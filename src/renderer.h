@@ -47,7 +47,7 @@
  *   the divide by PROJ_Y_DENOM is applied per frame with height scaling. */
 #define PROJ_X_SCALE     256
 #define PROJ_Y_NUMERATOR (256 * 11)
-#define PROJ_Y_DENOM     30                /* adjust this value to change the vertical FOV, can need tweaking */
+#define PROJ_Y_DENOM     38                /* adjust this value to change the vertical FOV, can need tweaking */
 #define PROJ_Y_SCALE     (PROJ_Y_NUMERATOR / PROJ_Y_DENOM)
 
 /* World Y fixed-point: zone/floor/object heights use this many fractional bits for projection. */
