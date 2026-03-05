@@ -62,4 +62,25 @@ static inline int32_t calc_dist_approx(int32_t dx, int32_t dz)
         return dz + (dx >> 1);
 }
 
+/*
+ * Euclidean distance (integer sqrt of dx²+dz²).
+ * Used for blast radius so splash matches Amiga ComputeBlast (which uses sqrt).
+ */
+static inline int32_t calc_dist_euclidean(int32_t dx, int32_t dz)
+{
+    if (dx < 0) dx = -dx;
+    if (dz < 0) dz = -dz;
+    if (dx == 0 && dz == 0) return 0;
+    {
+        int64_t sum_sq = (int64_t)dx * dx + (int64_t)dz * dz;
+        int32_t guess = (int32_t)((dx + dz) / 2);
+        if (guess == 0) guess = 1;
+        for (int i = 0; i < 3; i++) {
+            if (guess == 0) break;
+            guess = (int32_t)((guess + sum_sq / guess) / 2);
+        }
+        return guess;
+    }
+}
+
 #endif /* MATH_TABLES_H */

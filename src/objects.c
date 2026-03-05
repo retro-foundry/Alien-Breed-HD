@@ -2383,7 +2383,7 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
 
         int32_t dx = x - ox;
         int32_t dz = z - oz;
-        int32_t dist = calc_dist_approx(dx, dz);
+        int32_t dist = calc_dist_euclidean(dx, dz);
 
         if (dist < radius) {
             /* Only apply splash damage to enemies (not barrels, pickups, etc.) */
@@ -2402,7 +2402,7 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
     {
         int32_t dx = x - state->plr1.p_xoff;
         int32_t dz = z - state->plr1.p_zoff;
-        int32_t dist = calc_dist_approx(dx, dz);
+        int32_t dist = calc_dist_euclidean(dx, dz);
         if (dist < radius) {
             int damage = (power * (radius - (int)dist)) / radius;
             state->plr1.energy -= (int16_t)damage;
@@ -2411,7 +2411,7 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
     if (state->mode != MODE_SINGLE) {
         int32_t dx = x - state->plr2.p_xoff;
         int32_t dz = z - state->plr2.p_zoff;
-        int32_t dist = calc_dist_approx(dx, dz);
+        int32_t dist = calc_dist_euclidean(dx, dz);
         if (dist < radius) {
             int damage = (power * (radius - (int)dist)) / radius;
             state->plr2.energy -= (int16_t)damage;
