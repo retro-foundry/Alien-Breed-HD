@@ -153,13 +153,13 @@ static int obj_bright_to_level(int raw_brightness)
  * Per-vertex screen coordinate cache (shared across all polygons in one
  * draw call, reset for each object).
  * ----------------------------------------------------------------------- */
-typedef struct { int16_t x, y; } BoxOnScr;
 typedef struct { int32_t x, y; int16_t z; } BoxRot;
+typedef struct { int32_t x, y, z; int16_t vb; } ObjVertex;
+typedef struct { int32_t x, y, z; int16_t vb; } PolyVertex;
 
 static BoxRot    s_boxrot[MAX_POLY_POINTS];
-static BoxOnScr  s_boxonscr[MAX_POLY_POINTS];
 static int16_t   s_boxbrights[MAX_POLY_POINTS];
-static uint8_t   s_vertex_valid[MAX_POLY_POINTS]; /* 1 = in front of camera */
+static ObjVertex s_world[MAX_POLY_POINTS];
 
 /* -----------------------------------------------------------------------
  * Polygon scanline rasteriser
@@ -167,8 +167,15 @@ static uint8_t   s_vertex_valid[MAX_POLY_POINTS]; /* 1 = in front of camera */
  * Draws a convex (or near-convex) polygon into
  * g_renderer.rgb_buffer.  Uses a simple span-table (min_x/max_x per row).
  * ----------------------------------------------------------------------- */
-#define POLY_MAX_HEIGHT (RENDER_HEIGHT)
-#define MAX_POLY_VERTS  16
+#define POLY_MAX_HEIGHT   (RENDER_HEIGHT)
+#define MAX_POLY_VERTS    16
+#define MAX_CLIP_VERTS    (MAX_POLY_VERTS + 2)
+#define OBJ_NEAR_Z        4
+
+static PolyVertex intersect_near_plane(const PolyVertex *a, const PolyVertex *b,
+                                       int32_t near_z);
+static int clip_polygon_to_near(const PolyVertex *in, int in_count,
+                                PolyVertex *out, int max_out, int32_t near_z);
 
 static int s_span_min[POLY_MAX_HEIGHT];
 static int s_span_max[POLY_MAX_HEIGHT];
@@ -359,18 +366,10 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp,
         s_boxbrights[i] = (int16_t)vb;
     }
 
-    /* ---- 6. convtoscr: translate & project to screen ----------------- */
-    /* X/Z use horizontal world coords (same scale as orp->x_fine / orp->z):
-     *   screen_x = worldX * RENDER_SCALE / worldZ + width/2
-     * Y uses the height-system (WORLD_Y_FRAC_BITS fractional bits), matching
-     * how walls and sprites compute their Y.  rotY = localY << WORLD_Y_FRAC_BITS
-     * and y_adjust is in height units, so >> WORLD_Y_FRAC_BITS removes the
-     * fraction before applying proj_y_scale – identical to the wall formula:
-     *   screen_y = ((worldY >> WORLD_Y_FRAC_BITS) * proj_y_scale * RENDER_SCALE)
-     *              / worldZ + height/2
-     * This keeps vertical scale, aspect ratio, and camera-bob in sync with the
-     * rest of the scene.
-     */
+    /* ---- 6. convtoscr prep: translate vertices to world/view --------- */
+    /* Keep world-space X/Y/Z per vertex, then clip each polygon against
+     * a near plane before projection. This avoids dropping whole faces when
+     * only part of a polygon crosses behind the camera. */
     int32_t xpos_mid = orp->x_fine;     /* 32-bit view X of object centre */
     int32_t zpos_mid = orp->z;          /* view Z of object centre  */
     int W = r->width, H = r->height;
@@ -381,20 +380,10 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp,
         int32_t worldX = s_boxrot[i].x + xpos_mid;
         int32_t worldY = s_boxrot[i].y + y_adjust;
         int32_t worldZ = (int32_t)s_boxrot[i].z + zpos_mid;
-
-        if (worldZ <= 0) {
-            s_vertex_valid[i] = 0;
-            s_boxonscr[i].x = (int16_t)(W + 100);
-            s_boxonscr[i].y = (int16_t)(H + 100);
-            continue;
-        }
-        s_vertex_valid[i] = 1;
-
-        int scr_x = (int)((worldX * RENDER_SCALE) / worldZ) + half_w;
-        int scr_y = (int)((int64_t)(worldY >> WORLD_Y_FRAC_BITS) * proj_ys * RENDER_SCALE
-                          / worldZ) + half_h;
-        s_boxonscr[i].x = (int16_t)scr_x;
-        s_boxonscr[i].y = (int16_t)scr_y;
+        s_world[i].x = worldX;
+        s_world[i].y = worldY;
+        s_world[i].z = worldZ;
+        s_world[i].vb = s_boxbrights[i];
     }
 
     /* ---- 7. PutinParts: depth-sort polygon parts --------------------- */
@@ -465,22 +454,12 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp,
             if (num_verts < 3 || num_verts > MAX_POLY_VERTS) continue;
 
             int vi[MAX_POLY_VERTS];
-            int all_valid = 1;
+            int bad_index = 0;
             for (int v = 0; v < num_verts; v++) {
                 vi[v] = (int)(uint16_t)vec_rd16(poly_start + 4 + v * 4);
-                if (vi[v] < 0 || vi[v] >= np || !s_vertex_valid[vi[v]])
-                    all_valid = 0;
+                if (vi[v] < 0 || vi[v] >= np) bad_index = 1;
             }
-            if (!all_valid) continue;
-
-            /* Back-face culling – matches Amiga doapoly cross product:
-             *   muls (x2-x1),(y0-y1)  →  sub  muls (x0-x1),(y2-y1)  → ble skip
-             * i.e. (x2-x1)*(y0-y1) - (x0-x1)*(y2-y1) > 0 is front-facing. */
-            int x0 = s_boxonscr[vi[0]].x, y0 = s_boxonscr[vi[0]].y;
-            int x1 = s_boxonscr[vi[1]].x, y1 = s_boxonscr[vi[1]].y;
-            int x2 = s_boxonscr[vi[2]].x, y2 = s_boxonscr[vi[2]].y;
-            int cross = (x2 - x1) * (y0 - y1) - (x0 - x1) * (y2 - y1);
-            if (cross <= 0) continue;  /* back-facing or degenerate */
+            if (bad_index) continue;
 
             /* texture_map_index, brightness divisor, pregour live at:
              *   poly + 12 + d0*4, +14 + d0*4, +16 + d0*4 */
@@ -496,6 +475,35 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp,
             if (shade_div < 0) shade_div = -shade_div;
             if (shade_div == 0) shade_div = 1;
 
+            PolyVertex in_poly[MAX_CLIP_VERTS];
+            for (int v = 0; v < num_verts; v++) {
+                const ObjVertex *sv = &s_world[vi[v]];
+                in_poly[v].x = sv->x;
+                in_poly[v].y = sv->y;
+                in_poly[v].z = sv->z;
+                in_poly[v].vb = sv->vb;
+            }
+
+            PolyVertex clipped_poly[MAX_CLIP_VERTS];
+            int clipped_n = clip_polygon_to_near(in_poly, num_verts, clipped_poly,
+                                                 MAX_CLIP_VERTS, OBJ_NEAR_Z);
+            if (clipped_n < 3) continue;
+
+            int sx[MAX_CLIP_VERTS], sy[MAX_CLIP_VERTS];
+            for (int v = 0; v < clipped_n; v++) {
+                int32_t wz = clipped_poly[v].z;
+                if (wz <= 0) wz = 1;
+                sx[v] = (int)((clipped_poly[v].x * RENDER_SCALE) / wz) + half_w;
+                sy[v] = (int)((int64_t)(clipped_poly[v].y >> WORLD_Y_FRAC_BITS) * proj_ys * RENDER_SCALE
+                              / wz) + half_h;
+            }
+
+            /* Back-face culling – matches Amiga doapoly cross product:
+             *   muls (x2-x1),(y0-y1)  →  sub  muls (x0-x1),(y2-y1)  → ble skip
+             * i.e. (x2-x1)*(y0-y1) - (x0-x1)*(y2-y1) > 0 is front-facing. */
+            int cross = (sx[2] - sx[1]) * (sy[0] - sy[1]) - (sx[0] - sx[1]) * (sy[2] - sy[1]);
+            if (cross <= 0) continue;  /* back-facing or degenerate */
+
             /* ObjDraw3 face brightness:
              *   d1 = (polybright * 8) / shade_div
              *   shade_raw = objBright + 14 - d1
@@ -509,22 +517,62 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp,
 
             if (pregour) {
                 int sum_vb = 0;
-                for (int v = 0; v < num_verts; v++) sum_vb += (int)s_boxbrights[vi[v]];
-                int avg_vb = sum_vb / num_verts; /* 0..13, lower=brighter */
+                for (int v = 0; v < clipped_n; v++) sum_vb += (int)clipped_poly[v].vb;
+                int avg_vb = sum_vb / clipped_n; /* 0..13, lower=brighter */
                 shade_raw = (shade_raw + avg_vb) / 2;
             }
 
             int shade_level = obj_bright_to_level(shade_raw);
             uint32_t color = make_poly_color(vect_num, tex_map, shade_level);
 
-            int sx[MAX_POLY_VERTS], sy[MAX_POLY_VERTS];
-            for (int v = 0; v < num_verts; v++) {
-                sx[v] = s_boxonscr[vi[v]].x;
-                sy[v] = s_boxonscr[vi[v]].y;
-            }
-
-            draw_filled_polygon(sx, sy, num_verts, color,
+            draw_filled_polygon(sx, sy, clipped_n, color,
                                 clip_l, clip_r, clip_t, clip_b);
         }
     }
+}
+
+static PolyVertex intersect_near_plane(const PolyVertex *a, const PolyVertex *b,
+                                       int32_t near_z)
+{
+    PolyVertex out = *a;
+    int64_t dz = (int64_t)b->z - (int64_t)a->z;
+    if (dz == 0) {
+        out.z = near_z;
+        return out;
+    }
+
+    int64_t num = (int64_t)near_z - (int64_t)a->z;
+    out.x = a->x + (int32_t)(((int64_t)(b->x - a->x) * num) / dz);
+    out.y = a->y + (int32_t)(((int64_t)(b->y - a->y) * num) / dz);
+    out.z = near_z;
+    out.vb = (int16_t)(a->vb + (int32_t)(((int64_t)(b->vb - a->vb) * num) / dz));
+    return out;
+}
+
+static int clip_polygon_to_near(const PolyVertex *in, int in_count,
+                                PolyVertex *out, int max_out, int32_t near_z)
+{
+    if (!in || !out || in_count < 3 || max_out < 3) return 0;
+
+    int out_count = 0;
+    for (int i = 0; i < in_count; i++) {
+        const PolyVertex *s = &in[i];
+        const PolyVertex *e = &in[(i + 1) % in_count];
+        int s_in = (s->z >= near_z);
+        int e_in = (e->z >= near_z);
+
+        if (s_in && e_in) {
+            if (out_count >= max_out) return 0;
+            out[out_count++] = *e;
+        } else if (s_in && !e_in) {
+            if (out_count >= max_out) return 0;
+            out[out_count++] = intersect_near_plane(s, e, near_z);
+        } else if (!s_in && e_in) {
+            if (out_count + 1 >= max_out) return 0;
+            out[out_count++] = intersect_near_plane(s, e, near_z);
+            out[out_count++] = *e;
+        }
+    }
+
+    return out_count;
 }
