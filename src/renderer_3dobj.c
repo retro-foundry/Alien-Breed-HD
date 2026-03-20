@@ -23,6 +23,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <limits.h>
 
 /* -----------------------------------------------------------------------
  * Global POLYOBJECTS table
@@ -34,6 +35,8 @@ static const uint8_t *g_poly_tex_maps = NULL;
 static size_t         g_poly_tex_maps_size = 0;
 static const uint8_t *g_poly_tex_pal = NULL;
 static size_t         g_poly_tex_pal_size = 0;
+static int32_t       *g_poly_obj_depth = NULL;
+static size_t         g_poly_obj_depth_cap = 0;
 
 void poly_obj_set_texture_assets(const uint8_t *texture_maps, size_t texture_maps_size,
                                  const uint8_t *texture_pal, size_t texture_pal_size)
@@ -193,10 +196,12 @@ static int clip_polygon_to_near(const PolyVertex *in, int in_count,
                                 PolyVertex *out, int max_out, int32_t near_z);
 static int poly_textures_ready(void);
 static void draw_textured_polygon(const int *sx, const int *sy,
+                                  const int32_t *sz,
                                   const int32_t *u, const int32_t *v,
                                   int n, uint16_t tex_map_word, int shade_level,
                                   int clip_left, int clip_right,
                                   int clip_top, int clip_bot);
+static int ensure_poly_depth_buffer(size_t pixels);
 
 static int s_span_min[POLY_MAX_HEIGHT];
 static int s_span_max[POLY_MAX_HEIGHT];
@@ -396,6 +401,9 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp,
     int W = r->width, H = r->height;
     int half_w = W / 2, half_h = H / 2;
     int32_t proj_ys = r->proj_y_scale;
+    size_t pix_count = (size_t)W * (size_t)H;
+    if (!ensure_poly_depth_buffer(pix_count)) return;
+    for (size_t i = 0; i < pix_count; i++) g_poly_obj_depth[i] = INT_MAX;
 
     for (int i = 0; i < np; i++) {
         int32_t worldX = s_boxrot[i].x + xpos_mid;
@@ -416,7 +424,7 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp,
     int nparts = vo->num_parts;
     if (nparts > MAX_POLY_PARTS) nparts = MAX_POLY_PARTS;
 
-    typedef struct { int32_t sort_z; int part_idx; } PartEntry;
+    typedef struct { int32_t sort_key; int part_idx; } PartEntry;
     PartEntry sorted[MAX_POLY_PARTS];
     int sorted_count = 0;
 
@@ -426,15 +434,22 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp,
         int sort_pt = (int)vo->part_sort_off[p] / 10;
         if (sort_pt < 0 || sort_pt >= np) sort_pt = 0;
 
-        /* Amiga sort key: sq(x>>7) + sq(y>>7) + sq(z) of the sort point in
-         * boxrot space.  We use the simpler worldZ which preserves depth order. */
-        int32_t wz = (int32_t)s_boxrot[sort_pt].z + zpos_mid;
+        /* Amiga PutinParts key:
+         *   key = (x>>7)^2 + (y>>7)^2 + z^2
+         * where x/y/z are from boxrot[] (object space after facing/view rotation,
+         * before object translation). */
+        int16_t sx = (int16_t)(s_boxrot[sort_pt].x >> 7);
+        int16_t sy = (int16_t)(s_boxrot[sort_pt].y >> 7);
+        int16_t sz = (int16_t)s_boxrot[sort_pt].z;
+        int32_t key = (int32_t)sx * (int32_t)sx +
+                      (int32_t)sy * (int32_t)sy +
+                      (int32_t)sz * (int32_t)sz;
 
         /* Insertion sort: farthest first (painter's) */
         int ins = sorted_count;
-        while (ins > 0 && sorted[ins - 1].sort_z < wz) ins--;
+        while (ins > 0 && sorted[ins - 1].sort_key < key) ins--;
         for (int k = sorted_count; k > ins; k--) sorted[k] = sorted[k - 1];
-        sorted[ins].sort_z   = wz;
+        sorted[ins].sort_key = key;
         sorted[ins].part_idx = p;
         if (sorted_count < MAX_POLY_PARTS) sorted_count++;
     }
@@ -515,6 +530,7 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp,
             if (clipped_n < 3) continue;
 
             int sx[MAX_CLIP_VERTS], sy[MAX_CLIP_VERTS];
+            int32_t sz[MAX_CLIP_VERTS];
             int32_t su[MAX_CLIP_VERTS], svt[MAX_CLIP_VERTS];
             for (int v = 0; v < clipped_n; v++) {
                 int32_t wz = clipped_poly[v].z;
@@ -522,6 +538,7 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp,
                 sx[v] = (int)((clipped_poly[v].x * RENDER_SCALE) / wz) + half_w;
                 sy[v] = (int)((int64_t)(clipped_poly[v].y >> WORLD_Y_FRAC_BITS) * proj_ys * RENDER_SCALE
                               / wz) + half_h;
+                sz[v] = wz;
                 su[v] = clipped_poly[v].u;
                 svt[v] = clipped_poly[v].v;
             }
@@ -552,7 +569,7 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp,
 
             int shade_level = obj_bright_to_level(shade_raw);
             if (poly_textures_ready()) {
-                draw_textured_polygon(sx, sy, su, svt, clipped_n, tex_map, shade_level,
+                draw_textured_polygon(sx, sy, sz, su, svt, clipped_n, tex_map, shade_level,
                                       clip_l, clip_r, clip_t, clip_b);
             } else {
                 uint32_t color = make_poly_color(vect_num, tex_map, shade_level);
@@ -601,7 +618,7 @@ static uint32_t sample_poly_texel(uint16_t tex_map_word, int shade_level,
 }
 
 static void draw_textured_triangle(const int *sx, const int *sy,
-                                   const int32_t *u, const int32_t *v,
+                                   const int32_t *sz, const int32_t *u, const int32_t *v,
                                    uint16_t tex_map_word, int shade_level,
                                    int clip_left, int clip_right,
                                    int clip_top, int clip_bot)
@@ -642,14 +659,19 @@ static void draw_textured_triangle(const int *sx, const int *sy,
             double w2 = 1.0 - w0 - w1;
             if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue;
 
+            int32_t zf = (int32_t)(w0 * (double)sz[0] + w1 * (double)sz[1] + w2 * (double)sz[2]);
+            size_t didx = (size_t)y * (size_t)W + (size_t)x;
+            if (g_poly_obj_depth && zf >= g_poly_obj_depth[didx]) continue;
             int32_t uf = (int32_t)(w0 * (double)u[0] + w1 * (double)u[1] + w2 * (double)u[2]);
             int32_t vf = (int32_t)(w0 * (double)v[0] + w1 * (double)v[1] + w2 * (double)v[2]);
+            if (g_poly_obj_depth) g_poly_obj_depth[didx] = zf;
             row[x] = sample_poly_texel(tex_map_word, shade_level, uf, vf);
         }
     }
 }
 
 static void draw_textured_polygon(const int *sx, const int *sy,
+                                  const int32_t *sz,
                                   const int32_t *u, const int32_t *v,
                                   int n, uint16_t tex_map_word, int shade_level,
                                   int clip_left, int clip_right,
@@ -658,19 +680,35 @@ static void draw_textured_polygon(const int *sx, const int *sy,
     if (n < 3) return;
 
     int tsx[3], tsy[3];
+    int32_t tz[3];
     int32_t tu[3], tv[3];
     for (int i = 1; i < n - 1; i++) {
         tsx[0] = sx[0];  tsy[0] = sy[0];
         tsx[1] = sx[i];  tsy[1] = sy[i];
         tsx[2] = sx[i + 1]; tsy[2] = sy[i + 1];
 
+        tz[0] = sz[0];
+        tz[1] = sz[i];
+        tz[2] = sz[i + 1];
         tu[0] = u[0];  tv[0] = v[0];
         tu[1] = u[i];  tv[1] = v[i];
         tu[2] = u[i + 1]; tv[2] = v[i + 1];
 
-        draw_textured_triangle(tsx, tsy, tu, tv, tex_map_word, shade_level,
+        draw_textured_triangle(tsx, tsy, tz, tu, tv, tex_map_word, shade_level,
                                clip_left, clip_right, clip_top, clip_bot);
     }
+}
+
+static int ensure_poly_depth_buffer(size_t pixels)
+{
+    if (pixels == 0) return 0;
+    if (pixels > g_poly_obj_depth_cap) {
+        int32_t *new_buf = (int32_t *)realloc(g_poly_obj_depth, pixels * sizeof(int32_t));
+        if (!new_buf) return 0;
+        g_poly_obj_depth = new_buf;
+        g_poly_obj_depth_cap = pixels;
+    }
+    return 1;
 }
 
 static PolyVertex intersect_near_plane(const PolyVertex *a, const PolyVertex *b,
