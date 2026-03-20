@@ -308,12 +308,9 @@ uint8_t can_it_be_seen(const LevelState *level,
         return 0;
     }
 
-    /* Same room (insameroom): visible if on same floor.
-     * For single-floor zones (no upper floor), ignore floor flags entirely
-     * since byte 63 of enemy records may not be meaningful there. */
+    /* Same room (insameroom): visible only if on same floor. */
     if (from_room == to_room) {
-        int has_upper = (read_be32(from_room + ZONE_UPPER_FLOOR) != 0);
-        if (!has_upper || viewer_top == target_top)
+        if (viewer_top == target_top)
             return 0x03u;
         return 0u;
     }
@@ -444,10 +441,10 @@ uint8_t can_it_be_seen(const LevelState *level,
             /* Wall (no exit) → not visible (Amiga: blt outlist) */
             if (connect < 0) return 0;
             int connect_index = level_connect_to_zone_index(level, connect);
-            if (connect_index < 0) continue;
+            if (connect_index < 0) return 0;
 
-            /* Closed door blocks this exit: do not treat as visible through it */
-            if (is_exit_blocked_by_door(level, current_zone_id, line_idx)) continue;
+            /* Closed door blocks this exit. */
+            if (is_exit_blocked_by_door(level, current_zone_id, line_idx)) return 0;
 
             /* Height at which ray crosses this exit line.
              * Amiga d4 = (tz-lz)*lxlen - (tx-lx)*lzlen  (target signed distance, negated)
@@ -488,7 +485,7 @@ uint8_t can_it_be_seen(const LevelState *level,
                     int32_t cur_up_roof = read_be32(current_room + ZONE_UPPER_ROOF);
                     if (cur_up_roof < roof_h) roof_h = cur_up_roof;
                 }
-                if (cross_y < roof_h || cross_y > floor_h) continue;
+                if (cross_y < roof_h || cross_y > floor_h) return 0;
 
                 int32_t next_floor = read_be32(next_zone + ZONE_FLOOR_HEIGHT);
                 int32_t next_roof  = read_be32(next_zone + ZONE_ROOF_HEIGHT);
@@ -508,7 +505,7 @@ uint8_t can_it_be_seen(const LevelState *level,
                     floor_h = read_be32(current_room + ZONE_UPPER_FLOOR);
                     roof_h  = read_be32(current_room + ZONE_UPPER_ROOF);
                 }
-                if (cross_y < roof_h || cross_y > floor_h) continue;
+                if (cross_y < roof_h || cross_y > floor_h) return 0;
 
                 int32_t next_floor = read_be32(next_zone + ZONE_FLOOR_HEIGHT);
                 int32_t next_roof  = read_be32(next_zone + ZONE_ROOF_HEIGHT);
