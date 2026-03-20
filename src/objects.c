@@ -468,6 +468,29 @@ static int16_t enemy_tick_third_timer(GameObject *obj, GameState *state,
     return third_timer;
 }
 
+static bool enemy_type_slot_reusable_for_tree_spawn(int8_t obj_type)
+{
+    switch (obj_type) {
+    case OBJ_NBR_DEAD:
+    case OBJ_NBR_ALIEN:
+    case OBJ_NBR_ROBOT:
+    case OBJ_NBR_BIG_NASTY:
+    case OBJ_NBR_FLYING_NASTY:
+    case OBJ_NBR_MARINE:
+    case OBJ_NBR_WORM:
+    case OBJ_NBR_HUGE_RED_THING:
+    case OBJ_NBR_SMALL_RED_THING:
+    case OBJ_NBR_TREE:
+    case OBJ_NBR_EYEBALL:
+    case OBJ_NBR_TOUGH_MARINE:
+    case OBJ_NBR_FLAME_MARINE:
+    case OBJ_NBR_GAS_PIPE:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static bool enemy_spawn_tree_eyeball(GameObject *tree, GameState *state)
 {
     if (!state->level.object_data || !state->level.object_points) return false;
@@ -488,6 +511,16 @@ static bool enemy_spawn_tree_eyeball(GameObject *tree, GameState *state)
             obj_index++;
             continue;
         }
+        if (!enemy_type_slot_reusable_for_tree_spawn(obj->obj.number)) {
+            obj_index++;
+            continue;
+        }
+
+        {
+            int16_t spawn_cid = OBJ_CID(obj);
+            memset(obj->raw + 2, 0, OBJECT_SIZE - 2);
+            OBJ_SET_CID(obj, spawn_cid);
+        }
 
         obj->obj.number = OBJ_NBR_EYEBALL;
         obj->obj.can_see = 0;
@@ -496,10 +529,8 @@ static bool enemy_spawn_tree_eyeball(GameObject *tree, GameState *state)
         OBJ_SET_ZONE(obj, OBJ_ZONE(tree));
         OBJ_SET_GROOM(obj, OBJ_GROOM(tree));
         obj_sw(obj->raw + 4, obj_w(tree->raw + 4));
-        if (obj->raw[6] == 0 || obj->raw[7] == 0) {
-            obj->raw[6] = (uint8_t)default_object_world_size[OBJ_NBR_EYEBALL].w;
-            obj->raw[7] = (uint8_t)default_object_world_size[OBJ_NBR_EYEBALL].h;
-        }
+        obj->raw[6] = (uint8_t)default_object_world_size[OBJ_NBR_EYEBALL].w;
+        obj->raw[7] = (uint8_t)default_object_world_size[OBJ_NBR_EYEBALL].h;
 
         NASTY_LIVES(*obj) = 10;
         NASTY_DAMAGE(*obj) = 0;
