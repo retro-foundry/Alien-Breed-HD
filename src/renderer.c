@@ -538,7 +538,7 @@ static void renderer_fill_wall_joins(void)
                         /* Fill only clear/background pixels between y_src and wall_top */
                         for (int yy = y_src + 1; yy <= wall_top - 1; yy++) {
                             if (buf[yy * w + x] == 2) break;
-                            if (buf[yy * w + x] != 1) {
+                            if (buf[yy * w + x] == 0) {
                                 buf[yy * w + x] = 1;
                                 rgb[yy * w + x] = c;
                             }
@@ -565,7 +565,7 @@ static void renderer_fill_wall_joins(void)
                         uint32_t c = rgb[y_src * w + x];
                         for (int yy = y_src - 1; yy >= wall_bot + 1; yy--) {
                             if (buf[yy * w + x] == 2) break;
-                            if (buf[yy * w + x] != 1) {
+                            if (buf[yy * w + x] == 0) {
                                 buf[yy * w + x] = 1;
                                 rgb[yy * w + x] = c;
                             }
@@ -1269,7 +1269,10 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
             uint8_t *row8 = buf + (size_t)screen_row * rw;
             uint32_t *row32 = rgb + (size_t)screen_row * rw;
 
-            row8[screen_col] = texel;
+            /* Geometry tag buffer is used by wall-join post-pass:
+             * 1=floor/ceiling, 2=wall. Sprites must use a neutral tag so
+             * they are never treated as wall/floor spans. */
+            row8[screen_col] = 3;
 
             /* Color from .pal brightness palette (15 levels × 64 bytes or single 64-byte block).
              * Amiga .pal is big-endian 12-bit words. Try little-endian if colors look wrong. */
