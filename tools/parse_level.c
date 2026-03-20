@@ -140,8 +140,10 @@ int main(int argc, char **argv)
                 int16_t bottom = read_be16(p + 0), top = read_be16(p + 2), curr = read_be16(p + 4), dir = read_be16(p + 6);
                 int16_t zone = read_be16(p + 12);
                 int16_t conditions = read_be16(p + 14);
-                printf("  door[%d] zone=%d bottom=%d top=%d curr=%d dir=%d conditions=0x%04X\n",
-                       idx, (int)zone, (int)bottom, (int)top, (int)curr, (int)dir, (unsigned)(uint16_t)conditions);
+                int16_t mode = read_be16(p + 16);
+                printf("  door[%d] zone=%d bottom=%d top=%d curr=%d dir=%d conditions=0x%04X mode=0x%04X\n",
+                       idx, (int)zone, (int)bottom, (int)top, (int)curr, (int)dir,
+                       (unsigned)(uint16_t)conditions, (unsigned)(uint16_t)mode);
                 p = skip_wall_list(p + 18);
                 idx++;
                 if (idx > 512) break;
@@ -165,8 +167,10 @@ int main(int argc, char **argv)
                 int16_t bottom = read_be16(p + 0), top = read_be16(p + 2), curr = read_be16(p + 4), dir = read_be16(p + 6);
                 int16_t zone = read_be16(p + 12);
                 int16_t conditions = read_be16(p + 14);
-                printf("  lift[%d] zone=%d bottom=%d top=%d curr=%d dir=%d conditions=0x%04X\n",
-                       idx, (int)zone, (int)bottom, (int)top, (int)curr, (int)dir, (unsigned)(uint16_t)conditions);
+                int16_t mode = read_be16(p + 16);
+                printf("  lift[%d] zone=%d bottom=%d top=%d curr=%d dir=%d conditions=0x%04X mode=0x%04X\n",
+                       idx, (int)zone, (int)bottom, (int)top, (int)curr, (int)dir,
+                       (unsigned)(uint16_t)conditions, (unsigned)(uint16_t)mode);
                 p = skip_wall_list(p + 18);
                 idx++;
                 if (idx > 512) break;

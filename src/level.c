@@ -203,6 +203,7 @@ int level_parse(LevelState *level)
                         int16_t dir = read_word(s + 6);
                         int16_t zone = read_word(s + 12);
                         int16_t cond = read_word(s + 14);
+                        int16_t door_mode = read_word(s + 16); /* high byte=open mode, low byte=close mode */
                         const uint8_t *wall_start = s + 18;
                         uint32_t door_start = wall_index;
                         int nw = parse_amiga_door_wall_list(&wall_start, wall_list ? wall_list + wall_index * 6 : NULL, 64);
@@ -212,7 +213,7 @@ int level_parse(LevelState *level)
                             if (wall_offsets) wall_offsets[out_idx] = door_start;
                             uint8_t *t = buf + out_idx * 22;
                             write_word_be(t + 0, zone);
-                            write_word_be(t + 2, (int16_t)0);
+                            write_word_be(t + 2, door_mode);
                             /* Amiga: asr.w #2,d3 then muls #256,d3 → zone roof = curr*64, not curr*256 */
                             write_long_be(t + 4, (int32_t)curr * 64);
                             write_word_be(t + 8, dir);
@@ -267,10 +268,10 @@ int level_parse(LevelState *level)
                 d = wall_start;
                 if (nl > 256) break;
             }
-            /* Accept table if first lift has valid zone (by index or block ID), same idea as doors. */
+            /* Accept table if first lift has valid zone. Prefer raw index semantics (same as doors). */
             int16_t zone0 = read_word(lift_src + 12);
-            int z0 = zone_file_to_index(ld, lg + 16, num_zones, zone0);
-            if (z0 < 0 && zone0 >= 0 && zone0 < num_zones) z0 = (int)zone0;
+            int z0 = (zone0 >= 0 && zone0 < num_zones) ? (int)zone0 :
+                     zone_file_to_index(ld, lg + 16, num_zones, zone0);
             if (nl > 0 && nl <= 256 && z0 >= 0) {
                 uint8_t *buf = (uint8_t *)malloc((size_t)(nl + 1) * 20u);
                 uint8_t *wall_list = (total_lift_walls > 0) ? (uint8_t *)malloc((size_t)total_lift_walls * 6u) : NULL;
@@ -286,18 +287,19 @@ int level_parse(LevelState *level)
                         int16_t dir = read_word(s + 6);
                         int16_t zone = read_word(s + 12);
                         int16_t conditions = read_word(s + 14);
+                        int16_t lift_mode = read_word(s + 16); /* high byte=top behavior, low byte=bottom behavior */
                         const uint8_t *wall_start = s + 18;
                         uint32_t lift_start = wall_index;
                         int nw = parse_amiga_door_wall_list(&wall_start, wall_list ? wall_list + wall_index * 6 : NULL, 64);
                         wall_index += nw;
                         s = wall_start;
-                        int zidx = zone_file_to_index(ld, lg + 16, num_zones, zone);
-                        if (zidx < 0 && zone >= 0 && zone < num_zones) zidx = (int)zone;
+                        int zidx = (zone >= 0 && zone < num_zones) ? (int)zone :
+                                   zone_file_to_index(ld, lg + 16, num_zones, zone);
                         if (zidx >= 0) {
                             if (wall_offsets) wall_offsets[out_idx] = lift_start;
                             uint8_t *t = buf + out_idx * 20;
                             write_word_be(t + 0, (int16_t)zidx);
-                            write_word_be(t + 2, (int16_t)0);  /* type 0 = space key */
+                            write_word_be(t + 2, lift_mode);
                             write_long_be(t + 4, (int32_t)curr * 64);
                             write_word_be(t + 8, dir);
                             write_long_be(t + 10, (int32_t)top * 64);  /* lift_top = low position (×64, same as door) */

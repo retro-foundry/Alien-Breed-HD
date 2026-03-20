@@ -69,9 +69,56 @@ static int16_t read_be16(const uint8_t* p)
     return (int16_t)((p[0] << 8) | p[1]);
 }
 
+static void write_be16(uint8_t *p, uint16_t v)
+{
+    p[0] = (uint8_t)(v >> 8);
+    p[1] = (uint8_t)(v & 0xFFu);
+}
+
 static int32_t read_be32(const uint8_t* p)
 {
     return (int32_t)((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]);
+}
+
+/* Amiga MoveObject ORs wallflags into floorline word 14(a2) when the mover
+ * is close to, or collides with, that wall line. Door/Lift routines consume
+ * these bits to detect per-player interaction. */
+static void mark_floorline_touch_flag(const MoveContext *ctx, const uint8_t *fline)
+{
+    if (!ctx || !fline) return;
+    if (ctx->wall_flags == 0) return;
+    uint8_t *fl = (uint8_t *)fline;
+    uint16_t flags = (uint16_t)read_be16(fl + FLINE_AWAY);
+    flags |= ctx->wall_flags;
+    write_be16(fl + FLINE_AWAY, flags);
+}
+
+/* Amiga MoveObject "near wall" test that tags floorline +14 with wallflags:
+ * d = ((newx-lx)*zlen - (newz-lz)*xlen) / (line_length + extlen)
+ * if (d > 0 && d < 32) or.w wallflags,14(a2)
+ *
+ * Our coordinates may be shifted by pos_shift, so scale the 32 threshold too. */
+static void mark_floorline_touch_if_near(const MoveContext *ctx, const uint8_t *fline,
+    int32_t lx, int32_t lz, int16_t lxlen, int16_t lzlen, int ps)
+{
+    if (!ctx || !fline) return;
+    if (ctx->wall_flags == 0) return;
+
+    {
+        int64_t side = (int64_t)(ctx->newx - lx) * (int64_t)lzlen -
+                       (int64_t)(ctx->newz - lz) * (int64_t)lxlen;
+        if (side <= 0) return;
+
+        int32_t line_len = (int32_t)(int16_t)read_be16(fline + FLINE_LENGTH);
+        if (line_len < 0) line_len = -line_len;
+        int32_t denom = line_len + ctx->extlen;
+        if (denom <= 0) denom = 1;
+
+        int64_t d = side / denom;
+        int64_t near_thresh = (int64_t)32 << ps;
+        if (d < near_thresh)
+            mark_floorline_touch_flag(ctx, fline);
+    }
 }
 
 /* -----------------------------------------------------------------------
@@ -390,6 +437,9 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
     int32_t wx = (int32_t)lxlen << ps;
     int32_t wz = (int32_t)lzlen << ps;
 
+    /* Amiga tags touch flags before deciding whether an exit is passable. */
+    mark_floorline_touch_if_near(ctx, fline, lx, lz, lxlen, lzlen, ps);
+
     /* ---- Exit line: if passable, skip (transition handled later in find_room). ---- */
     if (zone_data && level->zone_adds && connect_index >= 0 && connect_index < level->num_zones) {
         int32_t target_zone_off = read_be32(level->zone_adds + (size_t)connect_index * 4);
@@ -454,6 +504,7 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
                 return 0;
             }
 
+            mark_floorline_touch_flag(ctx, fline);
             ctx->newx = ctx->oldx;
             ctx->newz = ctx->oldz;
             ctx->hitwall = 1;
@@ -485,12 +536,14 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
             }
 
             if (do_wall_slide_radius(ctx, ax, az, bx, bz, radius)) {
+                mark_floorline_touch_flag(ctx, fline);
                 ctx->hitwall = 1;
                 *xdiff = ctx->newx - ctx->oldx;
                 *zdiff = ctx->newz - ctx->oldz;
                 return 2;
             }
 
+            mark_floorline_touch_flag(ctx, fline);
             ctx->newx = ctx->oldx;
             ctx->newz = ctx->oldz;
             ctx->hitwall = 1;

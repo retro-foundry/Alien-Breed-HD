@@ -1721,23 +1721,16 @@ void object_handle_bullet(GameObject *obj, GameState *state)
 #define DOOR_FLINE_ZLEN      6
 #define DOOR_NEAR_THRESH     4   /* player within this distance of a door fline counts as "at door" */
 
-/* Returns true if player is in door's zone or within DOOR_NEAR_THRESH of any door wall floor line (dot with fline plane < 4). */
+/* Amiga DoorRoutine consumes floorline word +14 wall-touch bits set by MoveObject:
+ * PLR1 uses 0x0100, PLR2 uses 0x0800.  We mirror that behavior here. */
 static bool player_at_door_zone(GameState *state, int16_t door_zone_id, int16_t player_zone, int door_idx, int plr_num)
 {
+    (void)door_zone_id;
     if (player_zone < 0) return false;
-    if (player_zone == door_zone_id) return true;
 
     if (!state->level.door_wall_list || !state->level.door_wall_list_offsets || !state->level.floor_lines) return false;
     if (door_idx < 0 || (uint32_t)door_idx >= state->level.num_doors) return false;
-
-    int32_t px, pz;
-    if (plr_num == 0) {
-        px = state->plr1.xoff >> 16;
-        pz = state->plr1.zoff >> 16;
-    } else {
-        px = state->plr2.xoff >> 16;
-        pz = state->plr2.zoff >> 16;
-    }
+    uint16_t player_touch_flag = (plr_num == 0) ? 0x0100u : 0x0800u;
 
     uint32_t start = state->level.door_wall_list_offsets[door_idx];
     uint32_t end   = state->level.door_wall_list_offsets[door_idx + 1];
@@ -1746,58 +1739,21 @@ static bool player_at_door_zone(GameState *state, int16_t door_zone_id, int16_t 
         int16_t fi = be16(ent);
         if (fi < 0 || (int32_t)fi >= state->level.num_floor_lines) continue;
         const uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fi * DOOR_FLINE_SIZE;
-        int32_t lx   = (int32_t)(int16_t)be16(fl + DOOR_FLINE_X);
-        int32_t lz   = (int32_t)(int16_t)be16(fl + DOOR_FLINE_Z);
-        int32_t lxlen = (int32_t)(int16_t)be16(fl + DOOR_FLINE_XLEN);
-        int32_t lzlen = (int32_t)(int16_t)be16(fl + DOOR_FLINE_ZLEN);
-        /* Signed distance from point to line (dot with plane): (P - A) · N where N = (-lzlen, lxlen). */
-        int64_t cross = (int64_t)(px - lx) * lzlen - (int64_t)(pz - lz) * lxlen;
-        int64_t len_sq = (int64_t)lxlen * lxlen + (int64_t)lzlen * lzlen;
-        if (len_sq <= 0) continue;
-        /* |cross|/sqrt(len_sq) < 4  <=>  cross*cross < 16*len_sq */
-        if (cross < 0) cross = -cross;
-        if (cross * cross < 4000 * len_sq) return true;
+        uint16_t touched = (uint16_t)be16(fl + 14);
+        if ((touched & player_touch_flag) != 0u) return true;
     }
     return false;
 }
 
-/* Same as player_at_door_zone but for lifts: uses lift wall list and returns true if player is in
- * the lift zone or within DOOR_NEAR_THRESH of any lift wall floor line. */
+/* Amiga LiftRoutine sets PLR*_stoodonlift from zone equality only:
+ *   cmp.w (PLR*_Roompt),lift_zone ; seq PLR*_stoodonlift
+ * There is no geometric "near lift wall" test in this step. */
 static bool player_at_lift_zone(GameState *state, int16_t lift_zone_id, int16_t player_zone, int lift_idx, int plr_num)
 {
-    if (player_zone < 0) return false;
-    if (player_zone == lift_zone_id) return true;
-
-    if (!state->level.lift_wall_list || !state->level.lift_wall_list_offsets || !state->level.floor_lines) return false;
-    if (lift_idx < 0 || (uint32_t)lift_idx >= state->level.num_lifts) return false;
-
-    int32_t px, pz;
-    if (plr_num == 0) {
-        px = state->plr1.xoff >> 16;
-        pz = state->plr1.zoff >> 16;
-    } else {
-        px = state->plr2.xoff >> 16;
-        pz = state->plr2.zoff >> 16;
-    }
-
-    uint32_t start = state->level.lift_wall_list_offsets[lift_idx];
-    uint32_t end   = state->level.lift_wall_list_offsets[lift_idx + 1];
-    for (uint32_t j = start; j < end; j++) {
-        const uint8_t *ent = state->level.lift_wall_list + j * DOOR_WALL_ENT_SIZE;
-        int16_t fi = be16(ent);
-        if (fi < 0 || (int32_t)fi >= state->level.num_floor_lines) continue;
-        const uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fi * DOOR_FLINE_SIZE;
-        int32_t lx   = (int32_t)(int16_t)be16(fl + DOOR_FLINE_X);
-        int32_t lz   = (int32_t)(int16_t)be16(fl + DOOR_FLINE_Z);
-        int32_t lxlen = (int32_t)(int16_t)be16(fl + DOOR_FLINE_XLEN);
-        int32_t lzlen = (int32_t)(int16_t)be16(fl + DOOR_FLINE_ZLEN);
-        int64_t cross = (int64_t)(px - lx) * lzlen - (int64_t)(pz - lz) * lxlen;
-        int64_t len_sq = (int64_t)lxlen * lxlen + (int64_t)lzlen * lzlen;
-        if (len_sq <= 0) continue;
-        if (cross < 0) cross = -cross;
-        if (cross * cross < 4000 * len_sq) return true;
-    }
-    return false;
+    (void)state;
+    (void)lift_idx;
+    (void)plr_num;
+    return (player_zone >= 0) && (player_zone == lift_zone_id);
 }
 
 /* -----------------------------------------------------------------------
@@ -1826,65 +1782,78 @@ void door_routine(GameState *state)
         int16_t zone_id = be16(door);
         if (zone_id < 0) break;
 
-        int16_t door_type = be16(door + 2);
+        int16_t door_type = be16(door + 2); /* high byte=open mode, low byte=close mode (Amiga bytes 16/17) */
         int32_t door_pos = be32(door + 4);
         int16_t door_vel = be16(door + 8);
         int32_t door_top = be32(door + 10)+1024;  /* open position (more negative) */
         int32_t door_bot = be32(door + 14);  /* closed position (more positive) */
         int16_t timer = be16(door + 18);
         uint16_t door_flags = (uint16_t)be16(door + 20);
+        uint8_t door_open_mode = (uint8_t)((uint16_t)door_type >> 8);
+        uint8_t door_close_mode = (uint8_t)((uint16_t)door_type & 0xFFu);
 
-        /* Type 0: flags 0 = player-only (space at door); flags != 0 = condition (switch or key). */
-        if (door_type == 0) {
-            int satisfied;
-            int plr1_at = player_at_door_zone(state, zone_id, state->plr1.zone, door_idx, 0);
-            int plr2_at = player_at_door_zone(state, zone_id, state->plr2.zone, door_idx, 1);
-            int at_door = plr1_at || plr2_at;
-            int space_tap = (plr1_at && state->plr1.p_spctap) || (plr2_at && state->plr2.p_spctap);
+        /* Amiga state flow:
+         * 1) Advance with current velocity.
+         * 2) Clamp at top/bottom and zero velocity at limits.
+         * 3) Only at limits, evaluate trigger mask and optionally set new velocity.
+         * This avoids mid-travel flip-flopping that causes visible stutter. */
+        int16_t prev_vel = door_vel;
+        door_pos += (int32_t)door_vel * state->temp_frames * 64;
 
-            if (door_flags == 0) {
-                /* Player-only: open when player at door taps space; stay open while at door. */
-                satisfied = at_door && (space_tap || door_pos < door_bot);
-            } else {
-                int conditions_met = ((uint16_t)game_conditions & door_flags) == door_flags;
-                int is_switch_door = door_flags & 0xFF0;
-                if (is_switch_door) {
-                    satisfied = conditions_met;
-                } else {
-                    /* Key (or mixed) door: must have condition and be at door and interact (or door already open). */
-                    satisfied = conditions_met && at_door && (space_tap || door_pos < door_bot);
-                }
-            }
-
-            const int32_t open_speed = -16;
-            const int32_t close_speed = 4;
-            int16_t prev_vel = door_vel;
-            if (satisfied) {
-                if (door_pos > door_top)
-                    door_vel = (int16_t)open_speed;
-                else {
-                    door_vel = 0;
-                    door_pos = door_top;
-                }
-            } else {
-                if (door_pos < door_bot)
-                    door_vel = (int16_t)close_speed;
-                else {
-                    door_vel = 0;
-                    door_pos = door_bot;
-                }
-            }
-            if (door_vel != 0 && prev_vel == 0)
-                audio_play_sample(5, 64);  /* newdoor: play when door starts opening or closing */
+        bool door_closed = false;
+        bool door_open = false;
+        if (door_pos >= door_bot) {
+            door_closed = true;
+            if (door_pos > door_bot) door_pos = door_bot;
+            if (door_vel > 0) door_vel = 0;
+        }
+        if (door_pos <= door_top) {
+            door_open = true;
+            if (door_pos < door_top) door_pos = door_top;
+            if (door_vel < 0) door_vel = 0;
         }
 
-        door_pos += (int32_t)door_vel * state->temp_frames * 64;
-        if (door_pos < door_top) door_pos = door_top;
-        if (door_pos > door_bot) door_pos = door_bot;
+        int16_t trigger_vel = door_vel;
+        uint16_t trigger_mask = 0;
+        bool clear_touch_flags = false; /* Amiga simplecheck writes 0 to floorline+14 when conditions not met. */
+
+        /* Amiga NotGoBackUp: if player 1 is in the same zone, door is not at top,
+         * and door is not currently opening, force opening trigger via 0x8000. */
+        if (zone_id == state->plr1.zone && !door_open && door_vel >= 0) {
+            trigger_vel = -16;
+            trigger_mask = (uint16_t)0x8000;
+        } else {
+            bool conditions_met = (((uint16_t)game_conditions & door_flags) == door_flags);
+            if (!conditions_met) {
+                clear_touch_flags = true;
+            } else if (door_open) {
+                if (door_close_mode == 0) {
+                    trigger_vel = 4;
+                    trigger_mask = (uint16_t)0x8000;
+                }
+            } else if (door_closed) {
+                trigger_vel = -16;
+                switch (door_open_mode) {
+                    case 0: {
+                        uint16_t m = 0;
+                        if (state->plr1.p_spctap) m |= (uint16_t)0x0100;
+                        if (state->plr2.p_spctap) m |= (uint16_t)0x0800;
+                        trigger_mask = m;
+                        break;
+                    }
+                    case 1: trigger_mask = (uint16_t)0x0900; break;
+                    case 2: trigger_mask = (uint16_t)0x0400; break;
+                    case 3: trigger_mask = (uint16_t)0x0200; break;
+                    case 4: trigger_mask = (uint16_t)0x8000; break;
+                    case 5: trigger_mask = 0; break;
+                    default: trigger_mask = 0; break;
+                }
+            }
+        }
 
         /* Write back (big-endian) */
         wbe32(door + 4, door_pos);
-        wbe16(door + 8, door_vel);
+        /* door_vel may be updated below from trigger bits. */
         wbe16(door + 18, timer);
 
         /* Update zone data: write door position directly to zone roof (same as Amiga). */
@@ -1894,6 +1863,7 @@ void door_routine(GameState *state)
         /* Amiga-style: patch floor line 14 and graphics wall record for each door wall (when data was loaded). */
         if (state->level.door_wall_list && state->level.door_wall_list_offsets &&
             state->level.graphics && door_idx < state->level.num_doors) {
+            bool triggered = false;
             uint32_t start = state->level.door_wall_list_offsets[door_idx];
             uint32_t end   = state->level.door_wall_list_offsets[door_idx + 1];
             for (uint32_t j = start; j < end; j++) {
@@ -1902,7 +1872,10 @@ void door_routine(GameState *state)
                 int32_t gfx_off = (int32_t)be32(ent + 2);
                 if (state->level.floor_lines && fline >= 0 && (int32_t)fline < state->level.num_floor_lines) {
                     uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fline * 16u;
-                    wbe16(fl + 14, (int16_t)(uint16_t)0x8000);  /* door wall flag (Amiga doorwalls) */
+                    uint16_t old_flags = (uint16_t)be16(fl + 14);
+                    if (trigger_mask != 0 && (old_flags & trigger_mask) != 0)
+                        triggered = true;
+                    wbe16(fl + 14, clear_touch_flags ? (int16_t)0 : (int16_t)(uint16_t)0x8000);
                 }
                 if (gfx_off >= 0) {
                     uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
@@ -1920,7 +1893,13 @@ void door_routine(GameState *state)
                     wbe32(wall_rec + 10, yoff);
                 }
             }
+            if (triggered)
+                door_vel = trigger_vel;
         }
+
+        wbe16(door + 8, door_vel);
+        if (door_vel != 0 && prev_vel == 0)
+            audio_play_sample(5, 64);  /* newdoor: play when door starts opening or closing */
 
         door_idx++;
         door += 22;
@@ -1963,65 +1942,102 @@ void lift_routine(GameState *state)
 
         int plr1_at = player_at_lift_zone(state, zone_id, state->plr1.zone, lift_idx, 0);
         int plr2_at = player_at_lift_zone(state, zone_id, state->plr2.zone, lift_idx, 1);
-        int at_lift = plr1_at || plr2_at;
-        int space_tap = (plr1_at && state->plr1.p_spctap) || (plr2_at && state->plr2.p_spctap);
         int plr1_on = state->plr1.stood_on_lift && plr1_at;
         int plr2_on = state->plr2.stood_on_lift && plr2_at;
-        int any_on_lift = plr1_on || plr2_on;
-
-        /* Conditions: when lift_flags == 0 always satisfied; else same as door (switch bits). */
-        int satisfied = (lift_flags == 0) || (((uint16_t)game_conditions & lift_flags) == lift_flags);
-
-        if (satisfied) {
-            /* Amiga: two type bytes – high = when at top (can go down), low = when at bottom (can go up). */
-            int type_at_top = (lift_type >> 8) & 0xFF;
-            int type_at_bot = lift_type & 0xFF;
-            int at_top = (lift_pos <= lift_top);
-            int at_bot = (lift_pos >= lift_bot);
-
-            if (at_top) {
-                /* Decide whether to go down (positive vel = toward lift_bot). */
-                switch (type_at_top) {
-                    case 0: /* space or player on lift */
-                        if (space_tap || (any_on_lift && at_lift))
-                            lift_vel = 4;
-                        break;
-                    case 1: /* player on lift */
-                        if (any_on_lift) lift_vel = 4;
-                        break;
-                    case 2: lift_vel = 4; break;  /* auto down */
-                    case 3: lift_vel = 0; break; /* no move */
-                    default: break;
-                }
-            } else if (at_bot) {
-                /* Decide whether to go up (negative vel = toward lift_top). */
-                switch (type_at_bot) {
-                    case 0:
-                        if (space_tap || (any_on_lift && at_lift))
-                            lift_vel = -4;
-                        break;
-                    case 1:
-                        if (any_on_lift) lift_vel = -4;
-                        break;
-                    case 2: lift_vel = -4; break;  /* auto up */
-                    case 3: lift_vel = 0; break;
-                    default: break;
-                }
-            }
-            /* Else neither at top nor at bottom: keep current velocity (already moving). */
-        }
-
-        if (lift_vel != 0 && prev_lift_vel == 0)
-            audio_play_sample(5, 64);  /* newdoor: play when lift starts moving (same as door) */
 
         int32_t old_pos = lift_pos;
         lift_pos += (int32_t)lift_vel * state->temp_frames * 64;
-        if (lift_pos < lift_top) lift_pos = lift_top;
-        if (lift_pos > lift_bot) lift_pos = lift_bot;
+
+        bool at_top = false;
+        bool at_bot = false;
+        if (lift_pos >= lift_bot) {
+            at_bot = true;
+            if (lift_pos > lift_bot) lift_pos = lift_bot;
+            if (lift_vel > 0) lift_vel = 0;
+        }
+        if (lift_pos <= lift_top) {
+            at_top = true;
+            if (lift_pos < lift_top) lift_pos = lift_top;
+            if (lift_vel < 0) lift_vel = 0;
+        }
+
+        /* Amiga: mode word bytes at +16/+17 in source data.
+         * At top: use low byte (d5) to decide lowering behavior.
+         * At bottom: use high byte (d4) to decide raising behavior. */
+        uint8_t mode_raise_at_bottom = (uint8_t)((uint16_t)lift_type >> 8);
+        uint8_t mode_lower_at_top    = (uint8_t)((uint16_t)lift_type & 0xFFu);
+
+        int16_t trigger_vel = lift_vel;
+        uint16_t trigger_mask = 0;
+        bool clear_touch_flags = false;
+
+        /* Conditions gate all behavior; when not satisfied Amiga simplecheck clears 14(a4). */
+        bool conditions_met = (((uint16_t)game_conditions & lift_flags) == lift_flags);
+        if (!conditions_met) {
+            clear_touch_flags = true;
+        } else if (at_top) {
+            switch (mode_lower_at_top) {
+                case 0: {
+                    trigger_vel = 4;
+                    uint16_t m = 0;
+                    if (state->plr1.p_spctap) {
+                        m |= (uint16_t)0x0100;
+                        if (plr1_at) m = (uint16_t)0x8000;
+                    }
+                    if (m != (uint16_t)0x8000 && state->plr2.p_spctap) {
+                        m |= (uint16_t)0x0800;
+                        if (plr2_at) m = (uint16_t)0x8000;
+                    }
+                    trigger_mask = m;
+                    break;
+                }
+                case 1:
+                    trigger_vel = 4;
+                    trigger_mask = (plr1_at || plr2_at) ? (uint16_t)0x8000 : (uint16_t)0x0900;
+                    break;
+                case 2:
+                    trigger_vel = 4;
+                    trigger_mask = (uint16_t)0x8000;
+                    break;
+                case 3:
+                default:
+                    trigger_mask = 0;
+                    break;
+            }
+        } else if (at_bot) {
+            switch (mode_raise_at_bottom) {
+                case 0: {
+                    trigger_vel = -4;
+                    uint16_t m = 0;
+                    if (state->plr1.p_spctap) {
+                        m |= (uint16_t)0x0100;
+                        if (plr1_at) m = (uint16_t)0x8000;
+                    }
+                    if (m != (uint16_t)0x8000 && state->plr2.p_spctap) {
+                        m |= (uint16_t)0x0800;
+                        if (plr2_at) m = (uint16_t)0x8000;
+                    }
+                    trigger_mask = m;
+                    break;
+                }
+                case 1:
+                    trigger_vel = -4;
+                    trigger_mask = (plr1_at || plr2_at) ? (uint16_t)0x8000 : (uint16_t)0x0900;
+                    break;
+                case 2:
+                    trigger_vel = -4;
+                    trigger_mask = (uint16_t)0x8000;
+                    break;
+                case 3:
+                default:
+                    trigger_mask = 0;
+                    break;
+            }
+        }
+
         int32_t lift_delta = lift_pos - old_pos;
 
         wbe32(lift + 4, lift_pos);
-        wbe16(lift + 8, lift_vel);
 
         if (zone_id >= 0 && zone_id < state->level.num_zones)
         {
@@ -2048,6 +2064,7 @@ void lift_routine(GameState *state)
         /* Amiga-style: patch floor line 14 and graphics wall record. */
         if (state->level.lift_wall_list && state->level.lift_wall_list_offsets &&
             state->level.graphics && lift_idx < state->level.num_lifts) {
+            bool triggered = false;
             uint32_t start = state->level.lift_wall_list_offsets[lift_idx];
             uint32_t end   = state->level.lift_wall_list_offsets[lift_idx + 1];
             for (uint32_t j = start; j < end; j++) {
@@ -2056,14 +2073,23 @@ void lift_routine(GameState *state)
                 int32_t gfx_off = (int32_t)be32(ent + 2);
                 if (state->level.floor_lines && fline >= 0 && (int32_t)fline < state->level.num_floor_lines) {
                     uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fline * 16u;
-                    wbe16(fl + 14, (int16_t)(uint16_t)0x8000);
+                    uint16_t old_flags = (uint16_t)be16(fl + 14);
+                    if (trigger_mask != 0 && (old_flags & trigger_mask) != 0u)
+                        triggered = true;
+                    wbe16(fl + 14, clear_touch_flags ? (int16_t)0 : (int16_t)(uint16_t)0x8000);
                 }
                 if (gfx_off >= 0) {
                     uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
                     wbe32(wall_rec + 20, lift_pos);
                 }
             }
+            if (triggered)
+                lift_vel = trigger_vel;
         }
+
+        wbe16(lift + 8, lift_vel);
+        if (lift_vel != 0 && prev_lift_vel == 0)
+            audio_play_sample(5, 64);  /* newdoor: play when lift starts moving (same as door) */
 
         lift_idx++;
         lift += LIFT_ENTRY_SIZE;
@@ -2080,6 +2106,8 @@ void switch_routine(GameState *state)
 {
     if (!state->level.switch_data) return;
 
+    /* Distance threshold from Anims.s: cmp.l #60*60,d4 */
+    const int32_t switch_dist_sq = 60 * 60;
     uint8_t *sw = state->level.switch_data;
     int switch_index = 0;
 
@@ -2087,82 +2115,87 @@ void switch_routine(GameState *state)
         int16_t zone_id = be16(sw);
         if (zone_id < 0) break;
 
-        /* Amiga: condition bit from switch index (offset 4 = point index). Loop d0=7..0 so switch 0→bit 4, 1→5, … 7→bit 11. */
+        /* Amiga: condition bit from switch index (d0=7..0, bit = 4 + (7-d0)).
+         * With forward index this is simply bit 4 + index. */
         unsigned int bit_num = 4 + (switch_index % 8);
         uint16_t bit_mask = (uint16_t)(1u << bit_num);
+        int32_t gfx_off = (int32_t)be32(sw + 6);
 
-        /* Update switch wall graphic every frame to match game_conditions (e.g. after load or other triggers). */
-        if (state->level.graphics) {
-            int32_t gfx_off = (int32_t)be32(sw + 6);
+        /* Auto-reset branch from Amiga backtoend/nobutt:
+         * if byte2 != 0 and byte10 != 0: byte3 -= temp_frames*4; when byte3 == 0,
+         * switch turns off and condition bit is cleared. */
+        if ((int8_t)sw[2] != 0 && (int8_t)sw[10] != 0) {
+            int8_t dec = (int8_t)(state->temp_frames * 4);
+            sw[3] = (uint8_t)((int8_t)sw[3] - dec);
+            if ((int8_t)sw[3] == 0) {
+                sw[10] = 0;
+                if (state->level.graphics && gfx_off >= 0) {
+                    uint8_t *wall_ptr = state->level.graphics + (uint32_t)gfx_off;
+                    write_be16(wall_ptr + 4, 11);
+                    int16_t w = be16(wall_ptr);
+                    w = (int16_t)(w & 0x007C);
+                    write_be16(wall_ptr, w);
+                }
+                game_conditions = (int16_t)((uint16_t)game_conditions & (uint16_t)~bit_mask);
+                audio_play_sample(10, 50);
+            }
+        }
+
+        /* p1/p2 SpaceIsPressed path. Amiga uses switch point index (word at +4)
+         * and checks distance to midpoint of two consecutive points:
+         *  cx=(x0+x1)/2, cz=(z0+z1)/2, dist^2 < 60^2.
+         * No facing test and no explicit zone match in original code. */
+        {
+            int16_t pidx = be16(sw + 4);
+            bool near_plr1 = false;
+            bool near_plr2 = false;
+
+            if (state->level.points && pidx >= 0) {
+                const uint8_t *p0 = state->level.points + (uint32_t)(uint16_t)pidx * 4u;
+                int16_t x0 = be16(p0 + 0);
+                int16_t z0 = be16(p0 + 2);
+                int16_t x1 = be16(p0 + 4);
+                int16_t z1 = be16(p0 + 6);
+                int32_t cx = ((int32_t)x0 + (int32_t)x1) >> 1;
+                int32_t cz = ((int32_t)z0 + (int32_t)z1) >> 1;
+
+                if (state->plr1.p_spctap) {
+                    int32_t dx = cx - state->plr1.p_xoff;
+                    int32_t dz = cz - state->plr1.p_zoff;
+                    near_plr1 = (dx * dx + dz * dz) < switch_dist_sq;
+                }
+                if (state->plr2.p_spctap) {
+                    int32_t dx = cx - state->plr2.p_xoff;
+                    int32_t dz = cz - state->plr2.p_zoff;
+                    near_plr2 = (dx * dx + dz * dz) < switch_dist_sq;
+                }
+            }
+
+            if (near_plr1 || near_plr2) {
+                sw[10] = (uint8_t)(~sw[10]); /* not.b 10(a0) */
+                if (state->level.graphics && gfx_off >= 0) {
+                    uint8_t *wall_ptr = state->level.graphics + (uint32_t)gfx_off;
+                    write_be16(wall_ptr + 4, 11);
+                    int16_t w = be16(wall_ptr);
+                    w = (int16_t)(w & 0x007C);
+                    if ((int8_t)sw[10] != 0) w = (int16_t)(w | 2);
+                    write_be16(wall_ptr, w);
+                }
+                game_conditions ^= bit_mask;
+                sw[3] = 0;  /* move.b #0,3(a0) */
+                audio_play_sample(10, 50);
+            }
+        }
+
+        /* Keep wall state synced to current on/off and condition bits.
+         * This helps after save/load and mirrors what the Amiga writes during toggles. */
+        if (state->level.graphics && gfx_off >= 0) {
             uint8_t *wall_ptr = state->level.graphics + gfx_off;
+            write_be16(wall_ptr + 4, 11);
             int16_t w = be16(wall_ptr);
-            w = (int16_t)((w & ~2) | ((game_conditions & bit_mask) ? 2 : 0));
+            w = (int16_t)(w & 0x007C);
+            if ((int8_t)sw[10] != 0) w = (int16_t)(w | 2);
             write_be16(wall_ptr, w);
-        }
-
-        int8_t cooldown = *(int8_t*)(sw + 3);  /* byte 3 (Anims: sub.b d1,3(a0)) */
-
-        /* Decrement cooldown */
-        if (cooldown > 0) {
-            cooldown -= (int8_t)(state->temp_frames * 4);
-            if (cooldown < 0) cooldown = 0;
-            *(int8_t*)(sw + 3) = cooldown;
-        }
-
-        /* Check if player is near, facing the switch, and pressing use (space).
-         * Switch record is 14 bytes (Anims.s adda.w #14): zone(2), point_index(2), cooldown(1),
-         * pad(1), gfx_offset(4), sw_x(2), sw_z(2). Condition bit derived from switch index. */
-        if (cooldown == 0) {
-            int16_t sw_x = be16(sw + 10); /* switch X position */
-            int16_t sw_z = be16(sw + 12); /* switch Z position */
-
-            bool near_plr1 = (state->plr1.zone == zone_id);
-            bool near_plr2 = (state->plr2.zone == zone_id);
-
-            if (near_plr1 && sw_x != 0) {
-                int32_t dx = (int32_t)sw_x - state->plr1.p_xoff;
-                int32_t dz = (int32_t)sw_z - state->plr1.p_zoff;
-                near_plr1 = (dx * dx + dz * dz) < 3600;
-                /* Facing check: view direction dot (to switch) > 0.5 * dist (within ~60°) */
-                if (near_plr1) {
-                    int32_t dist_sq = dx * dx + dz * dz;
-                    if (dist_sq > 0) {
-                        int16_t sang = sin_lookup((int)state->plr1.p_angpos & ANGLE_MASK);
-                        int16_t cang = cos_lookup((int)state->plr1.p_angpos & ANGLE_MASK);
-                        int32_t dot = (int32_t)dx * sang + (int32_t)dz * cang;
-                        near_plr1 = (dot > 0 && (int64_t)dot * dot > (int64_t)dist_sq / 4);
-                    }
-                }
-            }
-            if (near_plr2 && sw_x != 0) {
-                int32_t dx = (int32_t)sw_x - state->plr2.p_xoff;
-                int32_t dz = (int32_t)sw_z - state->plr2.p_zoff;
-                near_plr2 = (dx * dx + dz * dz) < 3600;
-                if (near_plr2) {
-                    int32_t dist_sq = dx * dx + dz * dz;
-                    if (dist_sq > 0) {
-                        int16_t sang = sin_lookup((int)state->plr2.p_angpos & ANGLE_MASK);
-                        int16_t cang = cos_lookup((int)state->plr2.p_angpos & ANGLE_MASK);
-                        int32_t dot = (int32_t)dx * sang + (int32_t)dz * cang;
-                        near_plr2 = (dot > 0 && (int64_t)dot * dot > (int64_t)dist_sq / 4);
-                    }
-                }
-            }
-
-            if (state->plr1.p_spctap && near_plr1) {
-                game_conditions ^= bit_mask;
-                printf("[SWITCH] pressed (plr1) zone=%d bit_mask=0x%04X game_conditions=0x%04X\n",
-                       (int)zone_id, (unsigned)(uint16_t)bit_mask, (unsigned)(uint16_t)game_conditions);
-                *(int8_t*)(sw + 3) = 20; /* cooldown */
-                audio_play_sample(10, 50);
-            }
-            if (state->plr2.p_spctap && near_plr2) {
-                game_conditions ^= bit_mask;
-                printf("[SWITCH] pressed (plr2) zone=%d bit_mask=0x%04X game_conditions=0x%04X\n",
-                       (int)zone_id, (unsigned)(uint16_t)bit_mask, (unsigned)(uint16_t)game_conditions);
-                *(int8_t*)(sw + 3) = 20;
-                audio_play_sample(10, 50);
-            }
         }
 
         sw += 14;
