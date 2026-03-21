@@ -214,9 +214,11 @@ void order_zones(ZoneOrder *out, const LevelState *level,
     next[num_zones - 1] = -1;
     int head = 0, tail = num_zones - 1;
 
-    /* RunThroughList: multiple passes, each pass walk list from tail to head. */
+    /* RunThroughList: multiple passes, each pass walk list from tail to head.
+     * Early-exit: if a pass made no reorderings the list is already stable. */
     enum { k_order_passes = 100 };
     for (int pass = 0; pass < k_order_passes; pass++) {
+        int moved = 0;
         int node = tail;
         while (node >= 0) {
             int16_t cur_zone = node_zone[node];
@@ -271,6 +273,7 @@ void order_zones(ZoneOrder *out, const LevelState *level,
                         if (node == tail) tail = (prev[node] >= 0) ? prev[node] : node;
                         move_before(node, conn_node, next, prev);
                         if (conn_node == head) head = node;
+                        moved = 1;
                         /* Amiga: bra InsertLoop - no return, so multiple reorders per node per pass */
                     }
                     workspace[cur_zone] = d6;  /* Amiga allinlist: move.l d6,(a6) */
@@ -278,6 +281,7 @@ void order_zones(ZoneOrder *out, const LevelState *level,
             }
             node = prev[node];
         }
+        if (!moved) break;
     }
 
     /* Output final order (walk from head) */

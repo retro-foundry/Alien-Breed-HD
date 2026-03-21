@@ -59,6 +59,12 @@
  * ----------------------------------------------------------------------- */
 RendererState g_renderer;
 
+/* Static edge tables for floor/ceiling polygon rasterization.
+ * Sized to the compile-time render height so no per-polygon heap allocation
+ * is needed. Reused every polygon; initialised at the start of each polygon. */
+static int16_t s_floor_left_edge[RENDER_HEIGHT];
+static int16_t s_floor_right_edge[RENDER_HEIGHT];
+
 /* -----------------------------------------------------------------------
  * Big-endian read helpers (level data is Amiga big-endian)
  * ----------------------------------------------------------------------- */
@@ -507,6 +513,8 @@ static void renderer_fill_wall_joins(void)
     const int SCAN = 24;
 
     for (int x = 0; x < w; x++) {
+        /* Skip columns where no wall was drawn (clip.z == 0 after init-to-zero). */
+        if (g_renderer.clip.z && g_renderer.clip.z[x] == 0) continue;
         int y = 0;
         while (y < h) {
             /* Find start of a wall run */
@@ -846,9 +854,15 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
     int64_t tex_over_z1_64 = (int64_t)ct1 * 65536LL / cz1;
     int64_t tex_over_z2_64 = (int64_t)ct2 * 65536LL / cz2;
 
-    for (int screen_x = draw_start; screen_x <= draw_end; screen_x++) {
+    /* Precompute t_fp step so the inner loop only does an add instead of a
+     * 64-bit divide per column.  t_fp runs 0..65535 over [scr_x1..scr_x2]. */
+    int64_t t_fp_step = 65536LL / span;
+    int64_t t_fp_init = (int64_t)(draw_start - scr_x1) * 65536LL / span;
+
+    int64_t t_fp_cur = t_fp_init;
+    for (int screen_x = draw_start; screen_x <= draw_end; screen_x++, t_fp_cur += t_fp_step) {
         /* t linear in screen x, 0..65535 (stable, no sensitive denominator) */
-        int64_t t_fp = (int64_t)(screen_x - scr_x1) * 65536LL / span;
+        int64_t t_fp = t_fp_cur;
         if (t_fp < 0) t_fp = 0;
         if (t_fp > 65535) t_fp = 65535;
 
@@ -1685,16 +1699,18 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         }
     }
 
-    /* Sort by Z (farthest first - painter's algorithm) */
-    for (int i = 0; i < obj_count - 1; i++) {
-        for (int j = i + 1; j < obj_count; j++) {
-            /* Match Amiga insertion order for equal-depth ties: later entries draw first. */
-            if (objs[j].z >= objs[i].z) {
-                ObjEntry tmp = objs[i];
-                objs[i] = objs[j];
-                objs[j] = tmp;
-            }
+    /* Insertion sort by Z descending (farthest first — painter's algorithm).
+     * Uses >= in the shift condition to match the original selection sort's
+     * tie-breaking: equal-depth items end up in reverse-input order (later
+     * entries draw first, i.e. appear earlier in the sorted array). */
+    for (int i = 1; i < obj_count; i++) {
+        ObjEntry key = objs[i];
+        int j = i - 1;
+        while (j >= 0 && objs[j].z <= key.z) {
+            objs[j + 1] = objs[j];
+            j--;
         }
+        objs[j + 1] = key;
     }
 
     /* Draw each object (back-to-front, painter's algorithm)
@@ -2305,13 +2321,9 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
              */
             int h = g_renderer.height;
             int center = h / 2;  /* Match wall projection center */
-            int16_t *left_edge = (int16_t*)malloc((size_t)h * sizeof(int16_t));
-            int16_t *right_edge_tab = (int16_t*)malloc((size_t)h * sizeof(int16_t));
-            if (!left_edge || !right_edge_tab) {
-                free(left_edge);
-                free(right_edge_tab);
-                break;
-            }
+            if (h > RENDER_HEIGHT) h = RENDER_HEIGHT;  /* guard against runtime resize */
+            int16_t *left_edge      = s_floor_left_edge;
+            int16_t *right_edge_tab = s_floor_right_edge;
             for (int i = 0; i < h; i++) {
                 left_edge[i] = (int16_t)g_renderer.width;
                 right_edge_tab[i] = -1;
@@ -2490,8 +2502,6 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 renderer_draw_floor_span((int16_t)row, le, re,
                                          rel_h, floor_tex, bright, (entry_type == 7) ? 1 : 0);
             }
-            free(left_edge);
-            free(right_edge_tab);
             break;
         }
 
@@ -2567,28 +2577,15 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 
                 for (int seg = 1; seg <= num_segments; seg++) {
                     /* Compute angle for this segment (0 to 2*PI over num_segments) */
-                    /* Use integer sin/cos approximation */
                     int angle = (seg * 1024) / num_segments; /* 0-1024 represents 0-360 degrees */
-                    
-                    /* Simple sin/cos using lookup or approximation */
-                    /* sin/cos tables would be ideal but for now use rough approximation */
-                    int32_t s, c;
-                    /* Map angle 0-1024 to sin/cos (-256 to 256 scale) */
-                    int a = angle & 1023;
-                    if (a < 256) {
-                        s = a;
-                        c = 256 - (a * a / 512);
-                    } else if (a < 512) {
-                        s = 512 - a;
-                        c = -(a - 256);
-                    } else if (a < 768) {
-                        s = -(a - 512);
-                        c = -(768 - a);
-                    } else {
-                        s = a - 1024;
-                        c = 256 - ((1024 - a) * (1024 - a) / 512);
-                    }
-                    
+
+                    /* Use game sine table (4096 entries, byte-indexed 0-8191 for 360°).
+                     * Map 0-1024 arc steps to 0-8192 byte-index: multiply by 8.
+                     * Divide table value (range ≈ -32767..32767) by 128 to get -256..255 scale. */
+                    int byte_angle = angle << 3;
+                    int32_t s = sin_lookup(byte_angle) >> 7;
+                    int32_t c = cos_lookup(byte_angle) >> 7;
+
                     /* Rotate radius vector by angle */
                     int32_t rx = (dx * c - dz * s) / 256;
                     int32_t rz = (dx * s + dz * c) / 256;
