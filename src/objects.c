@@ -137,6 +137,12 @@ static void enemy_update_display_facing_frame(GameObject *obj, const GameState *
                                               int16_t view_x, int16_t view_z)
 {
     int16_t old_frame = OBJ_DEADL(obj);
+    /* Flying variants use special attack/hit frames (16+) that are not angle*4+step.
+     * Preserve those until logic code assigns a new frame. */
+    if ((obj->obj.number == OBJ_NBR_FLYING_NASTY || obj->obj.number == OBJ_NBR_EYEBALL) &&
+        old_frame >= 16) {
+        return;
+    }
     int16_t step = (int16_t)(old_frame & 3);
     int16_t angle = (int16_t)(enemy_viewpoint(obj, view_x, view_z, &state->level) & 3);
     OBJ_SET_DEADL(obj, (int16_t)((angle << 2) | step));
@@ -154,6 +160,8 @@ static int marine_pick_target_player(GameObject *obj, GameState *state);
 static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
                                    GameState *state, int player_num,
                                    bool apply_translation);
+static bool enemy_is_facing_player_cone(GameObject *obj, GameState *state,
+                                        int player_num, int16_t min_cos_q14);
 
 static void enemy_update_anim(GameObject *obj, GameState *state, int16_t vect_num)
 {
@@ -1070,10 +1078,13 @@ void object_handle_robot(GameObject *obj, GameState *state)
         }
 
         if (fourth_timer < 20) {
-            fourth_timer = 50;
-            OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, (int16_t)(150 + (rand() & 0x7F)));
-            audio_play_sample(9, 100);
-            enemy_fire_at_player(obj, state, target_player, 4, 10, 16, 3);
+            /* Robot.s gates shooting with canshootgun (must be facing target enough). */
+            if (enemy_is_facing_player_cone(obj, state, target_player, 8192)) { /* cos >= 0.5 */
+                fourth_timer = 50;
+                OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, (int16_t)(150 + (rand() & 0x7F)));
+                audio_play_sample(9, 100);
+                enemy_fire_at_player(obj, state, target_player, 4, 10, 16, 3);
+            }
         }
         OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, fourth_timer);
     } else {
@@ -1230,6 +1241,29 @@ static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
     }
 
     return dist;
+}
+
+/* True when the enemy is facing within a cone toward the target player.
+ * min_cos_q14 uses the same scale as sin/cos lookup (16384 = 1.0). */
+static bool enemy_is_facing_player_cone(GameObject *obj, GameState *state,
+                                        int player_num, int16_t min_cos_q14)
+{
+    PlayerState *plr = (player_num == 1) ? &state->plr1 : &state->plr2;
+    int16_t obj_x = 0, obj_z = 0;
+    get_object_pos(&state->level, (int)OBJ_CID(obj), &obj_x, &obj_z);
+
+    int32_t dx = (int32_t)plr->p_xoff - (int32_t)obj_x;
+    int32_t dz = (int32_t)plr->p_zoff - (int32_t)obj_z;
+    int32_t dist = calc_dist_approx(dx, dz);
+    if (dist <= 0) return true;
+
+    int16_t facing = NASTY_FACING(*obj);
+    int32_t sf = sin_lookup(facing);
+    int32_t cf = cos_lookup(facing);
+    int64_t fwd = (int64_t)dx * sf + (int64_t)dz * cf;
+    if (fwd <= 0) return false;
+
+    return fwd >= (int64_t)dist * (int64_t)min_cos_q14;
 }
 
 static void marine_hitscan_burst(GameObject *obj, GameState *state,
@@ -1400,6 +1434,7 @@ void object_handle_flying_nasty(GameObject *obj, GameState *state)
     int can_see = obj->obj.can_see & 0x03;
     int16_t third_timer = OBJ_TD_W(obj, ENEMY_THIRD_TIMER_OFF);
     bool attacking = false;
+    bool fired_this_tick = false;
     int target_player = 0;
 
     if (can_see && third_timer <= 0) {
@@ -1421,6 +1456,7 @@ void object_handle_flying_nasty(GameObject *obj, GameState *state)
             OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, 50);
             audio_play_sample(20, 100);
             enemy_fire_at_player(obj, state, target_player, 0, 5, 16, 3);
+            fired_this_tick = true;
         }
     } else {
         /* Continuous rotation while prowling */
@@ -1437,7 +1473,27 @@ void object_handle_flying_nasty(GameObject *obj, GameState *state)
     }
 
     int16_t vn_fly = (obj->obj.number == OBJ_NBR_EYEBALL) ? 0 : 4;
-    enemy_update_anim_with_step(obj, state, vn_fly, attacking ? 0 : ((walk_cycle >> 3) & 3));
+    int walk_step = (attacking && obj->obj.number != OBJ_NBR_FLYING_NASTY)
+        ? 0 : ((walk_cycle >> 3) & 3);
+    enemy_update_anim_with_step(obj, state, vn_fly, walk_step);
+
+    if (obj->obj.number == OBJ_NBR_FLYING_NASTY && attacking) {
+        int16_t plr_x, plr_z;
+        if (state->plr1.zone >= 0) {
+            plr_x = (int16_t)state->plr1.p_xoff;
+            plr_z = (int16_t)state->plr1.p_zoff;
+        } else {
+            plr_x = (int16_t)state->plr2.p_xoff;
+            plr_z = (int16_t)state->plr2.p_zoff;
+        }
+
+        int angle = enemy_viewpoint(obj, plr_x, plr_z, &state->level);
+        if (fired_this_tick) {
+            wbe16(obj->raw + 10, 17);  /* FlyingScalyBall.s fire frame */
+        } else if (angle == 0) {
+            wbe16(obj->raw + 10, 16);  /* Front-facing attack frame */
+        }
+    }
 }
 
 /* -----------------------------------------------------------------------
