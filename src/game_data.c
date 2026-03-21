@@ -497,8 +497,13 @@ const EnemyParams enemy_params[] = {
         .hiss_timer_range = 255,
         .death_sound    = 0,        /* scream (Amiga screamsound #0) */
         .scream_sound   = 0,        /* scream */
-        .hiss_sound     = 8,        /* low scream */
+        .periodic_vocal1 = 17,      /* howl1 (NormalAlien.s SecTimer) */
+        .periodic_vocal2 = 18,      /* howl2 */
+        .periodic_vol_idle = 100,
+        .periodic_vol_attack = 800,
         .attack_sound   = -1,
+        .damage_audio_class = ENEMY_DMG_AUDIO_ALIEN,
+        .gib_splat_noisevol = 0,
         .death_frames   = {32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,
                            33,33,33,33,33,33,33,33,33,33,33, -1},
     },
@@ -525,8 +530,13 @@ const EnemyParams enemy_params[] = {
         .hiss_timer_range = 0,
         .death_sound    = 15,
         .scream_sound   = 8,
-        .hiss_sound     = -1,
+        .periodic_vocal1 = -1,
+        .periodic_vocal2 = -1,
+        .periodic_vol_idle = 0,
+        .periodic_vol_attack = 0,
         .attack_sound   = -1,
+        .damage_audio_class = ENEMY_DMG_AUDIO_ROBOT,
+        .gib_splat_noisevol = 0,
         .death_frames   = {-1},
     },
     /* [2] Big Red Thing (BigRedThing.s) - death: add.w #1,10(a0) 0..9 then onfloordead */
@@ -552,8 +562,13 @@ const EnemyParams enemy_params[] = {
         .hiss_timer_range = 255,
         .death_sound    = 27,
         .scream_sound   = 27,
-        .hiss_sound     = 8,
+        .periodic_vocal1 = 17,
+        .periodic_vocal2 = 18,
+        .periodic_vol_idle = 100,
+        .periodic_vol_attack = 800,
         .attack_sound   = -1,
+        .damage_audio_class = ENEMY_DMG_AUDIO_BIG_GIB,
+        .gib_splat_noisevol = 0,
         .death_frames   = {0,1,2,3,4,5,6,7,8,9, -1},
     },
     /* [3] Half Worm (HalfWorm.s) */
@@ -579,12 +594,17 @@ const EnemyParams enemy_params[] = {
         .hiss_timer_range = 255,
         .death_sound    = 27,
         .scream_sound   = 27,
-        .hiss_sound     = 8,
+        .periodic_vocal1 = 17,
+        .periodic_vocal2 = 18,
+        .periodic_vol_idle = 100,
+        .periodic_vol_attack = 800,
         .attack_sound   = -1,
+        .damage_audio_class = ENEMY_DMG_AUDIO_WORM,
+        .gib_splat_noisevol = 300,
         .death_frames   = {18,18,18,18,18,18,18,18,18,18, 19,19,19,19,19,19,19,19,19,19,
                            20,20,20,20,20,20, -1},
     },
-    /* [4] Flame Marine (FlameMarine.s) - Amiga: move.w #14,Samplenum on death */
+    /* [4] Flame Marine (FlameMarine.s) - screamsound #0; death: #14@400 if damage>1 then #0@200 if anim */
     {
         .thing_height   = 128 * 128,
         .step_up        = 20 * 256,
@@ -605,14 +625,19 @@ const EnemyParams enemy_params[] = {
         .wander_timer   = 50,
         .hiss_timer_min = 300,
         .hiss_timer_range = 255,
-        .death_sound    = 14,       /* splatpop (Amiga Samplenum #14) */
-        .scream_sound   = 27,
-        .hiss_sound     = 8,
+        .death_sound    = 14,       /* splatpop — marine death audio handled in enemy_check_damage */
+        .scream_sound   = 0,        /* main scream (Amiga screamsound #0), hurt + death anim */
+        .periodic_vocal1 = 17,
+        .periodic_vocal2 = 18,
+        .periodic_vol_idle = 100,
+        .periodic_vol_attack = 800,
         .attack_sound   = 21,
+        .damage_audio_class = ENEMY_DMG_AUDIO_UNUSED,
+        .gib_splat_noisevol = 0,
         .death_frames   = {16,16,16,16,16,16,16,16,16,16, 17,17,17,17,17,17,17,17,17,17,
                            18,18,18,18,18,18, -1},
     },
-    /* [5] Tough Marine (ToughMarine.s) - Amiga: move.w #14,Samplenum on death */
+    /* [5] Tough Marine (ToughMarine.s) - same damage SFX as FlameMarine */
     {
         .thing_height   = 128 * 128,
         .step_up        = 20 * 256,
@@ -633,16 +658,21 @@ const EnemyParams enemy_params[] = {
         .wander_timer   = 50,
         .hiss_timer_min = 300,
         .hiss_timer_range = 255,
-        .death_sound    = 14,       /* splatpop (Amiga Samplenum #14) */
-        .scream_sound   = 27,
-        .hiss_sound     = 8,
+        .death_sound    = 14,
+        .scream_sound   = 0,
+        .periodic_vocal1 = 17,
+        .periodic_vocal2 = 18,
+        .periodic_vol_idle = 100,
+        .periodic_vol_attack = 800,
         .attack_sound   = -1,
+        .damage_audio_class = ENEMY_DMG_AUDIO_UNUSED,
+        .gib_splat_noisevol = 0,
         .death_frames   = {16,16,16,16,16,16,16,16,16,16, 17,17,17,17,17,17,17,17,17,17,
                            18,18,18,18,18,18, -1},
     },
     /* [6] Mutant Marine (MutantMarine.s) - fires gun (Amiga: hitscan via ShootPlayer1,
      * approximated here with a fast plasma projectile for visible gameplay).
-     * Amiga: move.w #14,Samplenum on death (splatpop). */
+     * Same scream #0 / splat #14 death pattern as other marines. */
     {
         .thing_height   = 128 * 128,
         .step_up        = 20 * 256,
@@ -663,10 +693,15 @@ const EnemyParams enemy_params[] = {
         .wander_timer   = 50,
         .hiss_timer_min = 300,
         .hiss_timer_range = 255,
-        .death_sound    = 14,       /* splatpop (Amiga Samplenum #14) */
-        .scream_sound   = 27,
-        .hiss_sound     = 8,
+        .death_sound    = 14,
+        .scream_sound   = 0,
+        .periodic_vocal1 = 17,
+        .periodic_vocal2 = 18,
+        .periodic_vol_idle = 100,
+        .periodic_vol_attack = 800,
         .attack_sound   = 3,
+        .damage_audio_class = ENEMY_DMG_AUDIO_UNUSED,
+        .gib_splat_noisevol = 0,
         .death_frames   = {16,16,16,16,16,16,16,16,16,16, 17,17,17,17,17,17,17,17,17,17,
                            18,18,18,18,18,18, -1},
     },
@@ -693,8 +728,13 @@ const EnemyParams enemy_params[] = {
         .hiss_timer_range = 0,
         .death_sound    = 8,
         .scream_sound   = 8,
-        .hiss_sound     = -1,
+        .periodic_vocal1 = -1,
+        .periodic_vocal2 = -1,
+        .periodic_vol_idle = 0,
+        .periodic_vol_attack = 0,
         .attack_sound   = -1,
+        .damage_audio_class = ENEMY_DMG_AUDIO_BIGUGLY,
+        .gib_splat_noisevol = 0,
         .death_frames   = {-1},
     },
     /* [8] Big Claws (BigClaws.s) - death: add.w #1,10(a0) 0..9 then onfloordead (same as BigRedThing) */
@@ -720,8 +760,13 @@ const EnemyParams enemy_params[] = {
         .hiss_timer_range = 255,
         .death_sound    = 27,
         .scream_sound   = 27,
-        .hiss_sound     = 8,
+        .periodic_vocal1 = 17,
+        .periodic_vocal2 = 18,
+        .periodic_vol_idle = 100,
+        .periodic_vol_attack = 800,
         .attack_sound   = -1,
+        .damage_audio_class = ENEMY_DMG_AUDIO_BIG_GIB,
+        .gib_splat_noisevol = 0,
         .death_frames   = {0,1,2,3,4,5,6,7,8,9, -1},
     },
     /* [9] Flying Scaly Ball (FlyingScalyBall.s ItsAFlyingNasty) */
@@ -741,14 +786,19 @@ const EnemyParams enemy_params[] = {
         .shot_shift     = 3,
         .shot_cooldown  = 50,
         .damage_shift   = 0,
-        .explode_threshold = 40,
+        .explode_threshold = 40,    /* Amiga: ble after cmp #40 → soft kill if damage <= 40 */
         .wander_timer   = 50,
-        .hiss_timer_min = 0,
-        .hiss_timer_range = 0,
-        .death_sound    = 27,
-        .scream_sound   = 27,
-        .hiss_sound     = -1,
+        .hiss_timer_min = 300,
+        .hiss_timer_range = 255,
+        .death_sound    = 8,        /* unused on kill path; soft death uses screamsound #8 */
+        .scream_sound   = 8,        /* lowscream @200 when killing blow <= 40 */
+        .periodic_vocal1 = 16,      /* newhiss (FlyingScalyBall.s SecTimer) */
+        .periodic_vocal2 = -1,
+        .periodic_vol_idle = 100,
+        .periodic_vol_attack = 100,
         .attack_sound   = 20,
+        .damage_audio_class = ENEMY_DMG_AUDIO_FLYING,
+        .gib_splat_noisevol = 0,
         .death_frames   = {-1},
     },
     /* [10] Tree (Tree.s ItsATree) */
@@ -774,8 +824,13 @@ const EnemyParams enemy_params[] = {
         .hiss_timer_range = 255,
         .death_sound    = 27,
         .scream_sound   = 27,
-        .hiss_sound     = 8,
+        .periodic_vocal1 = 17,
+        .periodic_vocal2 = 18,
+        .periodic_vol_idle = 100,
+        .periodic_vol_attack = 800,
         .attack_sound   = -1,
+        .damage_audio_class = ENEMY_DMG_AUDIO_BIG_GIB,
+        .gib_splat_noisevol = 0,
         .death_frames   = {-1},
     },
 };

@@ -144,9 +144,18 @@ extern const uint8_t bullet_fly_src_cols[MAX_BULLET_ANIM_IDX];
 extern const uint8_t bullet_fly_src_rows[MAX_BULLET_ANIM_IDX];
 
 /* -----------------------------------------------------------------------
- * Enemy type parameters
- * Consolidated from all enemy .s files
+ * Enemy damage/death SFX (which Amiga routine to mirror in enemy_check_damage).
+ * Human marines use a dedicated branch (scream #0); do not use MARINE here.
  * ----------------------------------------------------------------------- */
+#define ENEMY_DMG_AUDIO_UNUSED     0  /* human marines: handled by obj type before class */
+#define ENEMY_DMG_AUDIO_ALIEN      1  /* NormalAlien.s */
+#define ENEMY_DMG_AUDIO_ROBOT      2  /* Robot.s */
+#define ENEMY_DMG_AUDIO_BIG_GIB    3  /* BigRedThing.s / BigClaws.s / Tree.s */
+#define ENEMY_DMG_AUDIO_WORM       4  /* HalfWorm.s */
+#define ENEMY_DMG_AUDIO_FLYING     5  /* FlyingScalyBall.s / EyeBall.s */
+#define ENEMY_DMG_AUDIO_BIGUGLY    6  /* BigUglyAlien.s */
+#define ENEMY_DMG_AUDIO_GENERIC    7  /* death_sound @200 + prior behaviour */
+
 typedef struct {
     /* Movement */
     int32_t  thing_height;     /* collision height (in *128 units) */
@@ -178,11 +187,22 @@ typedef struct {
     /* Sounds */
     int16_t  death_sound;      /* death SFX id */
     int16_t  scream_sound;     /* hurt SFX id */
-    int16_t  hiss_sound;       /* idle SFX id */
+    /* SecTimer periodic vocal (NormalAlien.s / FlyingScalyBall.s MakeSomeNoise):
+     * When hiss_timer_min/range > 0, each ~hiss_timer_min+(0..range) ticks play
+     * periodic_vocal1, or random vocal in [periodic_vocal1, periodic_vocal2] if v2>=v1.
+     * periodic_vol_* are Amiga Noisevol (100 idle howl, 800 attacking); scaled to PC mix. */
+    int16_t  periodic_vocal1;
+    int16_t  periodic_vocal2;  /* -1 = use only vocal1 */
+    int16_t  periodic_vol_idle;
+    int16_t  periodic_vol_attack;
     int16_t  attack_sound;     /* attack SFX id */
 
     /* Death animation */
     int16_t  death_frames[30]; /* sequence of animation frames, -1 terminated */
+
+    /* Amiga-accurate hit/kill audio (see ENEMY_DMG_AUDIO_*). */
+    uint8_t  damage_audio_class;
+    int16_t  gib_splat_noisevol; /* 0 = 400; HalfWorm.s uses 300 for splatpop #14 */
 } EnemyParams;
 
 extern const EnemyParams enemy_params[];
