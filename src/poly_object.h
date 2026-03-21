@@ -21,6 +21,8 @@
 
 /* Number of vector objects in POLYOBJECTS table (robot, medipac, ... gaspipe) */
 #define NUM_POLY_OBJECTS 10
+/* POLYOBJECTS index for exitsign.vec (ObjDraw3 / renderer_3dobj.c) — hung from ceiling */
+#define POLY_SLOT_EXIT_SIGN 2
 
 /* -----------------------------------------------------------------------
  * In-memory point: object-space or screen-space

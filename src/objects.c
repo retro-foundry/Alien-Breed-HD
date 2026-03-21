@@ -17,6 +17,7 @@
 #include "level.h"
 #include "movement.h"
 #include "math_tables.h"
+#include "poly_object.h"
 #include "stub_audio.h"
 #include "visibility.h"
 #include <stdio.h>
@@ -752,7 +753,20 @@ void objects_update(GameState *state)
                     /* world_height at [7] is signed (e.g. barrel -60); only default when 0 */
                     int world_h = (int)(int8_t)obj->raw[7];
                     if (world_h == 0) world_h = 32;
-                    int16_t render_y = (int16_t)((floor_h >> 7) - world_h);
+
+                    /* Level exit sign (3D vector slot 2): anchor Y to ceiling, not floor
+                     * (same roof offsets as renderer_draw_zone / ZD_ROOF, ZD_UPPER_ROOF). */
+                    int32_t anchor_h = floor_h;
+                    if ((uint8_t)obj->raw[6] == (uint8_t)OBJ_3D_SPRITE &&
+                        be16(obj->raw + 8) == (int16_t)POLY_SLOT_EXIT_SIGN) {
+                        int32_t roof_h = be32(zd + 6);
+                        if (upper_floor != 0 && obj->obj.in_top) {
+                            int32_t upper_roof = be32(zd + 14);
+                            roof_h = (upper_roof != 0) ? upper_roof : roof_h;
+                        }
+                        anchor_h = roof_h;
+                    }
+                    int16_t render_y = (int16_t)((anchor_h >> 7) - world_h);
                     obj_sw(obj->raw + 4, render_y);
                 }
             }
