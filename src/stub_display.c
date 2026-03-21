@@ -23,6 +23,12 @@ static SDL_Texture  *g_texture  = NULL;
 #define WINDOW_W  RENDER_WIDTH
 #define WINDOW_H  RENDER_HEIGHT
 
+#ifdef AB3D_RELEASE
+/* Release: exclusive fullscreen at 720p (not desktop / borderless resolution). */
+#define AB3D_RELEASE_FS_W 1280
+#define AB3D_RELEASE_FS_H 720
+#endif
+
 /* Legacy palette no longer needed - colors come from the .wad LUT data
  * and are written directly to the rgb_buffer as ARGB8888 pixels. */
 
@@ -31,6 +37,11 @@ static SDL_Texture  *g_texture  = NULL;
  * ----------------------------------------------------------------------- */
 void display_init(void)
 {
+#ifdef AB3D_RELEASE
+    /* Actual fullscreen mode dimensions (renderer buffer must match). */
+    int release_fs_w = AB3D_RELEASE_FS_W;
+    int release_fs_h = AB3D_RELEASE_FS_H;
+#endif
     printf("[DISPLAY] SDL2 init\n");
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -43,12 +54,9 @@ void display_init(void)
     int init_h = renderer_get_height();
 
 #ifdef AB3D_RELEASE
-    /* Release: start fullscreen; use desktop size for initial window size */
-    SDL_DisplayMode dm;
-    if (SDL_GetDesktopDisplayMode(0, &dm) == 0 && dm.w >= 96 && dm.h >= 80) {
-        init_w = dm.w;
-        init_h = dm.h;
-    }
+    /* Release: 720p window, then exclusive fullscreen at that resolution */
+    init_w = AB3D_RELEASE_FS_W;
+    init_h = AB3D_RELEASE_FS_H;
 #endif
 
     g_window = SDL_CreateWindow(
@@ -63,7 +71,23 @@ void display_init(void)
     }
 
 #ifdef AB3D_RELEASE
-    if (SDL_SetWindowFullscreen(g_window, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
+    {
+        SDL_DisplayMode want;
+        SDL_zero(want);
+        want.w = AB3D_RELEASE_FS_W;
+        want.h = AB3D_RELEASE_FS_H;
+        /* Pick nearest supported mode (e.g. exact 1280x720 or closest refresh). */
+        SDL_DisplayMode closest;
+        const SDL_DisplayMode *picked = SDL_GetClosestDisplayMode(0, &want, &closest);
+        if (picked) {
+            release_fs_w = picked->w;
+            release_fs_h = picked->h;
+            if (SDL_SetWindowDisplayMode(g_window, picked) != 0) {
+                printf("[DISPLAY] SDL_SetWindowDisplayMode failed: %s\n", SDL_GetError());
+            }
+        }
+    }
+    if (SDL_SetWindowFullscreen(g_window, SDL_WINDOW_FULLSCREEN) != 0) {
         printf("[DISPLAY] SDL_SetWindowFullscreen failed: %s\n", SDL_GetError());
     }
     /* Let the window complete fullscreen transition before querying size */
@@ -77,12 +101,24 @@ void display_init(void)
         return;
     }
 
-    /* Use actual renderer output size; same resize path as SDL_WINDOWEVENT_RESIZED */
+    /* Size the software renderer to match the drawable.
+     * In Release exclusive fullscreen, SDL_GetRendererOutputSize right after
+     * SDL_CreateRenderer often still reports the old windowed framebuffer size
+     * (e.g. 768x640); use the display mode we selected instead. */
+#ifdef AB3D_RELEASE
+    int out_w = release_fs_w;
+    int out_h = release_fs_h;
+    if (out_w < 96 || out_h < 80) {
+        out_w = AB3D_RELEASE_FS_W;
+        out_h = AB3D_RELEASE_FS_H;
+    }
+#else
     int out_w = init_w, out_h = init_h;
     if (SDL_GetRendererOutputSize(g_sdl_ren, &out_w, &out_h) != 0) {
         out_w = init_w;
         out_h = init_h;
     }
+#endif
     if (out_w < 96) out_w = 96;
     if (out_h < 80) out_h = 80;
     display_on_resize(out_w, out_h);
@@ -106,7 +142,19 @@ void display_handle_resize(void)
 {
     if (!g_sdl_ren) return;
     int out_w = 0, out_h = 0;
-    if (SDL_GetRendererOutputSize(g_sdl_ren, &out_w, &out_h) != 0) return;
+#ifdef AB3D_RELEASE
+    /* Same as display_init: output size query can be wrong in exclusive fullscreen. */
+    if (g_window && (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN) != 0) {
+        SDL_DisplayMode dm;
+        if (SDL_GetWindowDisplayMode(g_window, &dm) == 0 && dm.w >= 96 && dm.h >= 80) {
+            out_w = dm.w;
+            out_h = dm.h;
+        }
+    }
+#endif
+    if (out_w < 96 || out_h < 80) {
+        if (SDL_GetRendererOutputSize(g_sdl_ren, &out_w, &out_h) != 0) return;
+    }
     if (out_w < 96) out_w = 96;
     if (out_h < 80) out_h = 80;
     printf("[DISPLAY] handle_resize: renderer output %dx%d\n", out_w, out_h);
