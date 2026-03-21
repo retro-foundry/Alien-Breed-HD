@@ -81,8 +81,12 @@ static const uint8_t *skip_amiga_wall_list(const uint8_t *p)
     return p + 2;
 }
 
-/* Parse one door's wall list; return number of wall entries, advance *p to next door.
- * If dst is non-NULL, write packed entries: 2 bytes fline (be) + 4 bytes gfx_off (be) per entry. */
+/* Parse one door/lift wall list; return number of wall entries, advance *p to next door.
+ * If dst is non-NULL, write packed entries:
+ *   +0: fline (be16)
+ *   +2: ptr_to_wall_rec (be32)   [Anims.s first long -> a1]
+ *   +6: gfx_base_offset (be32)   [Anims.s second long -> a2]
+ * Total: 10 bytes per entry. */
 static int parse_amiga_door_wall_list(const uint8_t **p, uint8_t *dst, int max_entries)
 {
     const uint8_t *q = *p;
@@ -91,8 +95,9 @@ static int parse_amiga_door_wall_list(const uint8_t **p, uint8_t *dst, int max_e
         int16_t w = read_word(q);
         if (w < 0) break;
         if (dst) {
-            write_word_be(dst + n * 6, w);
-            write_long_be(dst + n * 6 + 2, read_long(q + 2));
+            write_word_be(dst + n * 10, w);
+            write_long_be(dst + n * 10 + 2, read_long(q + 2));
+            write_long_be(dst + n * 10 + 6, read_long(q + 6));
         }
         n++;
         q += 2 + 4 + 4;
@@ -190,7 +195,7 @@ int level_parse(LevelState *level)
             int16_t zone0 = read_word(door_src + 12);
             if (nd > 0 && nd <= 256 && zone0 >= 0 && zone0 < num_zones) {
                 uint8_t *buf = (uint8_t *)malloc((size_t)(nd + 1) * 22u);
-                uint8_t *wall_list = (total_walls > 0) ? (uint8_t *)malloc((size_t)total_walls * 6u) : NULL;
+                uint8_t *wall_list = (total_walls > 0) ? (uint8_t *)malloc((size_t)total_walls * 10u) : NULL;
                 uint32_t *wall_offsets = (nd > 0) ? (uint32_t *)malloc((size_t)(nd + 1) * sizeof(uint32_t)) : NULL;
                 if (buf && (total_walls == 0 || (wall_list && wall_offsets))) {
                     const uint8_t *s = door_src;
@@ -206,7 +211,7 @@ int level_parse(LevelState *level)
                         int16_t door_mode = read_word(s + 16); /* high byte=open mode, low byte=close mode */
                         const uint8_t *wall_start = s + 18;
                         uint32_t door_start = wall_index;
-                        int nw = parse_amiga_door_wall_list(&wall_start, wall_list ? wall_list + wall_index * 6 : NULL, 64);
+                        int nw = parse_amiga_door_wall_list(&wall_start, wall_list ? wall_list + wall_index * 10 : NULL, 64);
                         wall_index += nw;
                         s = wall_start;
                         if (zone >= 0 && zone < num_zones) {
@@ -274,7 +279,7 @@ int level_parse(LevelState *level)
                      zone_file_to_index(ld, lg + 16, num_zones, zone0);
             if (nl > 0 && nl <= 256 && z0 >= 0) {
                 uint8_t *buf = (uint8_t *)malloc((size_t)(nl + 1) * 20u);
-                uint8_t *wall_list = (total_lift_walls > 0) ? (uint8_t *)malloc((size_t)total_lift_walls * 6u) : NULL;
+                uint8_t *wall_list = (total_lift_walls > 0) ? (uint8_t *)malloc((size_t)total_lift_walls * 10u) : NULL;
                 uint32_t *wall_offsets = (nl > 0) ? (uint32_t *)malloc((size_t)(nl + 1) * sizeof(uint32_t)) : NULL;
                 if (buf && (total_lift_walls == 0 || (wall_list && wall_offsets))) {
                     const uint8_t *s = lift_src;
@@ -290,7 +295,7 @@ int level_parse(LevelState *level)
                         int16_t lift_mode = read_word(s + 16); /* high byte=top behavior, low byte=bottom behavior */
                         const uint8_t *wall_start = s + 18;
                         uint32_t lift_start = wall_index;
-                        int nw = parse_amiga_door_wall_list(&wall_start, wall_list ? wall_list + wall_index * 6 : NULL, 64);
+                        int nw = parse_amiga_door_wall_list(&wall_start, wall_list ? wall_list + wall_index * 10 : NULL, 64);
                         wall_index += nw;
                         s = wall_start;
                         int zidx = (zone >= 0 && zone < num_zones) ? (int)zone :

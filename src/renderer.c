@@ -672,7 +672,7 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     /* Amiga d4 progression is independent of VALSHIFT/VALAND; those only affect row masking/addressing.
      * Scaling by rows over-wraps 128-row door textures vertically. */
     int32_t tex_step = (int32_t)(((int64_t)h << 16) / wall_pixels);
-    /* Amiga: totalyoff is added to row index then masked with VALAND (WallRoutine3 line 1803–1804). */
+    /* Vertical texture start offset (masked to texture row count). */
     int32_t yoff = (int32_t)((unsigned)totalyoff & (unsigned)valand);
     int32_t tex_y = (ct - y_top_tex) * tex_step + ((int32_t)yoff << 16);
 
@@ -1999,7 +1999,6 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
 #define MAX_LIFT_ENTRIES 256
 #define LIFT_ENTRY_SIZE  20
 #define DOOR_ENTRY_SIZE  22
-#define DOOR_WALL_ENTRY_SIZE 6
 
 static int zone_has_door(const uint8_t *door_data, int16_t zone_id)
 {
@@ -2011,28 +2010,6 @@ static int zone_has_door(const uint8_t *door_data, int16_t zone_id)
         door_data += 22;
     }
     return 0;  /* Safety: avoid reading past buffer if format is wrong */
-}
-
-/* Door clipping should only apply to wall records listed for the door (Anims.s doorwalls). */
-static int wall_is_door_controlled(const LevelState *level, int16_t zone_id, int32_t gfx_off)
-{
-    if (!level || !level->door_data || !level->door_wall_list || !level->door_wall_list_offsets) return 0;
-    if (level->num_doors <= 0) return 0;
-
-    for (int door_idx = 0; door_idx < level->num_doors; door_idx++) {
-        const uint8_t *door = level->door_data + (size_t)door_idx * DOOR_ENTRY_SIZE;
-        if (rd16(door) != zone_id) continue;
-
-        uint32_t start = level->door_wall_list_offsets[door_idx];
-        uint32_t end   = level->door_wall_list_offsets[door_idx + 1];
-        for (uint32_t j = start; j < end; j++) {
-            const uint8_t *ent = level->door_wall_list + j * DOOR_WALL_ENTRY_SIZE;
-            if (rd32(ent + 2) == gfx_off)
-                return 1;
-        }
-    }
-
-    return 0;
 }
 
 /* Zones are "tagged" as lift zones by appearing in the lift table (first word = zone_id). */
@@ -2095,6 +2072,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
     int zone_has_door_flag = zone_has_door(level->door_data, zone_id);
     int zone_has_lift_flag = zone_has_lift(level->lift_data, zone_id);
     int has_door_wall_list = (level->door_wall_list && level->door_wall_list_offsets && level->num_doors > 0);
+    int has_lift_wall_list = (level->lift_wall_list && level->lift_wall_list_offsets && level->num_lifts > 0);
 
     /* Read zone number from graphics data (consumed before polyloop) */
     const uint8_t *ptr = gfx_data;
@@ -2150,9 +2128,6 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 int16_t rx2 = (int16_t)(r->rotated[p2].x >> 7);
                 int16_t rz2 = (int16_t)r->rotated[p2].z;
                 const uint8_t *wall_tex = (tex_id >= 0 && tex_id < MAX_WALL_TILES) ? r->walltiles[tex_id] : NULL;
-                int32_t wall_gfx_off = (int32_t)((ptr - 2) - level->graphics);
-                int wall_is_door_wall = wall_is_door_controlled(level, zone_id, wall_gfx_off);
-
                 /* Prefer level-authored VALAND/VALSHIFT. Some textures have ambiguous raw sizes
                  * (e.g. 64 vs 128 rows), and inferred file dimensions can misalign specific doors.
                  * Only fall back to loaded-file dimensions when level data is missing/zero. */
@@ -2183,7 +2158,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 int skip_this_wall = 0;
 
                 /* Lift zone: clip all walls to current zone floor/roof so we don't draw wall below the platform. */
-                if (zone_has_lift_flag && tex_id != SWITCHES_WALL_TEX_ID) {
+                if (!has_lift_wall_list && zone_has_lift_flag && tex_id != SWITCHES_WALL_TEX_ID) {
                     int32_t live_zone_roof = rd32(zone_data + 6);
                     int32_t live_zone_floor = rd32(zone_data + 2);
                     int32_t zone_roof_rel = live_zone_roof - y_off;

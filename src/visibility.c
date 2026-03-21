@@ -62,6 +62,7 @@ static inline int reg_btst32(uint32_t value, unsigned int bit_index)
 #define DOOR_TYPE           2
 #define DOOR_POS            4
 #define DOOR_BOT            14
+#define DOOR_WALL_ENTRY_SIZE 10
 /* door_type: 4 = always open, 5 = never open */
 #define DOOR_TYPE_ALWAYS_OPEN  4
 #define DOOR_TYPE_NEVER_OPEN  5
@@ -99,7 +100,7 @@ static bool is_exit_blocked_by_door(const LevelState *level, int16_t current_zon
         uint32_t start = level->door_wall_list_offsets[door_idx];
         uint32_t end   = level->door_wall_list_offsets[door_idx + 1];
         for (uint32_t j = start; j < end; j++) {
-            const uint8_t *ent = level->door_wall_list + j * 6u;
+            const uint8_t *ent = level->door_wall_list + j * DOOR_WALL_ENTRY_SIZE;
             int16_t fline = (int16_t)read_be16(ent);
             if (fline != line_idx) continue;
 

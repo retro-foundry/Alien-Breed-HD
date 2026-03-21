@@ -152,13 +152,14 @@ typedef struct {
     bool zone_adds_owned;
     bool door_wall_list_owned;
 
-    /* Amiga door wall list: per-door (floor_line_index, gfx_offset) for patching walls. When non-NULL, door_routine
-     * writes floor line 14 and graphics at gfx_offset+24. door_wall_list_offsets[i] = first entry index for door i. */
-    uint8_t         *door_wall_list;       /* packed: 2 bytes fline (be16) + 4 bytes gfx_off (be32) per entry */
+    /* Amiga door wall list: per-door wall patch entries.
+     * packed per entry: fline(be16) + ptr_to_wall_rec(be32) + gfx_base(be32).
+     * door_wall_list_offsets[i] = first entry index for door i. */
+    uint8_t         *door_wall_list;
     uint32_t        *door_wall_list_offsets; /* [num_doors+1]: start index per door (offsets[i+1]-offsets[i] = count) */
     int              num_doors;            /* number of door entries in door_data */
 
-    /* Amiga lift wall list: same layout as door (fline + gfx_off). lift_routine patches floor line 14 and graphics. */
+    /* Amiga lift wall list: same 10-byte entry layout as door wall list. */
     uint8_t         *lift_wall_list;
     uint32_t        *lift_wall_list_offsets; /* [num_lifts+1] */
     int              num_lifts;
