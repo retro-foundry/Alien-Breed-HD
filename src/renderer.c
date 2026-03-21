@@ -1685,16 +1685,18 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         }
     }
 
-    /* Sort by Z (farthest first - painter's algorithm) */
-    for (int i = 0; i < obj_count - 1; i++) {
-        for (int j = i + 1; j < obj_count; j++) {
-            /* Match Amiga insertion order for equal-depth ties: later entries draw first. */
-            if (objs[j].z >= objs[i].z) {
-                ObjEntry tmp = objs[i];
-                objs[i] = objs[j];
-                objs[j] = tmp;
-            }
+    /* Insertion sort by Z descending (farthest first — painter's algorithm).
+     * Uses >= in the shift condition to match the original selection sort's
+     * tie-breaking: equal-depth items end up in reverse-input order (later
+     * entries draw first, i.e. appear earlier in the sorted array). */
+    for (int i = 1; i < obj_count; i++) {
+        ObjEntry key = objs[i];
+        int j = i - 1;
+        while (j >= 0 && objs[j].z <= key.z) {
+            objs[j + 1] = objs[j];
+            j--;
         }
+        objs[j + 1] = key;
     }
 
     /* Draw each object (back-to-front, painter's algorithm)
@@ -2567,28 +2569,15 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 
                 for (int seg = 1; seg <= num_segments; seg++) {
                     /* Compute angle for this segment (0 to 2*PI over num_segments) */
-                    /* Use integer sin/cos approximation */
                     int angle = (seg * 1024) / num_segments; /* 0-1024 represents 0-360 degrees */
-                    
-                    /* Simple sin/cos using lookup or approximation */
-                    /* sin/cos tables would be ideal but for now use rough approximation */
-                    int32_t s, c;
-                    /* Map angle 0-1024 to sin/cos (-256 to 256 scale) */
-                    int a = angle & 1023;
-                    if (a < 256) {
-                        s = a;
-                        c = 256 - (a * a / 512);
-                    } else if (a < 512) {
-                        s = 512 - a;
-                        c = -(a - 256);
-                    } else if (a < 768) {
-                        s = -(a - 512);
-                        c = -(768 - a);
-                    } else {
-                        s = a - 1024;
-                        c = 256 - ((1024 - a) * (1024 - a) / 512);
-                    }
-                    
+
+                    /* Use game sine table (4096 entries, byte-indexed 0-8191 for 360°).
+                     * Map 0-1024 arc steps to 0-8192 byte-index: multiply by 8.
+                     * Divide table value (range ≈ -32767..32767) by 128 to get -256..255 scale. */
+                    int byte_angle = angle << 3;
+                    int32_t s = sin_lookup(byte_angle) >> 7;
+                    int32_t c = cos_lookup(byte_angle) >> 7;
+
                     /* Rotate radius vector by angle */
                     int32_t rx = (dx * c - dz * s) / 256;
                     int32_t rz = (dx * s + dz * c) / 256;

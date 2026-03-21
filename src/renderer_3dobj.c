@@ -37,6 +37,10 @@ static const uint8_t *g_poly_tex_pal = NULL;
 static size_t         g_poly_tex_pal_size = 0;
 static int32_t       *g_poly_obj_depth = NULL;
 static size_t         g_poly_obj_depth_cap = 0;
+/* Generation counter: increment per object instead of clearing the depth buffer.
+ * A depth entry is only valid when its stamp matches g_depth_gen. */
+static uint32_t      *g_poly_obj_depth_gen = NULL;
+static uint32_t       g_depth_gen = 0;
 /* Default in PC port: animated object frame enabled (can be forced static via CLI). */
 static int            g_poly_use_object_frame = 1;
 
@@ -417,7 +421,14 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
     int32_t proj_ys = r->proj_y_scale;
     size_t pix_count = (size_t)W * (size_t)H;
     if (!ensure_poly_depth_buffer(pix_count)) return;
-    for (size_t i = 0; i < pix_count; i++) g_poly_obj_depth[i] = INT_MAX;
+    /* Advance generation stamp instead of clearing all W*H entries.
+     * On overflow back to zero, reset the stamp array so no stale entries match. */
+    g_depth_gen++;
+    if (g_depth_gen == 0) {
+        g_depth_gen = 1;
+        if (g_poly_obj_depth_gen)
+            memset(g_poly_obj_depth_gen, 0, pix_count * sizeof(uint32_t));
+    }
 
     for (int i = 0; i < np; i++) {
         int32_t worldX = s_boxrot[i].x + xpos_mid;
@@ -687,7 +698,9 @@ static void draw_textured_triangle(const int *sx, const int *sy,
 
             int32_t zf = (int32_t)(w0 * (double)sz[0] + w1 * (double)sz[1] + w2 * (double)sz[2]);
             size_t didx = (size_t)y * (size_t)W + (size_t)x;
-            if (g_poly_obj_depth && zf >= g_poly_obj_depth[didx]) continue;
+            if (g_poly_obj_depth && g_poly_obj_depth_gen &&
+                g_poly_obj_depth_gen[didx] == g_depth_gen &&
+                zf >= g_poly_obj_depth[didx]) continue;
             int32_t uf = (int32_t)(w0 * (double)u[0] + w1 * (double)u[1] + w2 * (double)u[2]);
             int32_t vf = (int32_t)(w0 * (double)v[0] + w1 * (double)v[1] + w2 * (double)v[2]);
             uint8_t pal_idx = sample_poly_texel_index(tex_map_word, uf, vf);
@@ -701,7 +714,10 @@ static void draw_textured_triangle(const int *sx, const int *sy,
                 if (pixel_shade < 0) pixel_shade = 0;
                 if (pixel_shade > 14) pixel_shade = 14;
             }
-            if (g_poly_obj_depth) g_poly_obj_depth[didx] = zf;
+            if (g_poly_obj_depth) {
+                g_poly_obj_depth[didx] = zf;
+                if (g_poly_obj_depth_gen) g_poly_obj_depth_gen[didx] = g_depth_gen;
+            }
             row[x] = sample_poly_palette(pal_idx, pixel_shade);
         }
     }
@@ -754,7 +770,13 @@ static int ensure_poly_depth_buffer(size_t pixels)
     if (pixels > g_poly_obj_depth_cap) {
         int32_t *new_buf = (int32_t *)realloc(g_poly_obj_depth, pixels * sizeof(int32_t));
         if (!new_buf) return 0;
+        uint32_t *new_gen = (uint32_t *)realloc(g_poly_obj_depth_gen, pixels * sizeof(uint32_t));
+        if (!new_gen) { free(new_buf); return 0; }
+        /* Zero new stamp entries so they never accidentally match g_depth_gen. */
+        memset(new_gen + g_poly_obj_depth_cap, 0,
+               (pixels - g_poly_obj_depth_cap) * sizeof(uint32_t));
         g_poly_obj_depth = new_buf;
+        g_poly_obj_depth_gen = new_gen;
         g_poly_obj_depth_cap = pixels;
     }
     return 1;
