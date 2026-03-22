@@ -590,6 +590,10 @@ static uint8_t *g_poly_tex_maps_data;
 static size_t   g_poly_tex_maps_size;
 static uint8_t *g_poly_tex_pal_data;
 static size_t   g_poly_tex_pal_size;
+static uint8_t *g_water_file_data;
+static size_t   g_water_file_size;
+static uint8_t *g_water_brighten_data;
+static size_t   g_water_brighten_size;
 /* Actual loaded size per wall (total file size) so dump can use correct pixel dimensions */
 static size_t g_wall_loaded_size[MAX_WALL_TILES];
 
@@ -605,6 +609,10 @@ void io_init(void)
     g_poly_tex_maps_size = 0;
     g_poly_tex_pal_data = NULL;
     g_poly_tex_pal_size = 0;
+    g_water_file_data = NULL;
+    g_water_file_size = 0;
+    g_water_brighten_data = NULL;
+    g_water_brighten_size = 0;
     poly_obj_set_texture_assets(NULL, 0, NULL, 0);
 }
 
@@ -627,6 +635,13 @@ void io_shutdown(void)
     free(g_poly_tex_pal_data);
     g_poly_tex_pal_data = NULL;
     g_poly_tex_pal_size = 0;
+    free(g_water_file_data);
+    g_water_file_data = NULL;
+    g_water_file_size = 0;
+    free(g_water_brighten_data);
+    g_water_brighten_data = NULL;
+    g_water_brighten_size = 0;
+    renderer_set_water_assets(NULL, 0, NULL, 0);
     poly_obj_set_texture_assets(NULL, 0, NULL, 0);
     printf("[IO] shutdown\n");
 }
@@ -958,6 +973,98 @@ void io_load_floor(void)
     } else {
         printf("[IO] FloorPalScaled not found\n");
     }
+
+    /* Optional Amiga water assets (used for textured water + underwater tint parity). */
+    free(g_water_file_data);
+    g_water_file_data = NULL;
+    g_water_file_size = 0;
+    free(g_water_brighten_data);
+    g_water_brighten_data = NULL;
+    g_water_brighten_size = 0;
+
+    {
+        static const char *water_rel_candidates[] = {
+            "amiga/data/helper/WaterFile",
+            "../amiga/data/helper/WaterFile",
+            "../../amiga/data/helper/WaterFile",
+            NULL
+        };
+        make_data_path(path, sizeof(path), "includes/WaterFile");
+        f = fopen(path, "rb");
+        if (!f) {
+            make_data_path(path, sizeof(path), "helper/WaterFile");
+            f = fopen(path, "rb");
+        }
+        if (!f) {
+            for (int i = 0; water_rel_candidates[i] && !f; i++) {
+                snprintf(path, sizeof(path), "%s", water_rel_candidates[i]);
+                f = fopen(path, "rb");
+            }
+        }
+        if (f) {
+            fseek(f, 0, SEEK_END);
+            long len = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            if (len > 0) {
+                g_water_file_data = (uint8_t *)malloc((size_t)len);
+                if (g_water_file_data && fread(g_water_file_data, 1, (size_t)len, f) == (size_t)len) {
+                    g_water_file_size = (size_t)len;
+                    printf("[IO] WaterFile: %ld bytes from %s\n", len, path);
+                } else {
+                    free(g_water_file_data);
+                    g_water_file_data = NULL;
+                    g_water_file_size = 0;
+                }
+            }
+            fclose(f);
+        } else {
+            printf("[IO] WaterFile not found\n");
+        }
+    }
+
+    {
+        static const char *bright_rel_candidates[] = {
+            "amiga/data/helper/OldBrightenFile",
+            "../amiga/data/helper/OldBrightenFile",
+            "../../amiga/data/helper/OldBrightenFile",
+            NULL
+        };
+        make_data_path(path, sizeof(path), "helper/OldBrightenFile");
+        f = fopen(path, "rb");
+        if (!f) {
+            make_data_path(path, sizeof(path), "includes/OldBrightenFile");
+            f = fopen(path, "rb");
+        }
+        if (!f) {
+            for (int i = 0; bright_rel_candidates[i] && !f; i++) {
+                snprintf(path, sizeof(path), "%s", bright_rel_candidates[i]);
+                f = fopen(path, "rb");
+            }
+        }
+        if (f) {
+            fseek(f, 0, SEEK_END);
+            long len = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            if (len > 0) {
+                g_water_brighten_data = (uint8_t *)malloc((size_t)len);
+                if (g_water_brighten_data &&
+                    fread(g_water_brighten_data, 1, (size_t)len, f) == (size_t)len) {
+                    g_water_brighten_size = (size_t)len;
+                    printf("[IO] OldBrightenFile: %ld bytes from %s\n", len, path);
+                } else {
+                    free(g_water_brighten_data);
+                    g_water_brighten_data = NULL;
+                    g_water_brighten_size = 0;
+                }
+            }
+            fclose(f);
+        } else {
+            printf("[IO] OldBrightenFile not found\n");
+        }
+    }
+
+    renderer_set_water_assets(g_water_file_data, g_water_file_size,
+                              g_water_brighten_data, g_water_brighten_size);
 }
 
 /* Try opening a file; tries subpath then Amiga-style "disk/includes/<name>". */

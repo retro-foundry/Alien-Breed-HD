@@ -15,6 +15,7 @@
 
 #include "game_state.h"
 #include <stdint.h>
+#include <stddef.h>
 
 /* -----------------------------------------------------------------------
  * Framebuffer dimensions (from AB3DI.s)
@@ -138,6 +139,11 @@ typedef struct {
     uint32_t *rgb_buffer;
     uint32_t *rgb_back_buffer;
 
+    /* 12-bit Amiga color-word framebuffer (double-buffered).
+     * Each pixel stores the final 0x0RGB word used for water byte sampling. */
+    uint16_t *cw_buffer;
+    uint16_t *cw_back_buffer;
+
     /* View transform */
     int16_t sinval, cosval;   /* Sin/cos of view angle */
     int16_t xoff, zoff;       /* Camera X/Z */
@@ -252,6 +258,12 @@ void renderer_swap(void);
  * After this call, g_renderer.buffer contains the rendered frame. */
 void renderer_draw_display(GameState *state);
 
+/* Optional water assets from Amiga helper files.
+ * Pass NULL/0 to disable and use fallback water shading. */
+void renderer_set_water_assets(const uint8_t *water_file, size_t water_file_size,
+                               const uint8_t *water_brighten, size_t water_brighten_size);
+void renderer_step_water_anim(int steps);
+
 /* Sub-routines (called by draw_display) */
 void renderer_rotate_level_pts(GameState *state);
 void renderer_rotate_object_pts(GameState *state);
@@ -265,7 +277,8 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
                         int16_t tex_id, int16_t wall_height_for_tex);
 void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
                               int32_t floor_height, const uint8_t *texture,
-                              int16_t brightness, int is_water);
+                              int16_t brightness, int16_t scaleval, int is_water,
+                              int16_t water_rows_left);
 void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                           int16_t width, int16_t height, int16_t z,
                           const uint8_t *wad, size_t wad_size,

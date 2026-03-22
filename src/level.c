@@ -107,6 +107,32 @@ static int parse_amiga_door_wall_list(const uint8_t **p, uint8_t *dst, int max_e
     return n;
 }
 
+/* Water list after lift table terminator (Anims.s DoWaterAnims): normalize zone ids to zone indices.
+ * Structure:
+ *   21 entries of [top(l), bot(l), curr(l), vel(w), (zone(w), gfx_off(l))* , -1(w)] */
+static void normalize_amiga_water_list(uint8_t *water_src, const uint8_t *ld,
+                                       const uint8_t *zone_adds, int num_zones)
+{
+    if (!water_src || !ld || !zone_adds || num_zones <= 0) return;
+    uint8_t *p = water_src;
+    for (int i = 0; i <= 20; i++) {
+        p += 14; /* top, bot, curr, vel */
+        int safety = 128;
+        while (safety-- > 0) {
+            int16_t zone = read_word(p);
+            if (zone < 0) {
+                p += 2;
+                break;
+            }
+            int zidx = (zone >= 0 && zone < num_zones) ? (int)zone :
+                       zone_file_to_index(ld, zone_adds, num_zones, zone);
+            if (zidx >= 0 && zidx != zone)
+                write_word_be(p, (int16_t)zidx);
+            p += 2 + 4; /* zone + gfx offset */
+        }
+    }
+}
+
 /* -----------------------------------------------------------------------
  * level_parse - Parse loaded level data, resolving internal offsets
  *
@@ -254,13 +280,16 @@ int level_parse(LevelState *level)
     level->lift_wall_list_offsets = NULL;
     level->num_lifts = 0;
     level->lift_wall_list_owned = false;
+    level->water_list = NULL;
     if (lift_offset <= 16) {
         level->lift_data = NULL;
     } else {
         const uint8_t *lift_src = lg + lift_offset;
+        const uint8_t *water_src = NULL;
         int16_t first_w = read_word(lift_src);
         if (first_w == 999) {
             level->lift_data = NULL;
+            water_src = lift_src + 2;
         } else {
             int nl = 0;
             int total_lift_walls = 0;
@@ -273,6 +302,8 @@ int level_parse(LevelState *level)
                 d = wall_start;
                 if (nl > 256) break;
             }
+            if (read_word(d) == 999)
+                water_src = d + 2;
             /* Accept table if first lift has valid zone. Prefer raw index semantics (same as doors). */
             int16_t zone0 = read_word(lift_src + 12);
             int z0 = (zone0 >= 0 && zone0 < num_zones) ? (int)zone0 :
@@ -330,6 +361,10 @@ int level_parse(LevelState *level)
             } else {
                 level->lift_data = NULL;
             }
+        }
+        if (water_src) {
+            level->water_list = (uint8_t *)water_src;
+            normalize_amiga_water_list(level->water_list, ld, lg + 16, num_zones);
         }
     }
 

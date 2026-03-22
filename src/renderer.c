@@ -72,7 +72,7 @@ static inline int32_t rd32(const uint8_t *p) {
 /* -----------------------------------------------------------------------
  * SCALE table (from Macros.i)
  *
- * Amiga SCALE macro (Macros.i): d6 0..64 → LUT block offset. 32 blocks of 64 bytes.
+ * Amiga SCALE macro (Macros.i): d6 0..64 -> LUT block offset. 32 blocks of 64 bytes.
  *   d6=0  = closest (brightest), d6=64 = farthest (dimmest).
  * ----------------------------------------------------------------------- */
 static const uint16_t wall_scale_table[65] = {
@@ -86,8 +86,45 @@ static const uint16_t wall_scale_table[65] = {
     64*28, 64*28, 64*29, 64*29, 64*30, 64*30, 64*31, 64*31, 64*31, 64*31  /* d6 31..64 */
 };
 
-/* Water animation: phase 0..255, advance every 2nd frame for a slow cycle. */
-static uint32_t g_water_phase = 0;
+/* AB3DI.s floorbright table (index 0..28 -> FloorPalScaled level 0..14). */
+static const uint8_t floor_bright_level_table[29] = {
+    0, 1, 1, 2, 2, 3, 3, 4, 4, 5,
+    5, 6, 6, 7, 7, 8, 8, 9, 9, 10,
+    10, 11, 11, 12, 12, 13, 13, 14, 14
+};
+
+/* Water animation / assets (Amiga: watertouse, wtan, wateroff, fillscrnwater). */
+static uint16_t g_water_wtan = 0;
+static uint8_t g_water_off = 0;
+static int8_t g_fill_screen_water = 0;
+static uint8_t g_water_anim_cursor = 0;
+static uint16_t g_water_src_off = 0;
+static const uint8_t *g_water_file = NULL;
+static size_t g_water_file_size = 0;
+static const uint8_t *g_water_brighten = NULL;
+static size_t g_water_brighten_size = 0;
+static const uint16_t g_water_src_offsets[8] = { 0, 2, 256, 258, 512, 514, 768, 770 };
+
+/* AB3DI.s DrawDisplay:
+ *   watertouse = *waterpt++;
+ *   if (waterpt == end) waterpt = start;
+ *   wtan += 640 (mod 8192), wateroff++ (mod 64). */
+static void renderer_advance_water_anim(void)
+{
+    g_water_src_off = g_water_src_offsets[g_water_anim_cursor & 7u];
+    g_water_anim_cursor = (uint8_t)((g_water_anim_cursor + 1u) & 7u);
+    g_water_wtan = (uint16_t)((g_water_wtan + 640u) & 8191u);
+    g_water_off = (uint8_t)((g_water_off + 1u) & 63u);
+}
+
+void renderer_step_water_anim(int steps)
+{
+    if (steps <= 0) return;
+    if (steps > 64) steps = 64;
+    while (steps-- > 0) {
+        renderer_advance_water_anim();
+    }
+}
 
 /* -----------------------------------------------------------------------
  * Convert a 12-bit Amiga color word (0x0RGB) to ARGB8888.
@@ -112,7 +149,51 @@ static inline uint32_t amiga12_to_argb(uint16_t w)
     return amiga12_lut[w & 0xFFFu];
 }
 
-/* Sprite brightness → palette level mapping (from ObjDraw3.ChipRam.s objscalecols).
+static inline uint16_t argb_to_amiga12(uint32_t c)
+{
+    uint32_t r = (c >> 16) & 0xFFu;
+    uint32_t g = (c >> 8) & 0xFFu;
+    uint32_t b = c & 0xFFu;
+    uint32_t r4 = (r + 8u) / 17u;
+    uint32_t g4 = (g + 8u) / 17u;
+    uint32_t b4 = (b + 8u) / 17u;
+    if (r4 > 15u) r4 = 15u;
+    if (g4 > 15u) g4 = 15u;
+    if (b4 > 15u) b4 = 15u;
+    return (uint16_t)((r4 << 8) | (g4 << 4) | b4);
+}
+
+static inline uint32_t blend_argb(uint32_t bg, uint32_t fg, uint32_t alpha_fg)
+{
+    if (alpha_fg >= 255u) return fg;
+    if (alpha_fg == 0u) return bg;
+    uint32_t inv = 255u - alpha_fg;
+    uint32_t br = (bg >> 16) & 0xFFu;
+    uint32_t bg_g = (bg >> 8) & 0xFFu;
+    uint32_t bb = bg & 0xFFu;
+    uint32_t fr = (fg >> 16) & 0xFFu;
+    uint32_t fg_g = (fg >> 8) & 0xFFu;
+    uint32_t fb = fg & 0xFFu;
+    uint32_t r = (br * inv + fr * alpha_fg) / 255u;
+    uint32_t g = (bg_g * inv + fg_g * alpha_fg) / 255u;
+    uint32_t b = (bb * inv + fb * alpha_fg) / 255u;
+    return 0xFF000000u | (r << 16) | (g << 8) | b;
+}
+
+void renderer_set_water_assets(const uint8_t *water_file, size_t water_file_size,
+                               const uint8_t *water_brighten, size_t water_brighten_size)
+{
+    g_water_file = water_file;
+    g_water_file_size = water_file_size;
+    g_water_brighten = water_brighten;
+    g_water_brighten_size = water_brighten_size;
+    g_water_anim_cursor = 0;
+    g_water_src_off = 0;
+    /* First DrawDisplay on Amiga immediately sets watertouse/wtan/wateroff. */
+    renderer_advance_water_anim();
+}
+
+/* Sprite brightness -> palette level mapping (from ObjDraw3.ChipRam.s objscalecols).
  * Raw brightness d6 (0..61+) maps to palette byte offset (64*level).
  * dcb.w 2,64*0 / dcb.w 4,64*1 / ... / dcb.w 20,64*14
  * Index clamped to 0..61; returns byte offset into .pal data. */
@@ -136,10 +217,10 @@ static const uint16_t obj_scale_cols[] = {
     64*14, 64*14, 64*14, 64*14
 };
 #define OBJ_SCALE_COLS_SIZE (sizeof(obj_scale_cols) / sizeof(obj_scale_cols[0]))
-/* Minimum brightness index for sprites so they don't appear pitch-black (0..23 → very dark). */
+/* Minimum brightness index for sprites so they do not appear pitch-black (0..23 -> very dark). */
 #define SPRITE_BRIGHT_MIN 12
 
-/* Gun ptr frame offsets (GUNS_FRAMES): 8 guns × 4 frames = 32 entries.
+/* Gun ptr frame offsets (GUNS_FRAMES): 8 guns x 4 frames = 32 entries.
  * Each entry is byte offset into gun_ptr for that (gun, frame) column list. */
 #define GUN_COLS 96
 #define GUN_STRIDE (GUN_COLS * 4)
@@ -167,6 +248,10 @@ static void free_buffers(void)
     g_renderer.rgb_buffer = NULL;
     free(g_renderer.rgb_back_buffer);
     g_renderer.rgb_back_buffer = NULL;
+    free(g_renderer.cw_buffer);
+    g_renderer.cw_buffer = NULL;
+    free(g_renderer.cw_back_buffer);
+    g_renderer.cw_back_buffer = NULL;
     free(g_renderer.depth_buffer);
     g_renderer.depth_buffer = NULL;
     free(g_renderer.clip.top);
@@ -189,6 +274,10 @@ static void allocate_buffers(int w, int h)
     size_t rgb_size = buf_size * sizeof(uint32_t);
     g_renderer.rgb_buffer = (uint32_t*)calloc(1, rgb_size);
     g_renderer.rgb_back_buffer = (uint32_t*)calloc(1, rgb_size);
+
+    size_t cw_size = buf_size * sizeof(uint16_t);
+    g_renderer.cw_buffer = (uint16_t*)calloc(1, cw_size);
+    g_renderer.cw_back_buffer = (uint16_t*)calloc(1, cw_size);
 
     g_renderer.depth_buffer = NULL;  /* Amiga: no depth buffer; painter's + stream order only */
 
@@ -233,6 +322,8 @@ void renderer_shutdown(void)
 #define CLEAR_ROW_MAX 2048
 static uint32_t s_clear_sky_row[CLEAR_ROW_MAX];
 static uint32_t s_clear_black_row[CLEAR_ROW_MAX];
+static uint16_t s_clear_sky_cw_row[CLEAR_ROW_MAX];
+static uint16_t s_clear_black_cw_row[CLEAR_ROW_MAX];
 static int s_clear_rows_inited = 0;
 
 static void init_clear_rows(void)
@@ -241,6 +332,8 @@ static void init_clear_rows(void)
     for (int i = 0; i < CLEAR_ROW_MAX; i++) {
         s_clear_sky_row[i] = 0xFFEEEEEEu;
         s_clear_black_row[i] = 0xFF000000u;
+        s_clear_sky_cw_row[i] = 0x0EEEu;
+        s_clear_black_cw_row[i] = 0x0000u;
     }
     s_clear_rows_inited = 1;
 }
@@ -270,6 +363,25 @@ void renderer_clear(uint8_t color)
             }
         }
     }
+    if (g_renderer.cw_buffer) {
+        init_clear_rows();
+        uint16_t *p = g_renderer.cw_buffer;
+        int center = h / 2;
+        size_t row_bytes = (size_t)w * sizeof(uint16_t);
+        if (w <= CLEAR_ROW_MAX) {
+            for (int y = 0; y < center; y++)
+                memcpy(p + (size_t)y * w, s_clear_sky_cw_row, row_bytes);
+            for (int y = center; y < h; y++)
+                memcpy(p + (size_t)y * w, s_clear_black_cw_row, row_bytes);
+        } else {
+            for (int y = 0; y < center; y++) {
+                for (int x = 0; x < w; x++) p[y * w + x] = 0x0EEEu;
+            }
+            for (int y = center; y < h; y++) {
+                for (int x = 0; x < w; x++) p[y * w + x] = 0x0000u;
+            }
+        }
+    }
 }
 
 void renderer_swap(void)
@@ -281,6 +393,10 @@ void renderer_swap(void)
     uint32_t *tmp2 = g_renderer.rgb_buffer;
     g_renderer.rgb_buffer = g_renderer.rgb_back_buffer;
     g_renderer.rgb_back_buffer = tmp2;
+
+    uint16_t *tmp3 = g_renderer.cw_buffer;
+    g_renderer.cw_buffer = g_renderer.cw_back_buffer;
+    g_renderer.cw_back_buffer = tmp3;
 }
 
 const uint8_t *renderer_get_buffer(void)
@@ -498,7 +614,8 @@ static void renderer_fill_wall_joins(void)
 {
     uint8_t* buf = g_renderer.buffer;
     uint32_t* rgb = g_renderer.rgb_buffer;
-    if (!buf || !rgb) return;
+    uint16_t* cw = g_renderer.cw_buffer;
+    if (!buf || !rgb || !cw) return;
 
     const int w = g_renderer.width;
     const int h = g_renderer.height;
@@ -535,12 +652,14 @@ static void renderer_fill_wall_joins(void)
 
                     if (y_src >= 0) {
                         uint32_t c = rgb[y_src * w + x];
+                        uint16_t c_cw = cw[y_src * w + x];
                         /* Fill only clear/background pixels between y_src and wall_top */
                         for (int yy = y_src + 1; yy <= wall_top - 1; yy++) {
                             if (buf[yy * w + x] == 2) break;
                             if (buf[yy * w + x] == 0) {
                                 buf[yy * w + x] = 1;
                                 rgb[yy * w + x] = c;
+                                cw[yy * w + x] = c_cw;
                             }
                         }
                     }
@@ -563,11 +682,13 @@ static void renderer_fill_wall_joins(void)
 
                     if (y_src >= 0) {
                         uint32_t c = rgb[y_src * w + x];
+                        uint16_t c_cw = cw[y_src * w + x];
                         for (int yy = y_src - 1; yy >= wall_bot + 1; yy--) {
                             if (buf[yy * w + x] == 2) break;
                             if (buf[yy * w + x] == 0) {
                                 buf[yy * w + x] = 1;
                                 rgb[yy * w + x] = c;
+                                cw[yy * w + x] = c_cw;
                             }
                         }
                     }
@@ -606,7 +727,8 @@ static void draw_wall_column(int x, int y_top, int y_bot,
 {
     uint8_t *buf = g_renderer.buffer;
     uint32_t *rgb = g_renderer.rgb_buffer;
-    if (!buf || !rgb) return;
+    uint16_t *cw = g_renderer.cw_buffer;
+    if (!buf || !rgb || !cw) return;
     if (x < g_renderer.left_clip || x >= g_renderer.right_clip) return;
 
     int width = g_renderer.width;
@@ -676,39 +798,34 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     int32_t yoff = (int32_t)((unsigned)totalyoff & (unsigned)valand);
     int32_t tex_y = (ct - y_top_tex) * tex_step + ((int32_t)yoff << 16);
 
-    /* Precompute distance shade once per column (Amiga-style: luminance ∝ (64-d6)/64, min 16). */
-    int inv_d6 = 64 - amiga_d6;
-    int shade = (256 * inv_d6) / 64;
-    if (shade > 256) shade = 256;
-    if (shade < 16) shade = 16;
-
-    /* Pre-bake per-column ARGB for all 32 texel values with brightness+shade combined.
-     * Eliminates per-pixel: LUT read, BE16 construction, amiga12_to_argb, and 3 multiplies. */
+    /* Pre-bake per-column ARGB for all 32 texel values from the Amiga wall LUT. */
     uint32_t col_argb[32];
+    uint16_t col_cw[32];
     {
-        int gray = inv_d6 * 255 / 64;
+        int gray = (64 - amiga_d6) * 255 / 64;
         if (gray < 0)   gray = 0;
         if (gray > 255) gray = 255;
-        gray = gray * shade >> 8;
         uint32_t fallback = 0xFF000000u | ((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray;
+        uint16_t fallback_cw = argb_to_amiga12(fallback);
         if (texture && pal) {
             for (int ti = 0; ti < 32; ti++) {
                 int lut_off = lut_block_off + ti * 2;
-                uint16_t cw = ((uint16_t)pal[lut_off] << 8) | pal[lut_off + 1];
-                uint32_t a  = amiga12_to_argb(cw);
-                uint32_t r  = ((a >> 16) & 0xFFu) * (uint32_t)shade >> 8;
-                uint32_t g  = ((a >>  8) & 0xFFu) * (uint32_t)shade >> 8;
-                uint32_t b  = ( a        & 0xFFu) * (uint32_t)shade >> 8;
-                col_argb[ti] = 0xFF000000u | (r << 16) | (g << 8) | b;
+                uint16_t c12 = ((uint16_t)pal[lut_off] << 8) | pal[lut_off + 1];
+                col_argb[ti] = amiga12_to_argb(c12);
+                col_cw[ti] = c12;
             }
         } else {
-            for (int ti = 0; ti < 32; ti++) col_argb[ti] = fallback;
+            for (int ti = 0; ti < 32; ti++) {
+                col_argb[ti] = fallback;
+                col_cw[ti] = fallback_cw;
+            }
         }
     }
 
     for (int y = ct; y <= cb; y++) {
         int ty = (int)(tex_y >> 16) & valand;
         uint32_t argb;
+        uint16_t out_cw;
 
         if (texture && pal) {
             int byte_off = strip_offset + ty * 2;
@@ -722,15 +839,19 @@ static void draw_wall_column(int x, int y_top, int y_bot,
                 default: texel5 = (uint8_t)((word >> 10) & 31u); break;
                 }
                 argb = col_argb[texel5];
+                out_cw = col_cw[texel5];
             } else {
                 argb = col_argb[0];
+                out_cw = col_cw[0];
             }
         } else {
             argb = col_argb[0];
+            out_cw = col_cw[0];
         }
 
         buf[y * width + x] = 2; /* tag: wall */
         rgb[y * width + x] = argb;
+        cw[y * width + x] = out_cw;
         tex_y += tex_step;
     }
 
@@ -892,7 +1013,8 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
  * ----------------------------------------------------------------------- */
 void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
                               int32_t floor_height, const uint8_t *texture,
-                              int16_t brightness, int is_water)
+                              int16_t brightness, int16_t scaleval, int is_water,
+                              int16_t water_rows_left)
 {
     /* Translated from AB3DI.s pastfloorbright (line 6657).
      *
@@ -909,7 +1031,8 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     RendererState *rs = &g_renderer;
     uint8_t *buf = rs->buffer;
     uint32_t *rgb = rs->rgb_buffer;
-    if (!buf || !rgb) return;
+    uint16_t *cwbuf = rs->cw_buffer;
+    if (!buf || !rgb || !cwbuf) return;
     if (y < 0 || y >= rs->height) return;
 
     int xl = (x_left < rs->left_clip) ? rs->left_clip : x_left;
@@ -921,8 +1044,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     if (row_dist == 0) row_dist = (y < center) ? -1 : 1;
     int abs_row_dist = (row_dist < 0) ? -row_dist : row_dist;
 
-    /* Zone brightness offset (same formula as walls). */
-    /* Zone brightness: level 0..15 *2; animated -10..10 *2. */
+    /* Fallback grayscale only (when no floor palette is loaded). */
     int zone_d6 = brightness * 2;
 
     int32_t fh_8 = floor_height >> WORLD_Y_FRAC_BITS;
@@ -947,11 +1069,42 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
      * d2 = -(d0 * sinval) (change in V across whole width) */
     int32_t cos_v = rs->cosval;
     int32_t sin_v = rs->sinval;
+    if (is_water) {
+        /* AB3DI pastfloorbright uses SineTable/bigsine values (~32767 magnitude).
+         * The shared runtime sin/cos table is half-scale (~16384), so promote
+         * water UV stepping only to Amiga-equivalent magnitude. */
+        cos_v <<= 1;
+        sin_v <<= 1;
+    }
     int32_t d1 = (int32_t)(((int64_t)dist * cos_v));
     int32_t d2 = (int32_t)(-((int64_t)dist * sin_v));
+    if (is_water && scaleval != 0) {
+        /* Amiga AB3DI.s scaleprog (around line 6667):
+         *   scaleval > 0 => asl.l d1/d2 (larger texels)
+         *   scaleval < 0 => asr.l d1/d2 (smaller texels) */
+        int s = (int)scaleval;
+        if (s > 0) {
+            if (s > 15) s = 15;
+            {
+                int64_t t1 = (int64_t)d1 << s;
+                int64_t t2 = (int64_t)d2 << s;
+                if (t1 > INT32_MAX) t1 = INT32_MAX;
+                if (t1 < INT32_MIN) t1 = INT32_MIN;
+                if (t2 > INT32_MAX) t2 = INT32_MAX;
+                if (t2 < INT32_MIN) t2 = INT32_MIN;
+                d1 = (int32_t)t1;
+                d2 = (int32_t)t2;
+            }
+        } else {
+            s = -s;
+            if (s > 15) s = 15;
+            d1 >>= s;
+            d2 >>= s;
+        }
+    }
 
     /* Step per pixel: fixed so each pixel = same world extent at any width.
-     * No def_w/w scaling — in widescreen we show more tiles, texture scale stays correct. */
+     * No def_w/w scaling - in widescreen we show more tiles, texture scale stays correct. */
     int w = rs->width;
     if (w < 1) w = 1;
     int32_t u_step = (int32_t)(d1 >> FLOOR_STEP_SHIFT);
@@ -966,6 +1119,23 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
 
     /* Camera position offset: UV per world unit = FLOOR_CAM_UV_SCALE (matches fixed u_step). */
     int32_t cam_scale = FLOOR_CAM_UV_SCALE;
+    if (is_water && scaleval != 0) {
+        /* Match Amiga sxoff/szoff scaling sign for water-only path. */
+        int s = (int)scaleval;
+        if (s > 0) {
+            if (s > 15) s = 15;
+            {
+                int64_t t = (int64_t)cam_scale << s;
+                if (t > INT32_MAX) t = INT32_MAX;
+                cam_scale = (int32_t)t;
+            }
+        } else {
+            s = -s;
+            if (s > 15) s = 15;
+            cam_scale >>= s;
+            if (cam_scale < 1) cam_scale = 1;
+        }
+    }
     start_u64 += (int64_t)rs->xoff * cam_scale;
     start_v64 += (int64_t)rs->zoff * cam_scale;
 
@@ -975,168 +1145,198 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         start_v64 += (int64_t)xl * v_step;
     }
 
-    /* Precompute shade (constant per span). */
-    int span_shade = (256 * (64 - amiga_d6)) / 64;
-    if (span_shade > 256) span_shade = 256;
-    if (span_shade < 16)  span_shade = 16;
+    int floor_pal_level = 0;
+    if (rs->floor_pal) {
+        int bright_idx = brightness + 5 + (dist >> 8);
+        if (bright_idx < 0) bright_idx = 0;
+        if (bright_idx > 28) bright_idx = 28;
+        floor_pal_level = floor_bright_level_table[bright_idx];
+    }
 
-    /* Pre-bake per-span ARGB for all 256 texel values with brightness+shade combined.
-     * Eliminates per-pixel: LUT read, BE16 construction, amiga12_to_argb, and 3 multiplies.
+    /* Pre-bake per-span ARGB for all 256 texel values.
      * Only built for the common non-water textured path. */
     uint32_t span_argb[256];
+    uint16_t span_cw[256];
     const int use_span_lut = (texture != NULL && rs->floor_pal != NULL && !is_water);
     if (use_span_lut) {
-        int pal_level = (amiga_d6 * 14) / 64;
-        if (pal_level > 14) pal_level = 14;
-        const uint8_t *lut = rs->floor_pal + pal_level * 512;
+        const uint8_t *lut = rs->floor_pal + floor_pal_level * 512;
         for (int ti = 0; ti < 256; ti++) {
             uint16_t cw = (uint16_t)((lut[ti * 2] << 8) | lut[ti * 2 + 1]);
-            uint32_t a  = amiga12_to_argb(cw);
-            uint32_t r  = ((a >> 16) & 0xFFu) * (uint32_t)span_shade >> 8;
-            uint32_t g  = ((a >>  8) & 0xFFu) * (uint32_t)span_shade >> 8;
-            uint32_t b  = ( a        & 0xFFu) * (uint32_t)span_shade >> 8;
-            span_argb[ti] = 0xFF000000u | (r << 16) | (g << 8) | b;
+            span_argb[ti] = amiga12_to_argb(cw);
+            span_cw[ti] = cw;
         }
     }
 
-    /* UV accumulators: 32-bit wrapping is sufficient — we only need (fp>>16)&63 for tile coords.
+    /* UV accumulators: 32-bit wrapping is sufficient - we only need (fp>>16)&63 for tile coords.
      * The 64-bit start computation above already handles the large intermediate values;
      * truncating to 32 bits here halves the per-pixel addition cost. */
     uint32_t u_fp = (uint32_t)(int32_t)start_u64;
     uint32_t v_fp = (uint32_t)(int32_t)start_v64;
 
+    int water_refr_y_off = 0;
+    if (is_water) {
+        /* AB3DI texturedwater computes vertical refraction once per scanline. */
+        int sin_idx = (((dist << 7) + (int32_t)g_water_wtan) & 8191);
+        /* AB3DI texturedwater reads directly from bigsine (range ~[-32767,32767]).
+         * Our shared sin_lookup table is half-scale (~[-16384,16384]), so double
+         * here to match Amiga water wobble without affecting non-water systems. */
+        int32_t sine = (int32_t)sin_lookup((int16_t)sin_idx) << 1;
+        int32_t den = dist + 300;
+        /* AB3DI texturedwater:
+         *   d0 = ((sin(dst*128 + wtan) / (dst+300)) >> 6) + 2 */
+        int refr_y_off = (den != 0) ? (int)(sine / den) : 0;
+        refr_y_off = (refr_y_off >> 6) + 2;
+
+        /* AB3DI disttobot clamp is in 80-line view space:
+         *   if (d0 >= disttobot) d0 = disttobot-1 */
+        {
+            int amiga_y = (int)(((int64_t)y * 80) / ((rs->height > 0) ? rs->height : 1));
+            int disttobot = 79 - amiga_y;
+            if (disttobot < 1) disttobot = 1;
+            if (refr_y_off >= disttobot) refr_y_off = disttobot - 1;
+        }
+        if (row_dist < 0) refr_y_off = -refr_y_off; /* AB3DI: if (above) d0 = -d0 */
+
+        /* Convert Amiga 80-line offset to current render height. */
+        if (rs->height != 80) {
+            refr_y_off = (int)(((int64_t)refr_y_off * rs->height) / 80);
+        }
+
+        /* Safety guard: keep source sampling on not-yet-written rows in current pass.
+         * This is only a guard for high-res rasterization and does not alter non-water paths. */
+        if (water_rows_left > 0) {
+            int max_mag = (int)water_rows_left - 1;
+            if (max_mag < 0) max_mag = 0;
+            if (refr_y_off > max_mag) refr_y_off = max_mag;
+            if (refr_y_off < -max_mag) refr_y_off = -max_mag;
+        }
+        water_refr_y_off = refr_y_off;
+    }
+
     uint8_t *row8 = buf + (size_t)y * w;
     uint32_t *row32 = rgb + (size_t)y * w;
+    uint16_t *row16 = cwbuf + (size_t)y * w;
 
     for (int x = xl; x <= xr; x++) {
-        int tu = (int)((u_fp >> 16) & 63u);
-        int tv = (int)((v_fp >> 16) & 63u);
+        uint8_t u8 = (uint8_t)((u_fp >> 16) & 0xFFu);
+        uint8_t v8 = (uint8_t)((v_fp >> 16) & 0xFFu);
+        int tu = (int)(u8 & 63u);
+        int tv = (int)(v8 & 63u);
 
         u_fp += (uint32_t)u_step;
         v_fp += (uint32_t)v_step;
 
-        /* Fast path: non-water textured span with palette — all per-pixel work is a
-         * single texture read + span_argb table lookup (shade + amiga12 pre-baked). */
+        /* Fast path: non-water textured span with palette: all per-pixel work is a
+         * single texture read + span_argb table lookup. */
         if (use_span_lut) {
+            uint8_t texel = texture[((tv << 8) | tu) * 4];
             row8[x]  = 1;
-            row32[x] = span_argb[texture[((tv << 8) | tu) * 4]];
+            row32[x] = span_argb[texel];
+            row16[x] = span_cw[texel];
             continue;
         }
 
-        /* Water: slow, smooth scroll only (no noisy ripple). */
         if (is_water) {
-            int scroll = (int)(g_water_phase >> 2) & 63;
-            tu = (tu + scroll) & 63;
-            tv = (tv + (scroll * 2) & 63) & 63;
+            /* Amiga-style textured water: refract existing pixels instead of drawing a solid color. */
+            int refr_y_off = water_refr_y_off;
+
+            uint16_t d5_word = (uint16_t)(((uint16_t)v8 << 8) | (uint16_t)u8);
+            uint16_t water_d5 = (uint16_t)(d5_word + (uint16_t)g_water_off);
+            water_d5 &= 0x3F3Fu;
+            uint8_t water_level = 0;
+
+            if (g_water_file && g_water_file_size >= 65536u) {
+                size_t wi = ((size_t)water_d5 << 2) + (size_t)g_water_src_off;
+                if (wi < g_water_file_size) {
+                    water_level = g_water_file[wi];
+                }
+            } else if (texture) {
+                int water_u = (int)(water_d5 & 63u);
+                int tex_idx = ((tv << 8) | water_u) * 4;
+                uint8_t t = texture[tex_idx];
+                water_level = (uint8_t)(t >> 4);
+            }
+
+            int refr_x = x;
+            int refr_y = y + refr_y_off;
+            if (refr_x < 0) refr_x = 0;
+            if (refr_x >= rs->width) refr_x = rs->width - 1;
+            if (refr_y < 0) refr_y = 0;
+            if (refr_y >= rs->height) refr_y = rs->height - 1;
+
+            size_t bg_i = (size_t)refr_y * (size_t)rs->width + (size_t)refr_x;
+            uint32_t bg = rgb[bg_i];
+            uint16_t bg_cw = cwbuf[bg_i];
+            if (buf[bg_i] == 0 && rs->rgb_back_buffer && rs->cw_back_buffer) {
+                /* AB3DI texturedwater samples from display memory while floor lines are streamed.
+                 * When refraction points at rows not written yet this frame, those pixels still
+                 * contain prior-frame values; mirror that by sampling back-buffer content. */
+                bg = rs->rgb_back_buffer[bg_i];
+                bg_cw = rs->cw_back_buffer[bg_i];
+            }
+            uint8_t bg_sample = (uint8_t)(bg_cw & 0xFFu);
+
+            uint32_t out;
+            uint16_t out_cw;
+            if (g_water_brighten && g_water_brighten_size >= 512u) {
+                /* Amiga texturedwater:
+                 *   d0 = WaterFile word, then move.b sampled_pixel_lowbyte,d0,
+                 *   output = brightentab[d0]. */
+                uint32_t dist_off = (((uint32_t)dist) & 0xFF00u) << 1;
+                if (dist_off > (uint32_t)(12 * 512)) dist_off = (uint32_t)(12 * 512);
+                size_t bi = (size_t)dist_off + ((size_t)water_level << 9) + (size_t)bg_sample * 2u;
+                if (bi + 1u < g_water_brighten_size) {
+                    out_cw = (uint16_t)((g_water_brighten[bi] << 8) | g_water_brighten[bi + 1u]);
+                    out = amiga12_to_argb(out_cw);
+                } else {
+                    out_cw = bg_cw;
+                    out = bg;
+                }
+            } else {
+                /* Fallback when brighten table is missing: keep prior blended behavior. */
+                uint32_t br = (bg >> 16) & 0xFFu;
+                uint32_t bg_g = (bg >> 8) & 0xFFu;
+                uint32_t bb = bg & 0xFFu;
+                uint32_t shade = 160u + ((uint32_t)water_level * 6u);
+                uint32_t r = (br * ((shade > 96u) ? (shade - 96u) : 0u)) >> 8;
+                uint32_t g = (bg_g * shade) >> 8;
+                uint32_t b = (bb * (shade + 28u)) >> 8;
+                b += 10u;
+                if (r > 255u) r = 255u;
+                if (g > 255u) g = 255u;
+                if (b > 255u) b = 255u;
+                out = blend_argb(bg, 0xFF000000u | (r << 16) | (g << 8) | b, 120u);
+                out_cw = argb_to_amiga12(out);
+            }
+
+            row8[x] = 4; /* water tag: avoid wall-join fill smearing */
+            row32[x] = out;
+            row16[x] = out_cw;
+            continue;
         }
 
         uint32_t argb;
-
+        uint16_t out_cw;
         if (texture) {
             int tex_idx = ((tv << 8) | tu) * 4;
             uint8_t texel = texture[tex_idx];
-
             if (rs->floor_pal) {
-                int pal_level = (amiga_d6 * 14) / 64;
-                if (is_water) {
-                    pal_level = 4;  /* bright water (LUT: low level = brighter) */
-                }
-                if (pal_level > 14) pal_level = 14;
-                const uint8_t *lut = rs->floor_pal + pal_level * 512;
+                const uint8_t *lut = rs->floor_pal + floor_pal_level * 512;
                 uint16_t cw = (uint16_t)((lut[texel * 2] << 8) | lut[texel * 2 + 1]);
                 argb = amiga12_to_argb(cw);
             } else {
                 int lit = ((int)texel * gray) >> 8;
-                if (is_water) {
-                    lit = 200 + (int)(texel * 3 / 4);  /* bright water when no floor pal */
-                    if (lit > 255) lit = 255;
-                }
                 argb = 0xFF000000u | ((uint32_t)lit << 16) | ((uint32_t)lit << 8) | (uint32_t)lit;
             }
         } else {
             argb = 0xFF000000u | ((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray;
         }
 
-        if (!is_water) {
-            uint32_t r = (argb >> 16) & 0xFF;
-            uint32_t g = (argb >> 8) & 0xFF;
-            uint32_t b = argb & 0xFF;
-            r = (r * (uint32_t)span_shade) >> 8;
-            g = (g * (uint32_t)span_shade) >> 8;
-            b = (b * (uint32_t)span_shade) >> 8;
-            argb = (argb & 0xFF000000u) | (r << 16) | (g << 8) | b;
-        }
-
-        /* Water: solid blue with light ripples; no dark bands (high base + min luminance). */
-        if (is_water) {
-            uint32_t r = 55, g = 130, b = 240;  /* raised base so no dark bands */
-            if (texture) {
-                int tex_idx = ((tv << 8) | tu) * 4;
-                uint8_t texel = texture[tex_idx];
-                uint32_t add = (uint32_t)texel * 120 >> 8;
-                r += add;
-                g += add;
-                b += add;
-            }
-            if (r > 255) r = 255;
-            if (g > 255) g = 255;
-            if (b > 255) b = 255;
-            uint32_t lum = (r * 77 + g * 150 + b * 29) >> 8;
-            if (lum > 0 && lum < 200) {
-                uint32_t scale = (200 << 8) / lum;
-                if (scale > 256) scale = 256;
-                r = (r * scale) >> 8;
-                g = (g * scale) >> 8;
-                b = (b * scale) >> 8;
-                if (r > 255) r = 255;
-                if (g > 255) g = 255;
-                if (b > 255) b = 255;
-            }
-            argb = 0xFF000000u | (r << 16) | (g << 8) | b;
-        }
-
-        /* Water: blend with background. Refract (bump-map style) from pattern gradient. */
-        if (is_water) {
-            int refr_x = x, refr_y = y;
-            if (texture) {
-                int scroll = (int)(g_water_phase >> 2) & 63;
-                int tu_refr = (tu + scroll) & 63;
-                int tv_refr = (tv + (scroll * 2)) & 63;
-                uint8_t t0  = texture[((tv_refr << 8) | tu_refr) * 4];
-                uint8_t tu1 = texture[((tv_refr << 8) | ((tu_refr + 1) & 63)) * 4];
-                uint8_t tv1 = texture[(((tv_refr + 1) & 63) << 8 | tu_refr) * 4];
-                int dx = (int)(t0 - tu1) / 24;
-                int dy = (int)(t0 - tv1) / 24;
-                refr_x = x + dx;
-                refr_y = y + dy;
-            }
-            refr_x = (refr_x < 0) ? 0 : (refr_x >= g_renderer.width ? g_renderer.width - 1 : refr_x);
-            refr_y = (refr_y < 0) ? 0 : (refr_y >= g_renderer.height ? g_renderer.height - 1 : refr_y);
-            uint32_t bg   = rgb[refr_y * g_renderer.width + refr_x];
-            uint32_t br   = (bg >> 16) & 0xFF, bg_g = (bg >> 8) & 0xFF, bb = bg & 0xFF;
-            uint32_t wr   = (argb >> 16) & 0xFF, wg = (argb >> 8) & 0xFF, wb = argb & 0xFF;
-            uint32_t r = (wr * 141 + br  * 115) >> 8;
-            uint32_t g = (wg * 141 + bg_g * 115) >> 8;
-            uint32_t b = (wb * 141 + bb  * 115) >> 8;
-            if (r > 255) r = 255;
-            if (g > 255) g = 255;
-            if (b > 255) b = 255;
-            uint32_t lum = (r * 77 + g * 150 + b * 29) >> 8;
-            if (lum > 0 && lum < 180) {
-                uint32_t scale = (180 << 8) / lum;
-                if (scale > 256) scale = 256;
-                r = (r * scale) >> 8;
-                g = (g * scale) >> 8;
-                b = (b * scale) >> 8;
-                if (r > 255) r = 255;
-                if (g > 255) g = 255;
-                if (b > 255) b = 255;
-            }
-            argb = 0xFF000000u | (r << 16) | (g << 8) | b;
-        }
+        out_cw = argb_to_amiga12(argb);
 
         row8[x]  = 1;
         row32[x] = argb;
+        row16[x] = out_cw;
     }
 }
 
@@ -1153,7 +1353,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
  *   bytes 1-3 = 24-bit offset into .wad data for this column
  *
  * The .pal file contains a brightness-graded palette:
- *   15 levels × 32 colors × 2 bytes (big-endian 12-bit Amiga color words).
+ *   15 levels x 32 colors x 2 bytes (big-endian 12-bit Amiga color words).
  *   Level N starts at offset N * 64; color C at offset N * 64 + C * 2.
  *
  * Per-pixel decode (same as gun renderer):
@@ -1176,7 +1376,8 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     (void)sprite_type;
     uint8_t *buf = g_renderer.buffer;
     uint32_t *rgb = g_renderer.rgb_buffer;
-    if (!buf || !rgb) return;
+    uint16_t *cw = g_renderer.cw_buffer;
+    if (!buf || !rgb || !cw) return;
     if (z <= 0) return;
     if (!wad || !ptr_data) return;
     int rw = g_renderer.width, rh = g_renderer.height;
@@ -1189,7 +1390,7 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
      * sx/sy are set after we may reduce to draw_w/draw_h for texture aspect. */
     int sx, sy;
 
-    /* Brightness → palette byte offset via objscalecols (ObjDraw3.ChipRam.s line 572).
+    /* Brightness -> palette byte offset via objscalecols (ObjDraw3.ChipRam.s line 572).
      * Disabled: force full brightness (0) so sprites are not dimmed by distance. */
     int bright_idx = 0;
     uint32_t pal_level_off = obj_scale_cols[bright_idx];
@@ -1272,30 +1473,36 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
 
             uint8_t *row8 = buf + (size_t)screen_row * rw;
             uint32_t *row32 = rgb + (size_t)screen_row * rw;
+            uint16_t *row16 = cw + (size_t)screen_row * rw;
 
             /* Geometry tag buffer is used by wall-join post-pass:
              * 1=floor/ceiling, 2=wall. Sprites must use a neutral tag so
              * they are never treated as wall/floor spans. */
             row8[screen_col] = 3;
 
-            /* Color from .pal brightness palette (15 levels × 64 bytes or single 64-byte block).
+            /* Color from .pal brightness palette (15 levels x 64 bytes or single 64-byte block).
              * Amiga .pal is big-endian 12-bit words. Try little-endian if colors look wrong. */
             if (pal && pal_size >= 64) {
                 uint32_t level_off = (pal_level_off + 64 <= pal_size) ? pal_level_off : 0;
                 uint32_t ci = level_off + (uint32_t)texel * 2;
                 if (ci + 1 < pal_size) {
-                    uint16_t cw = (uint16_t)((pal[ci] << 8) | pal[ci + 1]);
-                    row32[screen_col] = amiga12_to_argb(cw);
+                    uint16_t c12 = (uint16_t)((pal[ci] << 8) | pal[ci + 1]);
+                    row32[screen_col] = amiga12_to_argb(c12);
+                    row16[screen_col] = c12;
                 } else {
                     int shade = (gray * (int)texel) / 31;
-                    row32[screen_col] = 0xFF000000u
-                        | ((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade;
+                    uint32_t c = 0xFF000000u
+                               | ((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade;
+                    row32[screen_col] = c;
+                    row16[screen_col] = argb_to_amiga12(c);
                 }
             } else {
                 /* No palette: use texel for shading so sprite shape is visible */
                 int shade = (gray * (int)texel) / 31;
-                row32[screen_col] = 0xFF000000u
-                    | ((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade;
+                uint32_t c = 0xFF000000u
+                           | ((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade;
+                row32[screen_col] = c;
+                row16[screen_col] = argb_to_amiga12(c);
             }
         }
     }
@@ -1305,14 +1512,15 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
  * Draw gun overlay
  *
  * Translated from AB3DI.s DrawInGun (lines 2426-2535).
- * Amiga: gun graphic from Objects+9, GUNYOFFS=20, 3 chunks × 32 = 96 wide,
+ * Amiga: gun graphic from Objects+9, GUNYOFFS=20, 3 chunks x 32 = 96 wide,
  * 78-GUNYOFFS = 58 lines tall. If gun graphics are not loaded, nothing is drawn.
  * ----------------------------------------------------------------------- */
 void renderer_draw_gun(GameState *state)
 {
     uint8_t *buf = g_renderer.buffer;
     uint32_t *rgb = g_renderer.rgb_buffer;
-    if (!buf || !rgb) return;
+    uint16_t *cw = g_renderer.cw_buffer;
+    if (!buf || !rgb || !cw) return;
 
     int rw = g_renderer.width, rh = g_renderer.height;
 
@@ -1389,6 +1597,7 @@ void renderer_draw_gun(GameState *state)
                     uint32_t c = amiga12_to_argb(c12);
                     buf[sy * rw + sx] = 15;
                     rgb[sy * rw + sx] = c;
+                    cw[sy * rw + sx] = c12;
                 }
             }
             return;
@@ -1684,7 +1893,7 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         }
     }
 
-    /* Insertion sort by Z descending (farthest first — painter's algorithm).
+    /* Insertion sort by Z descending (farthest first - painter's algorithm).
      * Uses >= in the shift condition to match the original selection sort's
      * tie-breaking: equal-depth items end up in reverse-input order (later
      * entries draw first, i.e. appear earlier in the sorted array). */
@@ -1871,7 +2080,7 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         }
         if (vect_num < 0 || vect_num >= MAX_SPRITE_TYPES) continue;
 
-        /* World size from object record (Amiga: move.w #...,6(a0) → byte 6 = width, byte 7 = height; both signed). */
+        /* World size from object record (Amiga: move.w #...,6(a0) -> byte 6 = width, byte 7 = height; both signed). */
         int world_w = (int)(int8_t)obj[6];
         int world_h = (int)(int8_t)obj[7];
         if (world_w <= 0) world_w = 32;
@@ -1928,8 +2137,8 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         int scr_y = floor_screen_y - half_h + 1;
 
         /* Use dedicated .pal if loaded; no fallback to WAD header because
-         * sprite .pal format (15 levels × 32 × 2 bytes = 960) differs from
-         * the wall LUT format in the WAD header (17 blocks × 32 × 2 = 2048). */
+         * sprite .pal format (15 levels x 32 x 2 bytes = 960) differs from
+         * the wall LUT format in the WAD header (17 blocks x 32 x 2 = 2048). */
         const uint8_t *obj_pal = r->sprite_pal_data[vect_num];
         size_t obj_pal_size = r->sprite_pal_size[vect_num];
 
@@ -2065,10 +2274,26 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
 
     const uint8_t *gfx_data = level->graphics + gfx_off;
     int32_t zone_water = rd32(zone_data + 18);  /* ToZoneWater */
-    (void)zone_water; /* Used by water-type floors when entry_type==7 */
 
     int32_t y_off = r->yoff;
+    PlayerState *viewer = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
+    int16_t viewer_zone = viewer->zone;
     int half_h = g_renderer.height / 2;
+
+    /* ObjDraw beforewat/afterwat clip bounds (ObjDraw3.ChipRam.s BEFOREWAT and AFTERWAT labels).
+     * Bounds swap depending on whether the viewer is above or below the water plane. */
+    int32_t before_wat_top, before_wat_bot, after_wat_top, after_wat_bot;
+    if (zone_water < y_off) {
+        before_wat_top = zone_roof;
+        before_wat_bot = zone_water;
+        after_wat_top = zone_water;
+        after_wat_bot = zone_floor;
+    } else {
+        before_wat_top = zone_water;
+        before_wat_bot = zone_floor;
+        after_wat_top = zone_roof;
+        after_wat_bot = zone_water;
+    }
 
     int zone_has_door_flag = zone_has_door(level->door_data, zone_id);
     int zone_has_lift_flag = zone_has_lift(level->lift_data, zone_id);
@@ -2272,18 +2497,39 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
              * Total: 8 bytes.  Note: dontdrawreturn uses lea 4+6(a0),a0
              * which skips past the last point index (2) + these 8 = 10. */
             ptr += 2; /* padding */
-            /* int16_t scaleval = rd16(ptr); */ ptr += 2;
+            int16_t scaleval = rd16(ptr); ptr += 2;
             int16_t whichtile = rd16(ptr); ptr += 2;
             int16_t floor_bright_off = rd16(ptr); ptr += 2;
 
-            /* Determine floor height in world coords (same scale as y_off: *256) */
-            int32_t floor_h_world = (int32_t)ypos << 6; /* ASM: asl.l #6,d7 */
+            /* Determine polygon height in world coords (same scale as y_off: *256). */
+            int32_t poly_h_world = (int32_t)ypos << 6; /* ASM: asl.l #6,d7 */
             /* Use live zone floor/roof so door/lift updates are visible (objects.c writes ZD_FLOOR/ZD_ROOF each frame). */
+            int32_t floor_h_world = poly_h_world;
             if (entry_type == 1)
                 floor_h_world = zone_floor;
             else if (entry_type == 2)
                 floor_h_world = zone_roof;
+            /* AB3DI itsafloordraw early reject:
+             *   if (ypos_world < TOPOFROOM) skip (water path uses checkforwater)
+             *   if (ypos_world > BOTOFROOM) skip */
+            if (floor_h_world < zone_roof || floor_h_world > zone_floor) {
+                if (entry_type == 7 && !use_upper && zone_id == viewer_zone &&
+                    poly_h_world < zone_roof) {
+                    g_fill_screen_water = 0x0F;
+                }
+                continue;
+            }
             int32_t rel_h = floor_h_world - y_off; /* Relative to camera */
+
+            /* Amiga fillscrnwater flag: mark underwater/half-submerged when drawing water in viewer zone. */
+            if (entry_type == 7 && !use_upper && zone_id == viewer_zone) {
+                int32_t rel_water = floor_h_world - y_off;
+                if (rel_water < 0) {
+                    g_fill_screen_water = 0x0F; /* strong underwater tint */
+                } else if (rel_water <= (1 << WORLD_Y_FRAC_BITS) && g_fill_screen_water == 0) {
+                    g_fill_screen_water = (int8_t)-1; /* weaker near-surface tint */
+                }
+            }
 
             /* Floor Y offset: sign decides which half of screen (floor vs ceiling). Use live height when overridden. */
             int16_t floor_y_dist = (entry_type == 1 || entry_type == 2)
@@ -2478,7 +2724,23 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
             int16_t bright = zone_bright + floor_bright_off;
 
             /* Fill between edges for each row (floor and ceiling/roof). Clamp to zone clip. */
-            for (int row = poly_top; row <= poly_bot; row++) {
+            int row_start = poly_top;
+            int row_end = poly_bot;
+            int row_step = 1;
+            if (entry_type == 7) {
+                /* Water refraction samples offset rows:
+                 * - floor half (row_dist>0): samples below -> draw top->bottom
+                 * - ceiling half (row_dist<0): samples above -> draw bottom->top
+                 * so we avoid sampling freshly written water rows in both cases. */
+                if (floor_y_dist < 0) {
+                    row_start = poly_bot;
+                    row_end = poly_top;
+                    row_step = -1;
+                }
+            }
+            for (int row = row_start;
+                 (row_step > 0) ? (row <= row_end) : (row >= row_end);
+                 row += row_step) {
                 if (row < 0 || row >= h) continue;
                 if (row < r->top_clip || row > r->bot_clip) continue;  /* multi-floor: stay in zone band */
                 int16_t le = left_edge[row];
@@ -2488,8 +2750,16 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 if (re >= r->right_clip) re = (int16_t)(r->right_clip - 1);
                 if (le > re) continue;
                 /* Water (entry_type 7) and floor drawn inline in stream order (Amiga itsafloordraw). */
+                int16_t water_rows_left = 0;
+                if (entry_type == 7) {
+                    int rows_left = (row_step > 0) ? (row_end - row + 1) : (row - row_end + 1);
+                    if (rows_left < 0) rows_left = 0;
+                    if (rows_left > 32767) rows_left = 32767;
+                    water_rows_left = (int16_t)rows_left;
+                }
                 renderer_draw_floor_span((int16_t)row, le, re,
-                                         rel_h, floor_tex, bright, (entry_type == 7) ? 1 : 0);
+                                         rel_h, floor_tex, bright, scaleval, (entry_type == 7) ? 1 : 0,
+                                         water_rows_left);
             }
             free(left_edge);
             free(right_edge_tab);
@@ -2503,13 +2773,27 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
 
         case 4: /* Object (sprite) */
         {
-            /* Amiga: ObjDraw is called when type-4 is encountered (stream order). Word selects
-             * beforewat/afterwat/fullroom for ty3d/by3d; we use zone_roof/zone_floor. */
+            /* Amiga ObjDraw clip mode:
+             *   <1 = before water, ==1 = after water, >1 = full room. */
             int16_t obj_clip_mode = rd16(ptr);
             ptr += 2;
-            (void)obj_clip_mode; /* TODO: use for BEFOREWAT/AFTERWAT vertical clip when needed */
+
+            int32_t obj_top = zone_roof;
+            int32_t obj_bot = zone_floor;
+            if (obj_clip_mode < 1) {
+                obj_top = before_wat_top;
+                obj_bot = before_wat_bot;
+            } else if (obj_clip_mode == 1) {
+                obj_top = after_wat_top;
+                obj_bot = after_wat_bot;
+            }
+            if (obj_top > obj_bot) {
+                int32_t t = obj_top;
+                obj_top = obj_bot;
+                obj_bot = t;
+            }
             int is_multi_floor = (rd32(level->zone_graph_adds + zone_id * 8 + 4) != 0);
-            draw_zone_objects(state, zone_id, zone_roof, zone_floor,
+            draw_zone_objects(state, zone_id, obj_top, obj_bot,
                              is_multi_floor ? use_upper : -1);
             break;
         }
@@ -2570,9 +2854,9 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                     /* Compute angle for this segment (0 to 2*PI over num_segments) */
                     int angle = (seg * 1024) / num_segments; /* 0-1024 represents 0-360 degrees */
 
-                    /* Use game sine table (4096 entries, byte-indexed 0-8191 for 360°).
+                    /* Use game sine table (4096 entries, byte-indexed 0-8191 for 360 deg).
                      * Map 0-1024 arc steps to 0-8192 byte-index: multiply by 8.
-                     * Divide table value (range ≈ -32767..32767) by 128 to get -256..255 scale. */
+                     * Divide table value (range approx -32767..32767) by 128 to get -256..255 scale. */
                     int byte_angle = angle << 3;
                     int32_t s = sin_lookup(byte_angle) >> 7;
                     int32_t c = cos_lookup(byte_angle) >> 7;
@@ -2634,6 +2918,34 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
     }
 }
 
+static void renderer_apply_underwater_tint(void)
+{
+    if (g_fill_screen_water == 0) return;
+    if (!g_renderer.rgb_buffer || !g_renderer.cw_buffer) return;
+
+    /* AB3DI fillscrnwater post-pass:
+     * AND #$00FF on copper color words. Strong applies to whole view (4*20 lines),
+     * weak applies to bottom half only (2*20 lines). */
+    const int strong = (g_fill_screen_water > 0);
+    const int w = g_renderer.width;
+    const int h = g_renderer.height;
+    int y0 = strong ? 0 : (h / 2);
+    if (y0 < 0) y0 = 0;
+    if (y0 > h) y0 = h;
+
+    uint16_t *cw = g_renderer.cw_buffer;
+    uint32_t *rgb = g_renderer.rgb_buffer;
+    for (int y = y0; y < h; y++) {
+        size_t row = (size_t)y * (size_t)w;
+        for (int x = 0; x < w; x++) {
+            size_t i = row + (size_t)x;
+            uint16_t c12 = (uint16_t)(cw[i] & 0x00FFu);
+            cw[i] = c12;
+            rgb[i] = amiga12_to_argb(c12);
+        }
+    }
+}
+
 /* -----------------------------------------------------------------------
  * DrawDisplay - Main rendering entry point
  *
@@ -2648,12 +2960,8 @@ void renderer_draw_display(GameState *state)
 
     /* 1. Clear framebuffer */
     renderer_clear(0);
+    g_fill_screen_water = 0; /* Amiga DrawDisplay: clr.b fillscrnwater */
 
-    /* Water: advance phase every 2nd frame, full cycle 0-255 for slow animation */
-    static int water_tick = 0;
-    if ((++water_tick & 1) == 0) {
-        g_water_phase = (g_water_phase + 1) & 255;
-    }
     /* Vertical scale per frame: denominator scaled by screen aspect ratio (w/h vs default). */
     int w = (r->width  > 0) ? r->width  : 1;
     int h = (r->height > 0) ? r->height : 1;
@@ -2818,7 +3126,7 @@ void renderer_draw_display(GameState *state)
                 int upper_bot = split_y - split_margin - 1;
                 if (upper_bot < 0) upper_bot = -1;
                 /* Painter's order: draw upper room (back) first, then lower room (front) so floor/ceiling
-                 * and walls at the split are correctly ordered – lower room overwrites upper near the boundary. */
+                 * and walls at the split are correctly ordered - lower room overwrites upper near the boundary. */
                 r->top_clip = 0;
                 r->bot_clip = (int16_t)(upper_bot >= 0 ? upper_bot : split_y - 1);
                 r->wall_top_clip = -1;
@@ -2846,6 +3154,7 @@ void renderer_draw_display(GameState *state)
     renderer_fill_wall_joins();
     /* 6. Draw gun overlay */
     renderer_draw_gun(state);
+    renderer_apply_underwater_tint();
 
     /* 7. Swap buffers (the just-drawn buffer becomes the display buffer) */
     renderer_swap();

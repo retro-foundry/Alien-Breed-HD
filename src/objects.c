@@ -2720,7 +2720,12 @@ void lift_routine(GameState *state)
                 }
                 if (gfx_off >= 0) {
                     uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
-                    (void)gfx_base; /* Keep door-only texture scroll patch; do not alter lift wall_rec+10. */
+                    /* Amiga LiftRoutine does move.l a2,10(a1) (packed ptr into +10/+12), but this port's
+                     * wall drawer reads +10 as totalyoff (word) and +12 as tex_id (word). Writing a
+                     * full long here clobbers tex_id and breaks lift wall texture/scrolling (regression
+                     * from "Water Rendering Fixes"). Scroll/clipping is driven via wall_rec+20 and the
+                     * renderer lift-zone path (door_yoff_add). Do not patch wall_rec+10 for lifts. */
+                    (void)gfx_base;
                     wbe32(wall_rec + 20, lift_pos);
                 }
             }
@@ -2851,40 +2856,54 @@ void switch_routine(GameState *state)
  * ----------------------------------------------------------------------- */
 void do_water_anims(GameState *state)
 {
-    /* Water animation: iterate zones with water, oscillate level.
-     * The original iterates a WaterList structure with entries for each
-     * water zone, storing current level, min, max, speed, direction.
-     * When level data provides this list, the water floor height oscillates. */
+    /* Raw Amiga WaterList lives after LiftData's 999 terminator.
+     * Format per anim slot (Anims.s DoWaterAnims):
+     *   long top, long bot, long current, word velocity,
+     *   then repeating pairs: word zone_id, long water_poly_gfx_off, ... , word -1.
+     * There are 21 slots (d0 starts at 20, dbra loop). */
     if (!state->level.water_list) return;
     const int zone_slots = level_zone_slot_count(&state->level);
 
     uint8_t *wl = state->level.water_list;
-    while (1) {
-        int16_t zone_id = (int16_t)((wl[0] << 8) | wl[1]);
-        if (zone_id < 0) break;
+    for (int slot = 0; slot <= 20; slot++) {
+        int32_t top_level = be32(wl + 0);
+        int32_t bot_level = be32(wl + 4);
+        int32_t cur_level = be32(wl + 8);
+        int16_t vel = be16(wl + 12);
 
-        int32_t cur_level = (int32_t)((wl[2]<<24)|(wl[3]<<16)|(wl[4]<<8)|wl[5]);
-        int32_t min_level = (int32_t)((wl[6]<<24)|(wl[7]<<16)|(wl[8]<<8)|wl[9]);
-        int32_t max_level = (int32_t)((wl[10]<<24)|(wl[11]<<16)|(wl[12]<<8)|wl[13]);
-        int16_t spd       = (int16_t)((wl[14] << 8) | wl[15]);
-        int16_t dir       = (int16_t)((wl[16] << 8) | wl[17]);
+        cur_level += (int32_t)vel * state->temp_frames;
+        if (cur_level <= top_level) {
+            cur_level = top_level;
+            vel = 128;
+        }
+        if (cur_level >= bot_level) {
+            cur_level = bot_level;
+            vel = -128;
+        }
 
-        cur_level += dir * spd * state->temp_frames;
-        if (cur_level >= max_level) { cur_level = max_level; dir = -1; }
-        else if (cur_level <= min_level) { cur_level = min_level; dir = 1; }
+        wbe32(wl + 8, cur_level);
+        wbe16(wl + 12, vel);
 
-        wl[2] = (uint8_t)(cur_level >> 24);
-        wl[3] = (uint8_t)(cur_level >> 16);
-        wl[4] = (uint8_t)(cur_level >> 8);
-        wl[5] = (uint8_t)(cur_level);
-        wl[16] = (uint8_t)(dir >> 8);
-        wl[17] = (uint8_t)(dir);
+        wl += 14;
 
-        /* Update zone water: write current level directly (same as Amiga). */
-        if (zone_id >= 0 && zone_id < zone_slots)
-            level_set_zone_water(&state->level, zone_id, cur_level);
+        int safety = 128;
+        while (safety-- > 0) {
+            int16_t zone_id = be16(wl);
+            wl += 2;
+            if (zone_id < 0) break;
 
-        wl += 18;
+            int32_t gfx_off = be32(wl);
+            wl += 4;
+
+            /* Amiga writes water ypos word at +2 in the floor entry pointed by graphics offset. */
+            if (state->level.graphics && gfx_off >= 0) {
+                uint8_t *poly = state->level.graphics + (uint32_t)gfx_off;
+                wbe16(poly + 2, (int16_t)(cur_level >> 6));
+            }
+
+            if (zone_id >= 0 && zone_id < zone_slots)
+                level_set_zone_water(&state->level, zone_id, cur_level);
+        }
     }
 }
 

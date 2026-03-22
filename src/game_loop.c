@@ -25,6 +25,7 @@
 #include "game_data.h"
 #include "game_types.h"
 #include "visibility.h"
+#include "renderer.h"
 #include "stub_display.h"
 #include "stub_input.h"
 #include "stub_audio.h"
@@ -107,6 +108,9 @@ void game_loop(GameState *state)
                 state->temp_frames = MAX_TEMP_FRAMES;
             if (state->temp_frames < 1)
                 state->temp_frames = 1;
+            /* Water waves on Amiga advance once per VBlank. Drive it from the same
+             * 50Hz logic cadence so animation speed stays stable at high render FPS. */
+            renderer_step_water_anim(state->temp_frames);
             pending_vblanks = 0;
 
             /* ---- Phase 1: Pause handling ---- */
