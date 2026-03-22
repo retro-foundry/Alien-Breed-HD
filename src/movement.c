@@ -861,6 +861,12 @@ void collision_check(MoveContext* ctx, LevelState* level)
                         }
                     }
 
+                    /* Amiga Collision skips objects with zero lives. */
+                    if (NASTY_LIVES(*obj) == 0) {
+                        obj_index++;
+                        continue;
+                    }
+
                     if (ctx->stood_in_top != obj->obj.in_top) {
                         obj_index++;
                         continue;
@@ -902,30 +908,36 @@ void collision_check(MoveContext* ctx, LevelState* level)
                             }
                         }
 
-                        /* Horizontal extents: use Chebyshev (max axis) and combine widths. */
-                        {
-                            int32_t maxd = (dx > dz) ? dx : dz;
-                            int32_t combined = mover_width + (int32_t)box->width;
-
-                            if (maxd > combined) {
+                        /* Amiga ObjectMove.s Collision axis check:
+                         * if |dz|>|dx| use z axis only; else use x axis and then
+                         * apply moving-closer check. */
+                        if (dz > dx) {
+                            int32_t z_pen = dz - mover_width;
+                            if (z_pen > (int32_t)box->width) {
                                 obj_index++;
                                 continue;
                             }
-                        }
-
-                        /* Moving closer check (prevents permanent trapping). */
-                        {
-                            int32_t new_dx = (int32_t)ox - ctx->newx;
-                            int32_t new_dz = (int32_t)oz - ctx->newz;
-                            int32_t new_dist_sq = new_dx * new_dx + new_dz * new_dz;
-
-                            int32_t old_dx = (int32_t)ox - ctx->oldx;
-                            int32_t old_dz = (int32_t)oz - ctx->oldz;
-                            int32_t old_dist_sq = old_dx * old_dx + old_dz * old_dz;
-
-                            if (new_dist_sq > old_dist_sq) {
+                        } else {
+                            int32_t x_pen = dx - mover_width;
+                            if (x_pen > (int32_t)box->width) {
                                 obj_index++;
                                 continue;
+                            }
+
+                            /* Moving closer check (Amiga .checkx branch only). */
+                            {
+                                int32_t new_dx = (int32_t)ox - ctx->newx;
+                                int32_t new_dz = (int32_t)oz - ctx->newz;
+                                int32_t new_dist_sq = new_dx * new_dx + new_dz * new_dz;
+
+                                int32_t old_dx = (int32_t)ox - ctx->oldx;
+                                int32_t old_dz = (int32_t)oz - ctx->oldz;
+                                int32_t old_dist_sq = old_dx * old_dx + old_dz * old_dz;
+
+                                if (new_dist_sq > old_dist_sq) {
+                                    obj_index++;
+                                    continue;
+                                }
                             }
                         }
 
