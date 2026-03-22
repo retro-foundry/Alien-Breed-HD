@@ -112,18 +112,27 @@ void explode_into_bits(GameObject *obj, GameState *state)
          * src_cols=8 → eff_cols=16 and src_rows=8 → eff_rows=16, exactly one cell. */
         {
             const BulletAnimFrame *f = &bullet_anim_tables[gib_type][0];
-            bit->obj.width_or_3d  = f->width;
-            bit->obj.world_height = f->height;
+            bit->raw[6] = (uint8_t)f->width;
+            bit->raw[7] = (uint8_t)f->height;
             obj_sw(bit->raw + 8,  f->vect_num);
             obj_sw(bit->raw + 10, f->frame_num);
             bit->raw[14] = 8;
             bit->raw[15] = 8;
         }
 
-        /* Random XZ velocity: Amiga ≈ ±0-3 int units from random angle + impact.
-         * Use simple uniform random ±3 to approximate. */
-        SHOT_SET_XVEL(*bit, (int16_t)((rand() % 7) - 3));
-        SHOT_SET_ZVEL(*bit, (int16_t)((rand() % 7) - 3));
+        /* Amiga: random angle from SineTable, random 1..4 scale, plus half impact vector. */
+        {
+            int16_t ang = (int16_t)(rand() & 8190);
+            int16_t s = sin_lookup(ang);
+            int16_t c = cos_lookup(ang);
+            int shift = (rand() & 3) + 1;
+            int16_t vx = (int16_t)(((int32_t)s << shift) >> 16);
+            int16_t vz = (int16_t)(((int32_t)c << shift) >> 16);
+            vx = (int16_t)(vx + (NASTY_IMPACTX(*obj) >> 1));
+            vz = (int16_t)(vz + (NASTY_IMPACTZ(*obj) >> 1));
+            SHOT_SET_XVEL(*bit, vx);
+            SHOT_SET_ZVEL(*bit, vz);
+        }
         /* Y velocity: upward, Amiga range -(256 + rand & 1023) = -256 to -1279 */
         SHOT_SET_YVEL(*bit, (int16_t)(-(256 + (rand() & 1023))));
 

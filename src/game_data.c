@@ -319,7 +319,7 @@ const BulletTypeData bullet_types[8] = {
  * Bullet animation tables
  * Translated from Anims.s Bul1Anim, Bul2Anim, RockAnim, FlameAnim,
  * grenAnim, Bul4Anim, Bul5Anim.
- * BulletTypes[n] = { anim_ptr, pop_ptr } - only the anim tables here.
+ * BulletTypes[n] = { anim_ptr, pop_ptr }.
  * ----------------------------------------------------------------------- */
 
 /* Bul1Anim: gun 0 (unused - pistol is instant-hit) and gun 7 */
@@ -423,6 +423,145 @@ static const BulletAnimFrame anim_explode4[] = {
     { -1 }
 };
 
+/* -----------------------------------------------------------------------
+ * Bullet pop tables (shotstatus != 0)
+ * Translated from Anims.s Bul1Pop, Bul2Pop, RockPop, FlamePop,
+ * Bul4Pop, Bul5Pop, Explode1Pop..Explode4Pop.
+ * ----------------------------------------------------------------------- */
+
+static const BulletAnimFrame pop_bul1[] = {
+    { 25, 25, 1,  6,  0 },
+    { 25, 25, 1,  7, -4 },
+    { 25, 25, 1,  8, -4 },
+    { 25, 25, 1,  9, -4 },
+    { 25, 25, 1, 10, -4 },
+    { 25, 25, 1, 11, -4 },
+    { 25, 25, 1, 12, -4 },
+    { 25, 25, 1, 13, -4 },
+    { 25, 25, 1, 14, -4 },
+    { 25, 25, 1, 15, -4 },
+    { 25, 25, 1, 16, -4 },
+    { -1 }
+};
+
+static const BulletAnimFrame pop_bul2[] = {
+    { 25, 25, 2,  8, -4 },
+    { 29, 29, 2,  9, -4 },
+    { 33, 33, 2, 10, -4 },
+    { 37, 37, 2, 11, -4 },
+    { 41, 41, 2, 12, -4 },
+    { 45, 45, 2, 13, -4 },
+    { 49, 49, 2, 14, -4 },
+    { 53, 53, 2, 15, -4 },
+    { 57, 57, 2, 16, -4 },
+    { 61, 61, 2, 17, -4 },
+    { 65, 65, 2, 18, -4 },
+    { 69, 69, 2, 19, -4 },
+    { -1 }
+};
+
+static const BulletAnimFrame pop_rock[] = {
+    { 100, 100, 8, 0, -4 },
+    { 110, 110, 8, 1,  0 },
+    { 120, 120, 8, 2, -4 },
+    { 130, 130, 8, 3, -4 },
+    { 140, 140, 8, 4, -4 },
+    { 150, 150, 8, 4, -4 },
+    { 160, 160, 8, 5, -4 },
+    { 170, 170, 8, 5, -4 },
+    { 180, 180, 8, 6, -4 },
+    { 190, 190, 8, 6, -4 },
+    { 200, 200, 8, 7, -4 },
+    { 210, 210, 8, 7, -4 },
+    { 220, 220, 8, 8, -4 },
+    { 230, 230, 8, 8, -4 },
+    { -1 }
+};
+
+static const BulletAnimFrame pop_flame[] = {
+    { 140, 140, 8, 7, 0 },
+    { 144, 144, 8, 7, 0 },
+    { 148, 148, 8, 7, 0 },
+    { 152, 152, 8, 8, 0 },
+    { 156, 156, 8, 8, 0 },
+    { 160, 160, 8, 8, 0 },
+    { -1 }
+};
+
+static const BulletAnimFrame pop_bul4[] = {
+    { 20, 20, 6, 4, 0 },
+    { 15, 15, 6, 5, 0 },
+    { 10, 10, 6, 6, 0 },
+    {  5,  5, 6, 7, 0 },
+    { -1 }
+};
+
+static const BulletAnimFrame pop_bul5[] = {
+    { 8, 8, 6, 4, 0 },
+    { 6, 6, 6, 5, 0 },
+    { 4, 4, 6, 6, 0 },
+    { -1 }
+};
+
+static const BulletAnimFrame pop_explode1[] = {
+    { 20, 20, 0, 16, 1 },
+    { 20, 20, 0, 16, 1 },
+    { 20, 20, 0, 16, 1 },
+    { 20, 20, 0, 16, 1 },
+    { 20, 20, 0, 16, 1 },
+    { 20, 20, 0, 16, 1 },
+    { 20, 20, 0, 16, 1 },
+    { 20, 20, 0, 16, 1 },
+    { 17, 17, 0, 16, 1 },
+    { 13, 13, 0, 16, 1 },
+    {  9,  9, 0, 16, 1 },
+    { -1 }
+};
+
+static const BulletAnimFrame pop_explode2[] = {
+    { 20, 20, 0, 20, 1 },
+    { 20, 20, 0, 20, 1 },
+    { 20, 20, 0, 20, 1 },
+    { 20, 20, 0, 20, 1 },
+    { 20, 20, 0, 20, 1 },
+    { 20, 20, 0, 20, 1 },
+    { 20, 20, 0, 20, 1 },
+    { 20, 20, 0, 20, 1 },
+    { 17, 17, 0, 20, 1 },
+    { 13, 13, 0, 20, 1 },
+    {  9,  9, 0, 20, 1 },
+    { -1 }
+};
+
+static const BulletAnimFrame pop_explode3[] = {
+    { 17, 17, 0, 24, 1 },
+    { 17, 17, 0, 24, 1 },
+    { 17, 17, 0, 24, 1 },
+    { 17, 17, 0, 24, 1 },
+    { 17, 17, 0, 24, 1 },
+    { 17, 17, 0, 24, 1 },
+    { 17, 17, 0, 24, 1 },
+    { 17, 17, 0, 24, 1 },
+    { 13, 13, 0, 24, 1 },
+    {  9,  9, 0, 24, 1 },
+    { -1 }
+};
+
+static const BulletAnimFrame pop_explode4[] = {
+    { 20, 20, 0, 28, 0 },
+    { 20, 20, 0, 28, 1 },
+    { 20, 20, 0, 28, 1 },
+    { 20, 20, 0, 28, 1 },
+    { 20, 20, 0, 28, 1 },
+    { 20, 20, 0, 28, 1 },
+    { 20, 20, 0, 28, 1 },
+    { 20, 20, 0, 28, 1 },
+    { 17, 17, 0, 28, 1 },
+    { 13, 13, 0, 28, 1 },
+    {  9,  9, 0, 28, 1 },
+    { -1 }
+};
+
 /* Indexed by SHOT_SIZE.
  * Indices 0-7: player guns. Indices 8-49: NULL (unused). Indices 50-53: gibs. */
 const BulletAnimFrame *const bullet_anim_tables[MAX_BULLET_ANIM_IDX] = {
@@ -446,6 +585,29 @@ const BulletAnimFrame *const bullet_anim_tables[MAX_BULLET_ANIM_IDX] = {
     anim_explode4, /* 53 */
 };
 
+/* Indexed by SHOT_SIZE.
+ * Indices 0-7: player guns. Indices 8-49: NULL (unused). Indices 50-53: gibs. */
+const BulletAnimFrame *const bullet_pop_tables[MAX_BULLET_ANIM_IDX] = {
+    pop_bul1,     /* 0 */
+    pop_bul2,     /* 1: plasma gun */
+    pop_rock,     /* 2: rocket */
+    pop_flame,    /* 3: flamethrower */
+    pop_rock,     /* 4: grenade */
+    pop_bul4,     /* 5: worm spit */
+    pop_bul5,     /* 6: marine shot */
+    pop_bul1,     /* 7 */
+    /* 8-49: NULL */
+    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,  /* 8-17 */
+    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,  /* 18-27 */
+    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,  /* 28-37 */
+    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,  /* 38-47 */
+    NULL,NULL,                                          /* 48-49 */
+    pop_explode1, /* 50 */
+    pop_explode2, /* 51 */
+    pop_explode3, /* 52 */
+    pop_explode4, /* 53 */
+};
+
 /* BulletSizes flying src cols/rows (obj[14]/obj[15]).
  * Indices 0-7: from Anims.s BulletSizes. Indices 8-53: 0 (default 32 in renderer). */
 const uint8_t bullet_fly_src_cols[MAX_BULLET_ANIM_IDX] = {
@@ -454,6 +616,14 @@ const uint8_t bullet_fly_src_cols[MAX_BULLET_ANIM_IDX] = {
 };
 const uint8_t bullet_fly_src_rows[MAX_BULLET_ANIM_IDX] = {
     0x10,0x10,0x10,0x20,0x08,0x10,0x10,0x08,  /* 0-7 */
+};
+
+/* BulletSizes pop src cols/rows (second word of each BulletSizes entry). */
+const uint8_t bullet_pop_src_cols[MAX_BULLET_ANIM_IDX] = {
+    0x08,0x10,0x20,0x20,0x20,0x10,0x10,0x08,  /* 0-7 */
+};
+const uint8_t bullet_pop_src_rows[MAX_BULLET_ANIM_IDX] = {
+    0x08,0x10,0x20,0x20,0x20,0x10,0x10,0x08,  /* 0-7 */
 };
 
 /* -----------------------------------------------------------------------

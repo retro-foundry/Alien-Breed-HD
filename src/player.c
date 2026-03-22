@@ -1404,22 +1404,21 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
                 /* Hit the target */
                 NASTY_SET_DAMAGE(target, (int8_t)(NASTY_DAMAGE(*target) + gun->shot_power));
 
-                /* Impact force on target (push in firing direction) */
-                int16_t push_x = (int16_t)(dir_x >> 4);
-                int16_t push_z = (int16_t)(dir_z >> 4);
-                /* ImpactX/ImpactZ stored at type_data[20]/[24] for nastys */
-                OBJ_SET_TD_W(target, 20, OBJ_TD_W(target, 20) + push_x);
-                OBJ_SET_TD_W(target, 24, OBJ_TD_W(target, 24) + push_z);
+                /* Amiga PLR*HITINSTANT:
+                 * ext.l tempxdir/tempzdir; asl.l #3; swap; move.w -> ImpactX/ImpactZ.
+                 * This yields a very small signed push (-4..3), and writes (not accumulates). */
+                int16_t impact_x = (int16_t)(((int32_t)(int16_t)dir_x << 3) >> 16);
+                int16_t impact_z = (int16_t)(((int32_t)(int16_t)dir_z << 3) >> 16);
+                NASTY_SET_IMPACTX(target, impact_x);
+                NASTY_SET_IMPACTZ(target, impact_z);
             }
         }
     } else {
-        /* Projectile weapon.
-         * Amiga uses a shared shot pool; we put player bullets into nasty_shot_data
-         * (slots 0-19) so they are updated and rendered by the same path as enemy shots. */
-        if (!state->level.nasty_shot_data) return;
+        /* Projectile weapon: Amiga uses PlayerShotData for player projectiles. */
+        if (!state->level.player_shot_data) return;
 
-        /* Find free slot in nasty_shot_data */
-        uint8_t *shots = state->level.nasty_shot_data;
+        /* Find free slot in player_shot_data */
+        uint8_t *shots = state->level.player_shot_data;
         GameObject *bullet = NULL;
         for (int i = 0; i < 20; i++) {
             GameObject *candidate = (GameObject*)(shots + i * OBJECT_SIZE);
@@ -1459,9 +1458,9 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
          * object_handle_bullet will advance SHOT_ANIM each tick. */
         if (gun_idx >= 0 && gun_idx < 8 && bullet_anim_tables[gun_idx]) {
             const BulletAnimFrame *f = &bullet_anim_tables[gun_idx][0];
-            if (f->width != (int8_t)-1) {
-                bullet->obj.width_or_3d  = f->width;
-                bullet->obj.world_height = f->height;
+            if (f->width >= 0) {
+                bullet->raw[6] = (uint8_t)f->width;
+                bullet->raw[7] = (uint8_t)f->height;
                 obj_sw(bullet->raw + 8,  f->vect_num);
                 obj_sw(bullet->raw + 10, f->frame_num);
             }

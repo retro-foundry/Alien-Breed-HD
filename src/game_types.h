@@ -175,7 +175,7 @@ static inline void obj_sl(uint8_t *p, int32_t v) {
 #define SHOT_XVEL(o)      obj_w((o).raw + 18)   /* td[0]  abs 18 */
 #define SHOT_ZVEL(o)      obj_w((o).raw + 22)   /* td[4]  abs 22 */
 #define SHOT_POWER(o)     (*(int8_t*)&(o).raw[28])  /* td[10] byte - OK */
-#define SHOT_ANIM(o)      (*(uint8_t*)&(o).raw[29]) /* td[11] byte: shotanim counter */
+#define SHOT_ANIM(o)      (*(uint8_t*)&(o).raw[52]) /* td[34] byte: shotanim counter (Defs.i shotanim) */
 #define SHOT_STATUS(o)    (*(int8_t*)&(o).raw[30])  /* td[12] byte - OK */
 #define SHOT_SIZE(o)      (*(int8_t*)&(o).raw[31])  /* td[13] byte - OK */
 #define SHOT_YVEL(o)      obj_w((o).raw + 42)   /* td[24] abs 42 */
@@ -202,6 +202,8 @@ static inline void obj_sl(uint8_t *p, int32_t v) {
 #define NASTY_FACING(o)   obj_w((o).raw + 30)   /* td[12] abs 30 */
 #define NASTY_TIMER(o)    obj_w((o).raw + 34)   /* td[16] abs 34 */
 #define NASTY_EFLAGS(o)   obj_l((o).raw + 36)   /* td[18] abs 36 */
+#define NASTY_IMPACTX(o)  obj_w((o).raw + 42)   /* td[24] abs 42 */
+#define NASTY_IMPACTZ(o)  obj_w((o).raw + 44)   /* td[26] abs 44 */
 
 #define NASTY_SET_DAMAGE(p, v)   (*(int8_t*)&(p)->raw[19] = (int8_t)(v))
 #define NASTY_SET_MAXSPD(o, v)   obj_sw((o).raw + 20, (int16_t)(v))
@@ -209,6 +211,8 @@ static inline void obj_sl(uint8_t *p, int32_t v) {
 #define NASTY_SET_FACING(o, v)   obj_sw((o).raw + 30, (int16_t)(v))
 #define NASTY_SET_TIMER(o, v)    obj_sw((o).raw + 34, (int16_t)(v))
 #define NASTY_SET_EFLAGS(o, v)   obj_sl((o).raw + 36, (int32_t)(v))
+#define NASTY_SET_IMPACTX(p, v)  obj_sw((p)->raw + 42, (int16_t)(v))
+#define NASTY_SET_IMPACTZ(p, v)  obj_sw((p)->raw + 44, (int16_t)(v))
 
 /* -----------------------------------------------------------------------
  * Door definitions (from Defs.i)

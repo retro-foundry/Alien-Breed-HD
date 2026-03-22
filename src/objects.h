@@ -81,7 +81,7 @@ void enemy_fire_at_player(GameObject *obj, GameState *state,
 
 /* Utility: compute blast damage to nearby objects */
 void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
-                   int16_t radius, int16_t power);
+                   int16_t radius, int16_t power, int16_t zone, int8_t in_top);
 
 /* Explosion animation: spawn at (x,z,zone,y_floor). size_scale 100=normal; anim_rate 100=normal, 75=25% slower. */
 void explosion_spawn(GameState *state, int16_t x, int16_t z, int16_t zone, int8_t in_top, int32_t y_floor,
