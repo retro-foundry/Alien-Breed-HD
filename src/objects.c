@@ -454,8 +454,42 @@ static void enemy_wander_with_timer(GameObject *obj, const EnemyParams *params,
     int16_t c = cos_lookup(facing);
 
     int16_t obj_x, obj_z;
-    int idx = (int)(((uint8_t*)obj - state->level.object_data) / OBJECT_SIZE);
-    get_object_pos(&state->level, idx, &obj_x, &obj_z);
+    int cid = (int)OBJ_CID(obj);
+    if (cid < 0) return;
+    get_object_pos(&state->level, cid, &obj_x, &obj_z);
+
+    /* Amiga enemy scripts use type-specific object-collision masks and
+     * some types skip pre-move Collision entirely. */
+    uint32_t collide_mask = 0x3FDE1;
+    bool use_pre_collision = true;
+    switch (obj->obj.number) {
+    case OBJ_NBR_ALIEN:
+        collide_mask = 0x3FDE1;
+        break;
+    case OBJ_NBR_WORM:
+        collide_mask = 0x7FDE1;
+        break;
+    case OBJ_NBR_TREE:
+        collide_mask = 0xDFDE1;
+        break;
+    case OBJ_NBR_HUGE_RED_THING:
+        collide_mask = 0x0DE1;
+        break;
+    case OBJ_NBR_SMALL_RED_THING:
+    case OBJ_NBR_FLAME_MARINE:
+    case OBJ_NBR_TOUGH_MARINE:
+    case OBJ_NBR_MARINE:
+    case OBJ_NBR_FLYING_NASTY:
+    case OBJ_NBR_EYEBALL:
+        collide_mask = 0xFFDE1;
+        break;
+    case OBJ_NBR_ROBOT:
+    case OBJ_NBR_BIG_NASTY:
+        use_pre_collision = false;
+        break;
+    default:
+        break;
+    }
 
     MoveContext ctx;
     move_context_init(&ctx);
@@ -464,11 +498,19 @@ static void enemy_wander_with_timer(GameObject *obj, const EnemyParams *params,
     ctx.newx = obj_x - ((int32_t)s * speed * state->temp_frames) / 16384;
     ctx.newz = obj_z - ((int32_t)c * speed * state->temp_frames) / 16384;
     ctx.thing_height = params->thing_height;
+    {
+        /* Match Amiga collision vertical span: bottom = center - half_height. */
+        int16_t center_y = obj_w(obj->raw + 4);
+        int32_t half_h = ctx.thing_height >> 8;
+        int32_t move_y = ((int32_t)center_y - half_h) << 7;
+        ctx.oldy = move_y;
+        ctx.newy = move_y;
+    }
     ctx.step_up_val = params->step_up;
     ctx.step_down_val = params->step_down;
     ctx.extlen = params->extlen;
     ctx.awayfromwall = params->awayfromwall;
-    ctx.collide_flags = 0x3F7C1;
+    ctx.collide_flags = collide_mask;
     ctx.coll_id = OBJ_CID(obj);
     ctx.pos_shift = 0;
     ctx.stood_in_top = obj->obj.in_top;
@@ -483,10 +525,20 @@ static void enemy_wander_with_timer(GameObject *obj, const EnemyParams *params,
         }
     }
 
-    move_object_substepped(&ctx, &state->level);
+    /* Amiga enemy flow: many types do object Collision first; some (Robot/BigUgly) don't. */
+    if (use_pre_collision) {
+        collision_check(&ctx, &state->level);
+    }
+    if (ctx.hitwall) {
+        ctx.newx = ctx.oldx;
+        ctx.newz = ctx.oldz;
+    } else {
+        /* Amiga enemy movement uses a single MoveObject pass per tick. */
+        move_object(&ctx, &state->level);
+    }
 
     if (state->level.object_points) {
-        uint8_t *pts = state->level.object_points + idx * 8;
+        uint8_t *pts = state->level.object_points + cid * 8;
         obj_sw(pts, (int16_t)ctx.newx);
         obj_sw(pts + 4, (int16_t)ctx.newz);
     }
@@ -1340,15 +1392,54 @@ static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
     int16_t speed = NASTY_MAXSPD(*obj);
     if (speed == 0) speed = 6;
 
+    uint32_t collide_mask = 0xFFDE1;
+    bool use_pre_collision = true;
+    switch (obj->obj.number) {
+    case OBJ_NBR_ALIEN:
+        collide_mask = 0xFFDC1;
+        break;
+    case OBJ_NBR_WORM:
+        collide_mask = 0x7FDE1;
+        break;
+    case OBJ_NBR_TREE:
+        collide_mask = 0xDFDE1;
+        break;
+    case OBJ_NBR_HUGE_RED_THING:
+        collide_mask = 0x0DE1;
+        break;
+    case OBJ_NBR_SMALL_RED_THING:
+    case OBJ_NBR_FLAME_MARINE:
+    case OBJ_NBR_TOUGH_MARINE:
+    case OBJ_NBR_MARINE:
+    case OBJ_NBR_FLYING_NASTY:
+    case OBJ_NBR_EYEBALL:
+        collide_mask = 0xFFDE1;
+        break;
+    case OBJ_NBR_ROBOT:
+    case OBJ_NBR_BIG_NASTY:
+        use_pre_collision = false;
+        break;
+    default:
+        break;
+    }
+
     MoveContext ctx;
     move_context_init(&ctx);
     ctx.oldx = obj_x;
     ctx.oldz = obj_z;
     ctx.thing_height = params->thing_height;
+    {
+        int16_t center_y = obj_w(obj->raw + 4);
+        int32_t half_h = ctx.thing_height >> 8;
+        int32_t move_y = ((int32_t)center_y - half_h) << 7;
+        ctx.oldy = move_y;
+        ctx.newy = move_y;
+    }
     ctx.step_up_val = params->step_up;
     ctx.step_down_val = params->step_down;
     ctx.extlen = params->extlen;
     ctx.awayfromwall = params->awayfromwall;
+    ctx.collide_flags = collide_mask;
     ctx.coll_id = OBJ_CID(obj);
     ctx.pos_shift = 0;
     ctx.stood_in_top = obj->obj.in_top;
@@ -1369,7 +1460,16 @@ static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
                        speed * state->temp_frames, 120);
     NASTY_SET_FACING(*obj, facing);
 
-    move_object_substepped(&ctx, &state->level);
+    if (use_pre_collision) {
+        collision_check(&ctx, &state->level);
+    }
+    if (ctx.hitwall) {
+        ctx.newx = ctx.oldx;
+        ctx.newz = ctx.oldz;
+    } else {
+        /* Match original enemy chase movement (single MoveObject call). */
+        move_object(&ctx, &state->level);
+    }
 
     if (!apply_translation) {
         ctx.newx = ctx.oldx;
