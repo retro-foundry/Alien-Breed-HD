@@ -225,6 +225,12 @@ typedef struct {
      * Maps texel -> brightness-scaled color. NULL if not loaded. */
     const uint8_t *floor_pal;
 
+    /* Bump-mapped floor assets (AB3DI BumpLine path for types 8-11). */
+    const uint8_t *bump_tile;         /* data/gfx/BumpTile (chunky floors) */
+    const uint8_t *smooth_bump_tile;  /* data/gfx/SmoothBumpTile (smooth bumps) */
+    const uint8_t *bump_pal;          /* data/pal/BumpPalScaled */
+    const uint8_t *smooth_bump_pal;   /* data/pal/SmoothBumpPalScaled */
+
     /* Gun overlay (newgunsinhand.wad + .ptr + .pal). NULL if not loaded. */
     const uint8_t *gun_wad;   /* raw graphic data */
     const uint8_t *gun_ptr;   /* 96 columns × 4 bytes (mode + 24-bit offset per column) per frame */
@@ -280,7 +286,7 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
                         int16_t totalyoff, int16_t fromtile,
                         int16_t tex_id, int16_t wall_height_for_tex);
 void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
-                              int32_t floor_height, const uint8_t *texture,
+                              int32_t floor_height, const uint8_t *texture, const uint8_t *floor_pal,
                               int16_t brightness, int16_t scaleval, int is_water,
                               int16_t water_rows_left);
 void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,

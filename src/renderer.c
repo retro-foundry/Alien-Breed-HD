@@ -40,13 +40,16 @@
 
 /* Floor/ceiling UV step per pixel: d1>>FLOOR_STEP_SHIFT (same at any width so texture scale is correct). */
 #define FLOOR_STEP_SHIFT  (6 + RENDER_SCALE_LOG2)  /* d1>>9 at RENDER_SCALE=8 */
-/* UV per world unit for floor/ceiling camera offset. Matches projection: u_step = dist*cosval/512,
- * world_x_per_pixel = dist/512, so UV_per_world = cosval; sin/cos table scale is 2^14. */
-#define FLOOR_CAM_UV_SCALE  16384  /* 1<<14 */
+/* Camera UV scale in fixed-point, matching Amiga sxoff/szoff setup in pastsides:
+ * xoff/zoff words are promoted to 16.16 before entering pastfloorbright. */
+#define FLOOR_CAM_UV_SCALE  65536  /* 1<<16 */
 /* Extra pixels to extend beyond polygon edge (ceiling needs it at wall join; floor does not). */
 #define FLOOR_EDGE_EXTRA  0
 #define CEILING_EDGE_EXTRA 3
 #define PORTAL_EDGE_EXTRA 1
+/* AB3DI itsachunkyfloor does `sub.w #12,topclip` before itsafloordraw.
+ * Scale to current render resolution. */
+#define CHUNKY_TOPCLIP_BIAS  (12 * RENDER_SCALE)
 /* Minimum z in view space; vertices behind this are clipped. Used for walls and floor polygons. */
 #define RENDERER_NEAR_PLANE 4
 
@@ -1021,7 +1024,7 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
  * Draws a horizontal span of floor or ceiling at a given height.
  * ----------------------------------------------------------------------- */
 void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
-                              int32_t floor_height, const uint8_t *texture,
+                              int32_t floor_height, const uint8_t *texture, const uint8_t *floor_pal,
                               int16_t brightness, int16_t scaleval, int is_water,
                               int16_t water_rows_left)
 {
@@ -1056,7 +1059,11 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     /* Fallback grayscale only (when no floor palette is loaded). */
     int zone_d6 = brightness * 2;
 
-    int32_t fh_8 = floor_height >> WORLD_Y_FRAC_BITS;
+    /* Match Amiga distaddr scale approximately:
+     * distaddr is a smaller-height-space value than raw world rel_h.
+     * Use a half-step conversion here so floor/ceiling texel size lands between
+     * the old over-zoomed and the recent under-zoomed result. */
+    int32_t fh_8 = floor_height >> (WORLD_Y_FRAC_BITS - 1);
     int32_t dist;
     if (abs_row_dist <= 3) {
         dist = 32000;
@@ -1076,19 +1083,15 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     /* ---- ASM pastfloorbright (line 6660) ----
      * d1 = d0 * cosval (change in U across whole width)
      * d2 = -(d0 * sinval) (change in V across whole width) */
-    int32_t cos_v = rs->cosval;
-    int32_t sin_v = rs->sinval;
-    if (is_water) {
-        /* AB3DI pastfloorbright uses SineTable/bigsine values (~32767 magnitude).
-         * The shared runtime sin/cos table is half-scale (~16384), so promote
-         * water UV stepping only to Amiga-equivalent magnitude. */
-        cos_v <<= 1;
-        sin_v <<= 1;
-    }
+    /* AB3DI pastfloorbright uses SineTable/bigsine values (~32767 magnitude).
+     * Runtime sin/cos lookup is half-scale (~16384), so promote here for all
+     * floor/ceiling/water span UV stepping. */
+    int32_t cos_v = ((int32_t)rs->cosval) << 1;
+    int32_t sin_v = ((int32_t)rs->sinval) << 1;
     int32_t d1 = (int32_t)(((int64_t)dist * cos_v));
     int32_t d2 = (int32_t)(-((int64_t)dist * sin_v));
-    if (is_water && scaleval != 0) {
-        /* Amiga AB3DI.s scaleprog (around line 6667):
+    if (scaleval != 0) {
+        /* Amiga AB3DI.s scaleprog (around line 6667), used for floor/roof/water:
          *   scaleval > 0 => asl.l d1/d2 (larger texels)
          *   scaleval < 0 => asr.l d1/d2 (smaller texels) */
         int s = (int)scaleval;
@@ -1128,8 +1131,8 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
 
     /* Camera position offset: UV per world unit = FLOOR_CAM_UV_SCALE (matches fixed u_step). */
     int32_t cam_scale = FLOOR_CAM_UV_SCALE;
-    if (is_water && scaleval != 0) {
-        /* Match Amiga sxoff/szoff scaling sign for water-only path. */
+    if (scaleval != 0) {
+        /* Match Amiga sxoff/szoff scaling done in pastsides before pastfloorbright. */
         int s = (int)scaleval;
         if (s > 0) {
             if (s > 15) s = 15;
@@ -1154,8 +1157,9 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         start_v64 += (int64_t)xl * v_step;
     }
 
+    const uint8_t *pal_lut_src = floor_pal ? floor_pal : rs->floor_pal;
     int floor_pal_level = 0;
-    if (rs->floor_pal) {
+    if (pal_lut_src) {
         int bright_idx = brightness + 5 + (dist >> 8);
         if (bright_idx < 0) bright_idx = 0;
         if (bright_idx > 28) bright_idx = 28;
@@ -1166,9 +1170,9 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
      * Only built for the common non-water textured path. */
     uint32_t span_argb[256];
     uint16_t span_cw[256];
-    const int use_span_lut = (texture != NULL && rs->floor_pal != NULL && !is_water);
+    const int use_span_lut = (texture != NULL && pal_lut_src != NULL && !is_water);
     if (use_span_lut) {
-        const uint8_t *lut = rs->floor_pal + floor_pal_level * 512;
+        const uint8_t *lut = pal_lut_src + floor_pal_level * 512;
         for (int ti = 0; ti < 256; ti++) {
             uint16_t cw = (uint16_t)((lut[ti * 2] << 8) | lut[ti * 2 + 1]);
             span_argb[ti] = amiga12_to_argb(cw);
@@ -1329,8 +1333,8 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         if (texture) {
             int tex_idx = ((tv << 8) | tu) * 4;
             uint8_t texel = texture[tex_idx];
-            if (rs->floor_pal) {
-                const uint8_t *lut = rs->floor_pal + floor_pal_level * 512;
+            if (pal_lut_src) {
+                const uint8_t *lut = pal_lut_src + floor_pal_level * 512;
                 uint16_t cw = (uint16_t)((lut[texel * 2] << 8) | lut[texel * 2 + 1]);
                 argb = amiga12_to_argb(cw);
             } else {
@@ -2532,29 +2536,24 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
             int16_t whichtile = rd16(ptr); ptr += 2;
             int16_t floor_bright_off = rd16(ptr); ptr += 2;
 
-            /* Determine polygon height in world coords (same scale as y_off: *256). */
+            /* Polygon height in world coords (same scale as y_off: *256).
+             * Amiga itsafloordraw always uses entry ypos directly for floor/roof/water. */
             int32_t poly_h_world = (int32_t)ypos << 6; /* ASM: asl.l #6,d7 */
-            /* Use live zone floor/roof so door/lift updates are visible (objects.c writes ZD_FLOOR/ZD_ROOF each frame). */
-            int32_t floor_h_world = poly_h_world;
-            if (entry_type == 1)
-                floor_h_world = zone_floor;
-            else if (entry_type == 2)
-                floor_h_world = zone_roof;
             /* AB3DI itsafloordraw early reject:
              *   if (ypos_world < TOPOFROOM) skip (water path uses checkforwater)
              *   if (ypos_world > BOTOFROOM) skip */
-            if (floor_h_world < zone_roof || floor_h_world > zone_floor) {
+            if (poly_h_world < zone_roof || poly_h_world > zone_floor) {
                 if (entry_type == 7 && !use_upper && zone_id == viewer_zone &&
                     poly_h_world < zone_roof) {
                     g_fill_screen_water = 0x0F;
                 }
                 continue;
             }
-            int32_t rel_h = floor_h_world - y_off; /* Relative to camera */
+            int32_t rel_h = poly_h_world - y_off; /* Relative to camera */
 
             /* Amiga fillscrnwater flag: mark underwater/half-submerged when drawing water in viewer zone. */
             if (entry_type == 7 && !use_upper && zone_id == viewer_zone) {
-                int32_t rel_water = floor_h_world - y_off;
+                int32_t rel_water = poly_h_world - y_off;
                 if (rel_water < 0) {
                     g_fill_screen_water = 0x0F; /* strong underwater tint */
                 } else if (rel_water <= (1 << WORLD_Y_FRAC_BITS) && g_fill_screen_water == 0) {
@@ -2562,10 +2561,8 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 }
             }
 
-            /* Floor Y offset: sign decides which half of screen (floor vs ceiling). Use live height when overridden. */
-            int16_t floor_y_dist = (entry_type == 1 || entry_type == 2)
-                ? (int16_t)((floor_h_world > y_off) ? 1 : -1)
-                : (int16_t)(ypos - r->flooryoff);
+            /* Sign decides which half of screen (floor vs ceiling). */
+            int32_t floor_y_dist = (int32_t)ypos - (int32_t)r->flooryoff;
 
             if (floor_y_dist == 0) {
                 /* At eye level - skip */
@@ -2600,6 +2597,10 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
             /* Clamp Y range for floor vs ceiling. Multi-floor: also clamp to zone top_clip/bot_clip
              * so lower room does not draw above the split and upper room does not draw below it. */
             int y_min_clamp, y_max_clamp;
+            int top_clip_for_poly = r->top_clip;
+            if (entry_type == 8 || entry_type == 9) {
+                top_clip_for_poly -= CHUNKY_TOPCLIP_BIAS;
+            }
             if (floor_y_dist > 0) {
                 y_min_clamp = half_h;       /* floor: center to bottom */
                 y_max_clamp = h - 1;
@@ -2607,7 +2608,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 y_min_clamp = 0;            /* ceiling: top to center */
                 y_max_clamp = half_h - 1;
             }
-            if (y_min_clamp < r->top_clip) y_min_clamp = r->top_clip;
+            if (y_min_clamp < top_clip_for_poly) y_min_clamp = top_clip_for_poly;
             if (y_max_clamp > r->bot_clip) y_max_clamp = r->bot_clip;
 
             /* Full screen: use full extension; portal view: use 1px only to avoid drawing outside. */
@@ -2743,11 +2744,24 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
             if (poly_bot < 0) poly_bot = -1;
 
 
-            /* Resolve floor texture: floortile + whichtile offset.
-             * ASM: move.l floortile,a0 / adda.w whichtile,a0 */
+            /* Resolve floor texture/palette source.
+             * Amiga uses separate paths for:
+             *   1/2/7  -> FloorLine (floortile + FloorPalScaled)
+             *   8/9    -> BumpLine chunky (BumpTile + BumpPalScaled)
+             *   10/11  -> BumpLine smooth (SmoothBumpTile + SmoothBumpPalScaled) */
             const uint8_t *floor_tex = NULL;
-            if (r->floor_tile && whichtile >= 0) {
-                floor_tex = r->floor_tile + (uint16_t)whichtile;
+            const uint8_t *floor_pal = r->floor_pal;
+            if (entry_type == 8 || entry_type == 9) {
+                if (r->bump_tile)
+                    floor_tex = r->bump_tile + (uint16_t)whichtile;
+                floor_pal = r->bump_pal ? r->bump_pal : r->floor_pal;
+            } else if (entry_type == 10 || entry_type == 11) {
+                floor_tex = r->smooth_bump_tile ? r->smooth_bump_tile : r->bump_tile;
+                floor_pal = r->smooth_bump_pal ? r->smooth_bump_pal :
+                            (r->bump_pal ? r->bump_pal : r->floor_pal);
+            } else {
+                if (r->floor_tile)
+                    floor_tex = r->floor_tile + (uint16_t)whichtile;
             }
 
             /* Brightness: zone_bright + floor entry's brightness offset
@@ -2789,7 +2803,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                     water_rows_left = (int16_t)rows_left;
                 }
                 renderer_draw_floor_span((int16_t)row, le, re,
-                                         rel_h, floor_tex, bright, scaleval, (entry_type == 7) ? 1 : 0,
+                                         rel_h, floor_tex, floor_pal, bright, scaleval, (entry_type == 7) ? 1 : 0,
                                          water_rows_left);
             }
             free(left_edge);

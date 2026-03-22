@@ -594,6 +594,12 @@ static uint8_t *g_water_file_data;
 static size_t   g_water_file_size;
 static uint8_t *g_water_brighten_data;
 static size_t   g_water_brighten_size;
+static uint8_t *g_floor_tile_data;
+static uint8_t *g_floor_pal_data;
+static uint8_t *g_bump_tile_data;
+static uint8_t *g_smooth_bump_tile_data;
+static uint8_t *g_bump_pal_data;
+static uint8_t *g_smooth_bump_pal_data;
 /* Actual loaded size per wall (total file size) so dump can use correct pixel dimensions */
 static size_t g_wall_loaded_size[MAX_WALL_TILES];
 
@@ -613,6 +619,12 @@ void io_init(void)
     g_water_file_size = 0;
     g_water_brighten_data = NULL;
     g_water_brighten_size = 0;
+    g_floor_tile_data = NULL;
+    g_floor_pal_data = NULL;
+    g_bump_tile_data = NULL;
+    g_smooth_bump_tile_data = NULL;
+    g_bump_pal_data = NULL;
+    g_smooth_bump_pal_data = NULL;
     poly_obj_set_texture_assets(NULL, 0, NULL, 0);
 }
 
@@ -641,6 +653,24 @@ void io_shutdown(void)
     free(g_water_brighten_data);
     g_water_brighten_data = NULL;
     g_water_brighten_size = 0;
+    free(g_floor_tile_data);
+    g_floor_tile_data = NULL;
+    free(g_floor_pal_data);
+    g_floor_pal_data = NULL;
+    free(g_bump_tile_data);
+    g_bump_tile_data = NULL;
+    free(g_smooth_bump_tile_data);
+    g_smooth_bump_tile_data = NULL;
+    free(g_bump_pal_data);
+    g_bump_pal_data = NULL;
+    free(g_smooth_bump_pal_data);
+    g_smooth_bump_pal_data = NULL;
+    g_renderer.floor_tile = NULL;
+    g_renderer.floor_pal = NULL;
+    g_renderer.bump_tile = NULL;
+    g_renderer.smooth_bump_tile = NULL;
+    g_renderer.bump_pal = NULL;
+    g_renderer.smooth_bump_pal = NULL;
     renderer_set_water_assets(NULL, 0, NULL, 0);
     poly_obj_set_texture_assets(NULL, 0, NULL, 0);
     printf("[IO] shutdown\n");
@@ -879,21 +909,37 @@ void io_load_floor(void)
     extern RendererState g_renderer;
 
     char path[512];
+    FILE *f = NULL;
+
+    /* Reload-safe: free prior allocations and clear renderer pointers. */
+    free(g_floor_tile_data);       g_floor_tile_data = NULL;
+    free(g_floor_pal_data);        g_floor_pal_data = NULL;
+    free(g_bump_tile_data);        g_bump_tile_data = NULL;
+    free(g_smooth_bump_tile_data); g_smooth_bump_tile_data = NULL;
+    free(g_bump_pal_data);         g_bump_pal_data = NULL;
+    free(g_smooth_bump_pal_data);  g_smooth_bump_pal_data = NULL;
+
+    g_renderer.floor_tile = NULL;
+    g_renderer.floor_pal = NULL;
+    g_renderer.bump_tile = NULL;
+    g_renderer.smooth_bump_tile = NULL;
+    g_renderer.bump_pal = NULL;
+    g_renderer.smooth_bump_pal = NULL;
 
     /* Load floor tile texture (256x256 raw 8-bit texels) */
     make_data_path(path, sizeof(path), "includes/floortile");
     printf("[IO] Trying floor tile path: %s\n", path);
-    FILE *f = fopen(path, "rb");
+    f = fopen(path, "rb");
     if (f) {
         fseek(f, 0, SEEK_END);
         long len = ftell(f);
         fseek(f, 0, SEEK_SET);
 
-        uint8_t *data = (uint8_t *)malloc((size_t)len);
-        if (data) {
-            fread(data, 1, (size_t)len, f);
+        g_floor_tile_data = (uint8_t *)malloc((size_t)len);
+        if (g_floor_tile_data) {
+            fread(g_floor_tile_data, 1, (size_t)len, f);
             printf("[IO] Floor tile: %ld bytes from %s\n", len, path);
-            g_renderer.floor_tile = data;
+            g_renderer.floor_tile = g_floor_tile_data;
         }
         fclose(f);
     } else {
@@ -941,8 +987,8 @@ void io_load_floor(void)
             if (strstr(src, "dc.b")) {
                 /* Parse assembly: each line is " dc.b $XX,$YY" = 2 bytes */
                 int capacity = 8192;
-                uint8_t *data = (uint8_t *)malloc((size_t)capacity);
-                if (data) {
+                g_floor_pal_data = (uint8_t *)malloc((size_t)capacity);
+                if (g_floor_pal_data) {
                     int idx = 0;
                     char *p = src;
                     while ((p = strstr(p, "dc.b")) != NULL) {
@@ -950,21 +996,21 @@ void io_load_floor(void)
                         unsigned int b1 = 0, b2 = 0;
                         if (sscanf(p, " $%x,$%x", &b1, &b2) == 2) {
                             if (idx + 2 <= capacity) {
-                                data[idx++] = (uint8_t)b1;
-                                data[idx++] = (uint8_t)b2;
+                                g_floor_pal_data[idx++] = (uint8_t)b1;
+                                g_floor_pal_data[idx++] = (uint8_t)b2;
                             }
                         }
                     }
                     printf("[IO] FloorPalScaled: parsed %d bytes from %s\n", idx, path);
-                    g_renderer.floor_pal = data;
+                    g_renderer.floor_pal = g_floor_pal_data;
                 }
             } else {
                 /* Binary file - use directly */
-                uint8_t *data = (uint8_t *)malloc((size_t)len);
-                if (data) {
-                    memcpy(data, src, (size_t)len);
+                g_floor_pal_data = (uint8_t *)malloc((size_t)len);
+                if (g_floor_pal_data) {
+                    memcpy(g_floor_pal_data, src, (size_t)len);
                     printf("[IO] FloorPalScaled: %ld bytes from %s\n", len, path);
-                    g_renderer.floor_pal = data;
+                    g_renderer.floor_pal = g_floor_pal_data;
                 }
             }
             free(src);
@@ -972,6 +1018,152 @@ void io_load_floor(void)
         fclose(f);
     } else {
         printf("[IO] FloorPalScaled not found\n");
+    }
+
+    /* BumpTile (types 8/9) */
+    {
+        static const char *bump_rel_candidates[] = {
+            "amiga/data/gfx/BumpTile",
+            "../amiga/data/gfx/BumpTile",
+            "../../amiga/data/gfx/BumpTile",
+            NULL
+        };
+        make_data_path(path, sizeof(path), "gfx/BumpTile");
+        f = fopen(path, "rb");
+        if (!f) {
+            for (int i = 0; bump_rel_candidates[i] && !f; i++) {
+                snprintf(path, sizeof(path), "%s", bump_rel_candidates[i]);
+                f = fopen(path, "rb");
+            }
+        }
+        if (f) {
+            fseek(f, 0, SEEK_END);
+            long len = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            if (len > 0) {
+                g_bump_tile_data = (uint8_t *)malloc((size_t)len);
+                if (g_bump_tile_data && fread(g_bump_tile_data, 1, (size_t)len, f) == (size_t)len) {
+                    g_renderer.bump_tile = g_bump_tile_data;
+                    printf("[IO] BumpTile: %ld bytes from %s\n", len, path);
+                } else {
+                    free(g_bump_tile_data);
+                    g_bump_tile_data = NULL;
+                }
+            }
+            fclose(f);
+        } else {
+            printf("[IO] BumpTile not found\n");
+        }
+    }
+
+    /* SmoothBumpTile (types 10/11) */
+    {
+        static const char *smooth_rel_candidates[] = {
+            "amiga/data/gfx/SmoothBumpTile",
+            "../amiga/data/gfx/SmoothBumpTile",
+            "../../amiga/data/gfx/SmoothBumpTile",
+            NULL
+        };
+        make_data_path(path, sizeof(path), "gfx/SmoothBumpTile");
+        f = fopen(path, "rb");
+        if (!f) {
+            for (int i = 0; smooth_rel_candidates[i] && !f; i++) {
+                snprintf(path, sizeof(path), "%s", smooth_rel_candidates[i]);
+                f = fopen(path, "rb");
+            }
+        }
+        if (f) {
+            fseek(f, 0, SEEK_END);
+            long len = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            if (len > 0) {
+                g_smooth_bump_tile_data = (uint8_t *)malloc((size_t)len);
+                if (g_smooth_bump_tile_data &&
+                    fread(g_smooth_bump_tile_data, 1, (size_t)len, f) == (size_t)len) {
+                    g_renderer.smooth_bump_tile = g_smooth_bump_tile_data;
+                    printf("[IO] SmoothBumpTile: %ld bytes from %s\n", len, path);
+                } else {
+                    free(g_smooth_bump_tile_data);
+                    g_smooth_bump_tile_data = NULL;
+                }
+            }
+            fclose(f);
+        } else {
+            printf("[IO] SmoothBumpTile not found\n");
+        }
+    }
+
+    /* BumpPalScaled */
+    {
+        static const char *bump_pal_rel_candidates[] = {
+            "data/pal/BumpPalScaled",
+            "../data/pal/BumpPalScaled",
+            "../../data/pal/BumpPalScaled",
+            NULL
+        };
+        make_data_path(path, sizeof(path), "pal/BumpPalScaled");
+        f = fopen(path, "rb");
+        if (!f) {
+            for (int i = 0; bump_pal_rel_candidates[i] && !f; i++) {
+                snprintf(path, sizeof(path), "%s", bump_pal_rel_candidates[i]);
+                f = fopen(path, "rb");
+            }
+        }
+        if (f) {
+            fseek(f, 0, SEEK_END);
+            long len = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            if (len > 0) {
+                g_bump_pal_data = (uint8_t *)malloc((size_t)len);
+                if (g_bump_pal_data && fread(g_bump_pal_data, 1, (size_t)len, f) == (size_t)len) {
+                    g_renderer.bump_pal = g_bump_pal_data;
+                    printf("[IO] BumpPalScaled: %ld bytes from %s\n", len, path);
+                } else {
+                    free(g_bump_pal_data);
+                    g_bump_pal_data = NULL;
+                }
+            }
+            fclose(f);
+        } else {
+            printf("[IO] BumpPalScaled not found\n");
+        }
+    }
+
+    /* SmoothBumpPalScaled */
+    {
+        static const char *smooth_pal_rel_candidates[] = {
+            "data/pal/SmoothBumpPalScaled",
+            "../data/pal/SmoothBumpPalScaled",
+            "../../data/pal/SmoothBumpPalScaled",
+            NULL
+        };
+        make_data_path(path, sizeof(path), "pal/SmoothBumpPalScaled");
+        f = fopen(path, "rb");
+        if (!f) {
+            for (int i = 0; smooth_pal_rel_candidates[i] && !f; i++) {
+                snprintf(path, sizeof(path), "%s", smooth_pal_rel_candidates[i]);
+                f = fopen(path, "rb");
+            }
+        }
+        if (f) {
+            fseek(f, 0, SEEK_END);
+            long len = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            if (len > 0) {
+                g_smooth_bump_pal_data = (uint8_t *)malloc((size_t)len);
+                if (g_smooth_bump_pal_data &&
+                    fread(g_smooth_bump_pal_data, 1, (size_t)len, f) == (size_t)len) {
+                    g_renderer.smooth_bump_pal = g_smooth_bump_pal_data;
+                    printf("[IO] SmoothBumpPalScaled: %ld bytes from %s\n", len, path);
+                } else {
+                    free(g_smooth_bump_pal_data);
+                    g_smooth_bump_pal_data = NULL;
+                }
+            }
+            fclose(f);
+        } else {
+            printf("[IO] SmoothBumpPalScaled not found\n");
+        }
     }
 
     /* Optional Amiga water assets (used for textured water + underwater tint parity). */
