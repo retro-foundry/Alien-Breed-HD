@@ -13,6 +13,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <float.h>
 
  /* -----------------------------------------------------------------------
   * Constants from the original code
@@ -112,94 +113,179 @@ static void mark_floorline_touch_if_near(const MoveContext *ctx, const uint8_t *
 }
 
 /* -----------------------------------------------------------------------
- * Wall slide + bounds check
- *
- * Returns true if wall hit accepted, false if slide was outside segment.
- * When block_transition is true (stairs: blocking step-back), always slide/clamp
- * so we make progress along the boundary and can reach the next step.
+ * Geometry helpers (robust, radius-aware wall collision)
  * ----------------------------------------------------------------------- */
-static bool do_wall_slide(MoveContext *ctx, const uint8_t *fline,
-                          int16_t lxlen, int16_t lzlen,
-                          int32_t xdiff, int32_t zdiff,
-                          int64_t new_cross, int ps, bool block_transition)
+static double clamp01d(double t)
 {
-    int32_t lx = (int32_t)(int16_t)read_be16(fline + FLINE_X) << ps;
-    int32_t lz = (int32_t)(int16_t)read_be16(fline + FLINE_Z) << ps;
+    if (t < 0.0) return 0.0;
+    if (t > 1.0) return 1.0;
+    return t;
+}
 
+static double orient2d(double ax, double az, double bx, double bz, double cx, double cz)
+{
+    return (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
+}
+
+static bool on_segment(double px, double pz, double qx, double qz, double rx, double rz, double eps)
+{
+    return (qx >= fmin(px, rx) - eps && qx <= fmax(px, rx) + eps &&
+        qz >= fmin(pz, rz) - eps && qz <= fmax(pz, rz) + eps);
+}
+
+static bool segments_intersect(double ax, double az, double bx, double bz,
+    double cx, double cz, double dx, double dz)
+{
+    /* Standard 2D segment intersection including colinear touching. */
+    const double eps = 1e-9;
+
+    double o1 = orient2d(ax, az, bx, bz, cx, cz);
+    double o2 = orient2d(ax, az, bx, bz, dx, dz);
+    double o3 = orient2d(cx, cz, dx, dz, ax, az);
+    double o4 = orient2d(cx, cz, dx, dz, bx, bz);
+
+    if (((o1 > eps && o2 < -eps) || (o1 < -eps && o2 > eps)) &&
+        ((o3 > eps && o4 < -eps) || (o3 < -eps && o4 > eps))) {
+        return true;
+    }
+
+    if (fabs(o1) <= eps && on_segment(ax, az, cx, cz, bx, bz, eps)) return true;
+    if (fabs(o2) <= eps && on_segment(ax, az, dx, dz, bx, bz, eps)) return true;
+    if (fabs(o3) <= eps && on_segment(cx, cz, ax, az, dx, dz, eps)) return true;
+    if (fabs(o4) <= eps && on_segment(cx, cz, bx, bz, dx, dz, eps)) return true;
+
+    return false;
+}
+
+static double point_segment_distance_and_normal(double px, double pz,
+    double ax, double az,
+    double bx, double bz,
+    double* out_nx, double* out_nz)
+{
+    double dx = bx - ax;
+    double dz = bz - az;
+    double len2 = dx * dx + dz * dz;
+
+    double t = 0.0;
+    if (len2 > 0.0) {
+        t = ((px - ax) * dx + (pz - az) * dz) / len2;
+        t = clamp01d(t);
+    }
+
+    double cx = ax + t * dx;
+    double cz = az + t * dz;
+
+    double nx = px - cx;
+    double nz = pz - cz;
+    double d2 = nx * nx + nz * nz;
+
+    if (d2 <= 0.0) {
+        /* Exact on segment: choose a stable perpendicular normal. */
+        double nnx = dz;
+        double nnz = -dx;
+        double nlen2 = nnx * nnx + nnz * nnz;
+        if (nlen2 > 0.0) {
+            double inv = 1.0 / sqrt(nlen2);
+            nnx *= inv;
+            nnz *= inv;
+        }
+        else {
+            nnx = 1.0;
+            nnz = 0.0;
+        }
+        if (out_nx) *out_nx = nnx;
+        if (out_nz) *out_nz = nnz;
+        return 0.0;
+    }
+
+    {
+        double d = sqrt(d2);
+        if (out_nx) *out_nx = nx / d;
+        if (out_nz) *out_nz = nz / d;
+        return d;
+    }
+}
+
+static double segment_segment_distance(double ax, double az, double bx, double bz,
+    double cx, double cz, double dx, double dz)
+{
+    if (segments_intersect(ax, az, bx, bz, cx, cz, dx, dz)) return 0.0;
+
+    {
+        double best = DBL_MAX;
+        double tmp;
+
+        tmp = point_segment_distance_and_normal(ax, az, cx, cz, dx, dz, NULL, NULL);
+        if (tmp < best) best = tmp;
+
+        tmp = point_segment_distance_and_normal(bx, bz, cx, cz, dx, dz, NULL, NULL);
+        if (tmp < best) best = tmp;
+
+        tmp = point_segment_distance_and_normal(cx, cz, ax, az, bx, bz, NULL, NULL);
+        if (tmp < best) best = tmp;
+
+        tmp = point_segment_distance_and_normal(dx, dz, ax, az, bx, bz, NULL, NULL);
+        if (tmp < best) best = tmp;
+
+        return best;
+    }
+}
+
+static bool do_wall_slide_radius(MoveContext* ctx,
+    double ax, double az,
+    double bx, double bz,
+    double radius_scaled)
+{
     if (ctx->wallbounce) {
         ctx->newx = ctx->oldx;
         ctx->newz = ctx->oldz;
         return true;
     }
 
-    /* Project movement onto wall direction. */
-    int32_t slide_x, slide_z;
-    int32_t wall_len_sq = (int32_t)lxlen * lxlen + (int32_t)lzlen * lzlen;
-    if (wall_len_sq > 0) {
-        int64_t dot = (int64_t)xdiff * lxlen + (int64_t)zdiff * lzlen;
-        slide_x = ctx->oldx + (int32_t)((dot * lxlen) / wall_len_sq);
-        slide_z = ctx->oldz + (int32_t)((dot * lzlen) / wall_len_sq);
-    } else {
-        slide_x = ctx->oldx;
-        slide_z = ctx->oldz;
-    }
-
-    /* Push away from wall (player uses awayfromwall=0). */
-    if (ctx->awayfromwall > 0) {
-        int8_t away = *(int8_t*)(fline + FLINE_AWAY);
-        int32_t push_x, push_z;
-        if (ps > away) {
-            push_x = (int32_t)lzlen << (ps - away);
-            push_z = (int32_t)lxlen << (ps - away);
-        } else {
-            push_x = (int32_t)lzlen >> (away - ps);
-            push_z = (int32_t)lxlen >> (away - ps);
-        }
-        if (new_cross > 0) {
-            slide_x -= push_x;
-            slide_z += push_z;
-        } else {
-            slide_x += push_x;
-            slide_z -= push_z;
-        }
-    }
-
-    /* Bounds check against finite wall segment. */
     {
-        int32_t rel_x = (int32_t)((slide_x - lx) >> ps);
-        int32_t rel_z = (int32_t)((slide_z - lz) >> ps);
-        int16_t ax = lxlen >= 0 ? lxlen : -lxlen;
-        int16_t az = lzlen >= 0 ? lzlen : -lzlen;
-        int32_t wall_len_sq2 = (int32_t)lxlen * lxlen + (int32_t)lzlen * lzlen;
-        int64_t t_num;
-        if (wall_len_sq2 <= 0) return false;
+        double px = (double)ctx->newx;
+        double pz = (double)ctx->newz;
 
-        int64_t old_cross = (int64_t)(ctx->oldx - lx) * lzlen - (int64_t)(ctx->oldz - lz) * lxlen;
-        int64_t slide_cross = (int64_t)(slide_x - lx) * lzlen - (int64_t)(slide_z - lz) * lxlen;
-        if ((slide_cross ^ old_cross) < 0) return false;
+        double nx = 0.0, nz = 0.0;
+        double dist = point_segment_distance_and_normal(px, pz, ax, az, bx, bz, &nx, &nz);
 
-        int64_t perp = (int64_t)rel_x * (int64_t)lzlen - (int64_t)rel_z * (int64_t)lxlen;
-        if (perp < 0) perp = -perp;
-        if (ax + az > 0 && perp > (int64_t)(16 * (ax + az))) return false;
+        if (dist >= radius_scaled) return false;
 
-        t_num = (int64_t)rel_x * lxlen + (int64_t)rel_z * lzlen;
-        if (t_num >= 0 && t_num <= (int64_t)wall_len_sq2) {
-            ctx->newx = slide_x;
-            ctx->newz = slide_z;
-            return true;
-        }
-
-        if (wall_len_sq2 <= (int64_t)(128 * 128) && !block_transition) {
-            return false;
-        }
-
-        if (t_num < 0) t_num = 0;
-        if (t_num > (int64_t)wall_len_sq2) t_num = (int64_t)wall_len_sq2;
+        /* Push out by penetration depth + small epsilon to avoid re-hitting due to rounding. */
         {
-            int64_t scale = (int64_t)(1 << ps);
-            ctx->newx = lx + (int32_t)((t_num * (int64_t)lxlen * scale) / (int64_t)wall_len_sq2);
-            ctx->newz = lz + (int32_t)((t_num * (int64_t)lzlen * scale) / (int64_t)wall_len_sq2);
+            const double eps = 1.0;
+            double penetration = radius_scaled - dist;
+            px += nx * (penetration + eps);
+            pz += nz * (penetration + eps);
         }
+
+        /* Slide: remove inward component along the collision normal. */
+        {
+            double vx = px - (double)ctx->oldx;
+            double vz = pz - (double)ctx->oldz;
+            double vn = vx * nx + vz * nz;
+
+            if (vn < 0.0) {
+                vx -= vn * nx;
+                vz -= vn * nz;
+                px = (double)ctx->oldx + vx;
+                pz = (double)ctx->oldz + vz;
+            }
+        }
+
+        /* Final safety: ensure outside after slide too. */
+        {
+            const double eps = 1.0;
+            dist = point_segment_distance_and_normal(px, pz, ax, az, bx, bz, &nx, &nz);
+            if (dist < radius_scaled) {
+                double penetration = radius_scaled - dist;
+                px += nx * (penetration + eps);
+                pz += nz * (penetration + eps);
+            }
+        }
+
+        ctx->newx = (int32_t)llround(px);
+        ctx->newz = (int32_t)llround(pz);
         return true;
     }
 }
@@ -346,78 +432,121 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
     int16_t lxlen = (int16_t)read_be16(fline + FLINE_XLEN);
     int16_t lzlen = (int16_t)read_be16(fline + FLINE_ZLEN);
 
-    int64_t new_cross = (int64_t)(ctx->newx - lx) * lzlen -
-        (int64_t)(ctx->newz - lz) * lxlen;
-    int64_t old_cross = (int64_t)(ctx->oldx - lx) * lzlen -
-        (int64_t)(ctx->oldz - lz) * lxlen;
-
     int32_t wx = (int32_t)lxlen << ps;
     int32_t wz = (int32_t)lzlen << ps;
 
     /* Amiga tags touch flags before deciding whether an exit is passable. */
     mark_floorline_touch_if_near(ctx, fline, lx, lz, lxlen, lzlen, ps);
 
-    if ((new_cross ^ old_cross) >= 0) return 0;
-    if (old_cross == 0 || new_cross == 0) return 0;
+    /* ---- Exit line: if passable, skip (transition handled later in find_room). ---- */
+    if (zone_data && level->zone_adds && connect_index >= 0 && connect_index < zone_slots) {
+        int32_t target_zone_off = read_be32(level->zone_adds + (size_t)connect_index * 4);
+        const uint8_t* target_zone = level->data + target_zone_off;
 
-    if (!path_hits_segment(ctx->oldx, ctx->oldz, ctx->newx, ctx->newz, lx, lz, wx, wz)) {
-        return 0;
+        int32_t target_floor = read_be32(target_zone + ZONE_FLOOR_HEIGHT);
+        int32_t target_roof = read_be32(target_zone + ZONE_ROOF_HEIGHT);
+        int32_t our_floor = read_be32(zone_data +
+            (ctx->stood_in_top ? ZONE_UPPER_FLOOR : ZONE_FLOOR_HEIGHT));
+
+        /* Amiga-style signed step check:
+         *   Step UP   (target floor < our floor -> more negative Y = higher in world):
+         *             block when our_floor - target_floor > step_up_val.
+         *   Step DOWN (target floor > our floor -> lower in world):
+         *             always passable (player simply falls); only block if
+         *             floor_diff > step_down_val (which is huge, so effectively never).
+         */
+        int32_t floor_diff_signed = target_floor - our_floor;
+        bool height_ok;
+        if (floor_diff_signed <= 0) {
+            /* Step up: target is higher (smaller Y). Block if too tall. */
+            height_ok = ((-floor_diff_signed) <= ctx->step_up_val);
+        } else {
+            /* Step down: target is lower. Amiga always allows this. */
+            height_ok = (floor_diff_signed <= ctx->step_down_val);
+        }
+
+        if (height_ok) {
+            int32_t clearance = target_floor - target_roof;
+            uint8_t* target_room = (uint8_t*)(level->data + target_zone_off);
+            if (clearance >= ctx->thing_height || ctx->thing_height == 0) {
+                if (!(ctx->no_transition_back && target_room == ctx->no_transition_back)) {
+                    /* Passable exit: do not treat as wall. */
+                    return 0;
+                }
+                /* If blocked by no_transition_back, treat as wall below. */
+            }
+        }
+        /* Exit blocked by step height or clearance: treat as wall. */
     }
 
+    /* ---- Wall collision with extents ----
+     * Treat mover as a circle of radius (ctx->extlen / 2) so small gaps are passable.
+     * If extlen == 0, fall back to old point-crossing behavior.
+     */
     {
-        bool slide_no_revert = false;
+        int32_t ext = ctx->extlen;
+        if (ext < 0) ext = 0;
+        ext = ext / 2;  /* use half extlen for wall radius */
 
-        if (zone_data && level->zone_adds && connect_index >= 0 && connect_index < zone_slots) {
-            int32_t target_zone_off = read_be32(level->zone_adds + (size_t)connect_index * 4);
-            const uint8_t* target_zone = level->data + target_zone_off;
+        if (ext == 0) {
+            /* Point-crossing fallback (your previous behavior). */
+            int64_t new_cross = (int64_t)(ctx->newx - lx) * lzlen -
+                (int64_t)(ctx->newz - lz) * lxlen;
+            int64_t old_cross = (int64_t)(ctx->oldx - lx) * lzlen -
+                (int64_t)(ctx->oldz - lz) * lxlen;
 
-            int32_t target_floor = read_be32(target_zone + ZONE_FLOOR_HEIGHT);
-            int32_t target_roof = read_be32(target_zone + ZONE_ROOF_HEIGHT);
-            int32_t our_floor = read_be32(zone_data +
-                (ctx->stood_in_top ? ZONE_UPPER_FLOOR : ZONE_FLOOR_HEIGHT));
+            if ((new_cross ^ old_cross) >= 0) return 0;
+            if (old_cross == 0 || new_cross == 0) return 0;
 
-            /* Amiga-style signed step check:
-             *   Step UP   (target floor < our floor -> more negative Y = higher in world):
-             *             block when our_floor - target_floor > step_up_val.
-             *   Step DOWN (target floor > our floor -> lower in world):
-             *             always passable (player simply falls); only block if
-             *             floor_diff > step_down_val (which is huge, so effectively never).
-             */
-            int32_t floor_diff_signed = target_floor - our_floor;
-            bool height_ok;
-            if (floor_diff_signed <= 0) {
-                height_ok = ((-floor_diff_signed) <= ctx->step_up_val);
-            } else {
-                height_ok = (floor_diff_signed <= ctx->step_down_val);
+            if (!path_hits_segment(ctx->oldx, ctx->oldz, ctx->newx, ctx->newz, lx, lz, wx, wz)) {
+                return 0;
             }
 
-            if (height_ok) {
-                int32_t clearance = target_floor - target_roof;
-                uint8_t* target_room = (uint8_t*)(level->data + target_zone_off);
-                if (clearance >= ctx->thing_height || ctx->thing_height == 0) {
-                    if (ctx->no_transition_back && target_room == ctx->no_transition_back) {
-                        slide_no_revert = true;
-                    } else {
-                        return 0;
-                    }
-                }
-            }
-        }
-
-        if (do_wall_slide(ctx, fline, lxlen, lzlen, *xdiff, *zdiff,
-            new_cross, ps, slide_no_revert)) {
             mark_floorline_touch_flag(ctx, fline);
+            ctx->newx = ctx->oldx;
+            ctx->newz = ctx->oldz;
             ctx->hitwall = 1;
-            *xdiff = ctx->newx - ctx->oldx;
-            *zdiff = ctx->newz - ctx->oldz;
-            return 2;
+            return 3;
         }
 
-        mark_floorline_touch_flag(ctx, fline);
-        ctx->newx = ctx->oldx;
-        ctx->newz = ctx->oldz;
-        ctx->hitwall = 1;
-        return 3;
+        {
+            double radius = (double)((int64_t)ext << ps);
+
+            double ax = (double)lx;
+            double az = (double)lz;
+            double bx = (double)(lx + wx);
+            double bz = (double)(lz + wz);
+
+            double p0x = (double)ctx->oldx;
+            double p0z = (double)ctx->oldz;
+            double p1x = (double)ctx->newx;
+            double p1z = (double)ctx->newz;
+
+            /* Quick reject: if movement segment stays farther than radius, no hit. */
+            double d_path = segment_segment_distance(p0x, p0z, p1x, p1z, ax, az, bx, bz);
+            if (d_path >= radius) return 0;
+
+            /* Optional "moving away" reject (helps avoid sticky edges if already close). */
+            {
+                double d_old = point_segment_distance_and_normal(p0x, p0z, ax, az, bx, bz, NULL, NULL);
+                double d_new = point_segment_distance_and_normal(p1x, p1z, ax, az, bx, bz, NULL, NULL);
+                if (d_old < radius && d_new > d_old) return 0;
+            }
+
+            if (do_wall_slide_radius(ctx, ax, az, bx, bz, radius)) {
+                mark_floorline_touch_flag(ctx, fline);
+                ctx->hitwall = 1;
+                *xdiff = ctx->newx - ctx->oldx;
+                *zdiff = ctx->newz - ctx->oldz;
+                return 2;
+            }
+
+            mark_floorline_touch_flag(ctx, fline);
+            ctx->newx = ctx->oldx;
+            ctx->newz = ctx->oldz;
+            ctx->hitwall = 1;
+            return 3;
+        }
     }
 }
 
