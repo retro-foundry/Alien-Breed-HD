@@ -131,6 +131,7 @@ void display_on_resize(int w, int h)
     if (w < 1 || h < 1) return;
     printf("[DISPLAY] resize: %dx%d\n", w, h);
     renderer_resize(w, h);
+    renderer_set_present_size(w, h);
     if (g_texture) SDL_DestroyTexture(g_texture);
     g_texture = SDL_CreateTexture(g_sdl_ren,
         SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,

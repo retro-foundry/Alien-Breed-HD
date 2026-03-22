@@ -126,6 +126,10 @@ typedef struct {
     /* Current framebuffer size (matches window when resizable) */
     int width;
     int height;
+    /* Actual display/output size requested by SDL. Can differ from framebuffer
+     * when renderer clamps to an internal max dimension. */
+    int present_width;
+    int present_height;
 
     /* Vertical projection scale: numerator / (PROJ_Y_DENOM * width/RENDER_DEFAULT_WIDTH) * height/RENDER_DEFAULT_HEIGHT, recomputed each frame. */
     int32_t proj_y_scale;
@@ -296,5 +300,6 @@ const uint32_t *renderer_get_rgb_buffer(void);
 int renderer_get_width(void);
 int renderer_get_height(void);
 int renderer_get_stride(void);
+void renderer_set_present_size(int w, int h);
 
 #endif /* RENDERER_H */

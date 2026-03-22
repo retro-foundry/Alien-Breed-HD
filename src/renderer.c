@@ -266,6 +266,8 @@ static void allocate_buffers(int w, int h)
 {
     g_renderer.width = w;
     g_renderer.height = h;
+    g_renderer.present_width = w;
+    g_renderer.present_height = h;
 
     size_t buf_size = (size_t)w * h;
     g_renderer.buffer = (uint8_t*)calloc(1, buf_size);
@@ -412,6 +414,13 @@ const uint32_t *renderer_get_rgb_buffer(void)
 int renderer_get_width(void)  { return g_renderer.width; }
 int renderer_get_height(void) { return g_renderer.height; }
 int renderer_get_stride(void) { return g_renderer.width; }
+void renderer_set_present_size(int w, int h)
+{
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    g_renderer.present_width = w;
+    g_renderer.present_height = h;
+}
 
 /* -----------------------------------------------------------------------
  * Pixel writing helpers
@@ -1527,18 +1536,42 @@ void renderer_draw_gun(GameState *state)
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
     if (plr->gun_selected < 0) return;
 
-    /* Amiga: 96 columns, 58 lines. Single scale factor so gun aspect ratio does not change with renderer aspect. */
+    int gun_type = plr->gun_selected;
+    if (gun_type < 0 || gun_type >= 8) gun_type = 0;
+
+    /* Amiga source gun frame: 96x58. Keep one uniform scale so overlay aspect is stable. */
     const int gun_w_src = GUN_COLS;
     const int gun_h_src = GUN_LINES;
-    /* Scale by height so gun size tracks renderer but aspect stays fixed (width/height scale together). */
-    int gun_scale = (int)((int64_t)RENDER_SCALE * (int64_t)rh / RENDER_DEFAULT_HEIGHT);
-    if (gun_scale < 1) gun_scale = 1;
-    int gun_w_draw = gun_w_src * gun_scale;
-    int gun_h_draw = gun_h_src * gun_scale;
+
+    /* Use fractional scale (not integer steps) so size changes smoothly with resize.
+     * Base follows height like the original intent, then fit uniformly to screen bounds. */
+    int64_t scale_fp = (((int64_t)RENDER_SCALE * (int64_t)rh) << 16) / RENDER_DEFAULT_HEIGHT;
+    int64_t fit_fp_w = ((int64_t)rw << 16) / gun_w_src;
+    int64_t fit_fp_h = ((int64_t)rh << 16) / gun_h_src;
+    if (scale_fp > fit_fp_w) scale_fp = fit_fp_w;
+    if (scale_fp > fit_fp_h) scale_fp = fit_fp_h;
+    if (scale_fp < 1) scale_fp = 1;
+
+    int gun_w_draw = (int)(((int64_t)gun_w_src * scale_fp + 0x7FFF) >> 16);
+    int gun_h_draw = (int)(((int64_t)gun_h_src * scale_fp + 0x7FFF) >> 16);
+
+    /* If display output is wider/taller than the internal render target (e.g.
+     * width clamped at 2048), SDL stretches the final image. Pre-compensate
+     * gun width so only the weapon overlay preserves aspect after that stretch. */
+    int present_w = (g_renderer.present_width > 0) ? g_renderer.present_width : rw;
+    int present_h = (g_renderer.present_height > 0) ? g_renderer.present_height : rh;
+    int64_t post_aspect_fp = ((int64_t)present_h * (int64_t)rw << 16)
+                           / ((int64_t)present_w * (int64_t)rh);
+    if (post_aspect_fp > 0) {
+        gun_w_draw = (int)(((int64_t)gun_w_draw * post_aspect_fp + 0x7FFF) >> 16);
+    }
+
     if (gun_w_draw < 1) gun_w_draw = 1;
     if (gun_h_draw < 1) gun_h_draw = 1;
     if (gun_w_draw > rw) gun_w_draw = rw;
     if (gun_h_draw > rh) gun_h_draw = rh;
+
+    /* Keep the weapon at the bottom of the view. */
     int gy = rh - gun_h_draw;
     if (gy < 0) gy = 0;
     int gx = (rw - gun_w_draw) / 2;
@@ -1550,8 +1583,6 @@ void renderer_draw_gun(GameState *state)
     size_t gun_wad_size = g_renderer.gun_wad_size;
 
     if (gun_wad && gun_ptr && gun_pal && gun_wad_size > 0) {
-        int gun_type = plr->gun_selected;
-        if (gun_type >= 8) gun_type = 0;
         const GunAnim *anim = &gun_anims[gun_type];
         int anim_frame = plr->gun_frame;
         if (anim_frame > anim->num_frames) anim_frame = 0;
