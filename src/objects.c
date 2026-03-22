@@ -254,6 +254,30 @@ static inline bool enemy_is_human_marine(int8_t obj_type)
         || obj_type == OBJ_NBR_MARINE;
 }
 
+/* Queue player damage through damagetaken (raw[19]) so USEPLR1/2 apply
+ * hit flash + pain audio exactly like the Amiga path. */
+static void player_add_damage(GameState *state, int player_num, int damage)
+{
+    if (damage <= 0) return;
+    if (player_num != 1 && player_num != 2) return;
+
+    GameObject *plr_obj = (player_num == 1)
+        ? (GameObject *)state->level.plr1_obj
+        : (GameObject *)state->level.plr2_obj;
+
+    if (!plr_obj) {
+        PlayerState *plr = (player_num == 1) ? &state->plr1 : &state->plr2;
+        plr->energy -= (int16_t)damage;
+        return;
+    }
+
+    int cur = NASTY_DAMAGE(*plr_obj);
+    if (cur < 0) cur = 0;
+    int next = cur + damage;
+    if (next > 127) next = 127;
+    NASTY_SET_DAMAGE(plr_obj, next);
+}
+
 static void enemy_apply_death_outcome(GameObject *obj, const EnemyParams *params, bool instant_kill)
 {
     if (!instant_kill && params->death_frames[0] >= 0) {
@@ -1160,8 +1184,7 @@ void object_handle_alien(GameObject *obj, GameState *state)
         if (dist <= params->melee_range) {
             fourth_timer -= state->temp_frames;
             if (fourth_timer <= 0) {
-                PlayerState *plr = (target_player == 1) ? &state->plr1 : &state->plr2;
-                plr->energy -= params->melee_damage;
+                player_add_damage(state, target_player, params->melee_damage);
                 fourth_timer = 20;
             }
         }
@@ -1400,10 +1423,10 @@ static bool enemy_is_facing_player_cone(GameObject *obj, GameState *state,
 static void marine_hitscan_burst(GameObject *obj, GameState *state,
                                  int player_num, int pellets, int damage)
 {
-    PlayerState *plr = (player_num == 1) ? &state->plr1 : &state->plr2;
     int16_t obj_x = 0, obj_z = 0;
     get_object_pos(&state->level, (int)OBJ_CID(obj), &obj_x, &obj_z);
 
+    PlayerState *plr = (player_num == 1) ? &state->plr1 : &state->plr2;
     int32_t dx = (int32_t)plr->p_xoff - (int32_t)obj_x;
     int32_t dz = (int32_t)plr->p_zoff - (int32_t)obj_z;
     int32_t dist_sq = dx * dx + dz * dz;
@@ -1412,7 +1435,7 @@ static void marine_hitscan_burst(GameObject *obj, GameState *state,
     for (int i = 0; i < pellets; i++) {
         int32_t r = (int32_t)(rand() & 0x7FFF) << 2;
         if (r > hit_threshold) {
-            plr->energy -= (int16_t)damage;
+            player_add_damage(state, player_num, damage);
         }
     }
 }
@@ -1463,14 +1486,15 @@ void object_handle_marine(GameObject *obj, GameState *state)
             (type != OBJ_NBR_MARINE && fourth_timer < 20)) {
             if (type == OBJ_NBR_MARINE) {
                 OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, 50 + (int16_t)(rand() & 0xFF));
-                audio_play_sample(3, 100);
+                if (params->attack_sound >= 0) audio_play_sample(params->attack_sound, 100);
                 marine_hitscan_burst(obj, state, target_player, 1, 4);
             } else if (type == OBJ_NBR_TOUGH_MARINE) {
                 OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, 50 + (int16_t)(rand() & 0x1F));
+                if (params->attack_sound >= 0) audio_play_sample(params->attack_sound, 100);
                 enemy_fire_at_player(obj, state, target_player, 6, 7, 32, 4);
             } else {
                 OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, 200 + (int16_t)(rand() & 0xFF));
-                audio_play_sample(21, 100);
+                if (params->attack_sound >= 0) audio_play_sample(params->attack_sound, 100);
                 marine_hitscan_burst(obj, state, target_player, 5, 2);
             }
         }
@@ -1514,6 +1538,7 @@ void object_handle_big_nasty(GameObject *obj, GameState *state)
         if (dist <= 80) {
             PlayerState *plr = (target_player == 1) ? &state->plr1 : &state->plr2;
             plr->energy -= (int16_t)state->temp_frames;
+            audio_play_sample(2, amiga_noisevol_to_pc(50)); /* BigUglyAlien.s GotThere */
         }
 
         /* BigUglyAlien.s: baddiegun (#9) at Noisevol 200; SecTimer = 50+(rand&7) after shot */
@@ -3060,7 +3085,7 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         int32_t dist = calc_dist_euclidean(dx, dz);
         if (dist < radius) {
             int damage = (power * (radius - (int)dist)) / radius;
-            state->plr1.energy -= (int16_t)damage;
+            player_add_damage(state, 1, damage);
         }
     }
     if (state->mode != MODE_SINGLE) {
@@ -3069,7 +3094,7 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         int32_t dist = calc_dist_euclidean(dx, dz);
         if (dist < radius) {
             int damage = (power * (radius - (int)dist)) / radius;
-            state->plr2.energy -= (int16_t)damage;
+            player_add_damage(state, 2, damage);
         }
     }
 
@@ -3188,7 +3213,7 @@ void use_player1(GameState *state)
         state->plr1.energy -= damage;
         NASTY_DAMAGE(*plr_obj) = 0;
         state->hitcol = 0xF00; /* Red flash */
-        audio_play_sample(19, 200); /* Pain sound */
+        audio_play_sample(19, amiga_noisevol_to_pc(100)); /* AB3DI.s: pant @ Noisevol 100 */
     }
 
     /* Update numlives from energy */
@@ -3250,7 +3275,7 @@ void use_player2(GameState *state)
         state->plr2.energy -= damage;
         NASTY_DAMAGE(*plr_obj) = 0;
         state->hitcol2 = 0xF00;
-        audio_play_sample(19, 200);
+        audio_play_sample(19, amiga_noisevol_to_pc(100));
     }
 
     NASTY_LIVES(*plr_obj) = (int8_t)(state->plr2.energy + 1);
