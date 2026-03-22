@@ -1831,7 +1831,7 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         int idx;
         int32_t z;
     } ObjEntry;
-    ObjEntry objs[80 + 20 + MAX_EXPLOSIONS];
+    ObjEntry objs[80 + 40 + MAX_EXPLOSIONS];
     const int max_draw_entries = (int)(sizeof(objs) / sizeof(objs[0]));
     int obj_count = 0;
 
@@ -1872,9 +1872,10 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         obj_count++;
     }
 
-    /* Add nasty_shot_data bullets/gibs (same zone, depth-sorted with level objects). */
-    if (level->nasty_shot_data && obj_count < max_draw_entries) {
-        const uint8_t *shots = level->nasty_shot_data;
+    /* Add bullets/gibs from both shot pools (same zone, depth-sorted with level objects). */
+    for (int pool = 0; pool < 2 && obj_count < max_draw_entries; pool++) {
+        const uint8_t *shots = (pool == 0) ? level->nasty_shot_data : level->player_shot_data;
+        if (!shots) continue;
         for (int slot = 0; slot < 20 && obj_count < max_draw_entries; slot++) {
             const uint8_t *obj = shots + slot * OBJECT_SIZE;
             if (rd16(obj + 12) < 0) continue; /* OBJ_ZONE */
@@ -1890,7 +1891,7 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
             ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
             if (orp->z <= 0) continue;
             objs[obj_count].src = DRAW_SRC_SHOT;
-            objs[obj_count].idx = slot;
+            objs[obj_count].idx = slot + (pool * 20);
             objs[obj_count].z = orp->z;
             obj_count++;
         }
@@ -2027,9 +2028,18 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         }
 
         int obj_idx = objs[oi].idx;
-        const uint8_t *obj = (entry_src == DRAW_SRC_OBJECT)
-            ? (level->object_data + obj_idx * OBJECT_SIZE)
-            : (level->nasty_shot_data + obj_idx * OBJECT_SIZE);
+        const uint8_t *obj = NULL;
+        if (entry_src == DRAW_SRC_OBJECT) {
+            obj = level->object_data + obj_idx * OBJECT_SIZE;
+        } else {
+            if (obj_idx < 20) {
+                if (!level->nasty_shot_data) continue;
+                obj = level->nasty_shot_data + obj_idx * OBJECT_SIZE;
+            } else {
+                if (!level->player_shot_data) continue;
+                obj = level->player_shot_data + (obj_idx - 20) * OBJECT_SIZE;
+            }
+        }
         /* ObjDraw3: cmp.b #$ff,6(a0); bne BitMapObj; bsr PolygonObj.
          * When obj[6]==OBJ_3D_SPRITE the object is a 3D polygon mesh drawn via
          * the PolygonObj pipeline (renderer_3dobj.c). */
@@ -2115,12 +2125,10 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         }
         if (vect_num < 0 || vect_num >= MAX_SPRITE_TYPES) continue;
 
-        /* World size from object record (Amiga: move.w #...,6(a0) -> byte 6 = width, byte 7 = height; both signed). */
-        int world_w = (int)(int8_t)obj[6];
-        int world_h = (int)(int8_t)obj[7];
+        /* ObjDraw3 uses move.b for width/height, i.e. unsigned bytes. */
+        int world_w = (int)obj[6];
+        int world_h = (int)obj[7];
         if (world_w <= 0) world_w = 32;
-        /* For display height use positive value (obj[7] can be negative e.g. barrel -60 for placement). */
-        if (world_h <= 0 && world_h >= -128) world_h = -world_h;
         if (world_h <= 0) world_h = 32;
 
         /* Screen size: width from Amiga (byte*128/z)*RENDER_SCALE; height uses proj_y_scale so billboard Y matches floor projection scale. */
@@ -2145,31 +2153,12 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
             down_strip = ft[frame_num].down_strip;
         }
 
-        /* Sprite Y: use the object's own floor height from obj[4] and obj[7].
-         * Formula (from objects.c): obj[4] = (floor_h >> 7) - world_h,
-         *   world_h = obj[7] (signed). => obj_floor = (obj[4] + world_h) << 7.
-         * Barrels: obj[7] is -60 and level data often leaves obj[4] wrong, so use zone floor.
-         * When obj[4] is 0 (uninitialised) use bot_of_room. */
-        int16_t obj_y4 = rd16(obj + 4);
-        int32_t obj_floor;
-        if (obj_number == OBJ_NBR_BARREL) {
-            obj_floor = bot_of_room;
-        } else if (obj_y4 != 0) {
-            int world_h_raw = (int)(int8_t)(obj[7]);
-            obj_floor = ((int32_t)obj_y4 + (int32_t)world_h_raw) << 7;
-        } else {
-            obj_floor = bot_of_room;
-        }
-        int32_t floor_rel = obj_floor - y_off;
-        /* Match floor polygon/span exactly: screen_y = center + (rel >> WORLD_Y_FRAC_BITS) * PROJ_Y_SCALE * RENDER_SCALE / z. */
-        int32_t floor_rel_8 = floor_rel >> WORLD_Y_FRAC_BITS;
+        /* ObjDraw3 projects object Y directly from obj[4] (no floor reconstruction). */
+        int16_t obj_y = rd16(obj + 4);
+        int32_t rel_y = (((int32_t)obj_y) << 7) - y_off;
+        int32_t rel_y_8 = rel_y >> WORLD_Y_FRAC_BITS;
         int center_y = g_renderer.height / 2;
-        int floor_screen_y = (int)((int64_t)floor_rel_8 * (int64_t)g_renderer.proj_y_scale * (int32_t)RENDER_SCALE / (int32_t)orp->z) + center_y;
-        int half_h = sprite_h / 2;
-
-        /* Place sprite so its bottom row (feet) is at floor_screen_y. Renderer uses center: sy = screen_y - height/2,
-         * so we need center = floor_screen_y - half_h + 1 so that sy + height - 1 == floor_screen_y. */
-        int scr_y = floor_screen_y - half_h + 1;
+        int scr_y = (int)((int64_t)rel_y_8 * (int64_t)g_renderer.proj_y_scale * (int32_t)RENDER_SCALE / (int32_t)orp->z) + center_y;
 
         /* Use dedicated .pal if loaded; no fallback to WAD header because
          * sprite .pal format (15 levels x 32 x 2 bytes = 960) differs from

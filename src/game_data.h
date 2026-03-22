@@ -121,7 +121,7 @@ extern const BulletTypeData bullet_types[8];
 /* -----------------------------------------------------------------------
  * Bullet animation frame
  * Translated from Anims.s BulletTypes anim sub-tables (Bul1Anim etc.)
- * Each entry is 8 bytes matching the Amiga layout:
+ * Each entry mirrors the Amiga layout:
  *   byte 0: display width  (written to obj[6])
  *   byte 1: display height (written to obj[7])
  *   word +2: vect_num      (written to obj[8..9])
@@ -130,8 +130,8 @@ extern const BulletTypeData bullet_types[8];
  * width == -1 is the end-of-sequence sentinel (wraps to frame 0).
  * ----------------------------------------------------------------------- */
 typedef struct {
-    int8_t   width;
-    int8_t   height;
+    int16_t  width;   /* 0..255 in data, -1 sentinel */
+    int16_t  height;  /* 0..255 in data */
     int16_t  vect_num;
     int16_t  frame_num;
     int16_t  y_offset;
@@ -140,8 +140,11 @@ typedef struct {
 /* SHOT_SIZE 0-7: player gun bullets. 50-53: gibs (Explode1-4Anim). */
 #define MAX_BULLET_ANIM_IDX  54
 extern const BulletAnimFrame *const bullet_anim_tables[MAX_BULLET_ANIM_IDX];
+extern const BulletAnimFrame *const bullet_pop_tables[MAX_BULLET_ANIM_IDX];
 extern const uint8_t bullet_fly_src_cols[MAX_BULLET_ANIM_IDX];
 extern const uint8_t bullet_fly_src_rows[MAX_BULLET_ANIM_IDX];
+extern const uint8_t bullet_pop_src_cols[MAX_BULLET_ANIM_IDX];
+extern const uint8_t bullet_pop_src_rows[MAX_BULLET_ANIM_IDX];
 
 /* -----------------------------------------------------------------------
  * Enemy damage/death SFX (which Amiga routine to mirror in enemy_check_damage).

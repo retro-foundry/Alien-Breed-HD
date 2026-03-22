@@ -244,6 +244,19 @@ static void get_object_pos(const LevelState *level, int index,
     }
 }
 
+static GameObject *find_free_shot_slot(uint8_t *shots, int16_t *saved_cid)
+{
+    if (!shots) return NULL;
+    for (int i = 0; i < 20; i++) {
+        GameObject *candidate = (GameObject *)(shots + i * OBJECT_SIZE);
+        if (OBJ_ZONE(candidate) < 0) {
+            if (saved_cid) *saved_cid = OBJ_CID(candidate);
+            return candidate;
+        }
+    }
+    return NULL;
+}
+
 /* Amiga Noisevol (sfx importance / channel mix) → PC mixer 0–255 (see SoundPlayer.s). */
 static inline int amiga_noisevol_to_pc(int noisevol)
 {
@@ -895,18 +908,6 @@ static int32_t enemy_move_y_for_context(const GameObject *obj,
 void objects_update(GameState *state)
 {
     const int zone_slots = level_zone_slot_count(&state->level);
-    /* Process delayed blasts (barrel splash etc.) - frame-rate independent */
-    for (int i = 0; i < state->num_pending_blasts; ) {
-        if (state->current_ticks_ms >= state->pending_blasts[i].trigger_time_ms) {
-            compute_blast(state,
-                state->pending_blasts[i].x, state->pending_blasts[i].z, state->pending_blasts[i].y,
-                state->pending_blasts[i].radius, state->pending_blasts[i].power);
-            state->num_pending_blasts--;
-            state->pending_blasts[i] = state->pending_blasts[state->num_pending_blasts];
-            continue;
-        }
-        i++;
-    }
 
     /* 1. Update player zones (from room pointer if available) */
     /* Zone is already maintained by player_full_control -> MoveObject */
@@ -1136,6 +1137,15 @@ void objects_update(GameState *state)
     /* Process nasty_shot_data bullets and gibs (not in object_data list) */
     if (state->level.nasty_shot_data) {
         uint8_t *shots = state->level.nasty_shot_data;
+        for (int j = 0; j < 20; j++) {
+            GameObject *bullet = (GameObject *)(shots + j * OBJECT_SIZE);
+            if (OBJ_ZONE(bullet) < 0) continue;
+            if (bullet->obj.number != OBJ_NBR_BULLET) continue;
+            object_handle_bullet(bullet, state);
+        }
+    }
+    if (state->level.player_shot_data) {
+        uint8_t *shots = state->level.player_shot_data;
         for (int j = 0; j < 20; j++) {
             GameObject *bullet = (GameObject *)(shots + j * OBJECT_SIZE);
             if (OBJ_ZONE(bullet) < 0) continue;
@@ -1956,54 +1966,62 @@ void object_handle_gas_pipe(GameObject *obj, GameState *state)
  * ----------------------------------------------------------------------- */
 void object_handle_barrel(GameObject *obj, GameState *state)
 {
+    obj->obj.worry = 0;
+
+    /* Anims.s ItsABarrel: exploding state is vect=8, frame increments 0..7 then remove. */
+    if (obj_w(obj->raw + 8) == 8) {
+        obj->raw[6] = (uint8_t)((uint8_t)obj->raw[6] + 4u);
+        obj->raw[7] = (uint8_t)((uint8_t)obj->raw[7] + 4u);
+
+        int16_t frame = (int16_t)(obj_w(obj->raw + 10) + 1);
+        if (frame == 8) {
+            OBJ_SET_ZONE(obj, -1);
+            return;
+        }
+        obj_sw(obj->raw + 10, frame);
+        return;
+    }
+
+    /* Keep barrel anchored to floor each tick (y = floor>>7 - 60). */
+    {
+        int zone_slots = level_zone_slot_count(&state->level);
+        int src_zone = level_connect_to_zone_index(&state->level, OBJ_ZONE(obj));
+        if (src_zone < 0 && OBJ_ZONE(obj) >= 0 && OBJ_ZONE(obj) < zone_slots)
+            src_zone = OBJ_ZONE(obj);
+        if (src_zone >= 0 && src_zone < zone_slots && state->level.zone_adds && state->level.data) {
+            int32_t zo = (int32_t)be32(state->level.zone_adds + (uint32_t)src_zone * 4u);
+            const uint8_t *zd = state->level.data + zo;
+            int32_t floor_h = be32(zd + (obj->obj.in_top ? ZONE_OFF_UPPER_FLOOR : ZONE_OFF_FLOOR));
+            obj_sw(obj->raw + 4, (int16_t)((floor_h >> 7) - 60));
+        }
+    }
+
     int8_t damage = NASTY_DAMAGE(*obj);
-    if (damage <= 0) return;
+    if (damage == 0) return;
 
     NASTY_DAMAGE(*obj) = 0;
-    int8_t lives = NASTY_LIVES(*obj);
-    /* If lives uninitialized (0) from level, treat as one-shot: any damage explodes */
-    if (lives <= 0) lives = 1;
+    int16_t lives = NASTY_LIVES(*obj);
     lives -= damage;
-
-    if (lives <= 0) {
-        /* Get position and zone before removing object */
-        int16_t bx, bz;
-        get_object_pos(&state->level, (int)OBJ_CID(obj), &bx, &bz);
-        int16_t zone = OBJ_ZONE(obj);
-        int32_t y_floor = ((int32_t)obj_w(obj->raw + 4) + (int32_t)(int8_t)obj->raw[7]) << 7;
-        if ((int8_t)obj->raw[7] == 0) y_floor = ((int32_t)obj_w(obj->raw + 4) + 32) << 7;
-        y_floor += (88 << 7);   /* lower explosions so they sit on the ground */
-
-        /* Spawn explosion particles: larger, more spread out, animate 25% slower. */
-        {
-            const int num_particles = 10;
-            const int spread = 200;   /* wide spread for barrel */
-            const int8_t barrel_size = 150;   /* 50% larger sprite */
-            const int8_t barrel_anim_rate = 75;  /* 25% slower */
-            for (int p = 0; p < num_particles && state->num_explosions < MAX_EXPLOSIONS; p++) {
-                int16_t px = (int16_t)(bx + (int16_t)((rand() & (2*spread - 1)) - spread));
-                int16_t pz = (int16_t)(bz + (int16_t)((rand() & (2*spread - 1)) - spread));
-                explosion_spawn(state, px, pz, zone, obj->obj.in_top, y_floor, barrel_size, barrel_anim_rate);
-            }
-        }
-
-        OBJ_SET_ZONE(obj, -1);
-
-        /* Area damage after a short delay (frame-rate independent), so blast follows the visual */
-        if (state->num_pending_blasts < MAX_PENDING_BLASTS) {
-            int i = state->num_pending_blasts++;
-            state->pending_blasts[i].x = (int32_t)bx;
-            state->pending_blasts[i].z = (int32_t)bz;
-            state->pending_blasts[i].y = 0;
-            state->pending_blasts[i].radius = 280;
-            state->pending_blasts[i].power = 40;
-            state->pending_blasts[i].trigger_time_ms = state->current_ticks_ms + 100;  /* 100 ms delay */
-        }
-
-        audio_play_sample(15, 300);
-    } else {
-        NASTY_LIVES(*obj) = lives;
+    if (lives > 0) {
+        NASTY_LIVES(*obj) = (int8_t)lives;
+        return;
     }
+
+    NASTY_LIVES(*obj) = 0;
+
+    int16_t bx, bz;
+    get_object_pos(&state->level, (int)OBJ_CID(obj), &bx, &bz);
+
+    /* Barrel blast: immediate ComputeBlast #40, then visual barrel explosion anim. */
+    compute_blast(state, bx, bz, ((int32_t)obj_w(obj->raw + 4)) << 7,
+                  40, 40, OBJ_ZONE(obj), obj->obj.in_top);
+    audio_play_sample(15, 300);
+
+    obj_sw(obj->raw + 8, 8);     /* vect = explosion */
+    obj_sw(obj->raw + 10, 0);    /* frame = 0 */
+    obj->raw[14] = 0x20;         /* src cols = 32 */
+    obj->raw[15] = 0x20;         /* src rows = 32 */
+    obj_sw(obj->raw + 2, -30);   /* objVectBright */
 }
 
 /* -----------------------------------------------------------------------
@@ -2155,10 +2173,44 @@ void object_handle_bullet(GameObject *obj, GameState *state)
     int zone_slots = level_zone_slot_count(&state->level);
     bool    timed_out = false;
 
-    /* If already popping (impact animation), skip movement */
+    /* Popping path (Amiga ItsABullet shotstatus!=0): advance pop sequence only. */
     if (shot_status != 0) {
-        /* Pop animation is rendering-only, just decrement and remove */
-        OBJ_SET_ZONE(obj, -1);
+        if (shot_size < 0 || shot_size >= MAX_BULLET_ANIM_IDX ||
+            !bullet_pop_tables[shot_size]) {
+            OBJ_SET_ZONE(obj, -1);
+            SHOT_STATUS(*obj) = 0;
+            SHOT_ANIM(*obj) = 0;
+            return;
+        }
+
+        uint8_t anim_idx = SHOT_ANIM(*obj);
+        const BulletAnimFrame *f = &bullet_pop_tables[shot_size][anim_idx];
+        if (f->width < 0) {
+            OBJ_SET_ZONE(obj, -1);
+            SHOT_STATUS(*obj) = 0;
+            SHOT_ANIM(*obj) = 0;
+            return;
+        }
+
+        SHOT_ANIM(*obj) = (uint8_t)(anim_idx + 1);
+        obj->raw[6] = (uint8_t)f->width;
+        obj->raw[7] = (uint8_t)f->height;
+        obj_sw(obj->raw + 8,  f->vect_num);
+        obj_sw(obj->raw + 10, f->frame_num);
+
+        if (shot_size >= 50) {
+            obj->raw[14] = 8;
+            obj->raw[15] = 8;
+        } else {
+            obj->raw[14] = bullet_pop_src_cols[shot_size];
+            obj->raw[15] = bullet_pop_src_rows[shot_size];
+        }
+
+        {
+            int32_t acc = SHOT_ACCYPOS(*obj) + ((int32_t)f->y_offset << 7);
+            SHOT_SET_ACCYPOS(*obj, acc);
+            obj_sw(obj->raw + 4, (int16_t)(acc >> 7));
+        }
         return;
     }
 
@@ -2179,13 +2231,13 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         uint8_t anim_idx = SHOT_ANIM(*obj);
         const BulletAnimFrame *f = &bullet_anim_tables[shot_size][anim_idx];
         /* Wrap at end-of-sequence sentinel (width == -1) */
-        if (f->width == (int8_t)-1) {
+        if (f->width < 0) {
             anim_idx = 0;
             f = &bullet_anim_tables[shot_size][0];
         }
         /* Write size to obj[6:7], vect to obj[8:9], frame to obj[10:11] */
-        obj->obj.width_or_3d  = f->width;
-        obj->obj.world_height = f->height;
+        obj->raw[6] = (uint8_t)f->width;
+        obj->raw[7] = (uint8_t)f->height;
         obj_sw(obj->raw + 8,  f->vect_num);
         obj_sw(obj->raw + 10, f->frame_num);
         /* Update src_cols/rows (obj[14:15]).
@@ -2340,7 +2392,8 @@ void object_handle_bullet(GameObject *obj, GameState *state)
 
     /* Impact handling */
     if (timed_out) {
-        SHOT_STATUS(*obj) = 1; /* Set to popping */
+        SHOT_STATUS(*obj) = 1;
+        SHOT_ANIM(*obj) = 0;
 
         /* Hit sound */
         if (shot_size >= 0 && shot_size < 8 &&
@@ -2353,17 +2406,22 @@ void object_handle_bullet(GameObject *obj, GameState *state)
             audio_play_sample(13, 64);  /* splotch */
         }
 
-        /* Explosive force + explosion animation */
+        /* Explosive force splash + blast particles */
         if (shot_size >= 0 && shot_size < 8 &&
             bullet_types[shot_size].explosive_force > 0) {
-            explosion_spawn(state, (int16_t)ctx.newx, (int16_t)ctx.newz,
-                            OBJ_ZONE(obj), obj->obj.in_top, accypos, 100, 100);
             compute_blast(state, ctx.newx, ctx.newz, accypos,
                           bullet_types[shot_size].explosive_force,
-                          SHOT_POWER(*obj));
+                          SHOT_POWER(*obj),
+                          OBJ_ZONE(obj), obj->obj.in_top);
         }
 
-        OBJ_SET_ZONE(obj, -1); /* Remove (pop animation is rendering only) */
+        /* Pop in place at impact position. */
+        if (state->level.object_points) {
+            uint8_t *pts = state->level.object_points + idx * 8;
+            obj_sw(pts, (int16_t)ctx.newx);
+            obj_sw(pts + 4, (int16_t)ctx.newz);
+        }
+        obj_sw(obj->raw + 4, (int16_t)(accypos >> 7));
         return;
     }
 
@@ -2374,12 +2432,8 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         obj_sw(pts + 4, (int16_t)ctx.newz);
     }
 
-    /* Update render Y (obj[4]) from accypos so bullets/gibs draw at correct height */
-    {
-        int world_h = (int)(int8_t)obj->raw[7];
-        if (world_h <= 0) world_h = 32;
-        obj_sw(obj->raw + 4, (int16_t)((accypos >> 7) - world_h));
-    }
+    /* Amiga ItsABullet: move.w (accypos>>7),4(a0). */
+    obj_sw(obj->raw + 4, (int16_t)(accypos >> 7));
 
     /* Update zone from room (room pointer is authoritative). */
     if (ctx.objroom && state->level.data) {
@@ -2478,11 +2532,14 @@ void object_handle_bullet(GameObject *obj, GameState *state)
 
         /* HIT! Apply damage */
         NASTY_SET_DAMAGE(target, (int8_t)(NASTY_DAMAGE(*target) + SHOT_POWER(*obj)));
+        NASTY_SET_IMPACTX(target, SHOT_XVEL(*obj));
+        NASTY_SET_IMPACTZ(target, SHOT_ZVEL(*obj));
 
         /* Set bullet to popping */
         SHOT_STATUS(*obj) = 1;
+        SHOT_ANIM(*obj) = 0;
 
-        /* Hit sound + explosion */
+        /* Hit sound + explosive splash */
         if (shot_size >= 0 && shot_size < 8 &&
             bullet_types[shot_size].hit_noise >= 0) {
             audio_play_sample(bullet_types[shot_size].hit_noise,
@@ -2490,14 +2547,11 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         }
         if (shot_size >= 0 && shot_size < 8 &&
             bullet_types[shot_size].explosive_force > 0) {
-            explosion_spawn(state, (int16_t)ctx.newx, (int16_t)ctx.newz,
-                            OBJ_ZONE(obj), obj->obj.in_top, accypos, 100, 100);
             compute_blast(state, ctx.newx, ctx.newz, accypos,
                           bullet_types[shot_size].explosive_force,
-                          SHOT_POWER(*obj));
+                          SHOT_POWER(*obj),
+                          OBJ_ZONE(obj), obj->obj.in_top);
         }
-
-        OBJ_SET_ZONE(obj, -1);
         return;
     }
 }
@@ -3211,15 +3265,138 @@ void enemy_fire_at_player(GameObject *obj, GameState *state,
     audio_play_sample(3, 100);
 }
 
+static int16_t blast_rand_xz_delta(int16_t spread)
+{
+    /* Anims.s ComputeBlast:
+     *   jsr GetRand
+     *   ext.w d0        ; byte -> word
+     *   muls d5,d0
+     *   asr.w #1,d0
+     * So X/Z spread uses signed 8-bit randomness. */
+    int16_t r = (int16_t)(int8_t)(rand() & 0xFF);
+    int32_t prod = (int32_t)r * (int32_t)spread;
+    int16_t d = (int16_t)prod;               /* asr.w operates on low word */
+    d = (int16_t)(d >> 1);
+    if (d == 0) d = 2;
+    return d;
+}
+
+static void spawn_blast_particles(GameState *state, int32_t x, int32_t z, int32_t y,
+                                  int16_t zone, int8_t in_top)
+{
+    if (!state) return;
+
+    uint8_t *shot_pool = state->level.player_shot_data;
+    if (!shot_pool) shot_pool = state->level.nasty_shot_data;
+    if (!shot_pool) return;
+
+    int zone_slots = level_zone_slot_count(&state->level);
+    int src_zone = level_connect_to_zone_index(&state->level, zone);
+    if (src_zone < 0 && zone >= 0 && zone < zone_slots) src_zone = zone;
+
+    uint8_t *src_room = NULL;
+    if (src_zone >= 0 && src_zone < zone_slots &&
+        state->level.zone_adds && state->level.data) {
+        int32_t zo = (int32_t)be32(state->level.zone_adds + (uint32_t)src_zone * 4u);
+        src_room = state->level.data + zo;
+    }
+
+    for (int ring = 0; ring < 4; ring++) {
+        int16_t spread = (int16_t)(2 + ring);          /* Amiga d5: 2..5 */
+        int8_t start_anim = (int8_t)(5 - spread);      /* Amiga: shotanim=5-d5 */
+
+        for (int n = 0; n < 3; n++) {
+            int16_t saved_cid = -1;
+            GameObject *part = find_free_shot_slot(shot_pool, &saved_cid);
+            if (!part) return;
+
+            part->obj.number = OBJ_NBR_BULLET;
+
+            MoveContext ctx;
+            move_context_init(&ctx);
+            ctx.oldx = x;
+            ctx.oldz = z;
+            ctx.newx = x + blast_rand_xz_delta(spread);
+            ctx.newz = z + blast_rand_xz_delta(spread);
+            {
+                int16_t ry = (int16_t)(rand() & 0xFFFF);
+                ctx.newy = y + (((int32_t)ry * (int32_t)spread) >> 3); /* asr.l #3 */
+            }
+            ctx.objroom = src_room;
+            ctx.extlen = 80;
+            ctx.awayfromwall = 1;
+            ctx.exitfirst = 0;
+            ctx.wallbounce = 0;
+            ctx.stood_in_top = in_top;
+            ctx.thing_height = 10 * 128;
+            ctx.step_up_val = 0;
+            ctx.step_down_val = 0x1000000;
+            ctx.wall_flags = 0;
+
+            if (ctx.objroom && (ctx.newx != ctx.oldx || ctx.newz != ctx.oldz))
+                move_object(&ctx, &state->level);
+
+            int16_t new_zone = zone;
+            if (ctx.objroom && state->level.data) {
+                int zi = level_zone_index_from_room_ptr(&state->level, ctx.objroom);
+                if (zi < 0) {
+                    int16_t room_zone_word = (int16_t)((ctx.objroom[0] << 8) | ctx.objroom[1]);
+                    zi = level_connect_to_zone_index(&state->level, room_zone_word);
+                }
+                if (zi >= 0 && zi < zone_slots) new_zone = (int16_t)zi;
+            }
+
+            int32_t py = ctx.newy;
+            if (ctx.objroom) {
+                int off = ctx.stood_in_top ? 8 : 0;
+                int32_t floor_h = be32(ctx.objroom + 2 + off);
+                int32_t roof_h  = be32(ctx.objroom + 6 + off);
+                if (py > floor_h) py = floor_h;
+                if (py < roof_h)  py = roof_h;
+            }
+
+            OBJ_SET_ZONE(part, new_zone);
+            part->obj.in_top = ctx.stood_in_top;
+            SHOT_SET_ACCYPOS(*part, py);
+            obj_sw(part->raw + 4, (int16_t)(py >> 7));
+            SHOT_STATUS(*part) = 1;
+            SHOT_SIZE(*part) = 2;                /* RockPop */
+            SHOT_ANIM(*part) = (uint8_t)start_anim;
+            part->raw[14] = 0x20;
+            part->raw[15] = 0x20;
+            if (bullet_pop_tables[2]) {
+                const BulletAnimFrame *pf = &bullet_pop_tables[2][(uint8_t)start_anim];
+                if (pf->width >= 0) {
+                    part->raw[6] = (uint8_t)pf->width;
+                    part->raw[7] = (uint8_t)pf->height;
+                    obj_sw(part->raw + 8, pf->vect_num);
+                    obj_sw(part->raw + 10, pf->frame_num);
+                }
+            }
+            part->obj.worry = 127;
+
+            if (saved_cid >= 0 && state->level.object_points &&
+                saved_cid < state->level.num_object_points) {
+                uint8_t *pt = state->level.object_points + (uint32_t)saved_cid * 8u;
+                obj_sw(pt,     (int16_t)ctx.newx);
+                obj_sw(pt + 4, (int16_t)ctx.newz);
+            }
+        }
+    }
+}
+
 /* -----------------------------------------------------------------------
- * Utility: compute blast damage
+ * Utility: compute blast damage + visual blast particles
  *
- * Translated from the ExplodeIntoBits/ComputeBlast patterns.
+ * Translated from Anims.s ComputeBlast.
  * ----------------------------------------------------------------------- */
 void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
-                   int16_t radius, int16_t power)
+                   int16_t radius, int16_t power, int16_t zone, int8_t in_top)
 {
     if (!state->level.object_data) return;
+    if (radius <= 0) return;
+
+    int blast_power = (power > 0) ? power : radius;
 
     int obj_index = 0;
     while (1) {
@@ -3241,7 +3418,7 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
             /* Apply splash to enemies and barrels (chain reactions), not pickups etc. */
             if (obj_type_to_enemy_index(obj->obj.number) >= 0 ||
                 obj->obj.number == OBJ_NBR_BARREL) {
-                int damage = (power * (radius - (int)dist)) / radius;
+                int damage = (blast_power * (radius - (int)dist)) / radius;
                 if (damage > 0) {
                     NASTY_SET_DAMAGE(obj, (int8_t)(NASTY_DAMAGE(*obj) + damage));
                 }
@@ -3251,13 +3428,13 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         obj_index++;
     }
 
-    /* Also damage players */
+    /* Also damage players. */
     {
         int32_t dx = x - state->plr1.p_xoff;
         int32_t dz = z - state->plr1.p_zoff;
         int32_t dist = calc_dist_euclidean(dx, dz);
         if (dist < radius) {
-            int damage = (power * (radius - (int)dist)) / radius;
+            int damage = (blast_power * (radius - (int)dist)) / radius;
             player_add_damage(state, 1, damage);
         }
     }
@@ -3266,12 +3443,12 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         int32_t dz = z - state->plr2.p_zoff;
         int32_t dist = calc_dist_euclidean(dx, dz);
         if (dist < radius) {
-            int damage = (power * (radius - (int)dist)) / radius;
+            int damage = (blast_power * (radius - (int)dist)) / radius;
             player_add_damage(state, 2, damage);
         }
     }
 
-    (void)y; /* Y currently not used for blast radius */
+    spawn_blast_particles(state, x, z, y, zone, in_top);
 }
 
 /* -----------------------------------------------------------------------
