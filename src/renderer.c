@@ -2009,6 +2009,8 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
             if (z_for_size < 1) z_for_size = 1;
             int sprite_w = (int)((int32_t)expl_w * SPRITE_SIZE_SCALE / z_for_size) * SPRITE_SIZE_MULTIPLIER;
             int sprite_h = (int)((int64_t)expl_h * (int64_t)r->proj_y_scale * (int64_t)RENDER_SCALE / z_for_size) * SPRITE_SIZE_MULTIPLIER;
+            sprite_w *= EXPLOSION_SIZE_CORRECTION;
+            sprite_h *= EXPLOSION_SIZE_CORRECTION;
             if (sprite_w < 1) sprite_w = 1;
             if (sprite_h < 1) sprite_h = 1;
 
@@ -2143,7 +2145,12 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
 
         /* Screen size: width from Amiga (byte*128/z)*RENDER_SCALE; height uses proj_y_scale so billboard Y matches floor projection scale. */
         int sprite_w = (int)((int32_t)world_w * SPRITE_SIZE_SCALE / z_for_size) * SPRITE_SIZE_MULTIPLIER;
-        int sprite_h = (int)((int64_t)world_h * (int64_t)g_renderer.proj_y_scale * (int64_t)RENDER_SCALE / z_for_size) * SPRITE_SIZE_MULTIPLIER;    if (sprite_w < 1) sprite_w = 1;
+        int sprite_h = (int)((int64_t)world_h * (int64_t)g_renderer.proj_y_scale * (int64_t)RENDER_SCALE / z_for_size) * SPRITE_SIZE_MULTIPLIER;
+        if (vect_num == 8) {
+            sprite_w *= EXPLOSION_SIZE_CORRECTION;
+            sprite_h *= EXPLOSION_SIZE_CORRECTION;
+        }
+        if (sprite_w < 1) sprite_w = 1;
         if (sprite_h < 1) sprite_h = 1;
 
         /* Source dimensions: columns and rows from object data offsets 14, 15. */
