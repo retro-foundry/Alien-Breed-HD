@@ -220,9 +220,6 @@ static const uint16_t obj_scale_cols[] = {
     64*14, 64*14, 64*14, 64*14
 };
 #define OBJ_SCALE_COLS_SIZE (sizeof(obj_scale_cols) / sizeof(obj_scale_cols[0]))
-/* Minimum brightness index for sprites so they do not appear pitch-black (0..23 -> very dark). */
-#define SPRITE_BRIGHT_MIN 12
-
 /* Gun ptr frame offsets (GUNS_FRAMES): 8 guns x 4 frames = 32 entries.
  * Each entry is byte offset into gun_ptr for that (gun, frame) column list. */
 #define GUN_COLS 96
@@ -1469,8 +1466,11 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     int sx, sy;
 
     /* Brightness -> palette byte offset via objscalecols (ObjDraw3.ChipRam.s line 572).
-     * Disabled: force full brightness (0) so sprites are not dimmed by distance. */
-    int bright_idx = 0;
+     * Use caller-provided d6 brightness (distance + object brightness), clamped to
+     * the valid Amiga table index range. */
+    int bright_idx = brightness;
+    if (bright_idx < 0) bright_idx = 0;
+    if (bright_idx > 61) bright_idx = 61;
     uint32_t pal_level_off = obj_scale_cols[bright_idx];
     if (pal && pal_size < 960) pal_level_off = 0;  /* single-level or small palette */
     int gray = (bright_idx * 255) / 62;
