@@ -860,6 +860,7 @@ static void find_room(MoveContext* ctx, LevelState* level,
             for (int i = 0; i < 64; i++) {
                 int16_t entry = read_be16(list_ptr + i * 2);
                 if (entry < 0) break; /* -1 ends exit portion */
+                if (entry >= level->num_floor_lines) continue;
 
                 {
                     const uint8_t* fline = level->floor_lines + entry * FLINE_SIZE;
@@ -1036,6 +1037,7 @@ void move_object(MoveContext* ctx, LevelState* level)
                     int16_t entry = read_be16(list_ptr + i * 2);
                     if (entry == -2) break;
                     if (entry < 0) continue; /* -1 separator */
+                    if (entry >= level->num_floor_lines) continue;
 
                     {
                         const uint8_t* fline = level->floor_lines + entry * FLINE_SIZE;

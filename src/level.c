@@ -496,16 +496,34 @@ int level_parse(LevelState *level)
     int32_t layout_count = (floor_offset  - obj_offset) / 16;
     if (layout_count < 0) layout_count = 0;
     int32_t max_ref_index = -1;
-    if (level->zone_adds && level->num_zones > 0) {
-        for (int z = 0; z < level->num_zones; z++) {
-            int32_t zoff = read_long(level->zone_adds + z * 4);
-            const uint8_t *zd = ld + zoff;
-            int16_t list_off = read_word(zd + 32);  /* ToExitList */
-            const uint8_t *list = zd + list_off;
-            for (int i = 0; i < 128; i++) {
-                int16_t entry = read_word(list + i * 2);
-                if (entry == -2) break;
-                if (entry >= 0 && entry > max_ref_index) max_ref_index = (int32_t)entry;
+    if (level->zone_adds && level->num_zone_slots > 0) {
+        int zone_slots = (int)level->num_zone_slots;
+        if (zone_slots < (int)level->num_zones)
+            zone_slots = (int)level->num_zones;
+        {
+            size_t data_len = level->data_byte_count;
+            for (int z = 0; z < zone_slots; z++) {
+                int32_t zoff = read_long(level->zone_adds + (size_t)z * 4u);
+                if (zoff < 0) continue;
+                if (data_len != 0 && (size_t)zoff + 48u > data_len) continue;
+
+                const uint8_t *zd = ld + zoff;
+                int16_t list_off = read_word(zd + 32);  /* ToExitList */
+                int64_t list_abs = (int64_t)zoff + (int64_t)list_off;
+                if (list_abs < 0) continue;
+                if (data_len != 0 && (size_t)list_abs + 2u > data_len) continue;
+
+                const uint8_t *list = ld + (size_t)list_abs;
+                for (int i = 0; i < 128; i++) {
+                    if (data_len != 0 && (size_t)list_abs + (size_t)(i + 1) * 2u > data_len)
+                        break;
+                    {
+                        int16_t entry = read_word(list + (size_t)i * 2u);
+                        if (entry == -2) break;
+                        if (entry >= 0 && entry > max_ref_index)
+                            max_ref_index = (int32_t)entry;
+                    }
+                }
             }
         }
     }
