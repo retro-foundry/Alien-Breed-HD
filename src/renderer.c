@@ -2764,7 +2764,9 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
              * Near-plane clip edges so vertices behind the camera get proper
              * screen X values (otherwise on_screen[].screen_x is garbage and
              * the edge table doesn't reach the screen sides). */
-            const int32_t FLOOR_NEAR = 4;  /* minimum z for projection; vertices behind are clipped to this */
+            /* Water needs a tighter near clip than floor/roof so a surface just
+             * above the camera can still project up to the top rows. */
+            const int32_t FLOOR_NEAR = (entry_type == 7) ? 1 : 4;
             for (int s = 0; s < sides; s++) {
                 int i1 = pt_indices[s];
                 int i2 = pt_indices[(s + 1) % sides];
