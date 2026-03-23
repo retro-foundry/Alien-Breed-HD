@@ -72,7 +72,6 @@ enum {
  * 2 means one animation frame every 2 logic-vblank units. */
 #define EXPLOSION_FRAME_STEP_VBLANKS 2
 
-static bool enemy_type_uses_floor_minus_height_move_y(int8_t obj_type);
 static int32_t enemy_move_y_for_context(const GameObject *obj,
                                         const EnemyParams *params,
                                         const GameState *state,
@@ -859,37 +858,18 @@ static int16_t enemy_anim_vect_for_type(int8_t obj_type)
     }
 }
 
-/* Most ground enemies in Amiga scripts derive move Y from floor and full
- * collision height (newy+thingheight ~= floor). Keep Robot/BigUgly/BigRed
- * on legacy path because their scripts use special offsets/states. */
-static bool enemy_type_uses_floor_minus_height_move_y(int8_t obj_type)
-{
-    switch (obj_type) {
-    case OBJ_NBR_ALIEN:
-    case OBJ_NBR_MARINE:
-    case OBJ_NBR_TOUGH_MARINE:
-    case OBJ_NBR_FLAME_MARINE:
-    case OBJ_NBR_WORM:
-    case OBJ_NBR_SMALL_RED_THING:
-    case OBJ_NBR_TREE:
-    case OBJ_NBR_FLYING_NASTY:
-    case OBJ_NBR_EYEBALL:
-        return true;
-    default:
-        return false;
-    }
-}
-
 static int32_t enemy_move_y_for_context(const GameObject *obj,
                                         const EnemyParams *params,
                                         const GameState *state,
                                         int zone_slots)
 {
+    /* Default Amiga pattern in handlers:
+     *   move.w 4(a0),d0
+     *   sub.w #(thingheight>>8),d0
+     *   asl.l #7,d0 -> newy
+     */
     int32_t move_y = (((int32_t)obj_w(obj->raw + 4) -
-                      (int32_t)(params->thing_height >> 8)) << 7);
-
-    if (!enemy_type_uses_floor_minus_height_move_y(obj->obj.number))
-        return move_y;
+                       (int32_t)(params->thing_height >> 8)) << 7);
 
     if (OBJ_ZONE(obj) >= 0 && state->level.zone_adds && state->level.data) {
         int src_zone = level_connect_to_zone_index(&state->level, OBJ_ZONE(obj));
@@ -899,7 +879,22 @@ static int32_t enemy_move_y_for_context(const GameObject *obj,
             int32_t zo = (int32_t)be32(state->level.zone_adds + (uint32_t)src_zone * 4u);
             const uint8_t *zd = state->level.data + zo;
             int32_t floor_h = be32(zd + (obj->obj.in_top ? ZONE_OFF_UPPER_FLOOR : ZONE_OFF_FLOOR));
-            move_y = floor_h - params->thing_height;
+
+            /* Most ground enemies effectively use floor-thingheight for MoveObject.
+             * Big Ugly is a documented outlier in BigUglyAlien.s:
+             * newy = (objY<<7), while objY is maintained as floor>>7 - 70. */
+            switch (obj->obj.number) {
+            case OBJ_NBR_FLYING_NASTY:
+            case OBJ_NBR_EYEBALL:
+                /* Keep floating variants on their scripted objY-based path. */
+                break;
+            case OBJ_NBR_BIG_NASTY:
+                move_y = floor_h - (70 * 128);
+                break;
+            default:
+                move_y = floor_h - params->thing_height;
+                break;
+            }
         }
     }
     return move_y;
