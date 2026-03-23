@@ -111,7 +111,7 @@ extern const ObjectWorldSize default_object_world_size[21];
 typedef struct {
     int16_t  size_x;          /* display width */
     int16_t  size_y;          /* display height */
-    int16_t  explosive_force; /* blast radius (0 = none) */
+    int16_t  explosive_force; /* ComputeBlast max damage (0 = none) */
     int16_t  hit_noise;       /* sound on impact (-1 = none) */
     int16_t  hit_volume;      /* volume on impact */
 } BulletTypeData;

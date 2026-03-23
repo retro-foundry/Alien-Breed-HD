@@ -2012,10 +2012,9 @@ void object_handle_barrel(GameObject *obj, GameState *state)
     int16_t bx, bz;
     get_object_pos(&state->level, (int)OBJ_CID(obj), &bx, &bz);
 
-    /* Amiga ItsABarrel calls ComputeBlast with d0=#40 (max damage).
-     * In ComputeBlast that maps to an effective falloff reach of ~280 world units. */
+    /* Amiga ItsABarrel: move.w #40,d0 ; jsr ComputeBlast */
     compute_blast(state, bx, bz, ((int32_t)obj_w(obj->raw + 4)) << 7,
-                  280, 40, OBJ_ZONE(obj), obj->obj.in_top);
+                  40, OBJ_ZONE(obj), obj->obj.in_top);
     audio_play_sample(15, 300);
 
     obj_sw(obj->raw + 8, 8);     /* vect = explosion */
@@ -2412,7 +2411,6 @@ void object_handle_bullet(GameObject *obj, GameState *state)
             bullet_types[shot_size].explosive_force > 0) {
             compute_blast(state, ctx.newx, ctx.newz, accypos,
                           bullet_types[shot_size].explosive_force,
-                          SHOT_POWER(*obj),
                           OBJ_ZONE(obj), obj->obj.in_top);
         }
 
@@ -2550,7 +2548,6 @@ void object_handle_bullet(GameObject *obj, GameState *state)
             bullet_types[shot_size].explosive_force > 0) {
             compute_blast(state, ctx.newx, ctx.newz, accypos,
                           bullet_types[shot_size].explosive_force,
-                          SHOT_POWER(*obj),
                           OBJ_ZONE(obj), obj->obj.in_top);
         }
         return;
@@ -3386,70 +3383,137 @@ static void spawn_blast_particles(GameState *state, int32_t x, int32_t z, int32_
     }
 }
 
+static bool compute_blast_can_hit_obj_type(int8_t obj_type)
+{
+    switch (obj_type) {
+    case OBJ_NBR_ALIEN:
+    case OBJ_NBR_PLR1:
+    case OBJ_NBR_ROBOT:
+    case OBJ_NBR_BIG_NASTY:
+    case OBJ_NBR_FLYING_NASTY:
+    case OBJ_NBR_BARREL:
+    case OBJ_NBR_PLR2:
+    case OBJ_NBR_MARINE:
+    case OBJ_NBR_WORM:
+    case OBJ_NBR_HUGE_RED_THING:
+    case OBJ_NBR_SMALL_RED_THING:
+    case OBJ_NBR_TREE:
+    case OBJ_NBR_EYEBALL:
+    case OBJ_NBR_TOUGH_MARINE:
+    case OBJ_NBR_FLAME_MARINE:
+    case OBJ_NBR_GAS_PIPE:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* Amiga ComputeBlast distance approximation:
+ * sqrt(dx*dx + dz*dz) via 3 Newton refinements from 2^(highest_bit/2). */
+static int16_t compute_blast_dist_sqrt(int16_t dx, int16_t dz)
+{
+    int32_t sx = dx;
+    int32_t sz = dz;
+    int32_t sum_sq = sx * sx + sz * sz;
+    if (sum_sq <= 0) return 0;
+
+    int32_t guess = 1;
+    for (int bit = 31; bit >= 0; bit--) {
+        if (((uint32_t)sum_sq & (1u << bit)) != 0u) {
+            guess = 1 << (bit >> 1);
+            break;
+        }
+    }
+
+    for (int i = 0; i < 3; i++) {
+        int64_t num = (((int64_t)guess * (int64_t)guess) - (int64_t)sum_sq) >> 1;
+        int32_t corr = (int32_t)(num / guess);
+        guess -= corr;
+        if (guess <= 0) guess = 1;
+    }
+
+    if (guess > 32767) guess = 32767;
+    return (int16_t)guess;
+}
+
 /* -----------------------------------------------------------------------
  * Utility: compute blast damage + visual blast particles
  *
  * Translated from Anims.s ComputeBlast.
  * ----------------------------------------------------------------------- */
 void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
-                   int16_t radius, int16_t power, int16_t zone, int8_t in_top)
+                   int16_t max_damage, int16_t zone, int8_t in_top)
 {
-    if (!state->level.object_data) return;
-    if (radius <= 0) return;
+    if (!state || !state->level.object_data) return;
+    if (max_damage <= 0) return;
 
-    int blast_power = (power > 0) ? power : radius;
+    int zone_slots = level_zone_slot_count(&state->level);
+    int src_zone = level_connect_to_zone_index(&state->level, zone);
+    if (src_zone < 0 && zone >= 0 && zone < zone_slots) src_zone = zone;
+    if (src_zone < 0 || src_zone >= zone_slots ||
+        !state->level.zone_adds || !state->level.data) {
+        spawn_blast_particles(state, (int16_t)x, (int16_t)z, ((int32_t)((int16_t)(y >> 7))) << 7, zone, in_top);
+        return;
+    }
 
-    int obj_index = 0;
-    while (1) {
+    int16_t viewer_x = (int16_t)x;
+    int16_t viewer_z = (int16_t)z;
+    int16_t viewer_y = (int16_t)(y >> 7);
+    int32_t src_off = (int32_t)be32(state->level.zone_adds + (uint32_t)src_zone * 4u);
+    if (src_off < 0) {
+        spawn_blast_particles(state, viewer_x, viewer_z, ((int32_t)viewer_y) << 7, zone, in_top);
+        return;
+    }
+    const uint8_t *from_room = state->level.data + src_off;
+
+    for (int obj_index = 0;; obj_index++) {
         GameObject *obj = get_object(&state->level, obj_index);
         if (!obj || OBJ_CID(obj) < 0) break;
-        if (OBJ_ZONE(obj) < 0) {
-            obj_index++;
-            continue;
-        }
+        if (OBJ_ZONE(obj) < 0) continue;
+        if (!compute_blast_can_hit_obj_type(obj->obj.number)) continue;
 
-        int16_t ox, oz;
-        get_object_pos(&state->level, (int)OBJ_CID(obj), &ox, &oz);
+        int tgt_zone = level_connect_to_zone_index(&state->level, OBJ_ZONE(obj));
+        if (tgt_zone < 0 && OBJ_ZONE(obj) >= 0 && OBJ_ZONE(obj) < zone_slots)
+            tgt_zone = OBJ_ZONE(obj);
+        if (tgt_zone < 0 || tgt_zone >= zone_slots) continue;
 
-        int32_t dx = x - ox;
-        int32_t dz = z - oz;
-        int32_t dist = calc_dist_euclidean(dx, dz);
+        int32_t tgt_off = (int32_t)be32(state->level.zone_adds + (uint32_t)tgt_zone * 4u);
+        if (tgt_off < 0) continue;
+        const uint8_t *to_room = state->level.data + tgt_off;
 
-        if (dist < radius) {
-            /* Apply splash to enemies and barrels (chain reactions), not pickups etc. */
-            if (obj_type_to_enemy_index(obj->obj.number) >= 0 ||
-                obj->obj.number == OBJ_NBR_BARREL) {
-                int damage = (blast_power * (radius - (int)dist)) / radius;
-                if (damage > 0) {
-                    NASTY_SET_DAMAGE(obj, (int8_t)(NASTY_DAMAGE(*obj) + damage));
-                }
-            }
-        }
+        int16_t target_x, target_z;
+        get_object_pos(&state->level, (int)OBJ_CID(obj), &target_x, &target_z);
+        int16_t target_y = obj_w(obj->raw + 4);
 
-        obj_index++;
+        uint8_t vis = can_it_be_seen(&state->level,
+                                     from_room, to_room, (int16_t)tgt_zone,
+                                     viewer_x, viewer_z, viewer_y,
+                                     target_x, target_z, target_y,
+                                     in_top, obj->obj.in_top, 0);
+        if (!vis) continue;
+
+        int16_t dx = (int16_t)(target_x - viewer_x);
+        int16_t dz = (int16_t)(target_z - viewer_z);
+        int16_t dist = compute_blast_dist_sqrt(dx, dz);
+
+        int16_t dist_bucket = (int16_t)(dist >> 3);
+        dist_bucket = (int16_t)(dist_bucket - 4);
+        if (dist_bucket < 0) dist_bucket = 0;
+        if (dist_bucket > 31) continue;
+
+        int16_t atten = (int16_t)(32 - dist_bucket);
+        int32_t damage = ((int32_t)max_damage * (int32_t)atten) >> 5;
+        if (damage > max_damage) damage = max_damage;
+
+        obj->raw[19] = (uint8_t)((uint8_t)obj->raw[19] + (uint8_t)damage);
+
+        int32_t impact_x = ((int32_t)dx << 4) / (int32_t)atten;
+        int32_t impact_z = ((int32_t)dz << 4) / (int32_t)atten;
+        NASTY_SET_IMPACTX(obj, (int16_t)impact_x);
+        NASTY_SET_IMPACTZ(obj, (int16_t)impact_z);
     }
 
-    /* Also damage players. */
-    {
-        int32_t dx = x - state->plr1.p_xoff;
-        int32_t dz = z - state->plr1.p_zoff;
-        int32_t dist = calc_dist_euclidean(dx, dz);
-        if (dist < radius) {
-            int damage = (blast_power * (radius - (int)dist)) / radius;
-            player_add_damage(state, 1, damage);
-        }
-    }
-    if (state->mode != MODE_SINGLE) {
-        int32_t dx = x - state->plr2.p_xoff;
-        int32_t dz = z - state->plr2.p_zoff;
-        int32_t dist = calc_dist_euclidean(dx, dz);
-        if (dist < radius) {
-            int damage = (blast_power * (radius - (int)dist)) / radius;
-            player_add_damage(state, 2, damage);
-        }
-    }
-
-    spawn_blast_particles(state, x, z, y, zone, in_top);
+    spawn_blast_particles(state, viewer_x, viewer_z, ((int32_t)viewer_y) << 7, zone, in_top);
 }
 
 /* -----------------------------------------------------------------------

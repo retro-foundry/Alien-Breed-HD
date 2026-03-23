@@ -56,7 +56,7 @@
 #define WORLD_Y_SUBUNITS   (1 << WORLD_Y_FRAC_BITS)
 
 /* Sprite size: (world * SPRITE_SIZE_SCALE / z) * SPRITE_SIZE_MULTIPLIER.
- * Amiga ObjDraw3: (byte<<7)/z = (byte*128)/z; we scale by RENDER_SCALE for resolution. No extra doubling. */
+ * Keep multiplier at 1 so billboard scale matches the existing projection path. */
 #define SPRITE_SIZE_SCALE      (128 * RENDER_SCALE)
 #define SPRITE_SIZE_MULTIPLIER 1
 
