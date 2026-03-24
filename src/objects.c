@@ -378,7 +378,7 @@ static void enemy_update_flying_soft_dead(GameObject *obj,
 
 /* NormalAlien.s / FlameMarine.s: splat #14@400 if damage>1, scream if death anim, instant if huge hit. */
 static void enemy_death_marine_like(GameObject *obj, const EnemyParams *params,
-                                    GameState *state, int8_t damage,
+                                    GameState *state, int32_t damage,
                                     bool instant_kill, int scream_sample,
                                     bool explosion_damage)
 {
@@ -399,10 +399,11 @@ static void enemy_death_marine_like(GameObject *obj, const EnemyParams *params,
  * ----------------------------------------------------------------------- */
 static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameState *state)
 {
-    int8_t damage = NASTY_DAMAGE(*obj);
-    if (damage <= 0) return false;
+    uint8_t raw_damage = obj->raw[19];
+    if (raw_damage == 0) return false;
 
-    NASTY_DAMAGE(*obj) = 0;
+    obj->raw[19] = 0;
+    int32_t damage = (int32_t)raw_damage;
 
     int obj_idx = -1;
     if (state->level.object_data) {
@@ -420,12 +421,13 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
         if (damage < 1) damage = 1;
     }
 
-    int8_t lives = NASTY_LIVES(*obj);
+    int32_t lives = (int32_t)NASTY_LIVES(*obj);
     lives -= damage;
 
     int lives_before = (int)NASTY_LIVES(*obj);
-    printf("[ENEMY] damage obj=%d type=%d applied=%d lives %d -> %d%s\n",
-           obj_idx, (int)obj->obj.number, (int)damage, lives_before, (int)lives,
+    printf("[ENEMY] damage obj=%d type=%d raw=%u applied=%d lives %d -> %d%s\n",
+           obj_idx, (int)obj->obj.number, (unsigned)raw_damage, (int)damage,
+           lives_before, (int)lives,
            lives <= 0 ? " (killed)" : "");
 
     if (lives <= 0) {
@@ -532,7 +534,7 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
         }
     }
 
-    NASTY_LIVES(*obj) = lives;
+    NASTY_LIVES(*obj) = (int8_t)lives;
 
     /* Hurt: screamsound @ Noisevol 200 (all nasties) */
     if (params->scream_sound >= 0) {
@@ -2200,12 +2202,12 @@ void object_handle_barrel(GameObject *obj, GameState *state)
         }
     }
 
-    int8_t damage = NASTY_DAMAGE(*obj);
+    uint8_t damage = obj->raw[19];
     if (damage == 0) return;
 
-    NASTY_DAMAGE(*obj) = 0;
-    int16_t lives = NASTY_LIVES(*obj);
-    lives -= damage;
+    obj->raw[19] = 0;
+    int32_t lives = (int32_t)NASTY_LIVES(*obj);
+    lives -= (int32_t)damage;
     if (lives > 0) {
         NASTY_LIVES(*obj) = (int8_t)lives;
         return;
@@ -2780,7 +2782,7 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         }
 
         /* HIT! Apply damage */
-        NASTY_SET_DAMAGE(target, (int8_t)(NASTY_DAMAGE(*target) + SHOT_POWER(*obj)));
+        target->raw[19] = (uint8_t)(target->raw[19] + (uint8_t)SHOT_POWER(*obj));
         NASTY_SET_IMPACTX(target, SHOT_XVEL(*obj) >> 16);
         NASTY_SET_IMPACTZ(target, SHOT_ZVEL(*obj) >> 16);
 

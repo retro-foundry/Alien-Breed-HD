@@ -243,8 +243,7 @@ static void spawn_instant_hit_effect(GameState *state, const PlayerState *plr, i
     }
 
     {
-        int8_t cur = NASTY_DAMAGE(*target);
-        NASTY_SET_DAMAGE(target, (int8_t)(cur + shot_power));
+        target->raw[19] = (uint8_t)(target->raw[19] + (uint8_t)shot_power);
     }
 
     {
