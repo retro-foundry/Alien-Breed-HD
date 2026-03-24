@@ -2428,7 +2428,9 @@ void object_handle_bullet(GameObject *obj, GameState *state)
     /* Check lifetime against gun data */
     if (shot_size >= 0 && shot_size < 8) {
         int16_t max_life = default_plr1_guns[shot_size].bullet_lifetime;
-        if (max_life >= 0 && life >= max_life) {
+        /* Amiga ItsABullet times out only once shotlife exceeds max life
+         * (cmp.w shotlife,maxlife ; bge notdone). */
+        if (max_life >= 0 && life > max_life) {
             timed_out = true;
         }
     }
