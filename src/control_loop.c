@@ -410,15 +410,15 @@ void play_game(GameState *state)
     state->plr1.gun_selected = 0;
     state->plr2.gun_selected = 0;
 
-    /* ---- Bypass menu: go straight to level 1 ---- */
-    state->current_level = 0;  /* Level index 0 = Level 1 */
-    state->max_level = 0;
+    /* ---- Bypass menu: go straight to level 2 (testing) ---- */
+    state->current_level = 1;  /* Level index 1 = Level 2 */
+    state->max_level = 1;
     state->finished_level = 0;
     state->nasty = true;
     state->plr1.angpos = 0;
     state->plr2.angpos = 0;
 
-    printf("[CONTROL] Bypassing menu - starting level 1 directly\n");
+    printf("[CONTROL] Bypassing menu - starting level 2 directly\n");
 
     io_load_panel();
 
