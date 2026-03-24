@@ -3348,47 +3348,28 @@ void renderer_draw_display(GameState *state)
         }
         }
 
-        /* Multi-floor zone: draw lower and upper room with vertical clip split */
+        /* Multi-floor zone ordering (Amiga DrawDisplay, AB3DI.s 3543-3630):
+         *   if (yoff >= ToZoneRoof): draw upper first, then lower
+         *   else:                    draw lower first, then upper
+         * No screen-space split clipping is applied in the original path. */
         if (state->level.zone_adds && state->level.zone_graph_adds) {
             int32_t zone_off = rd32(state->level.zone_adds + zone_id * 4);
             const uint8_t *zgraph = state->level.zone_graph_adds + zone_id * 8;
             int32_t upper_gfx = rd32(zgraph + 4);
             if (upper_gfx != 0 && zone_off >= 0 && state->level.data) {
                 const uint8_t *zd = state->level.data + zone_off;
-                int32_t zone_roof = rd32(zd + 6);  /* ToZoneRoof = split height */
-                int32_t rel = zone_roof - r->yoff;
-                /* Split screen Y where lower ceiling / upper floor projects (same projection formula, fixed ref Z). */
-                int split_y = (int)((int64_t)(rel >> WORLD_Y_FRAC_BITS) * g_renderer.proj_y_scale * RENDER_SCALE / TWO_LEVEL_SPLIT_REF_Z) + (g_renderer.height / 2);
-                if (split_y < 1) split_y = 1;
-                if (split_y >= g_renderer.height) split_y = g_renderer.height - 1;
-                /* Reserve a band above the split for the lower room so the wall can extend up to
-                 * meet the ceiling. When very close to the wall the ceiling projects high on screen,
-                 * so use a large margin so the join holds even at close range. */
-                const int split_margin = (g_renderer.height * 3) / 5;  /* large band so wall meets ceiling when very close */
-                int lower_top = split_y - split_margin;
-                if (lower_top < 0) lower_top = 0;
-                int upper_bot = split_y - split_margin - 1;
-                if (upper_bot < 0) upper_bot = -1;
-                /* Painter's order: draw upper room (back) first, then lower room (front) so floor/ceiling
-                 * and walls at the split are correctly ordered - lower room overwrites upper near the boundary. */
-                r->top_clip = 0;
-                r->bot_clip = (int16_t)(upper_bot >= 0 ? upper_bot : split_y - 1);
-                r->wall_top_clip = -1;
-                r->wall_bot_clip = (int16_t)split_y;  /* upper room: walls extend down to meet floor at split */
-                renderer_draw_zone(state, zone_id, 1);  /* upper room first (back) */
-                /* Reset column clip so lower room is not affected by upper room's walls. */
-                {
-                    int w = g_renderer.width;
-                    memset(r->clip.top, 0, (size_t)w * sizeof(int16_t));
-                    int16_t bot_val = (int16_t)(g_renderer.height - 1);
-                    for (int c = 0; c < w; c++) r->clip.bot[c] = bot_val;
-                    if (r->clip.z) memset(r->clip.z, 0, (size_t)w * sizeof(int32_t));
+                int32_t split_height = rd32(zd + 6);  /* ToZoneRoof */
+                /* Amiga compares SplitHeight against yoff that is loaded directly from PLR*_yoff.
+                 * Keep this compare in raw player space (no render-only view lift offset). */
+                int draw_upper_first = (plr->yoff >= split_height);
+
+                if (draw_upper_first) {
+                    renderer_draw_zone(state, zone_id, 1);  /* upper */
+                    renderer_draw_zone(state, zone_id, 0);  /* lower */
+                } else {
+                    renderer_draw_zone(state, zone_id, 0);  /* lower */
+                    renderer_draw_zone(state, zone_id, 1);  /* upper */
                 }
-                r->top_clip = (int16_t)lower_top;
-                r->bot_clip = (int16_t)(g_renderer.height - 1);
-                r->wall_top_clip = 0;   /* lower room: walls can extend to top when very close to wall */
-                r->wall_bot_clip = -1;
-                renderer_draw_zone(state, zone_id, 0);  /* lower room second (front) */
                 continue;
             }
         }
