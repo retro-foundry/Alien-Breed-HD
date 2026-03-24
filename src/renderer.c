@@ -1070,23 +1070,10 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
 
     /* Fallback grayscale only (when no floor palette is loaded). */
     int zone_d6 = brightness * 2;
-    /* Amiga path for brightness falloff:
-     *   distaddr = ypos - flooryoff  (equivalent to rel_h >> 6 in our world scale)
-     *   dst = abs((distaddr * 64) / row_from_center) */
-    int32_t dist_bright;
-    {
-        int32_t distaddr = (floor_height >> 6);
-        int64_t numer = (int64_t)distaddr * 64;
-        int64_t q = numer / (int64_t)row_dist80;
-        if (q < 0) q = -q;
-        if (q > 32767) q = 32767;
-        dist_bright = (int32_t)q;
-    }
 
     /* UV distance path (kept separate from brightness falloff):
-     * distaddr is a smaller-height-space value than raw world rel_h.
-     * Use a half-step conversion here so floor/ceiling texel size lands between
-     * the old over-zoomed and the recent under-zoomed result. */
+     * Use a half-step conversion on the world-space height so floor/ceiling texel
+     * size lands between the old over-zoomed and the recent under-zoomed result. */
     int32_t fh_8 = floor_height >> (WORLD_Y_FRAC_BITS - 1);
     int32_t dist;
     if (abs_row_dist <= 3) {
@@ -1099,7 +1086,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     }
 
     /* Amiga formula: d6 = (dist >> 7) + zone_bright. Higher d6 = darker. */
-    int amiga_d6 = (dist_bright >> 7) + zone_d6;
+    int amiga_d6 = (dist >> 7) + zone_d6;
     if (amiga_d6 < 0) amiga_d6 = 0;
     if (amiga_d6 > 64) amiga_d6 = 64;
     int gray = (64 - amiga_d6) * 255 / 64;
@@ -1184,7 +1171,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     const uint8_t *pal_lut_src = floor_pal ? floor_pal : rs->floor_pal;
     int floor_pal_level = 0;
     if (pal_lut_src && !use_gour) {
-        int bright_idx = brightness + 5 + (dist_bright >> 8);
+        int bright_idx = brightness + 5 + (dist >> 8);
         if (bright_idx < 0) bright_idx = 0;
         if (bright_idx > 28) bright_idx = 28;
         floor_pal_level = floor_bright_level_table[bright_idx];
@@ -1261,7 +1248,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     int64_t gour_bright_step = 0;
     if (use_gour) {
         int span_w = xr - xl;
-        int dist_add = (dist_bright >> 7);
+        int dist_add = (dist >> 7);
         int left_level = left_brightness + dist_add;
         int right_level = right_brightness + dist_add;
         if (left_level < 0) left_level = 0;
@@ -1292,7 +1279,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             gour_bright = (int)(gour_bright_fp >> 16);
             gour_bright_fp += gour_bright_step;
             {
-                int d6 = (dist_bright >> 7) + (gour_bright * 2);
+                int d6 = (dist >> 7) + (gour_bright * 2);
                 if (d6 < 0) d6 = 0;
                 if (d6 > 64) d6 = 64;
                 gour_gray = (64 - d6) * 255 / 64;
