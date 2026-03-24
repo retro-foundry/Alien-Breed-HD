@@ -254,7 +254,7 @@ typedef struct {
     /* Current time in ms (set each frame by game loop; used for delayed splash damage) */
     uint32_t current_ticks_ms;
 
-#define MAX_EXPLOSIONS 16
+#define MAX_EXPLOSIONS 48
     /* Active explosion animations (barrel, rocket/grenade impact, explode_into_bits). */
     struct {
         int16_t  x, z;
