@@ -47,7 +47,7 @@
  * PROJ_Y: vertical projection. PROJ_Y_NUMERATOR / PROJ_Y_DENOM gives base scale;
  *   the divide by PROJ_Y_DENOM is applied per frame with height scaling. */
 #define PROJ_X_SCALE     256
-#define PROJ_Y_NUMERATOR (256 * 11)
+#define PROJ_Y_NUMERATOR (256 * 15)
 #define PROJ_Y_DENOM     38                /* adjust this value to change the vertical FOV, can need tweaking */
 #define PROJ_Y_SCALE     (PROJ_Y_NUMERATOR / PROJ_Y_DENOM)
 
