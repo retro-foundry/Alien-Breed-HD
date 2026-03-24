@@ -69,7 +69,15 @@ set(SOURCES
     src/sprite_palettes.c
 )
 
+file(GLOB_RECURSE PROJECT_HEADERS
+     CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
+)
+
 add_executable(ab3d1 ${SOURCES})
+
+target_sources(ab3d1 PRIVATE ${PROJECT_HEADERS})
+set_source_files_properties(${PROJECT_HEADERS} PROPERTIES HEADER_FILE_ONLY ON)
 
 target_include_directories(ab3d1 PRIVATE src)
 
