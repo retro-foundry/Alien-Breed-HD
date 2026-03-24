@@ -1613,25 +1613,34 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
             }
         }
     }
-    /* Calculate vertical aim toward target (PlayerShoot.s lines 99-139) */
-    if (closest_idx >= 0 && closest_dist > 0) {
-        /* bulyspd = (target_y - player_y + 18*256) / (dist >> bullet_speed)
-         * target_y comes from ObjectPoints offset 4 (stored in obj raw[4-5]) */
-        GameObject *tgt = (GameObject*)(state->level.object_data +
-                          closest_idx * OBJECT_SIZE);
-        int16_t target_y = (int16_t)((tgt->raw[4] << 8) | tgt->raw[5]);
-        int16_t player_y = (int16_t)(plr->p_yoff >> 7);
-        int32_t target_ydiff = (int32_t)target_y - player_y;
-        target_ydiff -= plr->p_height;
-        target_ydiff += 18 * 256;
+    /* Calculate vertical aim toward target (PlayerShoot.s lines 99-139).
+     * Grenades keep the original fallback solve even with no target selected. */
+    {
+        bool has_target = (closest_idx >= 0 && closest_dist > 0 && state->level.object_data);
+        bool grenade_fallback = (gun_idx == 4 && !has_target);
+        if (has_target || grenade_fallback) {
+            int32_t target_ydiff = 0;
+            int32_t aim_dist = has_target ? closest_dist : 32767;
 
-        int shift = gun->bullet_speed;
-        if (shift < 0) shift = 0;
-        if (shift > 15) shift = 15;
-        int32_t dist_shifted = closest_dist >> shift;
-        if (dist_shifted < 1) dist_shifted = 1;
+            if (has_target) {
+                GameObject *tgt = (GameObject *)(state->level.object_data +
+                                  closest_idx * OBJECT_SIZE);
+                int16_t target_y = (int16_t)((tgt->raw[4] << 8) | tgt->raw[5]);
+                /* Keep Y math in accypos units (<<7), like PlayerShoot.s targetydiff path. */
+                target_ydiff = ((int32_t)target_y << 7) - plr->p_yoff;
+            }
 
-        bulyspd = (int16_t)(target_ydiff / dist_shifted);
+            target_ydiff -= plr->p_height;
+            target_ydiff += 18 * 256;
+
+            int shift = gun->bullet_speed;
+            if (shift < 0) shift = 0;
+            if (shift > 15) shift = 15;
+            int32_t dist_shifted = aim_dist >> shift;
+            if (dist_shifted < 1) dist_shifted = 1;
+
+            bulyspd = (int16_t)(target_ydiff / dist_shifted);
+        }
     }
 
     /* 6. Fire the weapon */
@@ -1697,11 +1706,14 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         /* Set up bullet */
         memset(bullet, 0, OBJECT_SIZE);
 
-        /* Spawn bullet slightly in front of the player.
-         * Amiga spawns at exact player pos; we add a small forward offset so
-         * the rotated z > 0 (visible) on the first frame instead of culled. */
-        int16_t spawn_x = (int16_t)(plr->p_xoff + ((sin_val * 32) >> 14));
-        int16_t spawn_z = (int16_t)(plr->p_zoff + ((cos_val * 32) >> 14));
+        /* Strict Amiga parity for grenades: spawn at exact player position.
+         * Other projectiles keep a tiny forward offset for first-frame visibility. */
+        int16_t spawn_x = (int16_t)plr->p_xoff;
+        int16_t spawn_z = (int16_t)plr->p_zoff;
+        if (gun_idx != 4) {
+            spawn_x = (int16_t)(plr->p_xoff + ((sin_val * 32) >> 14));
+            spawn_z = (int16_t)(plr->p_zoff + ((cos_val * 32) >> 14));
+        }
 
         /* Restore CID and write spawn position into that object point */
         obj_sw(bullet->raw, saved_cid);
@@ -1735,11 +1747,23 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         if (shift > 15) shift = 15;
         int32_t xvel = ((int32_t)sin_val) << shift;
         int32_t zvel = ((int32_t)cos_val) << shift;
+        if (gun_idx == 4) {
+            /* Amiga BigSine is full-scale (~32767). Our runtime sin/cos is half-scale
+             * (~16384), so grenades need a x2 launch speed to match original range/apex timing. */
+            xvel <<= 1;
+            zvel <<= 1;
+        }
         SHOT_SET_XVEL(*bullet, xvel);
         SHOT_SET_ZVEL(*bullet, zvel);
         int16_t final_yvel = bulyspd;
-        if (final_yvel > 20) final_yvel = 20;
-        if (final_yvel < -20) final_yvel = -20;
+        if (gun_idx == 4) {
+            /* Mirror the original grenade clamp sequence from PlayerShoot.s. */
+            if (final_yvel >= 20) final_yvel = 20;
+            if (final_yvel >= -20) final_yvel = -20;
+        } else {
+            if (final_yvel > 20) final_yvel = 20;
+            if (final_yvel < -20) final_yvel = -20;
+        }
         final_yvel = (int16_t)(final_yvel + gun->bullet_y_offset);
         SHOT_SET_YVEL(*bullet, final_yvel);
         SHOT_POWER(*bullet) = gun->shot_power;

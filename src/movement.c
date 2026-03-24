@@ -1249,6 +1249,9 @@ void move_object_substepped(MoveContext* ctx, LevelState* level)
     int8_t cur_top = ctx->stood_in_top;
     int8_t any_hit = 0;
     int32_t hit_y = ctx->newy;
+    int16_t hit_wx = 0;
+    int16_t hit_wz = 0;
+    int16_t hit_wlen = 0;
 
     for (int i = 1; i <= steps; i++) {
         MoveContext step = *ctx;
@@ -1266,6 +1269,9 @@ void move_object_substepped(MoveContext* ctx, LevelState* level)
         if (step.hitwall) {
             any_hit = 1;
             hit_y = step.wall_hit_y;
+            hit_wx = step.wall_xsize;
+            hit_wz = step.wall_zsize;
+            hit_wlen = step.wall_length;
             if (step.exitfirst) {
                 cur_x = step.newx;
                 cur_z = step.newz;
@@ -1286,6 +1292,9 @@ void move_object_substepped(MoveContext* ctx, LevelState* level)
     ctx->stood_in_top = cur_top;
     ctx->hitwall = any_hit;
     ctx->wall_hit_y = hit_y;
+    ctx->wall_xsize = hit_wx;
+    ctx->wall_zsize = hit_wz;
+    ctx->wall_length = hit_wlen;
 }
 
 /* -----------------------------------------------------------------------
@@ -1301,6 +1310,9 @@ void move_object(MoveContext* ctx, LevelState* level)
 
     ctx->hitwall = 0;
     ctx->wall_hit_y = ctx->newy;
+    ctx->wall_xsize = 0;
+    ctx->wall_zsize = 0;
+    ctx->wall_length = 0;
 
     {
         int32_t xdiff = ctx->newx - ctx->oldx;
