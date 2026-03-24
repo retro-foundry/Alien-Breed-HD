@@ -112,6 +112,7 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
     /* Reset mouse deltas each frame */
     g_mouse.dx = 0;
     g_mouse.dy = 0;
+    g_mouse.wheel_y = 0;
 
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
@@ -184,6 +185,16 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
                 if (SDL_GetRelativeMouseMode() && key_map) key_map[AMIGA_KEY_SPACE] = 0;
             }
             break;
+
+        case SDL_MOUSEWHEEL:
+        {
+            int16_t wheel_y = (int16_t)ev.wheel.y;
+            if (ev.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
+                wheel_y = (int16_t)-wheel_y;
+            }
+            g_mouse.wheel_y = (int16_t)(g_mouse.wheel_y + wheel_y);
+            break;
+        }
 
         case SDL_WINDOWEVENT:
             if (ev.window.event == SDL_WINDOWEVENT_RESIZED) {

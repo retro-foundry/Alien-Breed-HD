@@ -23,6 +23,7 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed);
 typedef struct {
     int16_t dx;
     int16_t dy;
+    int16_t wheel_y;
     bool    left_button;
     bool    right_button;
 } MouseState;

@@ -43,6 +43,32 @@
 /* Gun selection key -> gun index mapping (from GUNVALS in Plr1Control.s):
  * key1 pistol, key2 shotgun, key3 plasma, key4 grenade, key5 rocket. */
 static const int8_t gun_key_map[5] = { 0, 7, 1, 4, 2 };
+#define GUN_KEY_COUNT ((int)(sizeof(gun_key_map) / sizeof(gun_key_map[0])))
+
+static int player_weapon_slot_from_gun(int16_t gun_idx)
+{
+    for (int i = 0; i < GUN_KEY_COUNT; i++) {
+        if (gun_key_map[i] == gun_idx) return i;
+    }
+    return 0;
+}
+
+static void player_cycle_weapon(PlayerState *plr, int direction)
+{
+    if (!plr || GUN_KEY_COUNT <= 0) return;
+
+    int slot = player_weapon_slot_from_gun(plr->gun_selected);
+    int step_dir = (direction >= 0) ? 1 : -1;
+
+    for (int tries = 0; tries < GUN_KEY_COUNT; tries++) {
+        slot = (slot + step_dir + GUN_KEY_COUNT) % GUN_KEY_COUNT;
+        int gun_idx = gun_key_map[slot];
+        if (gun_idx >= 0 && gun_idx < MAX_GUNS) {
+            plr->gun_selected = (int16_t)gun_idx;
+            return;
+        }
+    }
+}
 
 static GameObject *find_free_player_shot_slot(uint8_t *shots, int16_t *saved_cid)
 {
@@ -405,15 +431,28 @@ static void player_always_keys(PlayerState *plr, uint8_t *key_map,
     }
     plr->s_height = h;
 
-    /* Weapon selection (keys 1-5) */
-    /* Keys 1-5 are at Amiga raw codes $01-$05, which map to key_map[1..5] */
-    for (int i = 0; i < 5; i++) {
+    /* Weapon selection (number keys) */
+    for (int i = 0; i < GUN_KEY_COUNT; i++) {
         if (key_map[i + 1]) {
             int gun_idx = gun_key_map[i];
             /* Check if weapon is available (visible flag in gun_data); skip placeholder */
             //if (plr->gun_data[gun_idx].visible) {
                 plr->gun_selected = (int16_t)gun_idx;
             //}
+        }
+    }
+
+    /* Mouse wheel cycles through the mapped weapon slots. */
+    {
+        MouseState mouse;
+        input_read_mouse(&mouse);
+        int wheel_steps = (int)mouse.wheel_y;
+        if (wheel_steps != 0) {
+            int direction = (wheel_steps > 0) ? -1 : 1;
+            if (wheel_steps < 0) wheel_steps = -wheel_steps;
+            while (wheel_steps-- > 0) {
+                player_cycle_weapon(plr, direction);
+            }
         }
     }
 }
