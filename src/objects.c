@@ -52,6 +52,7 @@ int8_t  plr1_obs_in_line[MAX_OBJECTS];
 int8_t  plr2_obs_in_line[MAX_OBJECTS];
 int16_t plr1_obj_dists[MAX_OBJECTS];
 int16_t plr2_obj_dists[MAX_OBJECTS];
+static uint8_t explosion_damage_flag[MAX_OBJECTS];
 
 /* Animation timer (from Anims.s) */
 static int16_t anim_timer = 2;
@@ -317,13 +318,14 @@ static void enemy_apply_death_outcome(GameObject *obj, const EnemyParams *params
 /* NormalAlien.s / FlameMarine.s: splat #14@400 if damage>1, scream if death anim, instant if huge hit. */
 static void enemy_death_marine_like(GameObject *obj, const EnemyParams *params,
                                     GameState *state, int8_t damage,
-                                    bool instant_kill, int scream_sample)
+                                    bool instant_kill, int scream_sample,
+                                    bool explosion_damage)
 {
-    if (damage > 1) {
+    if (damage > 1 || explosion_damage) {
         audio_play_sample(14, amiga_noisevol_to_pc(400));
         explode_into_bits(obj, state);
     }
-    if (!instant_kill && params->death_frames[0] >= 0) {
+    if ((!instant_kill || explosion_damage) && params->death_frames[0] >= 0) {
         audio_play_sample(scream_sample, amiga_noisevol_to_pc(200));
     }
     enemy_apply_death_outcome(obj, params, instant_kill);
@@ -341,6 +343,16 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
 
     NASTY_DAMAGE(*obj) = 0;
 
+    int obj_idx = -1;
+    if (state->level.object_data) {
+        obj_idx = (int)(((uint8_t*)obj - state->level.object_data) / OBJECT_SIZE);
+    }
+    bool explosion_damage = false;
+    if (obj_idx >= 0 && obj_idx < MAX_OBJECTS) {
+        explosion_damage = explosion_damage_flag[obj_idx];
+        explosion_damage_flag[obj_idx] = 0;
+    }
+
     /* Apply damage reduction */
     if (params->damage_shift > 0) {
         damage >>= params->damage_shift;
@@ -350,7 +362,6 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
     int8_t lives = NASTY_LIVES(*obj);
     lives -= damage;
 
-    int obj_idx = (int)(((uint8_t *)obj - state->level.object_data) / OBJECT_SIZE);
     int lives_before = (int)NASTY_LIVES(*obj);
     printf("[ENEMY] damage obj=%d type=%d applied=%d lives %d -> %d%s\n",
            obj_idx, (int)obj->obj.number, (int)damage, lives_before, (int)lives,
@@ -368,13 +379,13 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
 
         /* Human marines: FlameMarine.s / ToughMarine.s / MutantMarine.s */
         if (enemy_is_human_marine(obj->obj.number)) {
-            enemy_death_marine_like(obj, params, state, damage, instant_kill, 0);
+            enemy_death_marine_like(obj, params, state, damage, instant_kill, 0, explosion_damage);
             return true;
         }
 
         switch (params->damage_audio_class) {
         case ENEMY_DMG_AUDIO_ALIEN:
-            enemy_death_marine_like(obj, params, state, damage, instant_kill, 0);
+            enemy_death_marine_like(obj, params, state, damage, instant_kill, 0, explosion_damage);
             return true;
 
         case ENEMY_DMG_AUDIO_ROBOT:
@@ -393,11 +404,11 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
         case ENEMY_DMG_AUDIO_WORM: {
             /* HalfWorm.s: splat #14 @300 if damage>1; scream #27@200 for anim; instant if damage>=80 */
             int splatv = (params->gib_splat_noisevol > 0) ? params->gib_splat_noisevol : 400;
-            if (damage > 1) {
+            if (damage > 1 || explosion_damage) {
                 audio_play_sample(14, amiga_noisevol_to_pc(splatv));
                 explode_into_bits(obj, state);
             }
-            if (!instant_kill && params->death_frames[0] >= 0) {
+            if ((!instant_kill || explosion_damage) && params->death_frames[0] >= 0) {
                 audio_play_sample(params->scream_sound, amiga_noisevol_to_pc(200));
             }
             enemy_apply_death_outcome(obj, params, instant_kill);
@@ -409,6 +420,8 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
             if (instant_kill) {
                 audio_play_sample(14, amiga_noisevol_to_pc(400));
                 explode_into_bits(obj, state);
+                if (explosion_damage && params->scream_sound >= 0)
+                    audio_play_sample(params->scream_sound, amiga_noisevol_to_pc(200));
                 OBJ_SET_ZONE(obj, -1);
             } else {
                 if (params->scream_sound >= 0)
@@ -429,7 +442,7 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
             if (params->death_sound >= 0) {
                 audio_play_sample(params->death_sound, amiga_noisevol_to_pc(200));
             }
-            if (damage > 1) {
+            if (damage > 1 || explosion_damage) {
                 explode_into_bits(obj, state);
             }
             enemy_apply_death_outcome(obj, params, instant_kill);
@@ -3550,6 +3563,9 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         if (damage > max_damage) damage = max_damage;
 
         obj->raw[19] = (uint8_t)((uint8_t)obj->raw[19] + (uint8_t)damage);
+        if (obj_index >= 0 && obj_index < MAX_OBJECTS) {
+            explosion_damage_flag[obj_index] = 1;
+        }
 
         int32_t impact_x = ((int32_t)dx << 4) / (int32_t)atten;
         int32_t impact_z = ((int32_t)dz << 4) / (int32_t)atten;
