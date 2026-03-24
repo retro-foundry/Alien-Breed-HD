@@ -399,6 +399,10 @@ void play_game(GameState *state)
     /* ---- Setup default game ---- */
     game_state_setup_default(state);
 
+    /* TEMP DEBUG: Start with all key condition bits set so key-locked doors open.
+     * REMOVE THIS AFTER TESTING. */
+    game_conditions = (int16_t)0x00FF;
+
     /* ---- Give player starting weapons and lots of ammo ----
      * All weapons acquired with full ammo (999 display units each). */
     for (int g = 0; g < MAX_GUNS; g++) {
