@@ -1621,33 +1621,59 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         (1u << OBJ_NBR_TOUGH_MARINE)    |  /* 18 */
         (1u << OBJ_NBR_FLAME_MARINE)    |  /* 19 */
         (1u << OBJ_NBR_GAS_PIPE);          /* 20 */
-    (void)plr_num; /* flags are now the same for both players */
+    uint8_t player_can_see_bit = (plr_num == 1) ? 0x01u : 0x02u;
 
     /* Find closest target in line of fire */
     int closest_idx = -1;
     int16_t closest_dist = 32767;
+    int32_t closest_target_ydiff = 0;
 
     if (state->level.object_data) {
-        for (int i = 0; i < state->level.num_object_points && i < MAX_OBJECTS; i++) {
-            GameObject *obj = (GameObject*)(state->level.object_data + i * OBJECT_SIZE);
-            int obj_type = obj->obj.number;
-            if (!obs_in_line[i]) continue;
-            int16_t dist = obj_dists[i];
-            if (dist <= 0) continue;
+        /* Prefer strict Amiga can_see-bit gating, but fall back to geometric
+         * in-line selection if can_see bits are stale for this frame. */
+        for (int pass = 0; pass < 2 && closest_idx < 0; pass++) {
+            bool require_can_see = (pass == 0);
+            for (int i = 0; i < MAX_OBJECTS; i++) {
+                GameObject *obj = (GameObject*)(state->level.object_data + i * OBJECT_SIZE);
+                int16_t obj_cid = OBJ_CID(obj);
+                if (obj_cid < 0) break;
 
-            /* Check if this object type is a valid target */
-            if (OBJ_ZONE(obj) < 0) continue;
+                int obj_type = obj->obj.number;
+                if (!obs_in_line[i]) continue;
 
-            if (obj_type < 0 || obj_type > 20) continue;
-            if (!(enemy_flags & (1u << obj_type))) continue;
+                if (require_can_see &&
+                    ((((uint8_t)obj->obj.can_see) & player_can_see_bit) == 0u)) {
+                    continue;
+                }
 
-            /* Do not target dead enemies (death animation or no lives left) */
-            if (obj_type == (int)OBJ_NBR_DEAD) continue;
-            if (NASTY_LIVES(*obj) <= 0 && obj_type != (int)OBJ_NBR_BARREL) continue;
+                int16_t dist = 0;
+                if (obj_cid >= 0 && obj_cid < MAX_OBJECTS)
+                    dist = obj_dists[obj_cid];
+                if (dist <= 0)
+                    dist = obj_dists[i];
+                if (dist <= 0) continue;
 
-            if (dist < closest_dist) {
-                closest_dist = dist;
-                closest_idx = i;
+                /* Check if this object type is a valid target */
+                if (OBJ_ZONE(obj) < 0) continue;
+
+                if (obj_type < 0 || obj_type > 20) continue;
+                if (!(enemy_flags & (1u << obj_type))) continue;
+
+                /* Do not target dead enemies (death animation or no lives left) */
+                if (obj_type == (int)OBJ_NBR_DEAD) continue;
+                if (NASTY_LIVES(*obj) <= 0 && obj_type != (int)OBJ_NBR_BARREL) continue;
+
+                /* PlayerShoot.s vertical gate: abs((objY<<7)-plrYoff) / 44 <= forward_dist. */
+                int16_t obj_y = obj_w(obj->raw + 4);
+                int32_t ydiff = ((int32_t)obj_y << 7) - plr->p_yoff;
+                int32_t abs_ydiff = (ydiff < 0) ? -ydiff : ydiff;
+                if ((abs_ydiff / 44) > dist) continue;
+
+                if (dist <= closest_dist) {
+                    closest_dist = dist;
+                    closest_idx = i;
+                    closest_target_ydiff = ydiff;
+                }
             }
         }
     }
@@ -1657,16 +1683,8 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         bool has_target = (closest_idx >= 0 && closest_dist > 0 && state->level.object_data);
         bool grenade_fallback = (gun_idx == 4 && !has_target);
         if (has_target || grenade_fallback) {
-            int32_t target_ydiff = 0;
+            int32_t target_ydiff = has_target ? closest_target_ydiff : 0;
             int32_t aim_dist = has_target ? closest_dist : 32767;
-
-            if (has_target) {
-                GameObject *tgt = (GameObject *)(state->level.object_data +
-                                  closest_idx * OBJECT_SIZE);
-                int16_t target_y = (int16_t)((tgt->raw[4] << 8) | tgt->raw[5]);
-                /* Keep Y math in accypos units (<<7), like PlayerShoot.s targetydiff path. */
-                target_ydiff = ((int32_t)target_y << 7) - plr->p_yoff;
-            }
 
             target_ydiff -= plr->p_height;
             target_ydiff += 18 * 256;
