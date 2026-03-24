@@ -1669,11 +1669,16 @@ void object_handle_marine(GameObject *obj, GameState *state)
                 OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, 50 + (int16_t)(rand() & 0x1F));
                 if (params->attack_sound >= 0) audio_play_sample(params->attack_sound, 100);
                 enemy_fire_at_player(obj, state, target_player, 6, 7, 32, 4);
+            } else if (type == OBJ_NBR_FLAME_MARINE) {
+                fourth_timer = 25;
+                if (params->attack_sound >= 0) audio_play_sample(params->attack_sound, 100);
+                enemy_fire_at_player(obj, state, target_player, 3, 7, 8, 2);
             } else {
                 OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, 200 + (int16_t)(rand() & 0xFF));
                 if (params->attack_sound >= 0) audio_play_sample(params->attack_sound, 100);
                 marine_hitscan_burst(obj, state, target_player, 5, 2);
             }
+            OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, fourth_timer);
         }
     } else {
         (void)enemy_tick_third_timer(obj, state, can_see, 20, 63);
@@ -1725,7 +1730,7 @@ void object_handle_big_nasty(GameObject *obj, GameState *state)
             int vol = (200 * 255 + 400) / 800;
             if (vol > 255) vol = 255;
             audio_play_sample(9, vol);
-            enemy_fire_at_player(obj, state, target_player, 1, 10, 16, 0);
+            enemy_fire_at_player(obj, state, target_player, 1, 10, 16, 4);
         }
         OBJ_SET_TD_W(obj, ENEMY_SEC_TIMER_OFF, sec_timer);
     } else {
@@ -2215,8 +2220,9 @@ void object_handle_bullet(GameObject *obj, GameState *state)
 
         const BulletAnimFrame *table = bullet_pop_tables[shot_size];
 
-        /* RockPop explosion uses frame-gated stepping so its 9-frame sequence is visible. */
-        if (shot_size == 2) {
+        /* Keep RockPop-derived sequences (rocket/grenade explosion pops) at
+         * the same cadence as the original feel in this port's timing model. */
+        if (shot_size == 2 || shot_size == 4) {
             int16_t tf = state->temp_frames;
             if (tf < 1) tf = 1;
             int16_t pop_accum = SHOT_LIFE(*obj);
@@ -3265,9 +3271,11 @@ void enemy_fire_at_player(GameObject *obj, GameState *state,
     if (dist == 0) dist = 1;
 
     /* Apply lead if speed > 0 */
-    if (shot_speed > 0 && state->xdiff1 != 0) {
-        int16_t lead_x = (int16_t)((state->xdiff1 * dist) / (shot_speed * 16));
-        int16_t lead_z = (int16_t)((state->zdiff1 * dist) / (shot_speed * 16));
+    int16_t target_xdiff = (player_num == 1) ? state->xdiff1 : state->xdiff2;
+    int16_t target_zdiff = (player_num == 1) ? state->zdiff1 : state->zdiff2;
+    if (shot_speed > 0 && (target_xdiff != 0 || target_zdiff != 0)) {
+        int16_t lead_x = (int16_t)((target_xdiff * dist) / (shot_speed * 16));
+        int16_t lead_z = (int16_t)((target_zdiff * dist) / (shot_speed * 16));
         plr_x += lead_x;
         plr_z += lead_z;
     }

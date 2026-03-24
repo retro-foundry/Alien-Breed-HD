@@ -305,14 +305,14 @@ const ObjectWorldSize default_object_world_size[21] = {
  * Translated from Anims.s BulletSizes, HitNoises, ExplosiveForce
  * ----------------------------------------------------------------------- */
 const BulletTypeData bullet_types[8] = {
-    /* Type 0: Plasma bolt    */ { 0x10, 0x10,  0,  -1,   0 },
-    /* Type 1: Plasma bolt2   */ { 0x08, 0x08,  0,  -1,   0 },
-    /* Type 2: Rocket         */ { 0x10, 0x10,  64,  15, 300 },
-    /* Type 3: Flame          */ { 0x10, 0x10,   0,  -1,   0 },
-    /* Type 4: Grenade        */ { 0x10, 0x10,  40,   9, 200 },
-    /* Type 5: Worm spit      */ { 0x08, 0x08,  0,  -1,   0 },
-    /* Type 6: Marine shot    */ { 0x20, 0x20,  0,   3, 100 },
-    /* Type 7: Big shot       */ { 0x20, 0x20,  0,  -1,   0 },
+    /* Type 0: Plasma bolt    */ { 0x10, 0x10,   0,  -1,   0 },
+    /* Type 1: Plasma bolt2   */ { 0x10, 0x10,   0,  -1,   0 },
+    /* Type 2: Rocket         */ { 0x10, 0x10,  64,  15, 200 },
+    /* Type 3: Flame          */ { 0x20, 0x20,   0,  -1,   0 },
+    /* Type 4: Grenade        */ { 0x08, 0x08,  40,  15, 200 },
+    /* Type 5: Worm spit      */ { 0x10, 0x10,   0,  -1,   0 },
+    /* Type 6: Marine shot    */ { 0x10, 0x10,   0,  -1,   0 },
+    /* Type 7: Big shot       */ { 0x08, 0x08,   0,  -1,   0 },
 };
 
 /* -----------------------------------------------------------------------
@@ -353,14 +353,27 @@ static const BulletAnimFrame anim_rock[] = {
     { -1 }
 };
 
-/* FlameAnim: gun 3 (flamethrower) - uses vect 8 (explosion sheet), frames 0-5, growing size */
+/* FlameAnim: gun 3 (flamethrower) - uses vect 8, full 18-frame growth sequence. */
 static const BulletAnimFrame anim_flame[] = {
-    { 10, 10,  8,  0, 0 },
-    { 14, 14,  8,  1, 0 },
-    { 18, 18,  8,  2, 0 },
-    { 22, 22,  8,  3, 0 },
-    { 26, 26,  8,  4, 0 },
-    { 30, 30,  8,  4, 0 },
+    {  5,  5,  8, 0, 0 },
+    {  9,  9,  8, 1, 0 },
+    { 13, 13,  8, 2, 0 },
+    { 17, 17,  8, 3, 0 },
+    { 21, 21,  8, 4, 0 },
+    { 25, 25,  8, 4, 0 },
+    { 29, 29,  8, 5, 0 },
+    { 33, 33,  8, 5, 0 },
+    { 37, 37,  8, 5, 0 },
+    { 41, 41,  8, 6, 0 },
+    { 45, 45,  8, 6, 0 },
+    { 49, 49,  8, 6, 0 },
+    { 55, 55,  8, 7, 0 },
+    { 63, 63,  8, 7, 0 },
+    { 71, 71,  8, 7, 0 },
+    { 79, 79,  8, 7, 0 },
+    { 87, 87,  8, 8, 0 },
+    { 95, 95,  8, 8, 0 },
+    { 103,103,  8, 8, 0 },
     { -1 }
 };
 
@@ -691,7 +704,7 @@ const EnemyParams enemy_params[] = {
         .shot_type      = 4,        /* projectile type 4 */
         .shot_power     = 10,
         .shot_speed     = 16,
-        .shot_shift     = 0,
+        .shot_shift     = 3,
         .shot_cooldown  = 50,
         .damage_shift   = 4,        /* asr.b #4 = divide by 16 */
         .explode_threshold = 0,     /* always explodes on death */
@@ -782,14 +795,14 @@ const EnemyParams enemy_params[] = {
         .extlen         = 80,
         .awayfromwall   = 1,
         .nas_height     = 64,
-        .melee_damage   = 2,        /* spread fire, 5 shots */
-        .melee_cooldown = 20,
+        .melee_damage   = 0,
+        .melee_cooldown = 0,
         .melee_range    = 80,
-        .shot_type      = -1,       /* uses special spread fire */
-        .shot_power     = 2,
-        .shot_speed     = 0,
-        .shot_shift     = 0,
-        .shot_cooldown  = 0,
+        .shot_type      = 3,        /* flame projectile */
+        .shot_power     = 7,
+        .shot_speed     = 8,
+        .shot_shift     = 2,
+        .shot_cooldown  = 25,
         .damage_shift   = 0,
         .explode_threshold = 40,
         .wander_timer   = 50,
@@ -801,7 +814,7 @@ const EnemyParams enemy_params[] = {
         .periodic_vocal2 = 18,
         .periodic_vol_idle = 100,
         .periodic_vol_attack = 800,
-        .attack_sound   = 21,
+        .attack_sound   = 1,
         .damage_audio_class = ENEMY_DMG_AUDIO_UNUSED,
         .gib_splat_noisevol = 0,
         .death_frames   = {16,16,16,16,16,16,16,16,16,16, 17,17,17,17,17,17,17,17,17,17,
@@ -886,10 +899,10 @@ const EnemyParams enemy_params[] = {
         .melee_damage   = 0,
         .melee_cooldown = 0,
         .melee_range    = 80,
-        .shot_type      = 0,        /* plasma-like */
+        .shot_type      = 1,        /* plasma bolt 2 */
         .shot_power     = 10,
         .shot_speed     = 16,
-        .shot_shift     = 0,
+        .shot_shift     = 4,
         .shot_cooldown  = 50,
         .damage_shift   = 0,
         .explode_threshold = 0,
