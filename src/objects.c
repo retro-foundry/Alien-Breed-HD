@@ -315,12 +315,12 @@ static void enemy_apply_death_outcome(GameObject *obj, const EnemyParams *params
     }
 }
 
-/* Eyeball soft death: keep the corpse in-world and settle it toward floor height.
- * This follows the Amiga floating-enemy soft-kill pattern (frame 18+ instead of
- * immediate object removal). */
-static void enemy_update_eyeball_soft_dead(GameObject *obj,
-                                           const EnemyParams *params,
-                                           GameState *state)
+/* Floating enemy soft death (FlyingScalyBall/EyeBall):
+ * keep the corpse in-world and settle it toward floor height, advancing
+ * frame 18->19 while falling, then resting at frame 20. */
+static void enemy_update_flying_soft_dead(GameObject *obj,
+                                          const EnemyParams *params,
+                                          GameState *state)
 {
     if (!obj || !params || !state) return;
     if (OBJ_ZONE(obj) < 0) return;
@@ -362,7 +362,14 @@ static void enemy_update_eyeball_soft_dead(GameObject *obj,
         OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, third);
     } else {
         obj_sw(obj->raw + 4, floor_y);
-        if (OBJ_DEADL(obj) < 20) OBJ_SET_DEADL(obj, 20);
+        /* Amiga FlyingScalyBall soft death: on first floor contact, burst into bits,
+         * then switch to final floor-corpse frame (20). */
+        if (OBJ_DEADL(obj) < 20) {
+            int splatv = (params->gib_splat_noisevol > 0) ? params->gib_splat_noisevol : 400;
+            audio_play_sample(14, amiga_noisevol_to_pc(splatv));
+            explode_into_bits(obj, state);
+            OBJ_SET_DEADL(obj, 20);
+        }
     }
 }
 
@@ -477,8 +484,9 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
             } else {
                 if (params->scream_sound >= 0)
                     audio_play_sample(params->scream_sound, amiga_noisevol_to_pc(200));
-                if (obj->obj.number == OBJ_NBR_EYEBALL) {
-                    /* Eyeball soft kill: keep corpse and hand over to dead-state update. */
+                if (obj->obj.number == OBJ_NBR_EYEBALL ||
+                    obj->obj.number == OBJ_NBR_FLYING_NASTY) {
+                    /* Flying/Eyeball soft kill: keep corpse and hand over to dead-state update. */
                     NASTY_LIVES(*obj) = 0;
                     OBJ_SET_DEADL(obj, 18);
                     OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, 30);
@@ -1822,8 +1830,9 @@ void object_handle_flying_nasty(GameObject *obj, GameState *state)
 
     int8_t lives = NASTY_LIVES(*obj);
     if (lives <= 0) {
-        if (obj->obj.number == OBJ_NBR_EYEBALL) {
-            enemy_update_eyeball_soft_dead(obj, params, state);
+        if (obj->obj.number == OBJ_NBR_EYEBALL ||
+            obj->obj.number == OBJ_NBR_FLYING_NASTY) {
+            enemy_update_flying_soft_dead(obj, params, state);
         }
         return;
     }
