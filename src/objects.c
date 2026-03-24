@@ -65,6 +65,8 @@ static uint8_t walk_cycle = 0;
 enum {
     ENEMY_OBJ_TIMER_OFF    = 16, /* ObjTimer   (raw+34) */
     ENEMY_SEC_TIMER_OFF    = 18, /* SecTimer   (raw+36) */
+    ENEMY_OBJ_YVEL_OFF     = 30, /* objyvel    (raw+48) */
+    ENEMY_TURN_SPEED_OFF   = 32, /* TurnSpeed  (raw+50) */
     ENEMY_THIRD_TIMER_OFF  = 34, /* ThirdTimer (raw+52) */
     ENEMY_FOURTH_TIMER_OFF = 36  /* FourthTimer(raw+54) */
 };
@@ -77,6 +79,7 @@ static int32_t enemy_move_y_for_context(const GameObject *obj,
                                         const EnemyParams *params,
                                         const GameState *state,
                                         int zone_slots);
+static void enemy_update_flying_vertical(GameObject *obj, const GameState *state);
 
 /* -----------------------------------------------------------------------
  * enemy_viewpoint - Amiga AlienControl.s ViewpointToDraw
@@ -534,15 +537,30 @@ static void enemy_wander_with_timer(GameObject *obj, const EnemyParams *params,
                                     GameState *state, int16_t timer_base,
                                     int16_t timer_mask)
 {
+    bool flying_hover = (obj->obj.number == OBJ_NBR_FLYING_NASTY ||
+                         obj->obj.number == OBJ_NBR_EYEBALL);
     int16_t timer = NASTY_TIMER(*obj);
     timer -= state->temp_frames;
 
     if (timer <= 0) {
-        int16_t new_facing = (int16_t)(rand() & 8190);
-        NASTY_SET_FACING(*obj, new_facing);
         timer = timer_base;
         if (timer_mask > 0) {
             timer = (int16_t)(timer + (rand() & timer_mask));
+        }
+
+        if (flying_hover) {
+            /* Amiga EyeBall/FlyingScalyBall: ObjTimer rollover updates
+             * TurnSpeed + objyvel (not an immediate random Facing snap). */
+            int16_t turn_speed = (int16_t)(((rand() >> 4) & 255) - 128);
+            turn_speed = (int16_t)(turn_speed * 2);
+            OBJ_SET_TD_W(obj, ENEMY_TURN_SPEED_OFF, turn_speed);
+
+            int16_t yv = (int16_t)(((rand() >> 4) & 7) - 3);
+            yv = (int16_t)(yv - ((rand() >> 5) & 1));
+            OBJ_SET_TD_W(obj, ENEMY_OBJ_YVEL_OFF, yv);
+        } else {
+            int16_t new_facing = (int16_t)(rand() & 8190);
+            NASTY_SET_FACING(*obj, new_facing);
         }
     }
 
@@ -898,6 +916,15 @@ static bool enemy_spawn_tree_eyeball(GameObject *tree, GameState *state)
         NASTY_SET_MAXSPD(*obj, 5);
         NASTY_SET_CURRSPD(*obj, 0);
         NASTY_SET_FACING(*obj, NASTY_FACING(*tree));
+        {
+            int16_t turn_speed = (int16_t)(((rand() >> 4) & 255) - 128);
+            turn_speed = (int16_t)(turn_speed * 2);
+            OBJ_SET_TD_W(obj, ENEMY_TURN_SPEED_OFF, turn_speed);
+
+            int16_t yv = (int16_t)(((rand() >> 4) & 7) - 3);
+            yv = (int16_t)(yv - ((rand() >> 5) & 1));
+            OBJ_SET_TD_W(obj, ENEMY_OBJ_YVEL_OFF, yv);
+        }
         NASTY_SET_TIMER(*obj, 100);
         OBJ_SET_TD_W(obj, ENEMY_SEC_TIMER_OFF, 100);
         OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, 100);
@@ -978,6 +1005,60 @@ static int32_t enemy_move_y_for_context(const GameObject *obj,
         }
     }
     return move_y;
+}
+
+/* Amiga EyeBall.s / FlyingScalyBall.s vertical bob:
+ * add objyvel to objY, then clamp between floor/roof bands and flip direction. */
+static void enemy_update_flying_vertical(GameObject *obj, const GameState *state)
+{
+    if (!state || !state->level.zone_adds || !state->level.data) return;
+
+    int zone_slots = level_zone_slot_count(&state->level);
+    int16_t zid = OBJ_ZONE(obj);
+    if (zid < 0) return;
+
+    int src_zone = level_connect_to_zone_index(&state->level, zid);
+    if (src_zone < 0 && zid < zone_slots) src_zone = zid;
+    if (src_zone < 0 || src_zone >= zone_slots) return;
+
+    int32_t zo = (int32_t)be32(state->level.zone_adds + (uint32_t)src_zone * 4u);
+    if (zo <= 0) return;
+    const uint8_t *room = state->level.data + zo;
+
+    int32_t floor_h = be32(room + ZONE_OFF_FLOOR);
+    int32_t roof_h  = be32(room + ZONE_OFF_ROOF);
+    if (obj->obj.in_top) {
+        floor_h = be32(room + ZONE_OFF_UPPER_FLOOR);
+        roof_h  = be32(room + ZONE_OFF_UPPER_ROOF);
+    }
+
+    int16_t yvel = OBJ_TD_W(obj, ENEMY_OBJ_YVEL_OFF);
+    int16_t y = obj_w(obj->raw + 4);
+    y = (int16_t)(y + yvel);
+
+    {
+        int32_t y_fp = ((int32_t)y) << 7;
+        int32_t d2 = y_fp + (48 * 256);
+        int32_t d3 = y_fp - (48 * 256);
+
+        if (d2 >= floor_h) {
+            d2 = floor_h;
+            d3 = d2;
+            yvel = (int16_t)-yvel;
+            d3 -= (96 * 256);
+        }
+
+        if (d3 <= roof_h) {
+            d3 = roof_h;
+            yvel = (int16_t)-yvel;
+        }
+
+        d3 += (48 * 256);
+        y = (int16_t)(d3 >> 7);
+    }
+
+    OBJ_SET_TD_W(obj, ENEMY_OBJ_YVEL_OFF, yvel);
+    obj_sw(obj->raw + 4, y);
 }
 /* -----------------------------------------------------------------------
  * objects_update - Main per-frame object processing
@@ -1067,7 +1148,9 @@ void objects_update(GameState *state)
         {
             int corpse_on_floor = (obj_type == OBJ_NBR_DEAD &&
                                    (uint8_t)obj->raw[6] != (uint8_t)OBJ_3D_SPRITE);
-            if (obj_type >= 0 || corpse_on_floor) {
+            int flying_hover = (obj_type == OBJ_NBR_FLYING_NASTY ||
+                                obj_type == OBJ_NBR_EYEBALL);
+            if ((obj_type >= 0 || corpse_on_floor) && !flying_hover) {
                 int16_t obj_zone = OBJ_ZONE(obj);
                 if (obj_zone >= 0 && obj_zone < zone_slots &&
                     state->level.zone_adds && state->level.data) {
@@ -1824,6 +1907,15 @@ void object_handle_flying_nasty(GameObject *obj, GameState *state)
     if (!state->nasty) return;
     enemy_decay_worry_latched(obj);
 
+    /* Amiga scripts force per-type world size every tick. */
+    if (obj->obj.number == OBJ_NBR_EYEBALL) {
+        obj->raw[6] = 0x10;
+        obj->raw[7] = 0x20;
+    } else {
+        obj->raw[6] = 0x60;
+        obj->raw[7] = 0x60;
+    }
+
     const EnemyParams *params = &enemy_params[9];
 
     if (enemy_check_damage(obj, params, state)) return;
@@ -1836,14 +1928,6 @@ void object_handle_flying_nasty(GameObject *obj, GameState *state)
         }
         return;
     }
-
-    /* Vertical movement (bounce between floor and ceiling) */
-    /* Reusing type_data fields for Y velocity */
-    int16_t yvel = OBJ_TD_W(obj, 6);
-    int32_t accypos = OBJ_TD_L(obj, 24);
-    accypos += yvel * state->temp_frames;
-    OBJ_SET_TD_L(obj, 24, accypos);
-    OBJ_SET_TD_W(obj, 6, yvel);
 
     enemy_update_can_see(obj, state);
     int can_see = obj->obj.can_see & 0x03;
@@ -1876,8 +1960,7 @@ void object_handle_flying_nasty(GameObject *obj, GameState *state)
     } else {
         /* Continuous rotation while prowling */
         int16_t facing = NASTY_FACING(*obj);
-        int16_t turn_speed = obj->obj.type_data[14]; /* TurnSpeed field */
-        if (turn_speed == 0) turn_speed = 50;
+        int16_t turn_speed = OBJ_TD_W(obj, ENEMY_TURN_SPEED_OFF);
         facing = (facing + turn_speed * state->temp_frames) & ANGLE_MASK;
         NASTY_SET_FACING(*obj, facing);
 
@@ -1886,6 +1969,8 @@ void object_handle_flying_nasty(GameObject *obj, GameState *state)
 
         enemy_wander_with_timer(obj, params, state, 50, 0);
     }
+
+    enemy_update_flying_vertical(obj, state);
 
     enemy_tick_sec_timer_vocal(obj, state, params, attacking);
 
