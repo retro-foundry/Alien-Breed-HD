@@ -51,114 +51,6 @@ static void write_long_be(uint8_t *p, int32_t v)
     p[3] = (uint8_t)(uint32_t)v;
 }
 
-static int shot_slot_count_from_level_field(int16_t slots_field)
-{
-    int slots = (int)slots_field;
-    if (slots <= 0)
-        slots = LEGACY_SHOT_SLOT_COUNT;
-    return slots;
-}
-
-static int count_missing_shot_cids(const uint8_t *shots, int slots, int old_num_pts)
-{
-    int missing = 0;
-    for (int i = 0; i < slots; i++) {
-        const uint8_t *slot = shots + (size_t)i * OBJECT_SIZE;
-        int16_t cid = read_word(slot + 0);
-        if (cid < 0 || cid >= old_num_pts)
-            missing++;
-    }
-    return missing;
-}
-
-static void assign_missing_shot_cids(uint8_t *shots, int slots, int old_num_pts, int *next_cid)
-{
-    for (int i = 0; i < slots; i++) {
-        uint8_t *slot = shots + (size_t)i * OBJECT_SIZE;
-        int16_t cid = read_word(slot + 0);
-        if (cid >= 0 && cid < old_num_pts)
-            continue;
-        write_word_be(slot + 0, (int16_t)(*next_cid));
-        (*next_cid)++;
-    }
-}
-
-static int level_expand_shot_and_point_pools(LevelState *level)
-{
-    const int old_player_slots = LEGACY_SHOT_SLOT_COUNT;
-    const int old_nasty_slots = LEGACY_SHOT_SLOT_COUNT;
-    const int new_player_slots = PLAYER_SHOT_SLOT_CAPACITY;
-    const int new_nasty_slots = NASTY_SHOT_SLOT_CAPACITY;
-    const int old_num_pts = (level->num_object_points > 0) ? (int)level->num_object_points : 0;
-    uint8_t *player_buf = NULL;
-    uint8_t *nasty_buf = NULL;
-    uint8_t *new_points = NULL;
-
-    if (!level || !level->player_shot_data || !level->nasty_shot_data)
-        return -1;
-    if (new_player_slots <= old_player_slots && new_nasty_slots <= old_nasty_slots)
-        return 0;
-
-    player_buf = (uint8_t *)calloc((size_t)new_player_slots, OBJECT_SIZE);
-    nasty_buf = (uint8_t *)calloc((size_t)new_nasty_slots * OBJECT_SIZE + (size_t)new_nasty_slots * 64u, 1);
-    if (!player_buf || !nasty_buf)
-        goto fail;
-
-    memcpy(player_buf, level->player_shot_data, (size_t)old_player_slots * OBJECT_SIZE);
-    memcpy(nasty_buf, level->nasty_shot_data, (size_t)old_nasty_slots * OBJECT_SIZE);
-
-    for (int i = old_player_slots; i < new_player_slots; i++) {
-        uint8_t *slot = player_buf + (size_t)i * OBJECT_SIZE;
-        write_word_be(slot + 0, (int16_t)-1);
-        write_word_be(slot + 12, (int16_t)-1);
-    }
-    for (int i = old_nasty_slots; i < new_nasty_slots; i++) {
-        uint8_t *slot = nasty_buf + (size_t)i * OBJECT_SIZE;
-        write_word_be(slot + 0, (int16_t)-1);
-        write_word_be(slot + 12, (int16_t)-1);
-    }
-
-    {
-        int missing = count_missing_shot_cids(player_buf, new_player_slots, old_num_pts) +
-                      count_missing_shot_cids(nasty_buf, new_nasty_slots, old_num_pts);
-        int new_num_pts = old_num_pts + missing;
-        int next_cid = old_num_pts;
-
-        if (new_num_pts > 32767)
-            goto fail;
-
-        if (missing > 0) {
-            new_points = (uint8_t *)calloc((size_t)new_num_pts, 8u);
-            if (!new_points)
-                goto fail;
-            if (level->object_points && old_num_pts > 0) {
-                memcpy(new_points, level->object_points, (size_t)old_num_pts * 8u);
-            }
-        }
-
-        assign_missing_shot_cids(player_buf, new_player_slots, old_num_pts, &next_cid);
-        assign_missing_shot_cids(nasty_buf, new_nasty_slots, old_num_pts, &next_cid);
-
-        level->num_object_points = (int16_t)new_num_pts;
-    }
-
-    level->player_shot_data = player_buf;
-    level->nasty_shot_data = nasty_buf;
-    level->other_nasty_data = nasty_buf + (size_t)new_nasty_slots * OBJECT_SIZE;
-    level->player_shot_slots = (int16_t)new_player_slots;
-    level->nasty_shot_slots = (int16_t)new_nasty_slots;
-    if (new_points) {
-        level->object_points = new_points;
-    }
-    return 0;
-
-fail:
-    free(player_buf);
-    free(nasty_buf);
-    free(new_points);
-    return -1;
-}
-
 /* Forward declare for use in level_parse. */
 static void log_broken_floor_line_connects(LevelState *level);
 
@@ -644,27 +536,16 @@ int level_parse(LevelState *level)
     /* Long 34: Offset to player shot data */
     int32_t pshot_offset = read_long(ld + 34);
     level->player_shot_data = ld + pshot_offset;
-    level->player_shot_slots = LEGACY_SHOT_SLOT_COUNT;
 
     /* Long 38: Offset to nasty shot data */
     int32_t nshot_offset = read_long(ld + 38);
     level->nasty_shot_data = ld + nshot_offset;
-    level->nasty_shot_slots = LEGACY_SHOT_SLOT_COUNT;
-    /* Other nasty data follows after the nasty shot pool. */
-    level->other_nasty_data = level->nasty_shot_data + (size_t)LEGACY_SHOT_SLOT_COUNT * OBJECT_SIZE;
+    /* Other nasty data follows: 64*20 bytes after nasty shots */
+    level->other_nasty_data = level->nasty_shot_data + 64 * 20;
 
     /* Long 42: Offset to object points */
     int32_t objpts_offset = read_long(ld + 42);
     level->object_points = ld + objpts_offset;
-
-    if (level_expand_shot_and_point_pools(level) == 0) {
-        printf("[LEVEL] Expanded shot pools: player=%d nasty=%d object_points=%d\n",
-               (int)level->player_shot_slots, (int)level->nasty_shot_slots,
-               (int)level->num_object_points);
-    } else {
-        printf("[LEVEL] Shot pool expansion unavailable; using legacy %d-slot pools\n",
-               LEGACY_SHOT_SLOT_COUNT);
-    }
 
     /* Long 46: Offset to player 1 object */
     int32_t plr1_offset = read_long(ld + 46);
@@ -869,18 +750,6 @@ int level_zone_slot_count(const LevelState *level)
     if (slots < 0)
         slots = 0;
     return slots;
-}
-
-int level_player_shot_slot_count(const LevelState *level)
-{
-    if (!level) return 0;
-    return shot_slot_count_from_level_field(level->player_shot_slots);
-}
-
-int level_nasty_shot_slot_count(const LevelState *level)
-{
-    if (!level) return 0;
-    return shot_slot_count_from_level_field(level->nasty_shot_slots);
 }
 
 int level_connect_to_zone_index(const LevelState *level, int16_t connect)

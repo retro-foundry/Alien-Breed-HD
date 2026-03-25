@@ -174,10 +174,8 @@ static void build_test_level_data(LevelState *level)
     int ptr_list_size = (NUM_POINTS + 1) * 2; /* indices + sentinel */
     /* Object data: just 2 player objects */
     int obj_data_size = 3 * OBJECT_SIZE; /* 2 players + 1 terminator */
-    /* Object points: dedicated points for both shot pools + 2 player points. */
-    int num_obj_pts = NASTY_SHOT_SLOT_CAPACITY + PLAYER_SHOT_SLOT_CAPACITY + 2;
-    int plr1_cid = num_obj_pts - 2;
-    int plr2_cid = num_obj_pts - 1;
+    /* Object points: 2 for players + 20 for nasty_shot_data (bullets/gibs) - Amiga shares this pool */
+    int num_obj_pts = 32;
     int obj_points_size = num_obj_pts * 8;
 
     int total = hdr_size + zone_table_size + zone_data_size + points_size +
@@ -218,7 +216,7 @@ static void build_test_level_data(LevelState *level)
     wr16(hdr + 18, NUM_POINTS); /* num points */
     wr16(hdr + 20, NUM_ZONES);  /* num zones */
     wr16(hdr + 22, NUM_FLINES); /* num floor lines */
-    wr16(hdr + 24, (int16_t)num_obj_pts);  /* num object points (players + both shot pools) */
+    wr16(hdr + 24, (int16_t)num_obj_pts);  /* num object points (players + nasty shot slots) */
     wr32(hdr + 26, off_points); /* offset to points */
     wr32(hdr + 30, off_flines); /* offset to floor lines */
     wr32(hdr + 34, off_obj_data);    /* offset to object data */
@@ -358,22 +356,23 @@ static void build_test_level_data(LevelState *level)
 
     /* ---- Object data (2 player objects + terminator) ---- */
     memset(buf + off_obj_data, 0, (size_t)obj_data_size);
-    /* PLR1/PLR2 use dedicated point indices at the end of object_points. */
+    /* PLR1/PLR2 use point indices 30 and 31 so 0..19 stay free for nasty_shot_data (bullets/gibs) */
     /* PLR1 object */
-    wr16(buf + off_obj_data + 0, (int16_t)plr1_cid);    /* collision_id = point index for PLR1 */
+    wr16(buf + off_obj_data + 0, 30);    /* collision_id = point index 30 */
     wr16(buf + off_obj_data + 12, 0);    /* zone = 0 */
     /* PLR2 object */
-    wr16(buf + off_obj_data + OBJECT_SIZE + 0, (int16_t)plr2_cid);  /* collision_id = point index for PLR2 */
+    wr16(buf + off_obj_data + OBJECT_SIZE + 0, 31);  /* collision_id = point index 31 */
     wr16(buf + off_obj_data + OBJECT_SIZE + 12, 3);   /* zone = 3 */
     /* Terminator object: collision_id = -1 ends the list */
     wr16(buf + off_obj_data + 2 * OBJECT_SIZE + 0, -1);
     wr16(buf + off_obj_data + 2 * OBJECT_SIZE + 12, -1); /* zone = -1 (inactive) */
 
-    /* ---- Object points ---- */
-    wr16(buf + off_obj_points + plr1_cid * 8 + 0, 256);   /* PLR1 x */
-    wr16(buf + off_obj_points + plr1_cid * 8 + 4, 256);   /* PLR1 z */
-    wr16(buf + off_obj_points + plr2_cid * 8 + 0, 768);   /* PLR2 x */
-    wr16(buf + off_obj_points + plr2_cid * 8 + 4, 768);   /* PLR2 z */
+    /* ---- Object points: 0..19 for bullets/gibs, 30..31 for players ---- */
+    wr16(buf + off_obj_points + 30 * 8 + 0, 256);   /* PLR1 x */
+    wr16(buf + off_obj_points + 30 * 8 + 4, 256);   /* PLR1 z */
+    wr16(buf + off_obj_points + 31 * 8 + 0, 768);  /* PLR2 x */
+    wr16(buf + off_obj_points + 31 * 8 + 4, 768);   /* PLR2 z */
+    /* 0..19 zeroed by calloc - used by bullets/gibs when spawned */
 
     /* Store in level state - set pointers directly (bypass level_parse
      * since our test data isn't in the exact original header format) */
@@ -386,38 +385,34 @@ static void build_test_level_data(LevelState *level)
     level->object_points = buf + off_obj_points;
     level->plr1_obj = buf + off_obj_data;
     level->plr2_obj = buf + off_obj_data + OBJECT_SIZE;
-    level->num_object_points = (int16_t)num_obj_pts;
+    level->num_object_points = num_obj_pts;
     level->num_zones = NUM_ZONES;
     level->num_zone_slots = (int16_t)NUM_ZONES;
     level->num_floor_lines = NUM_FLINES;
-    level->player_shot_slots = PLAYER_SHOT_SLOT_CAPACITY;
-    level->nasty_shot_slots = NASTY_SHOT_SLOT_CAPACITY;
     level->point_brights = NULL; /* No per-point brightness for test level */
 
-    /* Allocate player shot data.
+    /* Allocate player shot data (20 bullet slots for projectile weapons).
      * Each slot is OBJECT_SIZE bytes.  zone < 0 means the slot is free. */
     {
-        int shot_slots = PLAYER_SHOT_SLOT_CAPACITY;
+        int shot_slots = 20;
         int shot_buf_size = shot_slots * OBJECT_SIZE;
         uint8_t *shot_buf = (uint8_t *)calloc(1, (size_t)shot_buf_size);
         if (shot_buf) {
-            /* Mark all slots as free (zone = -1), assign stable point indices. */
+            /* Mark all slots as free (zone = -1) */
             for (int i = 0; i < shot_slots; i++) {
-                wr16(shot_buf + i * OBJECT_SIZE + 0, (int16_t)(NASTY_SHOT_SLOT_CAPACITY + i));
                 wr16(shot_buf + i * OBJECT_SIZE + 12, -1); /* obj.zone = -1 */
             }
             level->player_shot_data = shot_buf;
         }
     }
 
-    /* Allocate nasty shot data (+ extra per-slot scratch area). */
+    /* Allocate nasty shot data (20 enemy bullet slots + 64*20 extra) */
     {
-        int nasty_shots = NASTY_SHOT_SLOT_CAPACITY;
-        int nasty_buf_size = nasty_shots * OBJECT_SIZE + 64 * nasty_shots;
+        int nasty_shots = 20;
+        int nasty_buf_size = nasty_shots * OBJECT_SIZE + 64 * 20;
         uint8_t *nasty_buf = (uint8_t *)calloc(1, (size_t)nasty_buf_size);
         if (nasty_buf) {
             for (int i = 0; i < nasty_shots; i++) {
-                wr16(nasty_buf + i * OBJECT_SIZE + 0, (int16_t)i);
                 wr16(nasty_buf + i * OBJECT_SIZE + 12, -1);
             }
             level->nasty_shot_data = nasty_buf;
@@ -745,55 +740,25 @@ int io_load_level_clips(LevelState *level, int level_num)
 
 void io_release_level_memory(LevelState *level)
 {
-    /* player_shot_data and nasty_shot_data usually point into level->data.
-     * Free only if they point outside the level data buffer. */
-    if (level->player_shot_data) {
+    /* player_shot_data and nasty_shot_data point into the data buffer
+     * when loaded from real files (level_parse resolves them as offsets
+     * into level->data). Only free them if they DON'T point into data. */
+    if (level->player_shot_data && level->data) {
         uint8_t *d = level->data;
-        size_t len = level->data_byte_count;
-        int in_data = (d && len > 0 &&
-                       level->player_shot_data >= d &&
-                       level->player_shot_data < d + len);
-        if (!in_data && d && len == 0 &&
-            level->player_shot_data >= d &&
-            level->player_shot_data < d + 1024 * 1024) {
-            in_data = 1;
+        if (level->player_shot_data < d || level->player_shot_data > d + 1024*1024) {
+            free(level->player_shot_data);
         }
-        if (!in_data) free(level->player_shot_data);
     }
     level->player_shot_data = NULL;
 
-    if (level->nasty_shot_data) {
+    if (level->nasty_shot_data && level->data) {
         uint8_t *d = level->data;
-        size_t len = level->data_byte_count;
-        int in_data = (d && len > 0 &&
-                       level->nasty_shot_data >= d &&
-                       level->nasty_shot_data < d + len);
-        if (!in_data && d && len == 0 &&
-            level->nasty_shot_data >= d &&
-            level->nasty_shot_data < d + 1024 * 1024) {
-            in_data = 1;
+        if (level->nasty_shot_data < d || level->nasty_shot_data > d + 1024*1024) {
+            free(level->nasty_shot_data);
         }
-        if (!in_data) free(level->nasty_shot_data);
     }
     level->nasty_shot_data = NULL;
     level->other_nasty_data = NULL;
-    level->player_shot_slots = 0;
-    level->nasty_shot_slots = 0;
-
-    if (level->object_points) {
-        uint8_t *d = level->data;
-        size_t len = level->data_byte_count;
-        int in_data = (d && len > 0 &&
-                       level->object_points >= d &&
-                       level->object_points < d + len);
-        if (!in_data && d && len == 0 &&
-            level->object_points >= d &&
-            level->object_points < d + 1024 * 1024) {
-            in_data = 1;
-        }
-        if (!in_data) free(level->object_points);
-    }
-    level->object_points = NULL;
 
     free(level->workspace);         level->workspace = NULL;
 
@@ -854,7 +819,6 @@ void io_release_level_memory(LevelState *level)
     level->num_floor_lines = 0;
     level->object_data = NULL;
     level->object_points = NULL;
-    level->num_object_points = 0;
     level->plr1_obj = NULL;
     level->plr2_obj = NULL;
     level->connect_table = NULL;

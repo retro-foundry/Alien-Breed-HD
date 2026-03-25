@@ -92,8 +92,6 @@ int level_set_zone_water(LevelState *level, int16_t zone_id, int32_t water_y);
  * Usually equals num_zones, but real Amiga levels can have an extra slot.
  */
 int level_zone_slot_count(const LevelState *level);
-int level_player_shot_slot_count(const LevelState *level);
-int level_nasty_shot_slot_count(const LevelState *level);
 
 /*
  * Map floor-line connect value (zone id/index from file) to a zone_adds slot index.

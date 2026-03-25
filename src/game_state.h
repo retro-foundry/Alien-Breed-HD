@@ -12,10 +12,6 @@
 
 #include "game_types.h"
 
-#define LEGACY_SHOT_SLOT_COUNT      20
-#define PLAYER_SHOT_SLOT_CAPACITY  100
-#define NASTY_SHOT_SLOT_CAPACITY   100
-
 /* -----------------------------------------------------------------------
  * Player state
  *
@@ -138,8 +134,6 @@ typedef struct {
     uint8_t *player_shot_data;
     uint8_t *nasty_shot_data;
     uint8_t *other_nasty_data;
-    int16_t  player_shot_slots;   /* active player_shot_data slot count */
-    int16_t  nasty_shot_slots;    /* active nasty_shot_data slot count */
     uint8_t *object_points;
     uint8_t *plr1_obj;           /* pointer to player 1 object in object data */
     uint8_t *plr2_obj;           /* pointer to player 2 object in object data */

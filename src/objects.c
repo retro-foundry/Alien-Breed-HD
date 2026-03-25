@@ -251,10 +251,10 @@ static void get_object_pos(const LevelState *level, int index,
     }
 }
 
-static GameObject *find_free_shot_slot(uint8_t *shots, int shot_slots, int16_t *saved_cid)
+static GameObject *find_free_shot_slot(uint8_t *shots, int16_t *saved_cid)
 {
     if (!shots) return NULL;
-    for (int i = 0; i < shot_slots; i++) {
+    for (int i = 0; i < 20; i++) {
         GameObject *candidate = (GameObject *)(shots + i * OBJECT_SIZE);
         if (OBJ_ZONE(candidate) < 0) {
             if (saved_cid) *saved_cid = OBJ_CID(candidate);
@@ -1324,8 +1324,7 @@ void objects_update(GameState *state)
     /* Process nasty_shot_data bullets and gibs (not in object_data list) */
     if (state->level.nasty_shot_data) {
         uint8_t *shots = state->level.nasty_shot_data;
-        int nasty_slots = level_nasty_shot_slot_count(&state->level);
-        for (int j = 0; j < nasty_slots; j++) {
+        for (int j = 0; j < 20; j++) {
             GameObject *bullet = (GameObject *)(shots + j * OBJECT_SIZE);
             if (OBJ_ZONE(bullet) < 0) continue;
             if (bullet->obj.number != OBJ_NBR_BULLET) continue;
@@ -1334,8 +1333,7 @@ void objects_update(GameState *state)
     }
     if (state->level.player_shot_data) {
         uint8_t *shots = state->level.player_shot_data;
-        int player_slots = level_player_shot_slot_count(&state->level);
-        for (int j = 0; j < player_slots; j++) {
+        for (int j = 0; j < 20; j++) {
             GameObject *bullet = (GameObject *)(shots + j * OBJECT_SIZE);
             if (OBJ_ZONE(bullet) < 0) continue;
             if (bullet->obj.number != OBJ_NBR_BULLET) continue;
@@ -2118,9 +2116,8 @@ void object_handle_gas_pipe(GameObject *obj, GameState *state)
     /* Spawn flame projectile */
     if (!state->level.nasty_shot_data) return;
     uint8_t *shots = state->level.nasty_shot_data;
-    int nasty_slots = level_nasty_shot_slot_count(&state->level);
     GameObject *bullet = NULL;
-    for (int i = 0; i < nasty_slots; i++) {
+    for (int i = 0; i < 20; i++) {
         GameObject *c = (GameObject*)(shots + i * OBJECT_SIZE);
         if (OBJ_ZONE(c) < 0) { bullet = c; break; }
     }
@@ -3442,11 +3439,10 @@ void enemy_fire_at_player(GameObject *obj, GameState *state,
 
     PlayerState *plr = (player_num == 1) ? &state->plr1 : &state->plr2;
 
-    /* Find free slot in NastyShotData. */
+    /* Find free slot in NastyShotData (up to 20 slots, 64 bytes each) */
     uint8_t *shots = state->level.nasty_shot_data;
-    int nasty_slots = level_nasty_shot_slot_count(&state->level);
     GameObject *bullet = NULL;
-    for (int i = 0; i < nasty_slots; i++) {
+    for (int i = 0; i < 20; i++) {
         GameObject *candidate = (GameObject*)(shots + i * OBJECT_SIZE);
         if (OBJ_ZONE(candidate) < 0) {
             bullet = candidate;
@@ -3578,7 +3574,6 @@ static void spawn_blast_particles(GameState *state, int32_t x, int32_t z, int32_
 
     uint8_t *shot_pool = state->level.player_shot_data;
     if (!shot_pool) return; /* blast particles only use player_shot_data; nasty_shot_data is reserved for gibs */
-    int player_slots = level_player_shot_slot_count(&state->level);
 
     int zone_slots = level_zone_slot_count(&state->level);
     int src_zone = level_connect_to_zone_index(&state->level, zone);
@@ -3597,13 +3592,8 @@ static void spawn_blast_particles(GameState *state, int32_t x, int32_t z, int32_
 
         for (int n = 0; n < 3; n++) {
             int16_t saved_cid = -1;
-            GameObject *part = find_free_shot_slot(shot_pool, player_slots, &saved_cid);
-            if (!part) {
-                int used = count_used_shot_slots(shot_pool, player_slots);
-                printf("[BLAST-POOL] no free player slot: used=%d/%d ring=%d idx=%d zone=%d\n",
-                       used, player_slots, ring, n, (int)zone);
-                return;
-            }
+            GameObject *part = find_free_shot_slot(shot_pool, &saved_cid);
+            if (!part) return;
 
             part->obj.number = OBJ_NBR_BULLET;
 

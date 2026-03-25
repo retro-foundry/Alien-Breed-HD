@@ -70,10 +70,10 @@ static void player_cycle_weapon(PlayerState *plr, int direction)
     }
 }
 
-static GameObject *find_free_player_shot_slot(uint8_t *shots, int shot_slots, int16_t *saved_cid)
+static GameObject *find_free_player_shot_slot(uint8_t *shots, int16_t *saved_cid)
 {
     if (!shots) return NULL;
-    for (int i = 0; i < shot_slots; i++) {
+    for (int i = 0; i < 20; i++) {
         GameObject *candidate = (GameObject *)(shots + i * OBJECT_SIZE);
         if (OBJ_ZONE(candidate) < 0) {
             if (saved_cid) *saved_cid = OBJ_CID(candidate);
@@ -215,11 +215,10 @@ static void spawn_instant_hit_effect(GameState *state, const PlayerState *plr, i
     if (gun_idx < 0 || gun_idx >= MAX_BULLET_ANIM_IDX) return;
 
     uint8_t *shot_pool = state->level.player_shot_data;
-    int shot_slots = level_player_shot_slot_count(&state->level);
     if (!shot_pool) return;
 
     int16_t saved_cid = -1;
-    GameObject *impact = find_free_player_shot_slot(shot_pool, shot_slots, &saved_cid);
+    GameObject *impact = find_free_player_shot_slot(shot_pool, &saved_cid);
     if (!impact) return;
 
     obj_sw(impact->raw, saved_cid);
@@ -263,7 +262,6 @@ static void spawn_instant_miss_effect_target(GameState *state, const PlayerState
     if (!state || !plr || !target) return;
     if (gun_idx < 0 || gun_idx >= MAX_BULLET_ANIM_IDX) return;
     if (!state->level.player_shot_data || !state->level.object_points) return;
-    int shot_slots = level_player_shot_slot_count(&state->level);
 
     int16_t target_cid = OBJ_CID(target);
     if (target_cid < 0 || target_cid >= state->level.num_object_points) return;
@@ -286,7 +284,7 @@ static void spawn_instant_miss_effect_target(GameState *state, const PlayerState
         return;
 
     int16_t saved_cid = -1;
-    GameObject *impact = find_free_player_shot_slot(state->level.player_shot_data, shot_slots, &saved_cid);
+    GameObject *impact = find_free_player_shot_slot(state->level.player_shot_data, &saved_cid);
     if (!impact) return;
     obj_sw(impact->raw, saved_cid);
 
@@ -309,7 +307,6 @@ static void spawn_instant_miss_effect_no_target(GameState *state, const PlayerSt
     if (!state || !plr) return;
     if (gun_idx < 0 || gun_idx >= MAX_BULLET_ANIM_IDX) return;
     if (!state->level.player_shot_data) return;
-    int shot_slots = level_player_shot_slot_count(&state->level);
 
     int16_t oldx = (int16_t)(plr->xoff >> 16);
     int16_t oldz = (int16_t)(plr->zoff >> 16);
@@ -327,7 +324,7 @@ static void spawn_instant_miss_effect_no_target(GameState *state, const PlayerSt
         return;
 
     int16_t saved_cid = -1;
-    GameObject *impact = find_free_player_shot_slot(state->level.player_shot_data, shot_slots, &saved_cid);
+    GameObject *impact = find_free_player_shot_slot(state->level.player_shot_data, &saved_cid);
     if (!impact) return;
     obj_sw(impact->raw, saved_cid);
 
@@ -1728,9 +1725,8 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
 
         /* Find free slot in player_shot_data */
         uint8_t *shots = state->level.player_shot_data;
-        int shot_slots = level_player_shot_slot_count(&state->level);
         GameObject *bullet = NULL;
-        for (int i = 0; i < shot_slots; i++) {
+        for (int i = 0; i < 20; i++) {
             GameObject *candidate = (GameObject*)(shots + i * OBJECT_SIZE);
             if (OBJ_ZONE(candidate) < 0) {
                 bullet = candidate;
