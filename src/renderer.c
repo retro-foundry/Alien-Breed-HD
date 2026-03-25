@@ -925,38 +925,62 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     }
 
     size_t pix = (size_t)ct * (size_t)width + (size_t)x;
-    for (int y = ct; y <= cb; y++) {
-        int ty = (int)(tex_y >> 16) & valand;
-        uint32_t argb;
-        uint16_t out_cw;
-
-        if (texture && pal) {
-            int byte_off = strip_offset + ty * 2;
-            if (byte_off >= 0) {
+    if (texture && pal && strip_offset >= 0) {
+        if (pack_mode == 0) {
+            for (int y = ct; y <= cb; y++) {
+                int byte_off = strip_offset + (((int)(tex_y >> 16) & valand) << 1);
                 uint16_t word = ((uint16_t)texture[byte_off] << 8)
                               | (uint16_t)texture[byte_off + 1];
-                uint8_t texel5;
-                switch (pack_mode) {
-                case 0:  texel5 = (uint8_t)( word        & 31u); break;
-                case 1:  texel5 = (uint8_t)((word >>  5) & 31u); break;
-                default: texel5 = (uint8_t)((word >> 10) & 31u); break;
-                }
-                argb = cache_argb[texel5];
-                out_cw = cache_cw[texel5];
-            } else {
-                argb = cache_argb[0];
-                out_cw = cache_cw[0];
+                uint8_t texel5 = (uint8_t)(word & 31u);
+                buf[pix] = 2; /* tag: wall */
+                rgb[pix] = cache_argb[texel5];
+                cw[pix] = cache_cw[texel5];
+                pix += (size_t)width;
+                tex_y += tex_step;
+            }
+        } else if (pack_mode == 1) {
+            for (int y = ct; y <= cb; y++) {
+                int byte_off = strip_offset + (((int)(tex_y >> 16) & valand) << 1);
+                uint16_t word = ((uint16_t)texture[byte_off] << 8)
+                              | (uint16_t)texture[byte_off + 1];
+                uint8_t texel5 = (uint8_t)((word >> 5) & 31u);
+                buf[pix] = 2; /* tag: wall */
+                rgb[pix] = cache_argb[texel5];
+                cw[pix] = cache_cw[texel5];
+                pix += (size_t)width;
+                tex_y += tex_step;
             }
         } else {
-            argb = fallback;
-            out_cw = fallback_cw;
+            for (int y = ct; y <= cb; y++) {
+                int byte_off = strip_offset + (((int)(tex_y >> 16) & valand) << 1);
+                uint16_t word = ((uint16_t)texture[byte_off] << 8)
+                              | (uint16_t)texture[byte_off + 1];
+                uint8_t texel5 = (uint8_t)((word >> 10) & 31u);
+                buf[pix] = 2; /* tag: wall */
+                rgb[pix] = cache_argb[texel5];
+                cw[pix] = cache_cw[texel5];
+                pix += (size_t)width;
+                tex_y += tex_step;
+            }
         }
-
-        buf[pix] = 2; /* tag: wall */
-        rgb[pix] = argb;
-        cw[pix] = out_cw;
-        pix += (size_t)width;
-        tex_y += tex_step;
+    } else if (texture && pal) {
+        uint32_t argb0 = cache_argb[0];
+        uint16_t cw0 = cache_cw[0];
+        for (int y = ct; y <= cb; y++) {
+            buf[pix] = 2; /* tag: wall */
+            rgb[pix] = argb0;
+            cw[pix] = cw0;
+            pix += (size_t)width;
+            tex_y += tex_step;
+        }
+    } else {
+        for (int y = ct; y <= cb; y++) {
+            buf[pix] = 2; /* tag: wall */
+            rgb[pix] = fallback;
+            cw[pix] = fallback_cw;
+            pix += (size_t)width;
+            tex_y += tex_step;
+        }
     }
 
     /* Update column clip (walls occlude floor/ceiling/sprites behind).
@@ -3523,3 +3547,4 @@ void renderer_draw_display(GameState *state)
     /* 7. Swap buffers (the just-drawn buffer becomes the display buffer) */
     renderer_swap();
 }
+
