@@ -109,6 +109,8 @@ static uint16_t g_water_src_off = 0;
 static uint16_t g_water_wtan_draw = 0;
 /* Millisecond remainder used to keep average animation speed at exactly 50Hz. */
 static uint32_t g_water_ms_remainder = 0;
+/* Gameplay tweak: run water animation at half speed. */
+static uint32_t g_water_speed_ms_remainder = 0;
 static const uint8_t *g_water_file = NULL;
 static size_t g_water_file_size = 0;
 static const uint8_t *g_water_brighten = NULL;
@@ -139,6 +141,12 @@ void renderer_step_water_anim(int steps)
 
 void renderer_step_water_anim_ms(uint32_t elapsed_ms)
 {
+    if (elapsed_ms == 0u) return;
+
+    /* Slow water movement to 50%: convert real elapsed ms to simulation ms / 2. */
+    g_water_speed_ms_remainder += elapsed_ms;
+    elapsed_ms = g_water_speed_ms_remainder / 2u;
+    g_water_speed_ms_remainder %= 2u;
     if (elapsed_ms == 0u) return;
 
     g_water_ms_remainder += elapsed_ms;
@@ -223,6 +231,7 @@ void renderer_set_water_assets(const uint8_t *water_file, size_t water_file_size
     g_water_anim_cursor = 0;
     g_water_src_off = 0;
     g_water_ms_remainder = 0;
+    g_water_speed_ms_remainder = 0;
     /* First DrawDisplay on Amiga immediately sets watertouse/wtan/wateroff. */
     renderer_advance_water_anim();
     g_water_wtan_draw = g_water_wtan;
