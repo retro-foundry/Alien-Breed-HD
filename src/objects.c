@@ -4064,48 +4064,57 @@ void calc_plr1_in_line(GameState *state)
     int16_t plr_x = (int16_t)(state->plr1.xoff >> 16);
     int16_t plr_z = (int16_t)(state->plr1.zoff >> 16);
 
-    for (int i = 0; i < MAX_OBJECTS; i++) {
+    int point_count = state->level.num_object_points;
+    if (point_count < 0) point_count = 0;
+    if (point_count > MAX_OBJECTS) point_count = MAX_OBJECTS;
+
+    for (int i = 0; i < point_count; i++) {
         GameObject *obj = get_object(&state->level, i);
         if (!obj) break;
-        int16_t obj_cid = OBJ_CID(obj);
-        if (obj_cid < 0) break;
+        if (OBJ_CID(obj) < 0) break;
 
-        if (OBJ_ZONE(obj) < 0) continue;
+        if (OBJ_ZONE(obj) < 0) {
+            plr1_obs_in_line[i] = 0;
+            plr1_obj_dists[i] = 0;
+            continue;
+        }
 
-        /* Get object position via its CID (point index), NOT slot index i */
-        int16_t ox, oz;
-        get_object_pos(&state->level, obj_cid, &ox, &oz);
+        /* Amiga CalcPLR1InLine walks ObjectPoints and ObjectData in slot order. */
+        const uint8_t *pt = state->level.object_points + (size_t)i * 8u;
+        int16_t ox = obj_w(pt + 0);
+        int16_t oz = obj_w(pt + 4);
+        int16_t dx = (int16_t)(ox - plr_x);
+        int16_t dz = (int16_t)(oz - plr_z);
 
-        int16_t dx = ox - plr_x;
-        int16_t dz = oz - plr_z;
-
-        /* Get collision box width for this object type */
-        int obj_type = obj->obj.number;
-        int16_t box_width = 40; /* default */
+        int obj_type = (uint8_t)obj->obj.number;
+        int16_t box_width = 40;
         if (obj_type >= 0 && obj_type <= 20) {
             box_width = col_box_table[obj_type].width;
         }
 
-        /* Cross product (perpendicular distance) */
-        int32_t cross = (int32_t)dx * cos_val - (int32_t)dz * sin_val;
-        cross *= 2;
-        if (cross < 0) cross = -cross;
-        int16_t perp = (int16_t)(cross >> 16);
+        int32_t cross = (int32_t)(((int64_t)dx * cos_val) - ((int64_t)dz * sin_val));
+        cross = (int32_t)((uint32_t)cross << 1);
+        if (cross <= 0) cross = -cross;
+        int16_t perp = (int16_t)(((uint32_t)cross) >> 16);
 
-        /* Dot product (forward distance) */
-        int32_t dot = (int32_t)dx * sin_val + (int32_t)dz * cos_val;
-        dot <<= 2;
-        int16_t fwd = (int16_t)(dot >> 16);
+        int32_t dot = (int32_t)(((int64_t)dx * sin_val) + ((int64_t)dz * cos_val));
+        dot = (int32_t)((uint32_t)dot << 2);
+        int16_t fwd = (int16_t)(((uint32_t)dot) >> 16);
 
-        /* In line if: forward > 0 && perpendicular/2 < box_width
-         * Match Amiga CalcPLR1InLine: geometric test only (no LOS gate here). */
-        if (fwd > 0 && (perp >> 1) <= box_width) {
-            plr1_obs_in_line[i] = -1; /* 0xFF = in line */
+        int8_t in_line = 0;
+        if (fwd > 0) {
+            int16_t half_perp = (int16_t)(perp >> 1);
+            if (half_perp <= box_width) in_line = -1;
         }
 
+        plr1_obs_in_line[i] = in_line;
         plr1_obj_dists[i] = fwd;
-        if (obj_cid < MAX_OBJECTS)
-            plr1_obj_dists[obj_cid] = fwd;
+
+        /* PlayerShoot reads ObjDists by CID; keep that mapping synced too. */
+        {
+            int16_t cid = OBJ_CID(obj);
+            if (cid >= 0 && cid < MAX_OBJECTS) plr1_obj_dists[cid] = fwd;
+        }
     }
 }
 
@@ -4120,42 +4129,55 @@ void calc_plr2_in_line(GameState *state)
     int16_t plr_x = (int16_t)(state->plr2.xoff >> 16);
     int16_t plr_z = (int16_t)(state->plr2.zoff >> 16);
 
-    for (int i = 0; i < MAX_OBJECTS; i++) {
+    int point_count = state->level.num_object_points;
+    if (point_count < 0) point_count = 0;
+    if (point_count > MAX_OBJECTS) point_count = MAX_OBJECTS;
+
+    for (int i = 0; i < point_count; i++) {
         GameObject *obj = get_object(&state->level, i);
         if (!obj) break;
-        int16_t obj_cid = OBJ_CID(obj);
-        if (obj_cid < 0) break;
+        if (OBJ_CID(obj) < 0) break;
 
-        if (OBJ_ZONE(obj) < 0) continue;
+        if (OBJ_ZONE(obj) < 0) {
+            plr2_obs_in_line[i] = 0;
+            plr2_obj_dists[i] = 0;
+            continue;
+        }
 
-        int16_t ox, oz;
-        get_object_pos(&state->level, obj_cid, &ox, &oz);
+        const uint8_t *pt = state->level.object_points + (size_t)i * 8u;
+        int16_t ox = obj_w(pt + 0);
+        int16_t oz = obj_w(pt + 4);
+        int16_t dx = (int16_t)(ox - plr_x);
+        int16_t dz = (int16_t)(oz - plr_z);
 
-        int16_t dx = ox - plr_x;
-        int16_t dz = oz - plr_z;
-
-        int obj_type = obj->obj.number;
+        int obj_type = (uint8_t)obj->obj.number;
         int16_t box_width = 40;
         if (obj_type >= 0 && obj_type <= 20) {
             box_width = col_box_table[obj_type].width;
         }
 
-        int32_t cross = (int32_t)dx * cos_val - (int32_t)dz * sin_val;
-        cross *= 2;
-        if (cross < 0) cross = -cross;
-        int16_t perp = (int16_t)(cross >> 16);
+        int32_t cross = (int32_t)(((int64_t)dx * cos_val) - ((int64_t)dz * sin_val));
+        cross = (int32_t)((uint32_t)cross << 1);
+        if (cross <= 0) cross = -cross;
+        int16_t perp = (int16_t)(((uint32_t)cross) >> 16);
 
-        int32_t dot = (int32_t)dx * sin_val + (int32_t)dz * cos_val;
-        dot <<= 2;
-        int16_t fwd = (int16_t)(dot >> 16);
+        int32_t dot = (int32_t)(((int64_t)dx * sin_val) + ((int64_t)dz * cos_val));
+        dot = (int32_t)((uint32_t)dot << 2);
+        int16_t fwd = (int16_t)(((uint32_t)dot) >> 16);
 
-        if (fwd > 0 && (perp >> 1) <= box_width) {
-            plr2_obs_in_line[i] = -1;
+        int8_t in_line = 0;
+        if (fwd > 0) {
+            int16_t half_perp = (int16_t)(perp >> 1);
+            if (half_perp <= box_width) in_line = -1;
         }
 
+        plr2_obs_in_line[i] = in_line;
         plr2_obj_dists[i] = fwd;
-        if (obj_cid < MAX_OBJECTS)
-            plr2_obj_dists[obj_cid] = fwd;
+
+        {
+            int16_t cid = OBJ_CID(obj);
+            if (cid >= 0 && cid < MAX_OBJECTS) plr2_obj_dists[cid] = fwd;
+        }
     }
 }
 

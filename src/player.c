@@ -1149,6 +1149,9 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
         if (plr->zone != prev_zone && plr->s_tyoff < plr->s_yoff) {
             plr->s_yoff = plr->s_tyoff;
             plr->s_yvel = 0;
+            /* Keep shoot/collision-facing PLR_yoff in sync with the snapped sim Y
+             * for this same frame (important for auto-aim on stairs). */
+            plr->yoff = plr->s_yoff + bob_val;
         }
 
         /* PointsToRotatePtr = roompt + (int16_t)(zone_data[34..35])
@@ -1613,7 +1616,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
 
     /* Find closest target in line of fire */
     int closest_idx = -1;
-    int16_t closest_dist = 32767;
+    int32_t closest_dist = 32767;
     int32_t closest_target_ydiff = 0;
 
     if (state->level.object_data) {
@@ -1631,8 +1634,13 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
             if (NASTY_LIVES(*obj) == 0) continue;
             if (obj_cid < 0 || obj_cid >= MAX_OBJECTS) continue;
 
-            int16_t dist = obj_dists[obj_cid];
+            int32_t dist = obj_dists[obj_cid];
             if (dist <= 0) continue;
+            /* Runtime sin/cos table is half-scale (~16384) while Amiga
+             * bigsine math in PlayerShoot uses full-scale (~32767). Scale
+             * forward distance to preserve original auto-aim solve. */
+            dist <<= 1;
+            if (dist > 32767) dist = 32767;
 
             /* PlayerShoot.s vertical gate: abs((objY<<7)-PLR_yoff) / 44 <= forward_dist. */
             int16_t obj_y = obj_w(obj->raw + 4);
@@ -1731,14 +1739,9 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         /* Set up bullet */
         memset(bullet, 0, OBJECT_SIZE);
 
-        /* Strict Amiga parity for grenades: spawn at exact player position.
-         * Other projectiles keep a tiny forward offset for first-frame visibility. */
+        /* Amiga spawns projectiles at the player's current world position. */
         int16_t spawn_x = (int16_t)(plr->xoff >> 16);
         int16_t spawn_z = (int16_t)(plr->zoff >> 16);
-        if (gun_idx != 4) {
-            spawn_x = (int16_t)(spawn_x + ((sin_val * 32) >> 14));
-            spawn_z = (int16_t)(spawn_z + ((cos_val * 32) >> 14));
-        }
 
         /* Restore CID and write spawn position into that object point */
         obj_sw(bullet->raw, saved_cid);
@@ -1770,14 +1773,9 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         int shift = gun->bullet_speed;
         if (shift < 0) shift = 0;
         if (shift > 15) shift = 15;
-        int32_t xvel = ((int32_t)sin_val) << shift;
-        int32_t zvel = ((int32_t)cos_val) << shift;
-        if (gun_idx == 4) {
-            /* Amiga BigSine is full-scale (~32767). Our runtime sin/cos is half-scale
-             * (~16384), so grenades need a x2 launch speed to match original range/apex timing. */
-            xvel <<= 1;
-            zvel <<= 1;
-        }
+        /* Full-scale parity for projectile launch speed. */
+        int32_t xvel = ((int32_t)sin_val) << (shift + 1);
+        int32_t zvel = ((int32_t)cos_val) << (shift + 1);
         SHOT_SET_XVEL(*bullet, xvel);
         SHOT_SET_ZVEL(*bullet, zvel);
         /* Keep the exact PLR1FIREBULLET clamp sequence from PlayerShoot.s. */
