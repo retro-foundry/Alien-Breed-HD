@@ -315,9 +315,11 @@ uint8_t can_it_be_seen(const LevelState *level,
         return 0;
     }
 
-    /* Same room (insameroom): visible only if on same floor. */
+    /* Same room (insameroom): normally visible only on same floor.
+     * Full-height callers (e.g. blast/hitscan paths) intentionally
+     * allow cross-section visibility in the same zone. */
     if (from_room == to_room) {
-        if (viewer_top == target_top)
+        if (full_height || viewer_top == target_top)
             return 0x03u;
         return 0u;
     }

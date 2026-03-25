@@ -3819,11 +3819,12 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         get_object_pos(&state->level, (int)OBJ_CID(obj), &target_x, &target_z);
         int16_t target_y = obj_w(obj->raw + 4);
 
+        int16_t to_zone_id = (int16_t)((to_room[0] << 8) | to_room[1]);
         uint8_t vis = can_it_be_seen(&state->level,
-                                     from_room, to_room, (int16_t)tgt_zone,
+                                     from_room, to_room, to_zone_id,
                                      viewer_x, viewer_z, viewer_y,
                                      target_x, target_z, target_y,
-                                     in_top, obj->obj.in_top, 0);
+                                     in_top, obj->obj.in_top, 1);
         if (!vis) continue;
 
         int16_t dx = (int16_t)(target_x - viewer_x);
