@@ -1016,12 +1016,13 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
     int span = scr_x2 - scr_x1;
     if (span <= 0) span = 1;
 
-    /* Perspective-correct: interpolate 1/z and tex/z linearly in screen space (stable, no jitter).
-     * Then col_z = 65536/inv_z and tex = (tex_over_z)*col_z/65536. */
-    int32_t inv_z1 = (int32_t)(65536LL / cz1);
-    int32_t inv_z2 = (int32_t)(65536LL / cz2);
-    int64_t tex_over_z1_64 = (int64_t)ct1 * 65536LL / cz1;
-    int64_t tex_over_z2_64 = (int64_t)ct2 * 65536LL / cz2;
+    /* Perspective-correct: interpolate 1/z and tex/z with higher fixed-point precision.
+     * 16.16 inv_z causes visible quantization on far walls; use 8.24 here. */
+    const int64_t INVZ_ONE = (1LL << 24); /* 8.24 */
+    int64_t inv_z1_fp = INVZ_ONE / cz1;
+    int64_t inv_z2_fp = INVZ_ONE / cz2;
+    int64_t tex_over_z1_fp = (int64_t)ct1 * INVZ_ONE / cz1;
+    int64_t tex_over_z2_fp = (int64_t)ct2 * INVZ_ONE / cz2;
 
     for (int screen_x = draw_start; screen_x <= draw_end; screen_x++) {
         /* t linear in screen x, 0..65535 (stable, no sensitive denominator) */
@@ -1029,9 +1030,9 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
         if (t_fp < 0) t_fp = 0;
         if (t_fp > 65535) t_fp = 65535;
 
-        int32_t inv_z = inv_z1 + (int32_t)((int64_t)(inv_z2 - inv_z1) * t_fp / 65536);
-        if (inv_z <= 0) inv_z = 1;
-        int32_t col_z = (int32_t)(65536LL / inv_z);
+        int64_t inv_z_fp = inv_z1_fp + ((inv_z2_fp - inv_z1_fp) * t_fp) / 65536;
+        if (inv_z_fp <= 0) inv_z_fp = 1;
+        int32_t col_z = (int32_t)(INVZ_ONE / inv_z_fp);
         if (col_z < 1) col_z = 1;
 
         int32_t wall_bright = left_brightness +
@@ -1045,10 +1046,11 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
         int ext = (y_top >= 3) ? 3 : (y_top >= 2) ? 2 : (y_top >= 1) ? 1 : 0;
         int y_top_draw = y_top - ext;
 
-        /* tex = (tex/z) * z: interpolate tex_over_z in screen space, then multiply by col_z */
-        int64_t tex_over_z_64 = tex_over_z1_64 + (tex_over_z2_64 - tex_over_z1_64) * t_fp / 65536;
-        int64_t tex_t64 = tex_over_z_64 * (int64_t)col_z / 65536;
-        int tex_col = ((int32_t)(tex_t64 & 0xFFFFFFFFu) & horand) + fromtile;
+        /* tex = (tex/z) * z in the same 8.24 domain, then convert to integer tex units. */
+        int64_t tex_over_z_fp = tex_over_z1_fp + ((tex_over_z2_fp - tex_over_z1_fp) * t_fp) / 65536;
+        int64_t tex_t_fp64 = tex_over_z_fp * (int64_t)col_z; /* 8.24 */
+        int32_t tex_t_int = (int32_t)(tex_t_fp64 >> 24);
+        int tex_col = ((int32_t)(tex_t_int & horand)) + fromtile;
 
         /* Switch walls: depth bias so they draw in front of the wall behind them. */
         int32_t depth_z = col_z;
