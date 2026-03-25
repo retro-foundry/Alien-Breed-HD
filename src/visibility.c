@@ -190,16 +190,6 @@ void order_zones(ZoneOrder *out, const LevelState *level,
             lgr += 8;
         }
     }
-    if (num_zones == 0 && level->num_zones > 0) {
-        int n = level->num_zones;
-        if (n > 256) n = 256;
-        for (int z = 0; z < n; z++) {
-            to_draw_tab[z] = 1;
-            /* workspace stays 0 when no list; we treat 0 as "all bits set" for indrawlist */
-            zone_list[num_zones++] = (int16_t)z;
-            if (num_zones >= MAX_ORDER_ENTRIES) break;
-        }
-    }
     if (num_zones == 0) return;
 
     /* Linked list by node index: next[i], prev[i], zone_id[i]. Head = 0, tail = num_zones-1. */

@@ -182,6 +182,25 @@ static int argb24_to_amiga12_lut_ready = 0;
 /* Exact floor(x/255) for x in [0, 130050] used by blend_argb. */
 #define DIV255_LUT_MAX 130050u
 static uint16_t div255_lut[DIV255_LUT_MAX + 1u];
+static uint32_t g_render_frame_counter = 0;
+
+/* Debug helper:
+ * Set AB3D_CLIP_TRACE_FRAMES=N to print portal clip windows for first N frames. */
+static int renderer_take_clip_trace_slot(void)
+{
+    static int initialized = 0;
+    static int frames_left = 0;
+    if (!initialized) {
+        const char *env = getenv("AB3D_CLIP_TRACE_FRAMES");
+        if (env) frames_left = atoi(env);
+        initialized = 1;
+    }
+    if (frames_left > 0) {
+        frames_left--;
+        return 1;
+    }
+    return 0;
+}
 
 static void build_argb24_to_amiga12_lut(void)
 {
@@ -605,17 +624,16 @@ static void rotate_one_point(RendererState *r, const uint8_t *pts, int idx)
     r->rotated[idx].x = vx_fine;
     r->rotated[idx].z = (int32_t)vz16;
 
-    /* Project to screen column.
-     * Amiga uses +47 as center (ASM line 4148: add.w #47,d2).
-     * vx_fine already has <<7 (128x) baked in from the rotation above.
-     * Scale by g_renderer.width/96 so projection fills the doubled screen. */
+    /* Project to screen column in Amiga 96-column space.
+     * ASM: divs d1,d2 ; add.w #47,d2 */
     if (vz16 > 0) {
-        int32_t screen_x = (vx_fine * RENDER_SCALE / vz16) + (g_renderer.width / 2);
+        int32_t screen_x = (vx_fine / vz16) + 47;
         r->on_screen[idx].screen_x = (int16_t)screen_x;
         r->on_screen[idx].flags = 0;
     } else {
-        /* Behind camera */
-        r->on_screen[idx].screen_x = (int16_t)((vx_fine > 0) ? g_renderer.width + 100 : -100);
+        /* Behind camera.
+         * Amiga uses hard edge sentinels (0 or right edge), with tst.w on d2. */
+        r->on_screen[idx].screen_x = (int16_t)(((int16_t)vx_fine > 0) ? 96 : 0);
         r->on_screen[idx].flags = 1;
     }
 }
@@ -1066,9 +1084,8 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
     int16_t cx2 = x2, cz2 = z2;
     int16_t ct1 = tex_start, ct2 = tex_end;
 
-    /* Near plane distance - must be > 0 to avoid division issues.
-     * Using a slightly larger value prevents overflow in tex/z calculations. */
-    const int16_t NEAR_PLANE = 4;
+    /* Amiga wall clip tests use z>0; keep near plane at 1 for parity. */
+    const int16_t NEAR_PLANE = 1;
     
     if (cz1 < NEAR_PLANE) {
         /* Clip left endpoint to near plane */
@@ -1096,8 +1113,9 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
      * Amiga uses +47 as center offset (ASM: add.w #47,d2 in RotateLevelPts).
      * cx1/cx2 are rotated.x >> 7, so multiply back by PROJ_X_SCALE/2 (<<7) for the
      * perspective divide. Scale by RENDER_SCALE for doubled resolution. */
-    int scr_x1 = (int)(((int32_t)cx1 * (PROJ_X_SCALE / 2) * RENDER_SCALE) / cz1) + (g_renderer.width / 2);
-    int scr_x2 = (int)(((int32_t)cx2 * (PROJ_X_SCALE / 2) * RENDER_SCALE) / cz2) + (g_renderer.width / 2);
+    int center_x = (g_renderer.width * 47) / 96;
+    int scr_x1 = (int)(((int32_t)cx1 * (PROJ_X_SCALE / 2) * RENDER_SCALE) / cz1) + center_x;
+    int scr_x2 = (int)(((int32_t)cx2 * (PROJ_X_SCALE / 2) * RENDER_SCALE) / cz2) + center_x;
 
     /* If endpoints project in reverse order, swap them for left-to-right drawing.
      * This can happen after near-plane clipping. All endpoint data must stay in sync. */
@@ -2360,7 +2378,8 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
             int32_t orp_z = (int32_t)vz16;
             if (orp_z <= SPRITE_NEAR_CLIP_Z) continue;
 
-            int scr_x = (int)(vx_fine * RENDER_SCALE / (int32_t)orp_z) + (r->width / 2);
+            int center_x = (r->width * 47) / 96;
+            int scr_x = (int)(vx_fine * RENDER_SCALE / (int32_t)orp_z) + center_x;
             int32_t rel_y_8 = (state->explosions[ei].y_floor - y_off) >> WORLD_Y_FRAC_BITS;
             int center_y = r->height / 2;
             int scr_y = (int)((int64_t)rel_y_8 * (int64_t)r->proj_y_scale * (int32_t)RENDER_SCALE / (int32_t)orp_z) + center_y;
@@ -2436,7 +2455,8 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
 
         /* Project to screen X (PROJ_X_SCALE/2 = horizontal focal length). */
         int32_t obj_vx_fine = orp->x_fine;
-        int scr_x = (int)(obj_vx_fine * RENDER_SCALE / (int32_t)orp->z) + (g_renderer.width / 2);
+        int center_x = (g_renderer.width * 47) / 96;
+        int scr_x = (int)(obj_vx_fine * RENDER_SCALE / (int32_t)orp->z) + center_x;
 
         /* Get brightness + distance attenuation
          * ASM: asr.w #7,d6 ; add.w (a0)+,d6 (distance>>7 + obj brightness) */
@@ -3040,7 +3060,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
              * the edge table doesn't reach the screen sides). */
             /* Water needs a tighter near clip than floor/roof so a surface just
              * above the camera can still project up to the top rows. */
-            const int32_t FLOOR_NEAR = (entry_type == 7) ? 1 : 4;
+            const int32_t FLOOR_NEAR = 1;
             for (int s = 0; s < sides; s++) {
                 int i1 = pt_indices[s];
                 int i2 = pt_indices[(s + 1) % sides];
@@ -3094,8 +3114,9 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                     ez2 = FLOOR_NEAR;
                 }
                 /* Project X from clipped (ex,ez) so values are consistent and safe (no division by zero or negative z). */
-                int sx1 = (int)((int64_t)ex1 * RENDER_SCALE / ez1) + g_renderer.width / 2;
-                int sx2 = (int)((int64_t)ex2 * RENDER_SCALE / ez2) + g_renderer.width / 2;
+                int center_x = (g_renderer.width * 47) / 96;
+                int sx1 = (int)((int64_t)ex1 * RENDER_SCALE / ez1) + center_x;
+                int sx2 = (int)((int64_t)ex2 * RENDER_SCALE / ez2) + center_x;
 
                 /* Project Y: same rule so X and Y stay consistent (no jump when z crosses FLOOR_NEAR). */
                 int32_t rel_h_8 = rel_h >> WORLD_Y_FRAC_BITS;
@@ -3470,6 +3491,11 @@ void renderer_draw_display(GameState *state)
 {
     RendererState *r = &g_renderer;
     if (!r->buffer) return;
+    uint32_t frame_idx = g_render_frame_counter++;
+    int trace_clip = renderer_take_clip_trace_slot();
+    if (trace_clip) {
+        printf("[CLIP][frame %u] begin\n", (unsigned)frame_idx);
+    }
 
     /* 1. Clear framebuffer */
     renderer_clear(0);
@@ -3534,6 +3560,8 @@ void renderer_draw_display(GameState *state)
      *
      * For each zone: apply LEVELCLIPS, then renderer_draw_zone (stream parse + draw).
      */
+    const uint8_t *lgr_base = state->view_list_of_graph_rooms;
+
     for (int i = state->zone_order_count - 1; i >= 0; i--) {
         int16_t zone_id = state->zone_order_zones[i];
         if (zone_id < 0) continue;
@@ -3547,15 +3575,20 @@ void renderer_draw_display(GameState *state)
         r->wall_bot_clip = -1;
 
         /* Apply zone clipping from ListOfGraphRooms + LEVELCLIPS (portal clipping).
-         * Defensive at grazing angles: stricter z, reject off-screen projection, fallback to full screen if invalid. */
+         * Match Amiga NEWsetlclip/NEWsetrclip behavior:
+         * - test clip point z > 0
+         * - compare against CONNECT_TABLE paired point on screen
+         * - right clip uses sx + 1
+         * - skip zone when clip is invalid (no full-screen fallback) */
         {
-            const uint8_t *lgr = state->view_list_of_graph_rooms ?
-                state->view_list_of_graph_rooms : state->level.list_of_graph_rooms;
-        if (lgr && state->level.clips) {
-            /* Tight: use points in front; only accept points that project onto/near screen. */
-            const int32_t zone_clip_min_z = 4;
-            const int sx_min = 0;
-            const int sx_max = g_renderer.width;
+            const uint8_t *lgr = lgr_base;
+        if (!lgr || !state->level.clips) {
+            continue;
+        }
+        {
+            const uint8_t *connect_table = state->level.connect_table;
+            int16_t left_clip96 = 0;
+            int16_t right_clip96 = 96;
 
             /* Find this zone's entry in ListOfGraphRooms */
             int found = 0;
@@ -3569,50 +3602,93 @@ void renderer_draw_display(GameState *state)
 
             if (found) {
                 int16_t clip_off = rd16(lgr + 2);
+                if (trace_clip) {
+                    printf("[CLIP][frame %u] zone=%d clip_off=%d\n",
+                           (unsigned)frame_idx, (int)zone_id, (int)clip_off);
+                }
                 if (clip_off >= 0) {
                     const uint8_t *clip_ptr = state->level.clips + clip_off * 2;
 
-                    /* Left clips: only use points in front and with sane screen x. */
+                    /* Left clips (Amiga NEWsetlclip) */
                     while (rd16(clip_ptr) >= 0) {
                         int16_t pt = rd16(clip_ptr);
                         clip_ptr += 2;
                         if (pt >= 0 && pt < MAX_POINTS) {
-                            int32_t z = r->rotated[pt].z;
-                            int16_t sx = r->on_screen[pt].screen_x;
-                            if (z >= zone_clip_min_z && sx >= sx_min && sx <= sx_max && sx > r->left_clip) {
-                                r->left_clip = sx;
+                            int16_t z = (int16_t)r->rotated[pt].z;
+                            int16_t sx96 = r->on_screen[pt].screen_x;
+                            if (z > 0) {
+                                int allow = 1;
+                                if (connect_table) {
+                                    int16_t cpt = rd16(connect_table + (size_t)pt * 4u + 2u);
+                                    if (cpt >= 0 && cpt < MAX_POINTS) {
+                                        int16_t csx96 = r->on_screen[cpt].screen_x;
+                                        if (csx96 > sx96) allow = 0;
+                                    } else if (trace_clip) {
+                                        printf("[CLIP][frame %u] zone=%d left pt=%d bad cpt=%d\n",
+                                               (unsigned)frame_idx, (int)zone_id, (int)pt, (int)cpt);
+                                    }
+                                }
+                                if (allow && sx96 > left_clip96) {
+                                    left_clip96 = sx96;
+                                }
                             }
                         }
                     }
                     clip_ptr += 2; /* Skip -1 terminator */
 
-                    /* Right clips: same. */
+                    /* Right clips (Amiga NEWsetrclip) */
                     while (rd16(clip_ptr) >= 0) {
                         int16_t pt = rd16(clip_ptr);
                         clip_ptr += 2;
                         if (pt >= 0 && pt < MAX_POINTS) {
-                            int32_t z = r->rotated[pt].z;
-                            int16_t sx = r->on_screen[pt].screen_x;
-                            if (z >= zone_clip_min_z && sx >= sx_min && sx <= sx_max && sx < r->right_clip) {
-                                r->right_clip = sx;
+                            int16_t z = (int16_t)r->rotated[pt].z;
+                            int16_t sx96 = r->on_screen[pt].screen_x;
+                            if (z > 0) {
+                                int allow = 1;
+                                if (connect_table) {
+                                    int16_t cpt = rd16(connect_table + (size_t)pt * 4u);
+                                    if (cpt >= 0 && cpt < MAX_POINTS) {
+                                        int16_t csx96 = r->on_screen[cpt].screen_x;
+                                        if (csx96 < sx96) allow = 0;
+                                    } else if (trace_clip) {
+                                        printf("[CLIP][frame %u] zone=%d right pt=%d bad cpt=%d\n",
+                                               (unsigned)frame_idx, (int)zone_id, (int)pt, (int)cpt);
+                                    }
+                                }
+                                if (allow && sx96 < right_clip96) {
+                                    right_clip96 = (int16_t)(sx96 + 1);
+                                }
                             }
                         }
                     }
 
-                    /* Tight: use portal bounds as-is; clamp to screen only. */
-                    int left = (int)r->left_clip;
-                    int right = (int)r->right_clip;
-                    if (left < 0) left = 0;
-                    if (right > g_renderer.width) right = g_renderer.width;
-                    r->left_clip = (int16_t)left;
-                    r->right_clip = (int16_t)right;
-                }
-            }
+                    /* Amiga dontbothercantseeit guard: skip this zone if clip is invalid. */
+                    if ((int)left_clip96 >= 96 || (int)right_clip96 < 0 ||
+                        left_clip96 >= right_clip96) {
+                        if (trace_clip) {
+                            printf("[CLIP][frame %u] zone=%d SKIP invalid l=%d r=%d\n",
+                                   (unsigned)frame_idx, (int)zone_id,
+                                   (int)left_clip96, (int)right_clip96);
+                        }
+                        continue;
+                    }
 
-            /* At bad angles we can still get invalid clip; fallback to full screen instead of skipping the zone. */
-            if (r->left_clip >= g_renderer.width || r->right_clip <= 0 || r->left_clip >= r->right_clip) {
-                r->left_clip = 0;
-                r->right_clip = (int16_t)g_renderer.width;
+                    r->left_clip = (int16_t)(left_clip96 * RENDER_SCALE);
+                    r->right_clip = (int16_t)(right_clip96 * RENDER_SCALE);
+                    if (trace_clip) {
+                        printf("[CLIP][frame %u] zone=%d clip96=[%d,%d) clip_px=[%d,%d)\n",
+                               (unsigned)frame_idx, (int)zone_id,
+                               (int)left_clip96, (int)right_clip96,
+                               (int)r->left_clip, (int)r->right_clip);
+                    }
+                }
+            } else {
+                /* Zone not present in ListOfGraphRooms: do not draw it. */
+                if (trace_clip) {
+                    printf("[CLIP][frame %u] zone=%d SKIP not_in_lgr\n",
+                           (unsigned)frame_idx, (int)zone_id);
+                }
+                continue;
             }
         }
         }

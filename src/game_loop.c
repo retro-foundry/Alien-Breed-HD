@@ -277,13 +277,18 @@ void game_loop(GameState *state)
                 PlayerState *view_plr = (state->mode == MODE_SLAVE) ?
                                         &state->plr2 : &state->plr1;
 
-                /* Amiga: ListOfGraphRooms = current zone's list (zone_data + 48).
-                 * Use viewer's zone list when valid; else level-wide list (stub). */
+                /* Amiga: ListOfGraphRooms = current room's list (roompt + 48). */
                 const uint8_t *lgr_ptr = NULL;
-                if (view_plr->list_of_graph_rooms > 0 && state->level.data) {
-                    lgr_ptr = state->level.data + view_plr->list_of_graph_rooms;
-                } else if (state->level.list_of_graph_rooms) {
-                    lgr_ptr = state->level.list_of_graph_rooms;
+                if (state->level.data) {
+                    int32_t lgr_off = -1;
+                    if (view_plr->roompt >= 0) {
+                        lgr_off = view_plr->roompt + 48;  /* ToListOfGraph */
+                    } else if (view_plr->list_of_graph_rooms > 0) {
+                        lgr_off = view_plr->list_of_graph_rooms;
+                    }
+                    if (lgr_off > 0) {
+                        lgr_ptr = state->level.data + lgr_off;
+                    }
                 }
 
                 /* Amiga uses high 16 bits of xoff/zoff for OrderZones side test (move.w xoff,d2 = first word of long). */
