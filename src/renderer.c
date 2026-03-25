@@ -176,9 +176,37 @@ void renderer_step_water_anim_ms(uint32_t elapsed_ms)
 static uint32_t amiga12_lut[4096];
 /* Rounded 8-bit channel -> 4-bit nibble: exactly matches (v+8)/17 clamp. */
 static uint8_t byte_to_nibble_lut[256];
+/* Full RGB24 -> Amiga12 lookup table (16,777,216 entries, ~32 MiB). */
+static uint16_t *argb24_to_amiga12_lut = NULL;
+static int argb24_to_amiga12_lut_ready = 0;
 /* Exact floor(x/255) for x in [0, 130050] used by blend_argb. */
 #define DIV255_LUT_MAX 130050u
 static uint16_t div255_lut[DIV255_LUT_MAX + 1u];
+
+static void build_argb24_to_amiga12_lut(void)
+{
+    if (argb24_to_amiga12_lut_ready) return;
+    if (!argb24_to_amiga12_lut) {
+        size_t lut_size = (size_t)(1u << 24) * sizeof(uint16_t);
+        argb24_to_amiga12_lut = (uint16_t*)malloc(lut_size);
+    }
+    if (!argb24_to_amiga12_lut) {
+        argb24_to_amiga12_lut_ready = 0;
+        return;
+    }
+
+    for (uint32_t r = 0; r < 256u; r++) {
+        uint16_t r4 = (uint16_t)((uint16_t)byte_to_nibble_lut[r] << 8);
+        for (uint32_t g = 0; g < 256u; g++) {
+            uint16_t rg = (uint16_t)(r4 | ((uint16_t)byte_to_nibble_lut[g] << 4));
+            uint32_t base = (r << 16) | (g << 8);
+            for (uint32_t b = 0; b < 256u; b++) {
+                argb24_to_amiga12_lut[base | b] = (uint16_t)(rg | byte_to_nibble_lut[b]);
+            }
+        }
+    }
+    argb24_to_amiga12_lut_ready = 1;
+}
 
 static void build_amiga12_lut(void)
 {
@@ -196,6 +224,7 @@ static void build_amiga12_lut(void)
     for (unsigned i = 0; i <= DIV255_LUT_MAX; i++) {
         div255_lut[i] = (uint16_t)(i / 255u);
     }
+    build_argb24_to_amiga12_lut();
 }
 
 static inline uint32_t amiga12_to_argb(uint16_t w)
@@ -205,6 +234,9 @@ static inline uint32_t amiga12_to_argb(uint16_t w)
 
 static inline uint16_t argb_to_amiga12(uint32_t c)
 {
+    if (argb24_to_amiga12_lut_ready) {
+        return argb24_to_amiga12_lut[c & 0x00FFFFFFu];
+    }
     uint32_t r4 = (uint32_t)byte_to_nibble_lut[(c >> 16) & 0xFFu];
     uint32_t g4 = (uint32_t)byte_to_nibble_lut[(c >> 8) & 0xFFu];
     uint32_t b4 = (uint32_t)byte_to_nibble_lut[c & 0xFFu];
@@ -401,6 +433,9 @@ void renderer_resize(int w, int h)
 void renderer_shutdown(void)
 {
     free_buffers();
+    free(argb24_to_amiga12_lut);
+    argb24_to_amiga12_lut = NULL;
+    argb24_to_amiga12_lut_ready = 0;
     printf("[RENDERER] Shutdown\n");
 }
 
