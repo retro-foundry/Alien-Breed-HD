@@ -133,6 +133,9 @@ void game_loop(GameState *state)
             vblank_remainder_ms += elapsed;
             pending_vblanks += (int)(vblank_remainder_ms / 20);
             vblank_remainder_ms %= 20;
+
+            /* Keep water phase moving every display frame; average speed stays 50Hz. */
+            renderer_step_water_anim_ms(elapsed);
         }
 
         /* ================================================================
@@ -149,8 +152,6 @@ void game_loop(GameState *state)
 
             state->frames_to_draw = (int16_t)ticks;
             state->temp_frames = (int16_t)ticks;
-            /* Water waves on Amiga advance once per VBlank. */
-            renderer_step_water_anim(state->temp_frames);
 
             /* ---- Phase 1: Pause handling ---- */
             if (state->mode == MODE_SINGLE) {

@@ -105,6 +105,10 @@ static uint8_t g_water_off = 0;
 static int8_t g_fill_screen_water = 0;
 static uint8_t g_water_anim_cursor = 0;
 static uint16_t g_water_src_off = 0;
+/* Interpolated per-display-frame refraction phase (smooths 50Hz step on 60Hz+ displays). */
+static uint16_t g_water_wtan_draw = 0;
+/* Millisecond remainder used to keep average animation speed at exactly 50Hz. */
+static uint32_t g_water_ms_remainder = 0;
 static const uint8_t *g_water_file = NULL;
 static size_t g_water_file_size = 0;
 static const uint8_t *g_water_brighten = NULL;
@@ -129,6 +133,29 @@ void renderer_step_water_anim(int steps)
     if (steps > 64) steps = 64;
     while (steps-- > 0) {
         renderer_advance_water_anim();
+    }
+    g_water_wtan_draw = g_water_wtan;
+}
+
+void renderer_step_water_anim_ms(uint32_t elapsed_ms)
+{
+    if (elapsed_ms == 0u) return;
+
+    g_water_ms_remainder += elapsed_ms;
+    if (g_water_ms_remainder > 2000u) g_water_ms_remainder = 2000u;
+
+    /* Amiga cadence: one water step per 20 ms (50Hz). */
+    int steps = (int)(g_water_ms_remainder / 20u);
+    g_water_ms_remainder %= 20u;
+    if (steps > 0) {
+        renderer_step_water_anim(steps);
+    }
+
+    /* Interpolate within the next 20 ms step for smoother temporal motion. */
+    {
+        uint32_t frac_num = g_water_ms_remainder; /* 0..19 */
+        uint32_t interp = ((uint32_t)640u * frac_num) / 20u;
+        g_water_wtan_draw = (uint16_t)((g_water_wtan + interp) & 8191u);
     }
 }
 
@@ -195,8 +222,10 @@ void renderer_set_water_assets(const uint8_t *water_file, size_t water_file_size
     g_water_brighten_size = water_brighten_size;
     g_water_anim_cursor = 0;
     g_water_src_off = 0;
+    g_water_ms_remainder = 0;
     /* First DrawDisplay on Amiga immediately sets watertouse/wtan/wateroff. */
     renderer_advance_water_anim();
+    g_water_wtan_draw = g_water_wtan;
 }
 
 /* Sprite brightness -> palette level mapping (from ObjDraw3.ChipRam.s objscalecols).
@@ -1198,10 +1227,10 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     uint32_t u_fp = (uint32_t)(int32_t)start_u64;
     uint32_t v_fp = (uint32_t)(int32_t)start_v64;
 
-    int water_refr_y_off = 0;
+    int32_t water_refr_y_off_fp = 0;
     if (is_water) {
         /* AB3DI texturedwater computes vertical refraction once per scanline. */
-        int sin_idx = (((dist << 7) + (int32_t)g_water_wtan) & 8191);
+        int sin_idx = (((dist << 7) + (int32_t)g_water_wtan_draw) & 8191);
         /* AB3DI texturedwater reads directly from bigsine (range ~[-32767,32767]).
          * Our shared sin_lookup table is half-scale (~[-16384,16384]), so double
          * here to match Amiga water wobble without affecting non-water systems. */
@@ -1209,8 +1238,11 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         int32_t den = dist + 300;
         /* AB3DI texturedwater:
          *   d0 = ((sin(dst*128 + wtan) / (dst+300)) >> 6) + 2 */
-        int refr_y_off = (den != 0) ? (int)(sine / den) : 0;
-        refr_y_off = (refr_y_off >> 6) + 2;
+        int32_t refr_y_off_fp = 0;
+        if (den != 0) {
+            refr_y_off_fp = (int32_t)(((int64_t)sine << 8) / ((int64_t)den << 6));
+        }
+        refr_y_off_fp += (2 << 8);
 
         /* AB3DI disttobot clamp is in 80-line view space:
          *   if (d0 >= disttobot) d0 = disttobot-1 */
@@ -1218,13 +1250,14 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             int amiga_y = (int)(((int64_t)y * 80) / ((rs->height > 0) ? rs->height : 1));
             int disttobot = 79 - amiga_y;
             if (disttobot < 1) disttobot = 1;
-            if (refr_y_off >= disttobot) refr_y_off = disttobot - 1;
+            if (refr_y_off_fp >= (disttobot << 8))
+                refr_y_off_fp = (disttobot << 8) - 1;
         }
-        if (row_dist < 0) refr_y_off = -refr_y_off; /* AB3DI: if (above) d0 = -d0 */
+        if (row_dist < 0) refr_y_off_fp = -refr_y_off_fp; /* AB3DI: if (above) d0 = -d0 */
 
         /* Convert Amiga 80-line offset to current render height. */
         if (rs->height != 80) {
-            refr_y_off = (int)(((int64_t)refr_y_off * rs->height) / 80);
+            refr_y_off_fp = (int32_t)(((int64_t)refr_y_off_fp * rs->height) / 80);
         }
 
         /* Safety guard: keep source sampling on not-yet-written rows in current pass.
@@ -1232,10 +1265,11 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         if (water_rows_left > 0) {
             int max_mag = (int)water_rows_left - 1;
             if (max_mag < 0) max_mag = 0;
-            if (refr_y_off > max_mag) refr_y_off = max_mag;
-            if (refr_y_off < -max_mag) refr_y_off = -max_mag;
+            int32_t max_mag_fp = (int32_t)max_mag << 8;
+            if (refr_y_off_fp > max_mag_fp) refr_y_off_fp = max_mag_fp;
+            if (refr_y_off_fp < -max_mag_fp) refr_y_off_fp = -max_mag_fp;
         }
-        water_refr_y_off = refr_y_off;
+        water_refr_y_off_fp = refr_y_off_fp;
     }
 
     uint8_t *row8 = buf + (size_t)y * w;
@@ -1302,8 +1336,6 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
 
         if (is_water) {
             /* Amiga-style textured water: refract existing pixels instead of drawing a solid color. */
-            int refr_y_off = water_refr_y_off;
-
             uint16_t d5_word = (uint16_t)(((uint16_t)v8 << 8) | (uint16_t)u8);
             uint16_t water_d5 = (uint16_t)(d5_word + (uint16_t)g_water_off);
             water_d5 &= 0x3F3Fu;
@@ -1322,23 +1354,43 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             }
 
             int refr_x = x;
-            int refr_y = y + refr_y_off;
+            int32_t refr_y_fp = ((int32_t)y << 8) + water_refr_y_off_fp;
+            int refr_y = (int)(refr_y_fp >> 8);
+            int refr_frac = (int)(refr_y_fp & 0xFF);
+            int refr_y_next = refr_y + 1;
             if (refr_x < 0) refr_x = 0;
             if (refr_x >= rs->width) refr_x = rs->width - 1;
             if (refr_y < 0) refr_y = 0;
             if (refr_y >= rs->height) refr_y = rs->height - 1;
+            if (refr_y_next < 0) refr_y_next = 0;
+            if (refr_y_next >= rs->height) refr_y_next = rs->height - 1;
 
             size_t bg_i = (size_t)refr_y * (size_t)rs->width + (size_t)refr_x;
-            uint32_t bg = rgb[bg_i];
-            uint16_t bg_cw = cwbuf[bg_i];
+            uint32_t bg0 = rgb[bg_i];
+            uint16_t bg_cw0 = cwbuf[bg_i];
             if (buf[bg_i] == 0 && rs->rgb_back_buffer && rs->cw_back_buffer) {
                 /* AB3DI texturedwater samples from display memory while floor lines are streamed.
                  * When refraction points at rows not written yet this frame, those pixels still
                  * contain prior-frame values; mirror that by sampling back-buffer content. */
-                bg = rs->rgb_back_buffer[bg_i];
-                bg_cw = rs->cw_back_buffer[bg_i];
+                bg0 = rs->rgb_back_buffer[bg_i];
+                bg_cw0 = rs->cw_back_buffer[bg_i];
             }
-            uint8_t bg_sample = (uint8_t)(bg_cw & 0xFFu);
+            uint8_t bg_sample0 = (uint8_t)(bg_cw0 & 0xFFu);
+
+            int has_next_refr = (refr_frac > 0 && refr_y_next != refr_y);
+            uint32_t bg1 = bg0;
+            uint16_t bg_cw1 = bg_cw0;
+            uint8_t bg_sample1 = bg_sample0;
+            if (has_next_refr) {
+                size_t bg_i_next = (size_t)refr_y_next * (size_t)rs->width + (size_t)refr_x;
+                bg1 = rgb[bg_i_next];
+                bg_cw1 = cwbuf[bg_i_next];
+                if (buf[bg_i_next] == 0 && rs->rgb_back_buffer && rs->cw_back_buffer) {
+                    bg1 = rs->rgb_back_buffer[bg_i_next];
+                    bg_cw1 = rs->cw_back_buffer[bg_i_next];
+                }
+                bg_sample1 = (uint8_t)(bg_cw1 & 0xFFu);
+            }
 
             uint32_t out;
             uint16_t out_cw;
@@ -1348,16 +1400,37 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
                  *   output = brightentab[d0]. */
                 uint32_t dist_off = (((uint32_t)dist) & 0xFF00u) << 1;
                 if (dist_off > (uint32_t)(12 * 512)) dist_off = (uint32_t)(12 * 512);
-                size_t bi = (size_t)dist_off + ((size_t)water_level << 9) + (size_t)bg_sample * 2u;
-                if (bi + 1u < g_water_brighten_size) {
-                    out_cw = (uint16_t)((g_water_brighten[bi] << 8) | g_water_brighten[bi + 1u]);
-                    out = amiga12_to_argb(out_cw);
+                size_t bi0 = (size_t)dist_off + ((size_t)water_level << 9) + (size_t)bg_sample0 * 2u;
+                uint32_t out0;
+                uint16_t out_cw0;
+                if (bi0 + 1u < g_water_brighten_size) {
+                    out_cw0 = (uint16_t)((g_water_brighten[bi0] << 8) | g_water_brighten[bi0 + 1u]);
+                    out0 = amiga12_to_argb(out_cw0);
                 } else {
-                    out_cw = bg_cw;
-                    out = bg;
+                    out_cw0 = bg_cw0;
+                    out0 = bg0;
+                }
+
+                if (has_next_refr) {
+                    size_t bi1 = (size_t)dist_off + ((size_t)water_level << 9) + (size_t)bg_sample1 * 2u;
+                    uint32_t out1;
+                    uint16_t out_cw1;
+                    if (bi1 + 1u < g_water_brighten_size) {
+                        out_cw1 = (uint16_t)((g_water_brighten[bi1] << 8) | g_water_brighten[bi1 + 1u]);
+                        out1 = amiga12_to_argb(out_cw1);
+                    } else {
+                        out_cw1 = bg_cw1;
+                        out1 = bg1;
+                    }
+                    out = blend_argb(out0, out1, (uint32_t)refr_frac);
+                    out_cw = argb_to_amiga12(out);
+                } else {
+                    out = out0;
+                    out_cw = out_cw0;
                 }
             } else {
                 /* Fallback when brighten table is missing: keep prior blended behavior. */
+                uint32_t bg = has_next_refr ? blend_argb(bg0, bg1, (uint32_t)refr_frac) : bg0;
                 uint32_t br = (bg >> 16) & 0xFFu;
                 uint32_t bg_g = (bg >> 8) & 0xFFu;
                 uint32_t bb = bg & 0xFFu;
