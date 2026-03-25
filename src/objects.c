@@ -448,7 +448,13 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
     /* Apply damage reduction */
     if (params->damage_shift > 0) {
         damage >>= params->damage_shift;
-        if (damage < 1) damage = 1;
+        if (damage < 1) {
+            if (params->min_damage_after_shift) {
+                damage = 1;
+            } else {
+                return false; /* Armor absorbed this hit (Amiga beq noscream path). */
+            }
+        }
     }
 
     int32_t lives = (int32_t)NASTY_LIVES(*obj);

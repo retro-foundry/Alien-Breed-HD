@@ -180,6 +180,7 @@ typedef struct {
 
     /* Health */
     int8_t   damage_shift;     /* right-shift applied to incoming damage */
+    int8_t   min_damage_after_shift; /* if set, clamp shifted damage to at least 1 */
     int16_t  explode_threshold; /* damage for explosion death */
 
     /* AI */
