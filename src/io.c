@@ -174,8 +174,10 @@ static void build_test_level_data(LevelState *level)
     int ptr_list_size = (NUM_POINTS + 1) * 2; /* indices + sentinel */
     /* Object data: just 2 player objects */
     int obj_data_size = 3 * OBJECT_SIZE; /* 2 players + 1 terminator */
-    /* Object points: 2 for players + 20 for nasty_shot_data (bullets/gibs) - Amiga shares this pool */
-    int num_obj_pts = 32;
+    /* Object points: 2 for players + nasty shot slots. */
+    int num_obj_pts = NASTY_SHOT_SLOT_COUNT + 2;
+    int plr1_cid = NASTY_SHOT_SLOT_COUNT;
+    int plr2_cid = NASTY_SHOT_SLOT_COUNT + 1;
     int obj_points_size = num_obj_pts * 8;
 
     int total = hdr_size + zone_table_size + zone_data_size + points_size +
@@ -356,23 +358,22 @@ static void build_test_level_data(LevelState *level)
 
     /* ---- Object data (2 player objects + terminator) ---- */
     memset(buf + off_obj_data, 0, (size_t)obj_data_size);
-    /* PLR1/PLR2 use point indices 30 and 31 so 0..19 stay free for nasty_shot_data (bullets/gibs) */
+    /* PLR1/PLR2 use point indices after the nasty shot range. */
     /* PLR1 object */
-    wr16(buf + off_obj_data + 0, 30);    /* collision_id = point index 30 */
+    wr16(buf + off_obj_data + 0, (int16_t)plr1_cid);    /* collision_id = point index for PLR1 */
     wr16(buf + off_obj_data + 12, 0);    /* zone = 0 */
     /* PLR2 object */
-    wr16(buf + off_obj_data + OBJECT_SIZE + 0, 31);  /* collision_id = point index 31 */
+    wr16(buf + off_obj_data + OBJECT_SIZE + 0, (int16_t)plr2_cid);  /* collision_id = point index for PLR2 */
     wr16(buf + off_obj_data + OBJECT_SIZE + 12, 3);   /* zone = 3 */
     /* Terminator object: collision_id = -1 ends the list */
     wr16(buf + off_obj_data + 2 * OBJECT_SIZE + 0, -1);
     wr16(buf + off_obj_data + 2 * OBJECT_SIZE + 12, -1); /* zone = -1 (inactive) */
 
-    /* ---- Object points: 0..19 for bullets/gibs, 30..31 for players ---- */
-    wr16(buf + off_obj_points + 30 * 8 + 0, 256);   /* PLR1 x */
-    wr16(buf + off_obj_points + 30 * 8 + 4, 256);   /* PLR1 z */
-    wr16(buf + off_obj_points + 31 * 8 + 0, 768);  /* PLR2 x */
-    wr16(buf + off_obj_points + 31 * 8 + 4, 768);   /* PLR2 z */
-    /* 0..19 zeroed by calloc - used by bullets/gibs when spawned */
+    /* ---- Object points: 0..NASTY_SHOT_SLOT_COUNT-1 for nasty shots/gibs, then players ---- */
+    wr16(buf + off_obj_points + plr1_cid * 8 + 0, 256);   /* PLR1 x */
+    wr16(buf + off_obj_points + plr1_cid * 8 + 4, 256);   /* PLR1 z */
+    wr16(buf + off_obj_points + plr2_cid * 8 + 0, 768);   /* PLR2 x */
+    wr16(buf + off_obj_points + plr2_cid * 8 + 4, 768);   /* PLR2 z */
 
     /* Store in level state - set pointers directly (bypass level_parse
      * since our test data isn't in the exact original header format) */
@@ -394,7 +395,7 @@ static void build_test_level_data(LevelState *level)
     /* Allocate player shot data (20 bullet slots for projectile weapons).
      * Each slot is OBJECT_SIZE bytes.  zone < 0 means the slot is free. */
     {
-        int shot_slots = 20;
+        int shot_slots = PLAYER_SHOT_SLOT_COUNT;
         int shot_buf_size = shot_slots * OBJECT_SIZE;
         uint8_t *shot_buf = (uint8_t *)calloc(1, (size_t)shot_buf_size);
         if (shot_buf) {
@@ -406,13 +407,14 @@ static void build_test_level_data(LevelState *level)
         }
     }
 
-    /* Allocate nasty shot data (20 enemy bullet slots + 64*20 extra) */
+    /* Allocate nasty shot data (100 enemy bullet/gib slots + per-slot scratch). */
     {
-        int nasty_shots = 20;
-        int nasty_buf_size = nasty_shots * OBJECT_SIZE + 64 * 20;
+        int nasty_shots = NASTY_SHOT_SLOT_COUNT;
+        int nasty_buf_size = nasty_shots * OBJECT_SIZE + 64 * nasty_shots;
         uint8_t *nasty_buf = (uint8_t *)calloc(1, (size_t)nasty_buf_size);
         if (nasty_buf) {
             for (int i = 0; i < nasty_shots; i++) {
+                wr16(nasty_buf + i * OBJECT_SIZE + 0, (int16_t)i);
                 wr16(nasty_buf + i * OBJECT_SIZE + 12, -1);
             }
             level->nasty_shot_data = nasty_buf;
@@ -759,6 +761,14 @@ void io_release_level_memory(LevelState *level)
     }
     level->nasty_shot_data = NULL;
     level->other_nasty_data = NULL;
+
+    if (level->object_points && level->data) {
+        uint8_t *d = level->data;
+        if (level->object_points < d || level->object_points > d + 1024*1024) {
+            free(level->object_points);
+        }
+    }
+    level->object_points = NULL;
 
     free(level->workspace);         level->workspace = NULL;
 

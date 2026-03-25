@@ -51,6 +51,56 @@ static void write_long_be(uint8_t *p, int32_t v)
     p[3] = (uint8_t)(uint32_t)v;
 }
 
+static int level_expand_nasty_shot_pool(LevelState *level)
+{
+    const int old_slots = PLAYER_SHOT_SLOT_COUNT;
+    const int new_slots = NASTY_SHOT_SLOT_COUNT;
+    int old_point_count;
+    int added_slots;
+    int new_point_count;
+    int next_cid;
+    uint8_t *new_nasty;
+    uint8_t *new_points;
+
+    if (!level || !level->nasty_shot_data) return -1;
+    if (new_slots <= old_slots) {
+        level->other_nasty_data = level->nasty_shot_data + (size_t)old_slots * OBJECT_SIZE;
+        return 0;
+    }
+
+    old_point_count = (level->num_object_points > 0) ? (int)level->num_object_points : 0;
+    added_slots = new_slots - old_slots;
+    new_point_count = old_point_count + added_slots;
+    if (new_point_count > 32767) return -1;
+
+    new_nasty = (uint8_t *)calloc((size_t)new_slots * OBJECT_SIZE + (size_t)new_slots * 64u, 1);
+    if (!new_nasty) return -1;
+    memcpy(new_nasty, level->nasty_shot_data, (size_t)old_slots * OBJECT_SIZE);
+
+    new_points = (uint8_t *)calloc((size_t)new_point_count, 8u);
+    if (!new_points) {
+        free(new_nasty);
+        return -1;
+    }
+    if (level->object_points && old_point_count > 0) {
+        memcpy(new_points, level->object_points, (size_t)old_point_count * 8u);
+    }
+
+    next_cid = old_point_count;
+    for (int i = old_slots; i < new_slots; i++) {
+        uint8_t *slot = new_nasty + (size_t)i * OBJECT_SIZE;
+        write_word_be(slot + 0, (int16_t)next_cid);
+        write_word_be(slot + 12, (int16_t)-1);
+        next_cid++;
+    }
+
+    level->nasty_shot_data = new_nasty;
+    level->other_nasty_data = new_nasty + (size_t)new_slots * OBJECT_SIZE;
+    level->object_points = new_points;
+    level->num_object_points = (int16_t)new_point_count;
+    return 0;
+}
+
 /* Forward declare for use in level_parse. */
 static void log_broken_floor_line_connects(LevelState *level);
 
@@ -540,12 +590,20 @@ int level_parse(LevelState *level)
     /* Long 38: Offset to nasty shot data */
     int32_t nshot_offset = read_long(ld + 38);
     level->nasty_shot_data = ld + nshot_offset;
-    /* Other nasty data follows: 64*20 bytes after nasty shots */
-    level->other_nasty_data = level->nasty_shot_data + 64 * 20;
+    /* Other nasty data follows after shot records. */
+    level->other_nasty_data = level->nasty_shot_data + (size_t)PLAYER_SHOT_SLOT_COUNT * OBJECT_SIZE;
 
     /* Long 42: Offset to object points */
     int32_t objpts_offset = read_long(ld + 42);
     level->object_points = ld + objpts_offset;
+
+    if (level_expand_nasty_shot_pool(level) == 0) {
+        printf("[LEVEL] Expanded nasty shot pool: %d slots, object_points=%d\n",
+               NASTY_SHOT_SLOT_COUNT, (int)level->num_object_points);
+    } else {
+        printf("[LEVEL] Nasty shot pool expansion unavailable; using %d slots\n",
+               PLAYER_SHOT_SLOT_COUNT);
+    }
 
     /* Long 46: Offset to player 1 object */
     int32_t plr1_offset = read_long(ld + 46);

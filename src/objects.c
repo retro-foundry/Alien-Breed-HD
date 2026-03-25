@@ -254,7 +254,7 @@ static void get_object_pos(const LevelState *level, int index,
 static GameObject *find_free_shot_slot(uint8_t *shots, int16_t *saved_cid)
 {
     if (!shots) return NULL;
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < PLAYER_SHOT_SLOT_COUNT; i++) {
         GameObject *candidate = (GameObject *)(shots + i * OBJECT_SIZE);
         if (OBJ_ZONE(candidate) < 0) {
             if (saved_cid) *saved_cid = OBJ_CID(candidate);
@@ -289,6 +289,23 @@ static inline bool enemy_is_human_marine(int8_t obj_type)
     return obj_type == OBJ_NBR_FLAME_MARINE
         || obj_type == OBJ_NBR_TOUGH_MARINE
         || obj_type == OBJ_NBR_MARINE;
+}
+
+/* Amiga ExplodeIntoBits call sites usually pass d2 derived from the
+ * killing blow; marine/alien/worm classes shift it down before spawning bits. */
+static int16_t enemy_gib_level_from_damage(const GameObject *obj,
+                                           const EnemyParams *params,
+                                           int32_t damage)
+{
+    int32_t d2 = damage;
+    if (params &&
+        (params->damage_audio_class == ENEMY_DMG_AUDIO_ALIEN ||
+         params->damage_audio_class == ENEMY_DMG_AUDIO_WORM ||
+         enemy_is_human_marine(obj->obj.number))) {
+        d2 >>= 2;
+    }
+    if (d2 < 1) d2 = 1;
+    return (int16_t)d2;
 }
 
 /* Queue player damage through damagetaken (raw[19]) so USEPLR1/2 apply
@@ -380,8 +397,9 @@ static void enemy_update_flying_soft_dead(GameObject *obj,
          * then switch to final floor-corpse frame (20). */
         if (OBJ_DEADL(obj) < 20) {
             int splatv = (params->gib_splat_noisevol > 0) ? params->gib_splat_noisevol : 400;
+            int16_t gib_level = (int16_t)((OBJ_TD_W(obj, ENEMY_FOURTH_TIMER_OFF) >> 4) + 1);
             audio_play_sample(14, amiga_noisevol_to_pc(splatv));
-            explode_into_bits(obj, state, false);
+            explode_into_bits(obj, state, false, gib_level);
             OBJ_SET_DEADL(obj, 20);
         }
     }
@@ -394,8 +412,9 @@ static void enemy_death_marine_like(GameObject *obj, const EnemyParams *params,
                                     bool explosion_damage)
 {
     if (damage > 1 || explosion_damage) {
+        int16_t gib_level = enemy_gib_level_from_damage(obj, params, damage);
         audio_play_sample(14, amiga_noisevol_to_pc(400));
-        explode_into_bits(obj, state, explosion_damage);
+        explode_into_bits(obj, state, explosion_damage, gib_level);
     }
     if ((!instant_kill || explosion_damage) && params->death_frames[0] >= 0) {
         audio_play_sample(scream_sample, amiga_noisevol_to_pc(200));
@@ -483,7 +502,7 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
         case ENEMY_DMG_AUDIO_BIG_GIB:
             /* BigRedThing.s / BigClaws.s / Tree.s: #14@400 + gibs, no screamsound on kill */
             audio_play_sample(14, amiga_noisevol_to_pc(400));
-            explode_into_bits(obj, state, explosion_damage);
+            explode_into_bits(obj, state, explosion_damage, 7);
             enemy_apply_death_outcome(obj, params, instant_kill);
             return true;
 
@@ -491,8 +510,9 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
             /* HalfWorm.s: splat #14 @300 if damage>1; scream #27@200 for anim; instant if damage>=80 */
             int splatv = (params->gib_splat_noisevol > 0) ? params->gib_splat_noisevol : 400;
             if (damage > 1 || explosion_damage) {
+                int16_t gib_level = enemy_gib_level_from_damage(obj, params, damage);
                 audio_play_sample(14, amiga_noisevol_to_pc(splatv));
-                explode_into_bits(obj, state, explosion_damage);
+                explode_into_bits(obj, state, explosion_damage, gib_level);
             }
             if ((!instant_kill || explosion_damage) && params->death_frames[0] >= 0) {
                 audio_play_sample(params->scream_sound, amiga_noisevol_to_pc(200));
@@ -505,7 +525,7 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
             /* FlyingScalyBall.s / EyeBall.s: killing blow >40 → #14@400+gib; else #8@200 */
             if (instant_kill) {
                 audio_play_sample(14, amiga_noisevol_to_pc(400));
-                explode_into_bits(obj, state, explosion_damage);
+                explode_into_bits(obj, state, explosion_damage, 9);
                 if (explosion_damage && params->scream_sound >= 0)
                     audio_play_sample(params->scream_sound, amiga_noisevol_to_pc(200));
                 OBJ_SET_ZONE(obj, -1);
@@ -538,7 +558,8 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
                 audio_play_sample(params->death_sound, amiga_noisevol_to_pc(200));
             }
             if (damage > 1 || explosion_damage) {
-                explode_into_bits(obj, state, explosion_damage);
+                int16_t gib_level = enemy_gib_level_from_damage(obj, params, damage);
+                explode_into_bits(obj, state, explosion_damage, gib_level);
             }
             enemy_apply_death_outcome(obj, params, instant_kill);
             return true;
@@ -1324,7 +1345,7 @@ void objects_update(GameState *state)
     /* Process nasty_shot_data bullets and gibs (not in object_data list) */
     if (state->level.nasty_shot_data) {
         uint8_t *shots = state->level.nasty_shot_data;
-        for (int j = 0; j < 20; j++) {
+        for (int j = 0; j < NASTY_SHOT_SLOT_COUNT; j++) {
             GameObject *bullet = (GameObject *)(shots + j * OBJECT_SIZE);
             if (OBJ_ZONE(bullet) < 0) continue;
             if (bullet->obj.number != OBJ_NBR_BULLET) continue;
@@ -1333,7 +1354,7 @@ void objects_update(GameState *state)
     }
     if (state->level.player_shot_data) {
         uint8_t *shots = state->level.player_shot_data;
-        for (int j = 0; j < 20; j++) {
+        for (int j = 0; j < PLAYER_SHOT_SLOT_COUNT; j++) {
             GameObject *bullet = (GameObject *)(shots + j * OBJECT_SIZE);
             if (OBJ_ZONE(bullet) < 0) continue;
             if (bullet->obj.number != OBJ_NBR_BULLET) continue;
@@ -2117,7 +2138,7 @@ void object_handle_gas_pipe(GameObject *obj, GameState *state)
     if (!state->level.nasty_shot_data) return;
     uint8_t *shots = state->level.nasty_shot_data;
     GameObject *bullet = NULL;
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < NASTY_SHOT_SLOT_COUNT; i++) {
         GameObject *c = (GameObject*)(shots + i * OBJECT_SIZE);
         if (OBJ_ZONE(c) < 0) { bullet = c; break; }
     }
@@ -3439,10 +3460,10 @@ void enemy_fire_at_player(GameObject *obj, GameState *state,
 
     PlayerState *plr = (player_num == 1) ? &state->plr1 : &state->plr2;
 
-    /* Find free slot in NastyShotData (up to 20 slots, 64 bytes each) */
+    /* Find free slot in NastyShotData */
     uint8_t *shots = state->level.nasty_shot_data;
     GameObject *bullet = NULL;
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < NASTY_SHOT_SLOT_COUNT; i++) {
         GameObject *candidate = (GameObject*)(shots + i * OBJECT_SIZE);
         if (OBJ_ZONE(candidate) < 0) {
             bullet = candidate;

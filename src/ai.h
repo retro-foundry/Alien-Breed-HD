@@ -43,8 +43,9 @@ void go_in_direction(int32_t *newx, int32_t *newz,
                      int16_t angle, int16_t speed);
 
 /* ExplodeIntoBits - enemy death explosion into fragments.
- * explosion_kill enables stronger blast-style gib velocity/spread. */
-void explode_into_bits(GameObject *obj, GameState *state, bool explosion_kill);
+ * explosion_kill enables stronger blast-style gib velocity/spread.
+ * gib_level matches Amiga d2 usage (spawn count is derived from it). */
+void explode_into_bits(GameObject *obj, GameState *state, bool explosion_kill, int16_t gib_level);
 
 /* ViewpointToDraw - determine which sprite frame to draw for an
  * enemy based on the viewer's angle relative to the enemy facing.

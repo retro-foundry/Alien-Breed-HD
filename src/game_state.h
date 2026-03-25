@@ -12,6 +12,9 @@
 
 #include "game_types.h"
 
+#define PLAYER_SHOT_SLOT_COUNT 20
+#define NASTY_SHOT_SLOT_COUNT  100
+
 /* -----------------------------------------------------------------------
  * Player state
  *

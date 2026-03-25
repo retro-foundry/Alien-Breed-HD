@@ -77,23 +77,26 @@ static inline int16_t clamp_gib_vel_component(int32_t v)
  * Creates visual debris objects. The rendering of debris is platform-
  * specific but the logic to spawn them is game logic.
  * ----------------------------------------------------------------------- */
-void explode_into_bits(GameObject *obj, GameState *state, bool explosion_kill)
+void explode_into_bits(GameObject *obj, GameState *state, bool explosion_kill, int16_t gib_level)
 {
     /* Translated from Anims.s ExplodeIntoBits (line ~75-196).
-     * Creates 7-9 debris fragments (gibs) in NastyShotData with random velocities.
+     * Spawn count is derived from Amiga d2 (clamped to 7, then +1 fragments).
      * No explosion sound here: death sound (e.g. splatpop) is played by enemy_check_damage. */
     if (!state || !state->level.nasty_shot_data) return;
 
-    int num_bits = 7 + (rand() & 3); /* 7-9 pieces */
+    int d2 = (int)gib_level;
+    if (d2 < 1) d2 = 1;
+    if (d2 > 7) d2 = 7;
+    int num_bits = d2 + 1; /* Amiga: d2 clamped to 7, then decremented through loop */
 
-    int nasty_slots = 20;
+    int nasty_slots = NASTY_SHOT_SLOT_COUNT;
     int spawned = 0;
     for (int i = 0; i < num_bits; i++) {
         /* Find free slot in NastyShotData */
         uint8_t *shots = state->level.nasty_shot_data;
         GameObject *bit = NULL;
         int slot_j = -1;
-        for (int j = 0; j < 20; j++) {
+        for (int j = 0; j < nasty_slots; j++) {
             GameObject *candidate = (GameObject*)(shots + j * OBJECT_SIZE);
             if (OBJ_ZONE(candidate) < 0) {
                 bit = candidate;

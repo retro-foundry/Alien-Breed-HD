@@ -73,7 +73,7 @@ static void player_cycle_weapon(PlayerState *plr, int direction)
 static GameObject *find_free_player_shot_slot(uint8_t *shots, int16_t *saved_cid)
 {
     if (!shots) return NULL;
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < PLAYER_SHOT_SLOT_COUNT; i++) {
         GameObject *candidate = (GameObject *)(shots + i * OBJECT_SIZE);
         if (OBJ_ZONE(candidate) < 0) {
             if (saved_cid) *saved_cid = OBJ_CID(candidate);
@@ -1726,7 +1726,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         /* Find free slot in player_shot_data */
         uint8_t *shots = state->level.player_shot_data;
         GameObject *bullet = NULL;
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < PLAYER_SHOT_SLOT_COUNT; i++) {
             GameObject *candidate = (GameObject*)(shots + i * OBJECT_SIZE);
             if (OBJ_ZONE(candidate) < 0) {
                 bullet = candidate;

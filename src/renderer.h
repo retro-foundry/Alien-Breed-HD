@@ -70,7 +70,7 @@
  * RotateObjectPts writes to ObjRotated[].
  * ----------------------------------------------------------------------- */
 #define MAX_POINTS       2048
-#define MAX_OBJ_POINTS   256
+#define MAX_OBJ_POINTS   1024
 
 typedef struct {
     int32_t x;       /* View-space X (fixed 16.16 or scaled) */

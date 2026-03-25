@@ -1963,10 +1963,12 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
     }
 
     /* Add bullets/gibs from both shot pools (same zone, depth-sorted with level objects). */
+    int shot_pool_slots[2] = { NASTY_SHOT_SLOT_COUNT, PLAYER_SHOT_SLOT_COUNT };
     for (int pool = 0; pool < 2 && obj_count < max_draw_entries; pool++) {
         const uint8_t *shots = (pool == 0) ? level->nasty_shot_data : level->player_shot_data;
+        int slots = shot_pool_slots[pool];
         if (!shots) continue;
-        for (int slot = 0; slot < 20 && obj_count < max_draw_entries; slot++) {
+        for (int slot = 0; slot < slots && obj_count < max_draw_entries; slot++) {
             const uint8_t *obj = shots + slot * OBJECT_SIZE;
             if (rd16(obj + 12) < 0) continue; /* OBJ_ZONE */
             if ((int8_t)obj[16] != OBJ_NBR_BULLET) continue;
@@ -1981,7 +1983,7 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
             ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
             if (orp->z <= SPRITE_NEAR_CLIP_Z) continue;
             objs[obj_count].src = DRAW_SRC_SHOT;
-            objs[obj_count].idx = slot + (pool * 20);
+            objs[obj_count].idx = slot + ((pool == 0) ? 0 : NASTY_SHOT_SLOT_COUNT);
             objs[obj_count].z = orp->z;
             obj_count++;
         }
@@ -2135,12 +2137,12 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         if (entry_src == DRAW_SRC_OBJECT) {
             obj = level->object_data + obj_idx * OBJECT_SIZE;
         } else {
-            if (obj_idx < 20) {
+            if (obj_idx < NASTY_SHOT_SLOT_COUNT) {
                 if (!level->nasty_shot_data) continue;
                 obj = level->nasty_shot_data + obj_idx * OBJECT_SIZE;
             } else {
                 if (!level->player_shot_data) continue;
-                obj = level->player_shot_data + (obj_idx - 20) * OBJECT_SIZE;
+                obj = level->player_shot_data + (obj_idx - NASTY_SHOT_SLOT_COUNT) * OBJECT_SIZE;
             }
         }
         /* ObjDraw3: cmp.b #$ff,6(a0); bne BitMapObj; bsr PolygonObj.

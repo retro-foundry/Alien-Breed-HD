@@ -291,8 +291,8 @@ void play_the_game(GameState *state)
         printf("[GAME] No level data loaded\n");
     }
     printf("[GAME] Shot pools: player=%d nasty=%d object_points=%d\n",
-           20,
-           20,
+           PLAYER_SHOT_SLOT_COUNT,
+           NASTY_SHOT_SLOT_COUNT,
            (int)state->level.num_object_points);
     /* Ensure each object has world size in its record (Amiga style), for file and test levels */
     if (state->level.object_data && state->level.num_object_points > 0)
