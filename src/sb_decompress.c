@@ -16,6 +16,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "logging.h"
+#define printf ab3d_log_printf
 
 /* =======================================================================
  * =SB= header parsing

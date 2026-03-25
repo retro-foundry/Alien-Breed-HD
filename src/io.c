@@ -15,6 +15,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "logging.h"
+#define printf ab3d_log_printf
 #if defined(_WIN32) || defined(_WIN64)
 #include <direct.h>
 #define MKDIR(path) _mkdir(path)

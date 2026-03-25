@@ -24,6 +24,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
+#include "logging.h"
+#define printf ab3d_log_printf
 
 /* -----------------------------------------------------------------------
  * Global POLYOBJECTS table

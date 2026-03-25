@@ -24,6 +24,8 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "logging.h"
+#define printf ab3d_log_printf
 
 /* Define SDL_MAIN_HANDLED before including SDL.h so SDL doesn't
  * hijack main() - we want CONSOLE subsystem for printf output */
