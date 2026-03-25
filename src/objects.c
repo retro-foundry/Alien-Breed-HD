@@ -460,12 +460,6 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
     int32_t lives = (int32_t)NASTY_LIVES(*obj);
     lives -= damage;
 
-    int lives_before = (int)NASTY_LIVES(*obj);
-    printf("[ENEMY] damage obj=%d type=%d raw=%u applied=%d lives %d -> %d%s\n",
-           obj_idx, (int)obj->obj.number, (unsigned)raw_damage, (int)damage,
-           lives_before, (int)lives,
-           lives <= 0 ? " (killed)" : "");
-
     if (lives <= 0) {
         /* Instant-kill parity:
          * - Flying/Eyeball compare raw blow directly (> 40).
