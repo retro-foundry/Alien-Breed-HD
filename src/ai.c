@@ -88,6 +88,9 @@ void explode_into_bits(GameObject *obj, GameState *state, bool explosion_kill, i
     if (d2 < 1) d2 = 1;
     if (d2 > 7) d2 = 7;
     int num_bits = d2 + 1; /* Amiga: d2 clamped to 7, then decremented through loop */
+    /* Preserve legacy RNG cadence from pre-71acbab builds where num_bits consumed rand().
+     * This keeps gib velocity randomness feeling consistent while using d2-driven counts. */
+    (void)rand();
 
     int nasty_slots = NASTY_SHOT_SLOT_COUNT;
     int spawned = 0;

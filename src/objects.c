@@ -2483,13 +2483,28 @@ void object_handle_bullet(GameObject *obj, GameState *state)
             timed_out = true;
         }
     }
-    /* Increment life */
-    life += state->temp_frames;
-    SHOT_SET_LIFE(*obj, life);
+    /* Increment life for regular bullets.
+     * Gibs (50-53) reuse SHOT_LIFE as an animation cadence accumulator. */
+    if (shot_size < 50) {
+        life += state->temp_frames;
+        SHOT_SET_LIFE(*obj, life);
+    }
 
     /* Advance bullet animation (Amiga ItsABullet notpopping path).
      * BulletTypes[shot_size].anim_ptr drives size/vect/frame each tick. */
     if (shot_status == 0 && shot_size >= 0 && shot_size < MAX_BULLET_ANIM_IDX && bullet_anim_tables[shot_size]) {
+        int anim_steps = 1;
+        if (shot_size >= 50) {
+            int16_t tf = state->temp_frames;
+            if (tf < 1) tf = 1;
+            int16_t accum = SHOT_LIFE(*obj);
+            if (accum < 0) accum = 0;
+            accum = (int16_t)(accum + tf);
+            anim_steps = accum / EXPLOSION_FRAME_STEP_VBLANKS;
+            accum = (int16_t)(accum % EXPLOSION_FRAME_STEP_VBLANKS);
+            SHOT_SET_LIFE(*obj, accum);
+        }
+
         uint8_t anim_idx = SHOT_ANIM(*obj);
         const BulletAnimFrame *f = &bullet_anim_tables[shot_size][anim_idx];
         /* Wrap at end-of-sequence sentinel (width == -1) */
@@ -2511,8 +2526,14 @@ void object_handle_bullet(GameObject *obj, GameState *state)
             obj->raw[14] = bullet_fly_src_cols[(uint8_t)shot_size < MAX_BULLET_ANIM_IDX ? (uint8_t)shot_size : 0];
             obj->raw[15] = bullet_fly_src_rows[(uint8_t)shot_size < MAX_BULLET_ANIM_IDX ? (uint8_t)shot_size : 0];
         }
-        /* Advance for next tick */
-        SHOT_ANIM(*obj) = anim_idx + 1;
+        /* Advance for next tick(s). Gibs use paced cadence to match Amiga feel. */
+        while (anim_steps > 0) {
+            anim_idx = (uint8_t)(anim_idx + 1);
+            if (bullet_anim_tables[shot_size][anim_idx].width < 0)
+                anim_idx = 0;
+            anim_steps--;
+        }
+        SHOT_ANIM(*obj) = anim_idx;
     }
 
     /* Position is in object_points at OBJ_CID (works for both object_data and nasty_shot_data bullets). */
