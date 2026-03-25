@@ -141,11 +141,11 @@ static bool trace_instant_miss_path(GameState *state, const PlayerState *plr,
     uint8_t *room = resolve_player_room_ptr(state, plr);
     if (!room) return false;
 
-    int16_t oldx = (int16_t)plr->p_xoff;
-    int16_t oldz = (int16_t)plr->p_zoff;
+    int16_t oldx = (int16_t)(plr->xoff >> 16);
+    int16_t oldz = (int16_t)(plr->zoff >> 16);
     int16_t newx = init_newx;
     int16_t newz = init_newz;
-    int32_t oldy = plr->p_yoff + 20 * 128;
+    int32_t oldy = plr->yoff + 20 * 128;
     int32_t newy = init_newy;
     int8_t in_top = plr->stood_in_top;
 
@@ -268,8 +268,8 @@ static void spawn_instant_miss_effect_target(GameState *state, const PlayerState
     int16_t target_cid = OBJ_CID(target);
     if (target_cid < 0 || target_cid >= state->level.num_object_points) return;
 
-    int16_t oldx = (int16_t)plr->p_xoff;
-    int16_t oldz = (int16_t)plr->p_zoff;
+    int16_t oldx = (int16_t)(plr->xoff >> 16);
+    int16_t oldz = (int16_t)(plr->zoff >> 16);
     const uint8_t *target_pt = state->level.object_points + (uint32_t)(uint16_t)target_cid * 8u;
     int16_t tx = obj_w(target_pt + 0);
     int16_t tz = obj_w(target_pt + 4);
@@ -311,11 +311,11 @@ static void spawn_instant_miss_effect_no_target(GameState *state, const PlayerSt
     if (!state->level.player_shot_data) return;
     int shot_slots = level_player_shot_slot_count(&state->level);
 
-    int16_t oldx = (int16_t)plr->p_xoff;
-    int16_t oldz = (int16_t)plr->p_zoff;
+    int16_t oldx = (int16_t)(plr->xoff >> 16);
+    int16_t oldz = (int16_t)(plr->zoff >> 16);
     int16_t newx = (int16_t)(oldx + (sin_val >> 7));
     int16_t newz = (int16_t)(oldz + (cos_val >> 7));
-    int32_t oldy = plr->p_yoff + 20 * 128;
+    int32_t oldy = plr->yoff + 20 * 128;
     int32_t newy = oldy + (int32_t)((rand() & 0x0FFF) - 0x800);
 
     int16_t hit_x = 0, hit_z = 0;
@@ -1605,25 +1605,10 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     int8_t *obs_in_line = (plr_num == 1) ? plr1_obs_in_line : plr2_obs_in_line;
     int16_t *obj_dists = (plr_num == 1) ? plr1_obj_dists : plr2_obj_dists;
 
-    /* Hitscan target flags: enemies + barrel only.
-     * Pickups (ammo/medikit/key/gun) and player objects are NOT valid targets —
-     * the original Amiga magic numbers had ammo(9)/key(4) bits set by mistake,
-     * which caused ammo pickups to silently absorb shots and report nothing. */
-    uint32_t enemy_flags =
-        (1u << OBJ_NBR_ALIEN)           |  /* 0  */
-        (1u << OBJ_NBR_ROBOT)           |  /* 6  */
-        (1u << OBJ_NBR_BIG_NASTY)       |  /* 7  */
-        (1u << OBJ_NBR_FLYING_NASTY)    |  /* 8  */
-        (1u << OBJ_NBR_BARREL)          |  /* 10 */
-        (1u << OBJ_NBR_MARINE)          |  /* 12 */
-        (1u << OBJ_NBR_WORM)            |  /* 13 */
-        (1u << OBJ_NBR_HUGE_RED_THING)  |  /* 14 */
-        (1u << OBJ_NBR_SMALL_RED_THING) |  /* 15 */
-        (1u << OBJ_NBR_TREE)            |  /* 16 */
-        (1u << OBJ_NBR_EYEBALL)         |  /* 17 */
-        (1u << OBJ_NBR_TOUGH_MARINE)    |  /* 18 */
-        (1u << OBJ_NBR_FLAME_MARINE)    |  /* 19 */
-        (1u << OBJ_NBR_GAS_PIPE);          /* 20 */
+    /* Match PlayerShoot.s bitmasks exactly:
+     * PLR1: %1111111111110111000001
+     * PLR2: %1111111111010111100001 */
+    uint32_t enemy_flags = (plr_num == 1) ? 0x003FFDC1u : 0x003FF5E1u;
     uint8_t player_can_see_bit = (plr_num == 1) ? 0x01u : 0x02u;
 
     /* Find closest target in line of fire */
@@ -1632,64 +1617,44 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     int32_t closest_target_ydiff = 0;
 
     if (state->level.object_data) {
-        /* Prefer strict Amiga can_see-bit gating, but fall back to geometric
-         * in-line selection if can_see bits are stale for this frame. */
-        for (int pass = 0; pass < 2 && closest_idx < 0; pass++) {
-            bool require_can_see = (pass == 0);
-            for (int i = 0; i < MAX_OBJECTS; i++) {
-                GameObject *obj = (GameObject*)(state->level.object_data + i * OBJECT_SIZE);
-                int16_t obj_cid = OBJ_CID(obj);
-                if (obj_cid < 0) break;
+        for (int i = 0; i < MAX_OBJECTS; i++) {
+            GameObject *obj = (GameObject*)(state->level.object_data + i * OBJECT_SIZE);
+            int16_t obj_cid = OBJ_CID(obj);
+            if (obj_cid < 0) break;
 
-                int obj_type = obj->obj.number;
-                if (!obs_in_line[i]) continue;
+            int obj_type = obj->obj.number;
+            if (!obs_in_line[i]) continue;
+            if ((((uint8_t)obj->obj.can_see) & player_can_see_bit) == 0u) continue;
+            if (OBJ_ZONE(obj) < 0) continue;
+            if ((uint8_t)obj_type > 31u) continue;
+            if (!(enemy_flags & (1u << (obj_type & 31)))) continue;
+            if (NASTY_LIVES(*obj) == 0) continue;
+            if (obj_cid < 0 || obj_cid >= MAX_OBJECTS) continue;
 
-                if (require_can_see &&
-                    ((((uint8_t)obj->obj.can_see) & player_can_see_bit) == 0u)) {
-                    continue;
-                }
+            int16_t dist = obj_dists[obj_cid];
+            if (dist <= 0) continue;
 
-                int16_t dist = 0;
-                if (obj_cid >= 0 && obj_cid < MAX_OBJECTS)
-                    dist = obj_dists[obj_cid];
-                if (dist <= 0)
-                    dist = obj_dists[i];
-                if (dist <= 0) continue;
+            /* PlayerShoot.s vertical gate: abs((objY<<7)-PLR_yoff) / 44 <= forward_dist. */
+            int16_t obj_y = obj_w(obj->raw + 4);
+            int32_t ydiff = ((int32_t)obj_y << 7) - plr->yoff;
+            int32_t abs_ydiff = (ydiff < 0) ? -ydiff : ydiff;
+            if ((abs_ydiff / 44) > dist) continue;
 
-                /* Check if this object type is a valid target */
-                if (OBJ_ZONE(obj) < 0) continue;
-
-                if (obj_type < 0 || obj_type > 20) continue;
-                if (!(enemy_flags & (1u << obj_type))) continue;
-
-                /* Do not target dead enemies (death animation or no lives left) */
-                if (obj_type == (int)OBJ_NBR_DEAD) continue;
-                if (NASTY_LIVES(*obj) <= 0 && obj_type != (int)OBJ_NBR_BARREL) continue;
-
-                /* PlayerShoot.s vertical gate: abs((objY<<7)-plrYoff) / 44 <= forward_dist. */
-                int16_t obj_y = obj_w(obj->raw + 4);
-                int32_t ydiff = ((int32_t)obj_y << 7) - plr->p_yoff;
-                int32_t abs_ydiff = (ydiff < 0) ? -ydiff : ydiff;
-                if ((abs_ydiff / 44) > dist) continue;
-
-                if (dist <= closest_dist) {
-                    closest_dist = dist;
-                    closest_idx = i;
-                    closest_target_ydiff = ydiff;
-                }
+            if (dist <= closest_dist) {
+                closest_dist = dist;
+                closest_idx = i;
+                closest_target_ydiff = ydiff;
             }
         }
     }
-    /* Calculate vertical aim toward target (PlayerShoot.s lines 99-139).
-     * Grenades keep the original fallback solve even with no target selected. */
+    /* Calculate vertical aim toward target (PlayerShoot.s lines 99-139). */
     {
         bool has_target = (closest_idx >= 0 && closest_dist > 0 && state->level.object_data);
-        bool grenade_fallback = (gun_idx == 4 && !has_target);
-        if (has_target || grenade_fallback) {
-            int32_t target_ydiff = has_target ? closest_target_ydiff : 0;
-            int32_t aim_dist = has_target ? closest_dist : 32767;
+        if (has_target) {
+            int32_t target_ydiff = closest_target_ydiff;
+            int32_t aim_dist = closest_dist;
 
-            target_ydiff -= plr->p_height;
+            target_ydiff -= plr->height;
             target_ydiff += 18 * 256;
 
             int shift = gun->bullet_speed;
@@ -1724,8 +1689,8 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
             const uint8_t *pt = state->level.object_points + (uint32_t)(uint16_t)target_cid * 8u;
             int16_t tgt_ox = obj_w(pt + 0);
             int16_t tgt_oz = obj_w(pt + 4);
-            int16_t plr_x = (int16_t)plr->p_xoff;
-            int16_t plr_z = (int16_t)plr->p_zoff;
+            int16_t plr_x = (int16_t)(plr->xoff >> 16);
+            int16_t plr_z = (int16_t)(plr->zoff >> 16);
             int16_t adx = (int16_t)(tgt_ox - plr_x);
             int16_t adz = (int16_t)(tgt_oz - plr_z);
             int32_t scaled_dist_sq = (((int32_t)adx * adx) + ((int32_t)adz * adz)) >> 6;
@@ -1768,11 +1733,11 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
 
         /* Strict Amiga parity for grenades: spawn at exact player position.
          * Other projectiles keep a tiny forward offset for first-frame visibility. */
-        int16_t spawn_x = (int16_t)plr->p_xoff;
-        int16_t spawn_z = (int16_t)plr->p_zoff;
+        int16_t spawn_x = (int16_t)(plr->xoff >> 16);
+        int16_t spawn_z = (int16_t)(plr->zoff >> 16);
         if (gun_idx != 4) {
-            spawn_x = (int16_t)(plr->p_xoff + ((sin_val * 32) >> 14));
-            spawn_z = (int16_t)(plr->p_zoff + ((cos_val * 32) >> 14));
+            spawn_x = (int16_t)(spawn_x + ((sin_val * 32) >> 14));
+            spawn_z = (int16_t)(spawn_z + ((cos_val * 32) >> 14));
         }
 
         /* Restore CID and write spawn position into that object point */
@@ -1815,15 +1780,10 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         }
         SHOT_SET_XVEL(*bullet, xvel);
         SHOT_SET_ZVEL(*bullet, zvel);
+        /* Keep the exact PLR1FIREBULLET clamp sequence from PlayerShoot.s. */
         int16_t final_yvel = bulyspd;
-        if (gun_idx == 4) {
-            /* Mirror the original grenade clamp sequence from PlayerShoot.s. */
-            if (final_yvel >= 20) final_yvel = 20;
-            if (final_yvel >= -20) final_yvel = -20;
-        } else {
-            if (final_yvel > 20) final_yvel = 20;
-            if (final_yvel < -20) final_yvel = -20;
-        }
+        if (final_yvel >= 20) final_yvel = 20;
+        if (final_yvel >= -20) final_yvel = -20;
         final_yvel = (int16_t)(final_yvel + gun->bullet_y_offset);
         SHOT_SET_YVEL(*bullet, final_yvel);
         SHOT_POWER(*bullet) = gun->shot_power;
@@ -1831,7 +1791,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         SHOT_SET_LIFE(*bullet, 0);
         SHOT_SET_GRAV(*bullet, gun->shot_gravity);
         SHOT_SET_FLAGS(*bullet, gun->shot_flags);
-        SHOT_SET_ACCYPOS(*bullet, plr->p_yoff + 20 * 128);
+        SHOT_SET_ACCYPOS(*bullet, plr->yoff + 20 * 128);
         NASTY_SET_EFLAGS(*bullet, enemy_flags);
         SHOT_SIZE(*bullet) = (int8_t)gun_idx;
         bullet->obj.worry = 127;
@@ -1847,3 +1807,4 @@ void player2_shoot(GameState *state)
 {
     player_shoot_internal(state, &state->plr2, 2, default_plr2_guns);
 }
+
