@@ -52,6 +52,24 @@ void go_in_direction(int32_t *newx, int32_t *newz,
     *newz = oldz + (int16_t)(dz >> 16);
 }
 
+static int count_used_shot_slots(const uint8_t *shots, int shot_slots)
+{
+    int used = 0;
+    if (!shots || shot_slots <= 0) return 0;
+    for (int i = 0; i < shot_slots; i++) {
+        const GameObject *candidate = (const GameObject *)(shots + (size_t)i * OBJECT_SIZE);
+        if (OBJ_ZONE(candidate) >= 0) used++;
+    }
+    return used;
+}
+
+static inline int16_t clamp_gib_vel_component(int32_t v)
+{
+    if (v > 96) return 96;
+    if (v < -96) return -96;
+    return (int16_t)v;
+}
+
 /* -----------------------------------------------------------------------
  * ExplodeIntoBits - death explosion
  *
@@ -69,6 +87,7 @@ void explode_into_bits(GameObject *obj, GameState *state)
     int num_bits = 7 + (rand() & 3); /* 7-9 pieces */
 
     int nasty_slots = level_nasty_shot_slot_count(&state->level);
+    int spawned = 0;
     for (int i = 0; i < num_bits; i++) {
         /* Find free slot in NastyShotData */
         uint8_t *shots = state->level.nasty_shot_data;
@@ -82,7 +101,13 @@ void explode_into_bits(GameObject *obj, GameState *state)
                 break;
             }
         }
-        if (!bit || slot_j < 0) break;
+        if (!bit || slot_j < 0) {
+            int used = count_used_shot_slots(state->level.nasty_shot_data, nasty_slots);
+            printf("[GIB-POOL] no free nasty slot: used=%d/%d requested=%d spawned=%d dropped=%d obj_type=%d zone=%d\n",
+                   used, nasty_slots, num_bits, spawned, num_bits - spawned,
+                   (int)obj->obj.number, (int)OBJ_ZONE(obj));
+            break;
+        }
 
         /* Preserve the slot's pre-assigned CID (from level data) before clearing,
          * just like player bullets do - it is the index into object_points for this slot. */
@@ -121,14 +146,21 @@ void explode_into_bits(GameObject *obj, GameState *state)
             bit->raw[15] = 8;
         }
 
-        /* Amiga: random angle from SineTable, random 1..4 scale, plus half impact vector. */
+        /* Gib spread: keep directional push from impact, but add wider random scatter
+         * so explosion deaths do not launch pieces in overly uniform directions. */
         {
         int16_t ang = (int16_t)(rand() & 8190);
         int16_t s = sin_lookup(ang);
         int16_t c = cos_lookup(ang);
-        int shift = (rand() & 3) + 1;
-        int32_t vx = (((int32_t)s << shift) >> 16) + (NASTY_IMPACTX(*obj) >> 1);
-        int32_t vz = (((int32_t)c << shift) >> 16) + (NASTY_IMPACTZ(*obj) >> 1);
+        int32_t radial = 6 + (rand() & 15); /* 6..21 */
+        int32_t rand_vx = ((int32_t)s * radial) >> 15;
+        int32_t rand_vz = ((int32_t)c * radial) >> 15;
+        int32_t jitter_x = (int32_t)((rand() & 31) - 15);
+        int32_t jitter_z = (int32_t)((rand() & 31) - 15);
+        int32_t vx = (NASTY_IMPACTX(*obj) >> 1) + rand_vx + jitter_x;
+        int32_t vz = (NASTY_IMPACTZ(*obj) >> 1) + rand_vz + jitter_z;
+        vx = clamp_gib_vel_component(vx);
+        vz = clamp_gib_vel_component(vz);
         SHOT_SET_XVEL(*bit, vx << 16);
         SHOT_SET_ZVEL(*bit, vz << 16);
         }
@@ -153,6 +185,7 @@ void explode_into_bits(GameObject *obj, GameState *state)
                slot_j, (int)saved_cid, (int)OBJ_ZONE(bit), (int)gib_type,
                state->level.num_object_points,
                (int)SHOT_YVEL(*bit), (int)SHOT_ACCYPOS(*bit));
+        spawned++;
     }
 }
 

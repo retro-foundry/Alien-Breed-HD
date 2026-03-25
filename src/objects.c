@@ -264,6 +264,17 @@ static GameObject *find_free_shot_slot(uint8_t *shots, int shot_slots, int16_t *
     return NULL;
 }
 
+static int count_used_shot_slots(const uint8_t *shots, int shot_slots)
+{
+    int used = 0;
+    if (!shots || shot_slots <= 0) return 0;
+    for (int i = 0; i < shot_slots; i++) {
+        const GameObject *candidate = (const GameObject *)(shots + (size_t)i * OBJECT_SIZE);
+        if (OBJ_ZONE(candidate) >= 0) used++;
+    }
+    return used;
+}
+
 /* Amiga Noisevol (sfx importance / channel mix) → PC mixer 0–255 (see SoundPlayer.s). */
 static inline int amiga_noisevol_to_pc(int noisevol)
 {
@@ -3577,7 +3588,12 @@ static void spawn_blast_particles(GameState *state, int32_t x, int32_t z, int32_
         for (int n = 0; n < 3; n++) {
             int16_t saved_cid = -1;
             GameObject *part = find_free_shot_slot(shot_pool, player_slots, &saved_cid);
-            if (!part) return;
+            if (!part) {
+                int used = count_used_shot_slots(shot_pool, player_slots);
+                printf("[BLAST-POOL] no free player slot: used=%d/%d ring=%d idx=%d zone=%d\n",
+                       used, player_slots, ring, n, (int)zone);
+                return;
+            }
 
             part->obj.number = OBJ_NBR_BULLET;
 
@@ -3708,6 +3724,16 @@ static int16_t compute_blast_dist_sqrt(int16_t dx, int16_t dz)
     return (int16_t)guess;
 }
 
+#define BLAST_IMPACT_BASE_MAG 36
+#define BLAST_IMPACT_MAX_ABS  64
+
+static inline int16_t clamp_blast_impact_component(int32_t v)
+{
+    if (v > BLAST_IMPACT_MAX_ABS) return (int16_t)BLAST_IMPACT_MAX_ABS;
+    if (v < -BLAST_IMPACT_MAX_ABS) return (int16_t)-BLAST_IMPACT_MAX_ABS;
+    return (int16_t)v;
+}
+
 /* -----------------------------------------------------------------------
  * Utility: compute blast damage + visual blast particles
  *
@@ -3782,10 +3808,29 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
             explosion_damage_flag[obj_index] = 1;
         }
 
-        int32_t impact_x = ((int32_t)dx << 4) / (int32_t)atten;
-        int32_t impact_z = ((int32_t)dz << 4) / (int32_t)atten;
-        NASTY_SET_IMPACTX(obj, (int16_t)impact_x);
-        NASTY_SET_IMPACTZ(obj, (int16_t)impact_z);
+        /* Keep blast knockback in a sane range:
+         * directional unit vector scaled by attenuated magnitude.
+         * This keeps explosion gib force around "gunshot + 150%" territory
+         * instead of huge distance-driven spikes. */
+        int32_t push_mag = ((int32_t)atten * BLAST_IMPACT_BASE_MAG + 16) >> 5;
+        if (push_mag < 1) push_mag = 1;
+        int32_t impact_x = 0;
+        int32_t impact_z = 0;
+        if (dist > 0) {
+            impact_x = ((int32_t)dx * push_mag) / (int32_t)dist;
+            impact_z = ((int32_t)dz * push_mag) / (int32_t)dist;
+        }
+        int16_t impact_x_clamped = clamp_blast_impact_component(impact_x);
+        int16_t impact_z_clamped = clamp_blast_impact_component(impact_z);
+        if ((int32_t)impact_x_clamped != impact_x || (int32_t)impact_z_clamped != impact_z) {
+            printf("[BLAST-IMPACT] clamp obj=%d type=%d raw=(%ld,%ld) clamped=(%d,%d) dist=%d atten=%d\n",
+                   obj_index, (int)obj->obj.number,
+                   (long)impact_x, (long)impact_z,
+                   (int)impact_x_clamped, (int)impact_z_clamped,
+                   (int)dist, (int)atten);
+        }
+        NASTY_SET_IMPACTX(obj, impact_x_clamped);
+        NASTY_SET_IMPACTZ(obj, impact_z_clamped);
     }
 
     spawn_blast_particles(state, viewer_x, viewer_z, ((int32_t)viewer_y) << 7, zone, in_top);
