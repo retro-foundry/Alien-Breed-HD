@@ -282,7 +282,7 @@ void renderer_step_water_anim_ms(uint32_t elapsed_ms);
 void renderer_rotate_level_pts(GameState *state);
 void renderer_rotate_object_pts(GameState *state);
 void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper);
-void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
+void renderer_draw_wall(int32_t x1, int32_t z1, int32_t x2, int32_t z2,
                         int16_t top, int16_t bot,
                         const uint8_t *texture, int16_t tex_start,
                         int16_t tex_end, int16_t left_brightness, int16_t right_brightness,

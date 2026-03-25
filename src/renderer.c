@@ -183,6 +183,7 @@ static int argb24_to_amiga12_lut_ready = 0;
 #define DIV255_LUT_MAX 130050u
 static uint16_t div255_lut[DIV255_LUT_MAX + 1u];
 static uint32_t g_render_frame_counter = 0;
+static uint32_t g_render_frame_index_for_walls = 0;
 
 /* Debug helper:
  * Set AB3D_CLIP_TRACE_FRAMES=N to print portal clip windows for first N frames. */
@@ -200,6 +201,32 @@ static int renderer_take_clip_trace_slot(void)
         return 1;
     }
     return 0;
+}
+
+/* Debug helper:
+ * Set AB3D_WALL_SEAM_TRACE_FRAMES=N to log wall left-clip seam candidates. */
+static int renderer_take_wall_seam_trace_slot(void)
+{
+    static int initialized = 0;
+    static int frames_left = 0;
+    if (!initialized) {
+        const char *env = getenv("AB3D_WALL_SEAM_TRACE_FRAMES");
+        if (env) frames_left = atoi(env);
+        initialized = 1;
+    }
+    if (frames_left > 0) {
+        frames_left--;
+        return 1;
+    }
+    return 0;
+}
+
+/* Project rotated X/Z to current render pixel-space X, matching wall path math. */
+static inline int project_x_to_pixels(int32_t vx, int32_t vz)
+{
+    if (vz <= 0) return (vx >= 0) ? g_renderer.width : -g_renderer.width;
+    int center_x = (g_renderer.width * 47) / 96;
+    return (int)((int64_t)vx * (int64_t)RENDER_SCALE / (int64_t)vz) + center_x;
 }
 
 static void build_argb24_to_amiga12_lut(void)
@@ -1059,7 +1086,7 @@ static void draw_wall_column(int x, int y_top, int y_bot,
  * Takes two endpoints in view space, projects them, and draws
  * columns from left to right with perspective-correct texturing.
  * ----------------------------------------------------------------------- */
-void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
+void renderer_draw_wall(int32_t x1, int32_t z1, int32_t x2, int32_t z2,
                         int16_t top, int16_t bot,
                         const uint8_t *texture, int16_t tex_start,
                         int16_t tex_end, int16_t left_brightness, int16_t right_brightness,
@@ -1073,19 +1100,13 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
     /* Both behind camera - skip */
     if (z1 <= 0 && z2 <= 0) return;
 
-    /* Back-face cull: don't draw walls facing away from the camera (view-space cross product). */
-    {
-        int32_t cross = (int32_t)x1 * (int32_t)z2 - (int32_t)x2 * (int32_t)z1;
-        if (cross >= 0) return;
-    }
-
     /* Clip to near plane */
-    int16_t cx1 = x1, cz1 = z1;
-    int16_t cx2 = x2, cz2 = z2;
+    int32_t cx1 = x1, cz1 = z1;
+    int32_t cx2 = x2, cz2 = z2;
     int16_t ct1 = tex_start, ct2 = tex_end;
 
     /* Amiga wall clip tests use z>0; keep near plane at 1 for parity. */
-    const int16_t NEAR_PLANE = 1;
+    const int32_t NEAR_PLANE = 1;
     
     if (cz1 < NEAR_PLANE) {
         /* Clip left endpoint to near plane */
@@ -1093,7 +1114,7 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
         if (dz == 0) { cz1 = NEAR_PLANE; cx1 = (int16_t)((cx1 + cx2) / 2); ct1 = (int16_t)((ct1 + ct2) / 2); }
         else {
             int32_t t = (NEAR_PLANE - cz1) * 65536 / dz;
-            cx1 = (int16_t)(cx1 + (int32_t)(cx2 - cx1) * t / 65536);
+            cx1 = (int32_t)(cx1 + (int64_t)(cx2 - cx1) * t / 65536);
             cz1 = NEAR_PLANE;
             ct1 = (int16_t)(ct1 + (int32_t)(ct2 - ct1) * t / 65536);
         }
@@ -1103,27 +1124,28 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
         if (dz == 0) { cz2 = NEAR_PLANE; cx2 = cx1; ct2 = ct1; }
         else {
             int32_t t = (NEAR_PLANE - cz2) * 65536 / dz;
-            cx2 = (int16_t)(cx2 + (int32_t)(cx1 - cx2) * t / 65536);
+            cx2 = (int32_t)(cx2 + (int64_t)(cx1 - cx2) * t / 65536);
             cz2 = NEAR_PLANE;
             ct2 = (int16_t)(ct2 + (int32_t)(ct1 - ct2) * t / 65536);
         }
     }
 
-    /* Project to screen.
-     * Amiga uses +47 as center offset (ASM: add.w #47,d2 in RotateLevelPts).
-     * cx1/cx2 are rotated.x >> 7, so multiply back by PROJ_X_SCALE/2 (<<7) for the
-     * perspective divide. Scale by RENDER_SCALE for doubled resolution. */
+    /* Project in fine pixel space for smooth motion. Keep 96-column projections
+     * alongside this so we can enforce Amiga column continuity at clip edges. */
     int center_x = (g_renderer.width * 47) / 96;
-    int scr_x1 = (int)(((int32_t)cx1 * (PROJ_X_SCALE / 2) * RENDER_SCALE) / cz1) + center_x;
-    int scr_x2 = (int)(((int32_t)cx2 * (PROJ_X_SCALE / 2) * RENDER_SCALE) / cz2) + center_x;
+    int scr_x1 = (int)((int64_t)cx1 * (int64_t)RENDER_SCALE / cz1) + center_x;
+    int scr_x2 = (int)((int64_t)cx2 * (int64_t)RENDER_SCALE / cz2) + center_x;
+    int scr96_1 = (int)(cx1 / cz1) + 47;
+    int scr96_2 = (int)(cx2 / cz2) + 47;
 
     /* If endpoints project in reverse order, swap them for left-to-right drawing.
      * This can happen after near-plane clipping. All endpoint data must stay in sync. */
     if (scr_x1 > scr_x2) {
         int tmp;
         tmp = scr_x1; scr_x1 = scr_x2; scr_x2 = tmp;
-        tmp = cx1; cx1 = cx2; cx2 = (int16_t)tmp;
-        tmp = cz1; cz1 = (int16_t)cz2; cz2 = (int16_t)tmp;
+        { int32_t t32 = cx1; cx1 = cx2; cx2 = t32; }
+        { int32_t t32 = cz1; cz1 = cz2; cz2 = t32; }
+        tmp = scr96_1; scr96_1 = scr96_2; scr96_2 = tmp;
         tmp = ct1; ct1 = (int16_t)ct2; ct2 = (int16_t)tmp;
     }
 
@@ -1136,7 +1158,65 @@ void renderer_draw_wall(int16_t x1, int16_t z1, int16_t x2, int16_t z2,
     if (draw_start < r->left_clip) draw_start = r->left_clip;
     int draw_end = scr_x2;
     if (draw_end >= r->right_clip) draw_end = r->right_clip - 1;
+
+    /* Seam guard at left clip: if the wall's left edge is in the same Amiga
+     * 96-column as the clip boundary, extend start to boundary to avoid small
+     * gaps introduced by sub-column projection at scaled resolutions. */
+    if (draw_start > r->left_clip) {
+        int gap = draw_start - r->left_clip;
+        if (gap > 0 && gap <= RENDER_SCALE) {
+            int left96 = r->left_clip / RENDER_SCALE;
+            int seg_min96 = (scr96_1 < scr96_2) ? scr96_1 : scr96_2;
+            int seg_max96 = (scr96_1 > scr96_2) ? scr96_1 : scr96_2;
+            if (seg_min96 <= (left96 + 1) && seg_max96 >= left96) {
+                draw_start = r->left_clip;
+            }
+        }
+    }
+
+    /* Symmetric seam guard at right clip: preserve last visible scaled columns
+     * when wall and clip edge share the same Amiga 96-column boundary. */
+    if (draw_end < r->right_clip - 1) {
+        int gap = (r->right_clip - 1) - draw_end;
+        if (gap > 0 && gap <= RENDER_SCALE) {
+            int right96_last = (r->right_clip - 1) / RENDER_SCALE;
+            int seg_min96 = (scr96_1 < scr96_2) ? scr96_1 : scr96_2;
+            int seg_max96 = (scr96_1 > scr96_2) ? scr96_1 : scr96_2;
+            if (seg_min96 <= right96_last && seg_max96 >= (right96_last - 1)) {
+                draw_end = r->right_clip - 1;
+            }
+        }
+    }
+
     if (draw_start > draw_end) return;
+
+    /* Trace candidate seam cases where clip pushes the first drawn column
+     * right of the projected wall start. */
+    {
+        static uint32_t seam_trace_frame = UINT32_MAX;
+        static int seam_trace_enabled = 0;
+        static int seam_logs_this_frame = 0;
+        uint32_t f = g_render_frame_index_for_walls;
+        if (seam_trace_frame != f) {
+            seam_trace_frame = f;
+            seam_trace_enabled = renderer_take_wall_seam_trace_slot();
+            seam_logs_this_frame = 0;
+            if (seam_trace_enabled) {
+                printf("[WSEAM][frame %u] begin\n", (unsigned)f);
+            }
+        }
+        if (seam_trace_enabled && seam_logs_this_frame < 120 &&
+            (draw_start > scr_x1 || draw_end < scr_x2)) {
+            int lgap = draw_start - scr_x1;
+            int rgap = scr_x2 - draw_end;
+            if (lgap < 0) lgap = 0;
+            if (rgap < 0) rgap = 0;
+            printf("[WSEAM][frame %u] lgap=%d rgap=%d scr=[%d,%d] draw=[%d,%d] clip=[%d,%d)\n",
+                   (unsigned)f, lgap, rgap, scr_x1, scr_x2, draw_start, draw_end,
+                   (int)r->left_clip, (int)r->right_clip);
+            seam_logs_this_frame++;
+        }
+    }
 
     /* Wall span for interpolation (use at least 1 to avoid division by zero) */
     int span = scr_x2 - scr_x1;
@@ -2784,10 +2864,10 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
             int16_t tex_id = rd16(ptr + 12);
             if (p1 >= 0 && p1 < MAX_POINTS && p2 >= 0 && p2 < MAX_POINTS)
             {
-                int16_t rx1 = (int16_t)(r->rotated[p1].x >> 7);
-                int16_t rz1 = (int16_t)r->rotated[p1].z;
-                int16_t rx2 = (int16_t)(r->rotated[p2].x >> 7);
-                int16_t rz2 = (int16_t)r->rotated[p2].z;
+                int32_t rx1 = r->rotated[p1].x;
+                int32_t rz1 = r->rotated[p1].z;
+                int32_t rx2 = r->rotated[p2].x;
+                int32_t rz2 = r->rotated[p2].z;
                 const uint8_t *wall_tex = (tex_id >= 0 && tex_id < MAX_WALL_TILES) ? r->walltiles[tex_id] : NULL;
                 /* Prefer level-authored VALAND/VALSHIFT. Some textures have ambiguous raw sizes
                  * (e.g. 64 vs 128 rows), and inferred file dimensions can misalign specific doors.
@@ -3380,7 +3460,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                 const uint8_t *arc_tex = (tex_id >= 0 && tex_id < MAX_WALL_TILES) ? r->walltiles[tex_id] : NULL;
                 
                 /* Draw arc as series of wall segments */
-                int32_t prev_x = (ex >> 7);
+                int32_t prev_x = ex;
                 int32_t prev_z = ez;
                 int32_t prev_t = bmp_start;
                 
@@ -3399,7 +3479,7 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                     int32_t rx = (dx * c - dz * s) / 256;
                     int32_t rz = (dx * s + dz * c) / 256;
                     
-                    int32_t new_x = (cx + rx) >> 7;
+                    int32_t new_x = (cx + rx);
                     int32_t new_z = cz + rz;
                     int32_t new_t = bmp_start + ((bmp_end - bmp_start) * seg / num_segments);
                     
@@ -3411,8 +3491,8 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
                             r->cur_wall_pal = r->wall_palettes[tex_id];
                         else
                             r->cur_wall_pal = NULL;
-                        renderer_draw_wall((int16_t)prev_x, (int16_t)prev_z,
-                                          (int16_t)new_x, (int16_t)new_z,
+                        renderer_draw_wall(prev_x, prev_z,
+                                          new_x, new_z,
                                           (int16_t)(topwall >> 8), (int16_t)(botwall >> 8),
                                           arc_tex, (int16_t)prev_t, (int16_t)new_t,
                                           base_bright, base_bright, 63, 6, 255,
@@ -3492,6 +3572,7 @@ void renderer_draw_display(GameState *state)
     RendererState *r = &g_renderer;
     if (!r->buffer) return;
     uint32_t frame_idx = g_render_frame_counter++;
+    g_render_frame_index_for_walls = frame_idx;
     int trace_clip = renderer_take_clip_trace_slot();
     if (trace_clip) {
         printf("[CLIP][frame %u] begin\n", (unsigned)frame_idx);
@@ -3587,8 +3668,8 @@ void renderer_draw_display(GameState *state)
         }
         {
             const uint8_t *connect_table = state->level.connect_table;
-            int16_t left_clip96 = 0;
-            int16_t right_clip96 = 96;
+            int left_clip_px = 0;
+            int right_clip_px = g_renderer.width;
 
             /* Find this zone's entry in ListOfGraphRooms */
             int found = 0;
@@ -3615,21 +3696,21 @@ void renderer_draw_display(GameState *state)
                         clip_ptr += 2;
                         if (pt >= 0 && pt < MAX_POINTS) {
                             int16_t z = (int16_t)r->rotated[pt].z;
-                            int16_t sx96 = r->on_screen[pt].screen_x;
                             if (z > 0) {
+                                int sxpx = project_x_to_pixels(r->rotated[pt].x, r->rotated[pt].z);
                                 int allow = 1;
                                 if (connect_table) {
                                     int16_t cpt = rd16(connect_table + (size_t)pt * 4u + 2u);
                                     if (cpt >= 0 && cpt < MAX_POINTS) {
-                                        int16_t csx96 = r->on_screen[cpt].screen_x;
-                                        if (csx96 > sx96) allow = 0;
+                                        int csxpx = project_x_to_pixels(r->rotated[cpt].x, r->rotated[cpt].z);
+                                        if (csxpx > sxpx) allow = 0;
                                     } else if (trace_clip) {
                                         printf("[CLIP][frame %u] zone=%d left pt=%d bad cpt=%d\n",
                                                (unsigned)frame_idx, (int)zone_id, (int)pt, (int)cpt);
                                     }
                                 }
-                                if (allow && sx96 > left_clip96) {
-                                    left_clip96 = sx96;
+                                if (allow && sxpx > left_clip_px) {
+                                    left_clip_px = sxpx;
                                 }
                             }
                         }
@@ -3642,43 +3723,44 @@ void renderer_draw_display(GameState *state)
                         clip_ptr += 2;
                         if (pt >= 0 && pt < MAX_POINTS) {
                             int16_t z = (int16_t)r->rotated[pt].z;
-                            int16_t sx96 = r->on_screen[pt].screen_x;
                             if (z > 0) {
+                                int sxpx = project_x_to_pixels(r->rotated[pt].x, r->rotated[pt].z);
                                 int allow = 1;
                                 if (connect_table) {
                                     int16_t cpt = rd16(connect_table + (size_t)pt * 4u);
                                     if (cpt >= 0 && cpt < MAX_POINTS) {
-                                        int16_t csx96 = r->on_screen[cpt].screen_x;
-                                        if (csx96 < sx96) allow = 0;
+                                        int csxpx = project_x_to_pixels(r->rotated[cpt].x, r->rotated[cpt].z);
+                                        if (csxpx < sxpx) allow = 0;
                                     } else if (trace_clip) {
                                         printf("[CLIP][frame %u] zone=%d right pt=%d bad cpt=%d\n",
                                                (unsigned)frame_idx, (int)zone_id, (int)pt, (int)cpt);
                                     }
                                 }
-                                if (allow && sx96 < right_clip96) {
-                                    right_clip96 = (int16_t)(sx96 + 1);
+                                if (allow && sxpx < right_clip_px) {
+                                    right_clip_px = sxpx + RENDER_SCALE;
                                 }
                             }
                         }
                     }
 
                     /* Amiga dontbothercantseeit guard: skip this zone if clip is invalid. */
-                    if ((int)left_clip96 >= 96 || (int)right_clip96 < 0 ||
-                        left_clip96 >= right_clip96) {
+                    if (left_clip_px >= g_renderer.width || right_clip_px <= 0 ||
+                        left_clip_px >= right_clip_px) {
                         if (trace_clip) {
-                            printf("[CLIP][frame %u] zone=%d SKIP invalid l=%d r=%d\n",
+                            printf("[CLIP][frame %u] zone=%d SKIP invalid lpx=%d rpx=%d\n",
                                    (unsigned)frame_idx, (int)zone_id,
-                                   (int)left_clip96, (int)right_clip96);
+                                   left_clip_px, right_clip_px);
                         }
                         continue;
                     }
 
-                    r->left_clip = (int16_t)(left_clip96 * RENDER_SCALE);
-                    r->right_clip = (int16_t)(right_clip96 * RENDER_SCALE);
+                    if (left_clip_px < 0) left_clip_px = 0;
+                    if (right_clip_px > g_renderer.width) right_clip_px = g_renderer.width;
+                    r->left_clip = (int16_t)left_clip_px;
+                    r->right_clip = (int16_t)right_clip_px;
                     if (trace_clip) {
-                        printf("[CLIP][frame %u] zone=%d clip96=[%d,%d) clip_px=[%d,%d)\n",
+                        printf("[CLIP][frame %u] zone=%d clip_px=[%d,%d)\n",
                                (unsigned)frame_idx, (int)zone_id,
-                               (int)left_clip96, (int)right_clip96,
                                (int)r->left_clip, (int)r->right_clip);
                     }
                 }
