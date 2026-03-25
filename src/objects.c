@@ -3268,6 +3268,27 @@ void switch_routine(GameState *state)
 {
     if (!state->level.switch_data) return;
 
+    /* Real-time auto-switch pacing:
+     * Convert elapsed wall-clock ms into virtual 50Hz ticks so auto-reset
+     * timing is stable even when render/frame pacing changes. */
+    static const uint8_t *s_last_switch_data = NULL;
+    static uint32_t s_last_switch_tick_ms = 0;
+    static uint32_t s_switch_vblank_remainder_ms = 0;
+    uint32_t now_ms = state->current_ticks_ms;
+    if (state->level.switch_data != s_last_switch_data) {
+        s_last_switch_data = state->level.switch_data;
+        s_last_switch_tick_ms = now_ms;
+        s_switch_vblank_remainder_ms = 0;
+    }
+    uint32_t elapsed_ms = now_ms - s_last_switch_tick_ms;
+    s_last_switch_tick_ms = now_ms;
+    if (elapsed_ms > 200u) elapsed_ms = 200u;
+    s_switch_vblank_remainder_ms += elapsed_ms;
+    int auto_vblanks = (int)(s_switch_vblank_remainder_ms / 20u);
+    s_switch_vblank_remainder_ms %= 20u;
+    /* Keep prior gameplay tweak: 50% slower auto-reset than original (2 units per 50Hz tick). */
+    int8_t auto_dec = (int8_t)(auto_vblanks * 2);
+
     /* Distance threshold from Anims.s: cmp.l #60*60,d4 */
     const int32_t switch_dist_sq = 60 * 60;
     uint8_t *sw = state->level.switch_data;
@@ -3284,22 +3305,23 @@ void switch_routine(GameState *state)
         int32_t gfx_off = (int32_t)be32(sw + 6);
 
         /* Auto-reset branch from Amiga backtoend/nobutt:
-         * if byte2 != 0 and byte10 != 0: byte3 -= temp_frames*4; when byte3 == 0,
-         * switch turns off and condition bit is cleared. */
+         * original logic uses temp_frames*4; here we drive the same byte countdown
+         * from wall-clock-based virtual 50Hz ticks for uncapped-frame stability. */
         if ((int8_t)sw[2] != 0 && (int8_t)sw[10] != 0) {
-            int8_t dec = (int8_t)(state->temp_frames * 4);
-            sw[3] = (uint8_t)((int8_t)sw[3] - dec);
-            if ((int8_t)sw[3] == 0) {
-                sw[10] = 0;
-                if (state->level.graphics && gfx_off >= 0) {
-                    uint8_t *wall_ptr = state->level.graphics + (uint32_t)gfx_off;
-                    write_be16(wall_ptr + 4, 11);
-                    int16_t w = be16(wall_ptr);
-                    w = (int16_t)(w & 0x007C);
-                    write_be16(wall_ptr, w);
+            if (auto_dec != 0) {
+                sw[3] = (uint8_t)((int8_t)sw[3] - auto_dec);
+                if ((int8_t)sw[3] == 0) {
+                    sw[10] = 0;
+                    if (state->level.graphics && gfx_off >= 0) {
+                        uint8_t *wall_ptr = state->level.graphics + (uint32_t)gfx_off;
+                        write_be16(wall_ptr + 4, 11);
+                        int16_t w = be16(wall_ptr);
+                        w = (int16_t)(w & 0x007C);
+                        write_be16(wall_ptr, w);
+                    }
+                    game_conditions = (int16_t)((uint16_t)game_conditions & (uint16_t)~bit_mask);
+                    audio_play_sample(10, 50);
                 }
-                game_conditions = (int16_t)((uint16_t)game_conditions & (uint16_t)~bit_mask);
-                audio_play_sample(10, 50);
             }
         }
 
