@@ -30,6 +30,11 @@
 #define RENDER_HEIGHT        (80  * RENDER_SCALE)   /* Visible game lines   */
 #define RENDER_DEFAULT_WIDTH  RENDER_WIDTH          /* Default/resize reference width  */
 #define RENDER_DEFAULT_HEIGHT RENDER_HEIGHT         /* Default/resize reference height */
+/* Sky filtering for HD output.
+ * 1 = bilinear sample (smoother in high resolutions), 0 = nearest (Amiga-style blocky). */
+#ifndef SKY_BILINEAR_FILTER
+#define SKY_BILINEAR_FILTER 1
+#endif
 
 /* Wall vertical texture: divisor so one world-space wall height maps to one texture repeat at any resolution. */
 #define WALL_VERTICAL_TEX_DIVISOR  ((int32_t)PROJ_Y_SCALE * (int32_t)RENDER_SCALE)

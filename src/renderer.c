@@ -557,6 +557,65 @@ static void sky_build_lut_from_rgb768(const uint8_t *rgb_palette_768)
     }
 }
 
+static inline uint16_t sky_fetch_cw_mode0(int tx, int ty)
+{
+    if (tx < 0) tx = 0;
+    if (ty < 0) ty = 0;
+    if (tx >= s_sky_tex_w) tx = s_sky_tex_w - 1;
+    if (ty >= s_sky_tex_h) ty = s_sky_tex_h - 1;
+    size_t off;
+    if (s_sky_row_major) {
+        off = (size_t)ty * (size_t)s_sky_tex_w * 2u + (size_t)tx * 2u;
+    } else {
+        off = (size_t)tx * (size_t)s_sky_bytes_per_col + (size_t)ty * 2u;
+    }
+    if (off + 1u >= s_sky_data_bytes) return 0x0FFFu;
+    return (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1u]);
+}
+
+static inline uint32_t sky_fetch_argb_mode0(int tx, int ty)
+{
+    return amiga12_to_argb(sky_fetch_cw_mode0(tx, ty));
+}
+
+static inline uint32_t sky_fetch_argb_mode1(int tx, int ty)
+{
+    if (tx < 0) tx = 0;
+    if (ty < 0) ty = 0;
+    if (tx >= s_sky_tex_w) tx = s_sky_tex_w - 1;
+    if (ty >= s_sky_tex_h) ty = s_sky_tex_h - 1;
+    size_t off = (size_t)ty * (size_t)s_sky_tex_w + (size_t)tx;
+    size_t lim = (size_t)s_sky_tex_w * (size_t)s_sky_tex_h;
+    if (off >= lim) return s_sky_argb[0];
+    return s_sky_argb[s_sky_pixels[off]];
+}
+
+static inline uint32_t sky_lerp_chan(uint32_t a, uint32_t b, uint32_t t16)
+{
+    return (uint32_t)((int32_t)a + ((((int32_t)b - (int32_t)a) * (int32_t)t16 + 32768) >> 16));
+}
+
+static inline uint32_t sky_bilinear_argb(uint32_t c00, uint32_t c10, uint32_t c01, uint32_t c11,
+                                         uint32_t fx, uint32_t fy)
+{
+    uint32_t r00 = (c00 >> 16) & 0xFFu, g00 = (c00 >> 8) & 0xFFu, b00 = c00 & 0xFFu;
+    uint32_t r10 = (c10 >> 16) & 0xFFu, g10 = (c10 >> 8) & 0xFFu, b10 = c10 & 0xFFu;
+    uint32_t r01 = (c01 >> 16) & 0xFFu, g01 = (c01 >> 8) & 0xFFu, b01 = c01 & 0xFFu;
+    uint32_t r11 = (c11 >> 16) & 0xFFu, g11 = (c11 >> 8) & 0xFFu, b11 = c11 & 0xFFu;
+
+    uint32_t r0 = sky_lerp_chan(r00, r10, fx);
+    uint32_t g0 = sky_lerp_chan(g00, g10, fx);
+    uint32_t b0 = sky_lerp_chan(b00, b10, fx);
+    uint32_t r1 = sky_lerp_chan(r01, r11, fx);
+    uint32_t g1 = sky_lerp_chan(g01, g11, fx);
+    uint32_t b1 = sky_lerp_chan(b01, b11, fx);
+
+    uint32_t r = sky_lerp_chan(r0, r1, fy);
+    uint32_t g = sky_lerp_chan(g0, g1, fy);
+    uint32_t b = sky_lerp_chan(b0, b1, fy);
+    return RENDER_RGB_RASTER_PIXEL((r << 16) | (g << 8) | b);
+}
+
 void renderer_set_sky_assets(const uint8_t *chunky_pixels, int tex_w, int tex_h, size_t data_bytes,
                               const uint8_t *rgb_palette_768)
 {
@@ -640,72 +699,138 @@ void renderer_draw_sky_pass(int16_t angpos)
     const int sky_view_cols = 96;
 
     if (s_sky_pixels && s_sky_mode == 0) {
-        /* 16-bit BE Amiga color words. Layout: row-major (default) or column-major (Anims.s). */
         int th = s_sky_tex_h;
         int tw = s_sky_tex_w;
-        int bpc = s_sky_bytes_per_col;
-        size_t row_stride = (size_t)tw * 2u;
-        /* Map texture rows to upper sky band only (full-frame stretch smeared the image). */
-        for (int y = 0; y < h; y++) {
-            int rpix;
-            if (y < sky_h) {
-                rpix = (int)((int64_t)y * (th - 1) / (sky_h > 1 ? sky_h - 1 : 1));
-            } else {
-                rpix = th - 1;
+#if SKY_BILINEAR_FILTER
+        if (th > 1 && tw > 1 && w > 1 && sky_h > 1) {
+            const int64_t pan_period_fp = ((int64_t)SKY_PAN_WIDTH << 16);
+            const int64_t sx_step_fp = (((int64_t)(sky_view_cols - 1)) << 16) / (int64_t)(w - 1);
+            for (int y = 0; y < h; y++) {
+                int64_t v_fp;
+                if (y < sky_h) v_fp = (((int64_t)y * (th - 1)) << 16) / (int64_t)(sky_h - 1);
+                else           v_fp = ((int64_t)(th - 1) << 16);
+                int v0 = (int)(v_fp >> 16);
+                int v1 = (v0 < th - 1) ? (v0 + 1) : v0;
+                uint32_t fy = (uint32_t)(v_fp & 0xFFFF);
+                size_t row = (size_t)y * (size_t)w;
+                int64_t sx_fp = 0;
+                for (int x = 0; x < w; x++, sx_fp += sx_step_fp) {
+                    int64_t pan_fp = ((int64_t)u0 << 16) + sx_fp;
+                    pan_fp %= pan_period_fp;
+                    if (pan_fp < 0) pan_fp += pan_period_fp;
+                    int64_t tx_fp = (pan_fp * (int64_t)tw) / (int64_t)SKY_PAN_WIDTH;
+                    int tx0 = (int)(tx_fp >> 16);
+                    uint32_t fx = (uint32_t)(tx_fp & 0xFFFF);
+                    int tx1 = tx0 + 1;
+                    if (tx1 >= tw) tx1 = 0;
+                    uint32_t c00 = sky_fetch_argb_mode0(tx0, v0);
+                    uint32_t c10 = sky_fetch_argb_mode0(tx1, v0);
+                    uint32_t c01 = sky_fetch_argb_mode0(tx0, v1);
+                    uint32_t c11 = sky_fetch_argb_mode0(tx1, v1);
+                    uint32_t px = sky_bilinear_argb(c00, c10, c01, c11, fx, fy);
+                    size_t p = row + (size_t)x;
+                    buf[p] = 0;
+                    rgb[p] = px;
+                    cw[p] = argb_to_amiga12(px);
+                }
             }
-            if (rpix < 0) rpix = 0;
-            if (rpix >= th) rpix = th - 1;
-            size_t row = (size_t)y * (size_t)w;
-            for (int x = 0; x < w; x++) {
-                int sx = (int)((int64_t)x * sky_view_cols / w);
-                if (sx < 0) sx = 0;
-                if (sx >= sky_view_cols) sx = sky_view_cols - 1;
-                int c = (u0 + sx) % SKY_PAN_WIDTH;
-                if (c < 0) c += SKY_PAN_WIDTH;
-                c = (c * tw) / SKY_PAN_WIDTH;
-                if (c >= tw) c = tw - 1;
-                size_t off;
-                if (s_sky_row_major)
-                    off = (size_t)rpix * row_stride + (size_t)c * 2u;
-                else
-                    off = (size_t)c * (size_t)bpc + (size_t)rpix * 2u;
-                if (off + 2u > s_sky_data_bytes) continue;
-                uint16_t cw12 = (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1]);
-                uint32_t px = amiga12_to_argb(cw12);
-                size_t p = row + (size_t)x;
-                buf[p] = 0;
-                rgb[p] = px;
-                cw[p] = argb_to_amiga12(px);
+        } else
+#endif
+        {
+            /* Nearest-neighbour path (or filtering disabled). */
+            int bpc = s_sky_bytes_per_col;
+            size_t row_stride = (size_t)tw * 2u;
+            for (int y = 0; y < h; y++) {
+                int rpix;
+                if (y < sky_h) rpix = (int)((int64_t)y * (th - 1) / (sky_h > 1 ? sky_h - 1 : 1));
+                else           rpix = th - 1;
+                if (rpix < 0) rpix = 0;
+                if (rpix >= th) rpix = th - 1;
+                size_t row = (size_t)y * (size_t)w;
+                for (int x = 0; x < w; x++) {
+                    int sx = (int)((int64_t)x * sky_view_cols / w);
+                    if (sx < 0) sx = 0;
+                    if (sx >= sky_view_cols) sx = sky_view_cols - 1;
+                    int c = (u0 + sx) % SKY_PAN_WIDTH;
+                    if (c < 0) c += SKY_PAN_WIDTH;
+                    c = (c * tw) / SKY_PAN_WIDTH;
+                    if (c >= tw) c = tw - 1;
+                    size_t off;
+                    if (s_sky_row_major) off = (size_t)rpix * row_stride + (size_t)c * 2u;
+                    else                 off = (size_t)c * (size_t)bpc + (size_t)rpix * 2u;
+                    if (off + 2u > s_sky_data_bytes) continue;
+                    uint16_t cw12 = (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1]);
+                    uint32_t px = amiga12_to_argb(cw12);
+                    size_t p = row + (size_t)x;
+                    buf[p] = 0;
+                    rgb[p] = px;
+                    cw[p] = argb_to_amiga12(px);
+                }
             }
         }
     } else if (s_sky_pixels && s_sky_mode == 1) {
         int th = s_sky_tex_h;
         int tw = s_sky_tex_w;
-        for (int y = 0; y < h; y++) {
-            int v;
-            if (y < sky_h) {
-                v = (int)((int64_t)y * (th - 1) / (sky_h > 1 ? sky_h - 1 : 1));
-            } else {
-                v = th - 1;
+#if SKY_BILINEAR_FILTER
+        if (th > 1 && tw > 1 && w > 1 && sky_h > 1) {
+            const int64_t pan_period_fp = ((int64_t)SKY_PAN_WIDTH << 16);
+            const int64_t sx_step_fp = (((int64_t)(sky_view_cols - 1)) << 16) / (int64_t)(w - 1);
+            for (int y = 0; y < h; y++) {
+                int64_t v_fp;
+                if (y < sky_h) v_fp = (((int64_t)y * (th - 1)) << 16) / (int64_t)(sky_h - 1);
+                else           v_fp = ((int64_t)(th - 1) << 16);
+                int v0 = (int)(v_fp >> 16);
+                int v1 = (v0 < th - 1) ? (v0 + 1) : v0;
+                uint32_t fy = (uint32_t)(v_fp & 0xFFFF);
+                size_t row = (size_t)y * (size_t)w;
+                int64_t sx_fp = 0;
+                for (int x = 0; x < w; x++, sx_fp += sx_step_fp) {
+                    int64_t pan_fp = ((int64_t)u0 << 16) + sx_fp;
+                    pan_fp %= pan_period_fp;
+                    if (pan_fp < 0) pan_fp += pan_period_fp;
+                    int64_t tx_fp = (pan_fp * (int64_t)tw) / (int64_t)SKY_PAN_WIDTH;
+                    int tx0 = (int)(tx_fp >> 16);
+                    uint32_t fx = (uint32_t)(tx_fp & 0xFFFF);
+                    int tx1 = tx0 + 1;
+                    if (tx1 >= tw) tx1 = 0;
+                    uint32_t c00 = sky_fetch_argb_mode1(tx0, v0);
+                    uint32_t c10 = sky_fetch_argb_mode1(tx1, v0);
+                    uint32_t c01 = sky_fetch_argb_mode1(tx0, v1);
+                    uint32_t c11 = sky_fetch_argb_mode1(tx1, v1);
+                    uint32_t px = sky_bilinear_argb(c00, c10, c01, c11, fx, fy);
+                    size_t p = row + (size_t)x;
+                    buf[p] = 0;
+                    rgb[p] = px;
+                    cw[p] = argb_to_amiga12(px);
+                }
             }
-            if (v < 0) v = 0;
-            if (v >= th) v = th - 1;
-            size_t row = (size_t)y * (size_t)w;
-            for (int x = 0; x < w; x++) {
-                int sx = (int)((int64_t)x * sky_view_cols / w);
-                if (sx < 0) sx = 0;
-                if (sx >= sky_view_cols) sx = sky_view_cols - 1;
-                int tu = (u0 + sx) % SKY_PAN_WIDTH;
-                if (tu < 0) tu += SKY_PAN_WIDTH;
-                tu = (tu * tw) / SKY_PAN_WIDTH;
-                if (tu >= tw) tu = tw - 1;
-                size_t toff = (size_t)v * (size_t)tw + (size_t)tu;
-                if (toff >= (size_t)tw * (size_t)th) continue;
-                uint8_t idx = s_sky_pixels[toff];
-                size_t p = row + (size_t)x;
-                buf[p] = 0;
-                rgb[p] = s_sky_argb[idx];
-                cw[p] = s_sky_cw[idx];
+        } else
+#endif
+        {
+            /* Nearest-neighbour path (or filtering disabled). */
+            for (int y = 0; y < h; y++) {
+                int v;
+                if (y < sky_h) v = (int)((int64_t)y * (th - 1) / (sky_h > 1 ? sky_h - 1 : 1));
+                else           v = th - 1;
+                if (v < 0) v = 0;
+                if (v >= th) v = th - 1;
+                size_t row = (size_t)y * (size_t)w;
+                for (int x = 0; x < w; x++) {
+                    int sx = (int)((int64_t)x * sky_view_cols / w);
+                    if (sx < 0) sx = 0;
+                    if (sx >= sky_view_cols) sx = sky_view_cols - 1;
+                    int tu = (u0 + sx) % SKY_PAN_WIDTH;
+                    if (tu < 0) tu += SKY_PAN_WIDTH;
+                    tu = (tu * tw) / SKY_PAN_WIDTH;
+                    if (tu >= tw) tu = tw - 1;
+                    size_t toff = (size_t)v * (size_t)tw + (size_t)tu;
+                    if (toff >= (size_t)tw * (size_t)th) continue;
+                    uint8_t idx = s_sky_pixels[toff];
+                    size_t p = row + (size_t)x;
+                    buf[p] = 0;
+                    rgb[p] = s_sky_argb[idx];
+                    cw[p] = s_sky_cw[idx];
+                }
             }
         }
     } else {
