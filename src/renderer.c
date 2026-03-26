@@ -1314,6 +1314,61 @@ static void draw_wall_column(int x, int y_top, int y_bot,
         }
     }
 
+    /* Extend strip by one column left/right with edge texel colours (cf. floor span horizontal extend). */
+    {
+        for (int row = ct; row <= cb; row++) {
+            size_t mid = (size_t)row * (size_t)width + (size_t)x;
+            uint32_t c = rgb[mid];
+            uint16_t wv = cw[mid];
+            if (x > 0) {
+                size_t L = mid - 1;
+                buf[L] = 2;
+                rgb[L] = c;
+                cw[L] = wv;
+            }
+            if (x + 1 < width) {
+                size_t R = mid + 1;
+                buf[R] = 2;
+                rgb[R] = c;
+                cw[R] = wv;
+            }
+        }
+        if (ct > 0) {
+            size_t up = (size_t)(ct - 1) * (size_t)width + (size_t)x;
+            uint32_t c = rgb[up];
+            uint16_t wv = cw[up];
+            if (x > 0) {
+                size_t L = up - 1;
+                buf[L] = 2;
+                rgb[L] = c;
+                cw[L] = wv;
+            }
+            if (x + 1 < width) {
+                size_t R = up + 1;
+                buf[R] = 2;
+                rgb[R] = c;
+                cw[R] = wv;
+            }
+        }
+        if (cb + 1 < g_renderer.height) {
+            size_t dn = (size_t)(cb + 1) * (size_t)width + (size_t)x;
+            uint32_t c = rgb[dn];
+            uint16_t wv = cw[dn];
+            if (x > 0) {
+                size_t L = dn - 1;
+                buf[L] = 2;
+                rgb[L] = c;
+                cw[L] = wv;
+            }
+            if (x + 1 < width) {
+                size_t R = dn + 1;
+                buf[R] = 2;
+                rgb[R] = c;
+                cw[R] = wv;
+            }
+        }
+    }
+
     /* Update column clip (walls occlude floor/ceiling/sprites behind).
      * Store wall depth so sprites only skip when actually behind the wall (sprite_z >= clip.z). */
     if (y_top > g_renderer.clip.top[x]) {
@@ -1471,6 +1526,35 @@ void renderer_draw_wall(int32_t x1, int32_t z1, int32_t x2, int32_t z2,
         draw_wall_column(screen_x, y_top_draw, y_bot, y_top, tex_col, texture,
                          amiga_d6, valand, valshift, totalyoff, depth_z,
                          wall_height_for_tex, tex_id, d6_max);
+    }
+}
+
+/* Extend floor/ceiling span by one column left/right with edge colours (cf. draw_wall_column +1 row). */
+static void floor_span_extend_horizontal_edges(int16_t y, int xl, int xr, int width,
+                                                uint8_t *buf, uint32_t *rgb, uint16_t *cwbuf)
+{
+    if (!buf || !rgb || !cwbuf || xl > xr || width < 1) return;
+    if (y < 0 || y >= g_renderer.height) return;
+    size_t row = (size_t)y * (size_t)width;
+    size_t li = row + (size_t)xl;
+    size_t ri = row + (size_t)xr;
+    uint32_t cL = rgb[li];
+    uint32_t cR = rgb[ri];
+    uint16_t wL = cwbuf[li];
+    uint16_t wR = cwbuf[ri];
+    uint8_t tL = buf[li];
+    uint8_t tR = buf[ri];
+    if (xl > 0) {
+        size_t L = li - 1;
+        buf[L] = tL;
+        rgb[L] = cL;
+        cwbuf[L] = wL;
+    }
+    if (xr + 1 < width) {
+        size_t R = ri + 1;
+        buf[R] = tR;
+        rgb[R] = cR;
+        cwbuf[R] = wR;
     }
 }
 
@@ -1725,6 +1809,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             *p32++ = span_argb[texel];
             *p16++ = span_cw[texel];
         }
+        floor_span_extend_horizontal_edges(y, xl, xr, w, buf, rgb, cwbuf);
         return;
     }
 
@@ -1841,6 +1926,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             *p32++ = out;
             *p16++ = out_cw;
         }
+        floor_span_extend_horizontal_edges(y, xl, xr, w, buf, rgb, cwbuf);
         return;
     }
 
@@ -1894,6 +1980,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
                 *p32++ = gour_argb_levels[gour_level][texel];
                 *p16++ = gour_cw_levels[gour_level][texel];
             }
+            floor_span_extend_horizontal_edges(y, xl, xr, w, buf, rgb, cwbuf);
             return;
         }
 
@@ -1909,6 +1996,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
                 *p32++ = amiga12_to_argb(out_cw);
                 *p16++ = out_cw;
             }
+            floor_span_extend_horizontal_edges(y, xl, xr, w, buf, rgb, cwbuf);
             return;
         }
     }
@@ -1937,6 +2025,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
                 *p32++ = argb;
                 *p16++ = argb_to_amiga12(argb);
             }
+            floor_span_extend_horizontal_edges(y, xl, xr, w, buf, rgb, cwbuf);
             return;
         }
 
@@ -1950,6 +2039,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             *row32++ = argb;
             *row16++ = argb_to_amiga12(argb);
         }
+        floor_span_extend_horizontal_edges(y, xl, xr, w, buf, rgb, cwbuf);
         return;
     }
 
@@ -1975,6 +2065,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             *row16++ = out_cw;
         }
     }
+    floor_span_extend_horizontal_edges(y, xl, xr, w, buf, rgb, cwbuf);
 }
 
 /* -----------------------------------------------------------------------
