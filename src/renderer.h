@@ -38,6 +38,9 @@
 #define RENDER_STRIDE    RENDER_WIDTH   /* stride = width; runtime uses renderer width */
 #define RENDER_BUF_SIZE  (RENDER_STRIDE * RENDER_HEIGHT)
 
+/* Each wall column strip appends a (top,bot) pair; multiple draws per column stack here. */
+#define WALL_SPANS_MAX_PER_COLUMN 32
+
 /* Projection scales.
  *
  * PROJ_X_SCALE: horizontal projection (256 = Amiga default). The horizontal
@@ -167,6 +170,14 @@ typedef struct {
 
     /* Column clipping */
     ColumnClip clip;
+
+    /* Wall vertical spans per column (clipped screen Y), for crack filling / debug.
+     * Layout: index = layer * width + x, layer in [0, wall_span_count[x]). */
+    int16_t *wall_span_top;
+    int16_t *wall_span_bot;
+    uint32_t *wall_span_argb_top;
+    uint32_t *wall_span_argb_bot;
+    uint8_t *wall_span_count;
 
     /* Unused (Amiga uses no depth buffer; painter's + stream order only). */
     int16_t *depth_buffer;
@@ -310,6 +321,13 @@ void renderer_draw_gun(GameState *state);
 /* Get pointer to the current rendered frame for display */
 const uint8_t *renderer_get_buffer(void);
 const uint32_t *renderer_get_rgb_buffer(void);
+/* Wall span arrays: length width * WALL_SPANS_MAX_PER_COLUMN; use count per column.
+ * ARGB at span top/bottom rows (matches rgb_buffer after that column is drawn). */
+const int16_t *renderer_get_wall_span_top(void);
+const int16_t *renderer_get_wall_span_bot(void);
+const uint32_t *renderer_get_wall_span_argb_top(void);
+const uint32_t *renderer_get_wall_span_argb_bot(void);
+const uint8_t *renderer_get_wall_span_count(void);
 int renderer_get_width(void);
 int renderer_get_height(void);
 int renderer_get_stride(void);

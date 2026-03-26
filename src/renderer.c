@@ -403,6 +403,16 @@ static void free_buffers(void)
     g_renderer.clip.bot = NULL;
     free(g_renderer.clip.z);
     g_renderer.clip.z = NULL;
+    free(g_renderer.wall_span_top);
+    g_renderer.wall_span_top = NULL;
+    free(g_renderer.wall_span_bot);
+    g_renderer.wall_span_bot = NULL;
+    free(g_renderer.wall_span_argb_top);
+    g_renderer.wall_span_argb_top = NULL;
+    free(g_renderer.wall_span_argb_bot);
+    g_renderer.wall_span_argb_bot = NULL;
+    free(g_renderer.wall_span_count);
+    g_renderer.wall_span_count = NULL;
 }
 
 static void allocate_buffers(int w, int h)
@@ -430,6 +440,14 @@ static void allocate_buffers(int w, int h)
     g_renderer.clip.top = (int16_t*)calloc(1, clip_size);
     g_renderer.clip.bot = (int16_t*)calloc(1, clip_size);
     g_renderer.clip.z = (int32_t*)calloc(1, (size_t)w * sizeof(int32_t));
+    {
+        size_t span_cells = (size_t)w * (size_t)WALL_SPANS_MAX_PER_COLUMN;
+        g_renderer.wall_span_top = (int16_t*)calloc(span_cells, sizeof(int16_t));
+        g_renderer.wall_span_bot = (int16_t*)calloc(span_cells, sizeof(int16_t));
+        g_renderer.wall_span_argb_top = (uint32_t*)calloc(span_cells, sizeof(uint32_t));
+        g_renderer.wall_span_argb_bot = (uint32_t*)calloc(span_cells, sizeof(uint32_t));
+    }
+    g_renderer.wall_span_count = (uint8_t*)calloc((size_t)w, sizeof(uint8_t));
 
     g_renderer.top_clip = 0;
     g_renderer.bot_clip = (int16_t)(h - 1);
@@ -555,6 +573,31 @@ const uint8_t *renderer_get_buffer(void)
 const uint32_t *renderer_get_rgb_buffer(void)
 {
     return g_renderer.rgb_back_buffer; /* The just-drawn RGB frame */
+}
+
+const int16_t *renderer_get_wall_span_top(void)
+{
+    return g_renderer.wall_span_top;
+}
+
+const int16_t *renderer_get_wall_span_bot(void)
+{
+    return g_renderer.wall_span_bot;
+}
+
+const uint32_t *renderer_get_wall_span_argb_top(void)
+{
+    return g_renderer.wall_span_argb_top;
+}
+
+const uint32_t *renderer_get_wall_span_argb_bot(void)
+{
+    return g_renderer.wall_span_argb_bot;
+}
+
+const uint8_t *renderer_get_wall_span_count(void)
+{
+    return g_renderer.wall_span_count;
 }
 
 int renderer_get_width(void)  { return g_renderer.width; }
@@ -953,6 +996,20 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     }
     if (g_renderer.clip.z) {
         g_renderer.clip.z[x] = col_z;
+    }
+    if (g_renderer.wall_span_top && g_renderer.wall_span_bot && g_renderer.wall_span_count &&
+        g_renderer.wall_span_argb_top && g_renderer.wall_span_argb_bot) {
+        int n = (int)g_renderer.wall_span_count[x];
+        if (n < WALL_SPANS_MAX_PER_COLUMN) {
+            size_t idx = (size_t)n * (size_t)g_renderer.width + (size_t)x;
+            g_renderer.wall_span_top[idx] = (int16_t)ct;
+            g_renderer.wall_span_bot[idx] = (int16_t)cb;
+            size_t pix_top = (size_t)ct * (size_t)width + (size_t)x;
+            size_t pix_bot = (size_t)cb * (size_t)width + (size_t)x;
+            g_renderer.wall_span_argb_top[idx] = rgb[pix_top];
+            g_renderer.wall_span_argb_bot[idx] = rgb[pix_bot];
+            g_renderer.wall_span_count[x] = (uint8_t)(n + 1);
+        }
     }
 }
 /* Reference Z used to project two-level zone split height to screen Y (same scale as orp->z). */
@@ -3340,6 +3397,83 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
     }
 }
 
+/* Clear color for upper half of view (renderer_clear); seam cracks expose this between columns. */
+#define SEAM_FILL_SKY_ARGB 0xFFEEEEEEu
+
+/* Fill vertical sky gaps from recorded wall span edges (crack / column seam closure). */
+static void renderer_wall_seam_fill(void)
+{
+    uint32_t *rgb = g_renderer.rgb_buffer;
+    uint16_t *cw = g_renderer.cw_buffer;
+    uint8_t *buf = g_renderer.buffer;
+    int16_t *top = g_renderer.wall_span_top;
+    int16_t *bot = g_renderer.wall_span_bot;
+    uint32_t *atop = g_renderer.wall_span_argb_top;
+    uint32_t *abot = g_renderer.wall_span_argb_bot;
+    uint8_t *nsp = g_renderer.wall_span_count;
+    if (!rgb || !top || !bot || !atop || !abot || !nsp) return;
+
+    const int w = g_renderer.width;
+    const int h = g_renderer.height;
+
+    for (int x = 0; x < w; x++) {
+        int nc = (int)nsp[x];
+        if (nc <= 0) continue;
+        if (nc > WALL_SPANS_MAX_PER_COLUMN) nc = WALL_SPANS_MAX_PER_COLUMN;
+        for (int k = 0; k < nc; k++) {
+            size_t idx = (size_t)k * (size_t)w + (size_t)x;
+            int yt = (int)top[idx];
+            int yb = (int)bot[idx];
+            if (yt < 0) yt = 0;
+            if (yb >= h) yb = h - 1;
+            if (yt > yb) {
+                int t = yt;
+                yt = yb;
+                yb = t;
+            }
+
+            uint32_t c_top = atop[idx];
+            uint32_t c_bot = abot[idx];
+
+            /* From below bottom edge: fill downward while sky. */
+            for (int y = yb + 1; y < h; y++) {
+                size_t pix = (size_t)y * (size_t)w + (size_t)x;
+                if (rgb[pix] != SEAM_FILL_SKY_ARGB) break;
+                rgb[pix] = c_bot;
+                if (cw) cw[pix] = argb_to_amiga12(c_bot);
+                if (buf) buf[pix] = 2;
+            }
+
+            /* From above top edge: fill upward only if another span endpoint in this column
+             * lies strictly higher on screen (smaller y). Otherwise the gap is open sky — skip. */
+            int has_point_above = 0;
+            for (int j = 0; j < nc; j++) {
+                size_t jdx = (size_t)j * (size_t)w + (size_t)x;
+                int tj = (int)top[jdx];
+                int bj = (int)bot[jdx];
+                if (tj < 0) tj = 0;
+                if (bj >= h) bj = h - 1;
+                if (tj > bj) {
+                    int t = tj;
+                    tj = bj;
+                    bj = t;
+                }
+                if (tj < yt) has_point_above = 1;
+                if (bj < yt) has_point_above = 1;
+            }
+            if (has_point_above && yt > 0) {
+                for (int y = yt - 1; y >= 0; y--) {
+                    size_t pix = (size_t)y * (size_t)w + (size_t)x;
+                    if (rgb[pix] != SEAM_FILL_SKY_ARGB) break;
+                    rgb[pix] = c_top;
+                    if (cw) cw[pix] = argb_to_amiga12(c_top);
+                    if (buf) buf[pix] = 2;
+                }
+            }
+        }
+    }
+}
+
 static void renderer_apply_underwater_tint(void)
 {
     if (g_fill_screen_water == 0) return;
@@ -3431,6 +3565,10 @@ void renderer_draw_display(GameState *state)
         int16_t *bot = r->clip.bot;
         for (int i = 0; i < w; i++) bot[i] = bot_val;
         if (r->clip.z) memset(r->clip.z, 0, (size_t)w * sizeof(int32_t));
+    }
+
+    if (r->wall_span_count) {
+        memset(r->wall_span_count, 0, (size_t)w);
     }
 
     /* 4. Rotate geometry */
@@ -3609,6 +3747,8 @@ void renderer_draw_display(GameState *state)
         }
         renderer_draw_zone(state, zone_id, 0);
     }
+
+    renderer_wall_seam_fill();
 
     /* 6. Draw gun overlay */
     renderer_draw_gun(state);
