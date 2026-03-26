@@ -927,6 +927,28 @@ static void draw_wall_column(int x, int y_top, int y_bot,
         }
     }
 
+    /* Extend column by one row above/below with the edge texel colour to hide thin gaps vs floor/ceiling. */
+    {
+        size_t first_pix = (size_t)ct * (size_t)width + (size_t)x;
+        size_t last_pix = (size_t)cb * (size_t)width + (size_t)x;
+        uint32_t edge_top_rgb = rgb[first_pix];
+        uint32_t edge_bot_rgb = rgb[last_pix];
+        uint16_t edge_top_cw = cw[first_pix];
+        uint16_t edge_bot_cw = cw[last_pix];
+        if (ct > 0) {
+            size_t up = first_pix - (size_t)width;
+            buf[up] = 2;
+            rgb[up] = edge_top_rgb;
+            cw[up] = edge_top_cw;
+        }
+        if (cb + 1 < g_renderer.height) {
+            size_t dn = last_pix + (size_t)width;
+            buf[dn] = 2;
+            rgb[dn] = edge_bot_rgb;
+            cw[dn] = edge_bot_cw;
+        }
+    }
+
     /* Update column clip (walls occlude floor/ceiling/sprites behind).
      * Store wall depth so sprites only skip when actually behind the wall (sprite_z >= clip.z). */
     if (y_top > g_renderer.clip.top[x]) {
@@ -940,13 +962,17 @@ static void draw_wall_column(int x, int y_top, int y_bot,
     }
 }
 
-/* Project world Y to screen row; nearest-pixel rounding matches visible wall edges better than truncating division. */
-static int wall_proj_y_screen(int16_t world_y, int32_t col_z, int32_t proj_y_scale, int height)
+/* Wall column loop uses inverse-Z in 8.24 (INVZ_ONE). Projecting Y as world_y*K/z with an
+ * integer z from z = INVZ_ONE/inv_z truncates twice vs. world_y*K*inv_z/INVZ_ONE (one divide).
+ * The latter matches true perspective along the span and reduces stair-steps at floor/ceiling. */
+static int wall_proj_y_screen_invz(int16_t world_y, int64_t inv_z_fp, int32_t proj_y_scale, int height)
 {
-    int64_t den = col_z;
-    if (den <= 0) den = 1;
-    int64_t num = (int64_t)world_y * proj_y_scale * RENDER_SCALE;
-    int64_t q = (num >= 0) ? ((num + den / 2) / den) : ((num - den / 2) / den);
+    const int64_t INVZ_ONE = (1LL << 24);
+    if (inv_z_fp <= 0) inv_z_fp = 1;
+    int64_t num = (int64_t)world_y * (int64_t)proj_y_scale * (int64_t)RENDER_SCALE * inv_z_fp;
+    int64_t q = (num >= 0)
+        ? ((num + INVZ_ONE / 2) / INVZ_ONE)
+        : ((num - INVZ_ONE / 2) / INVZ_ONE);
     return (int)q + height / 2;
 }
 
@@ -1051,7 +1077,8 @@ void renderer_draw_wall(int32_t x1, int32_t z1, int32_t x2, int32_t z2,
 
         int64_t inv_z_fp = inv_z1_fp + ((inv_z2_fp - inv_z1_fp) * t_fp) / 65536;
         if (inv_z_fp <= 0) inv_z_fp = 1;
-        int32_t col_z = (int32_t)(INVZ_ONE / inv_z_fp);
+        /* Rounded reciprocal: closer to true z than INVZ_ONE/inv_z truncation alone. */
+        int32_t col_z = (int32_t)((INVZ_ONE + inv_z_fp / 2) / inv_z_fp);
         if (col_z < 1) col_z = 1;
 
         int32_t wall_bright = left_brightness +
@@ -1060,8 +1087,8 @@ void renderer_draw_wall(int32_t x1, int32_t z1, int32_t x2, int32_t z2,
         if (amiga_d6 < 0) amiga_d6 = 0;
         if (amiga_d6 > 64) amiga_d6 = 64;
 
-        int y_top = wall_proj_y_screen(top, col_z, g_renderer.proj_y_scale, g_renderer.height);
-        int y_bot = wall_proj_y_screen(bot, col_z, g_renderer.proj_y_scale, g_renderer.height);
+        int y_top = wall_proj_y_screen_invz(top, inv_z_fp, g_renderer.proj_y_scale, g_renderer.height);
+        int y_bot = wall_proj_y_screen_invz(bot, inv_z_fp, g_renderer.proj_y_scale, g_renderer.height);
         /* Strict Amiga parity: do not apply port-side wall-top seam expansion. */
         int ext = 0;
         int y_top_draw = y_top - ext;
