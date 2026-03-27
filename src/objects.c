@@ -25,6 +25,9 @@
 
 #define LIFT_ENTRY_SIZE 20
 
+/* Big claws (small red): minimum distance before they stop rushing in (CalcDist-style units). */
+#define SMALL_RED_STANDOFF_DIST 128
+
 /* Big-endian read/write helpers (Amiga data is big-endian) */
 static inline int16_t be16(const uint8_t *p) {
     return (int16_t)((p[0] << 8) | p[1]);
@@ -1685,6 +1688,14 @@ static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
     int32_t dx = target_x - obj_x;
     int32_t dz = target_z - obj_z;
     int32_t dist = calc_dist_approx(dx, dz);
+
+    if (obj->obj.number == OBJ_NBR_SMALL_RED_THING && dist > 0
+        && dist < SMALL_RED_STANDOFF_DIST) {
+        /* Mirror chase target across the enemy so head_towards_angle walks backward,
+         * keeping them at a hittable range instead of under the barrel. */
+        target_x = obj_x + (obj_x - target_x);
+        target_z = obj_z + (obj_z - target_z);
+    }
 
     int16_t speed = NASTY_MAXSPD(*obj);
     if (speed == 0) speed = 6;

@@ -418,7 +418,7 @@ void play_game(GameState *state)
     state->plr2.gun_selected = 0;
 
     /* ---- Bypass menu: go straight to level 1 (testing) ---- */
-    state->current_level = 3;
+    state->current_level = 2;
     state->max_level = 2;
     state->finished_level = 0;
     state->nasty = true;
