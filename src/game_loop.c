@@ -383,6 +383,7 @@ void game_loop(GameState *state)
         if (input_key_pressed(state->key_map, KEY_ESC)) {
             if (state->mode == MODE_SINGLE) {
                 printf("[LOOP] ESC pressed - exiting to menu\n");
+                state->finished_level = 0;
                 break;
             } else if (state->mode == MODE_SLAVE) {
                 state->slave_quitting = true;

@@ -238,8 +238,6 @@ int read_main_menu(GameState *state)
  */
 void play_the_game(GameState *state)
 {
-    player_debug_apply_saved_level_before_load(state);
-
     printf("[GAME] === PlayTheGame: level %d ===\n", state->current_level);
 
     /* ---- Text screen ---- */
@@ -309,6 +307,9 @@ void play_the_game(GameState *state)
     /* ---- Init player positions ---- */
     player_init_from_level(state);
 
+    state->num_explosions = 0;
+    state->num_pending_blasts = 0;
+
     /* ---- Audio setup ---- */
     audio_mt_init();
 
@@ -348,34 +349,31 @@ void play_the_game(GameState *state)
         /* Stop background music */
         audio_mt_end();
 
-        /* Check won or lost */
-        if (final_energy > 0) {
-            /* Won! */
+        /* Win/loss follows game_loop (end zone, death, ESC). Do not treat ESC as victory. */
+        if (state->finished_level == 1 && final_energy > 0) {
             printf("[GAME] Level completed successfully!\n");
-
             if (state->mode == MODE_SINGLE) {
                 if (state->max_level < MAX_LEVELS) {
-                    state->max_level = state->current_level + 1;
+                    state->max_level = (int16_t)(state->current_level + 1);
                 }
-                state->finished_level = 1;
             }
-
-            /* Check for end of game (level 16) */
-            if (state->max_level >= MAX_LEVELS) {
+            if (state->current_level >= MAX_LEVELS - 1) {
                 printf("[GAME] Final level complete! %s\n", end_game_text);
                 state->max_level = MAX_LEVELS - 1;
-                /* EndGameScroll would go here */
             }
         } else {
-            /* Lost */
-            printf("[GAME] Player died.\n");
             state->finished_level = 0;
+            if (final_energy <= 0) {
+                printf("[GAME] Player died.\n");
+            }
         }
     }
 
     /* ---- Cleanup for main menu (AB3DI.s CleanupForMainMenu ~4774) ---- */
     audio_mt_end();
     display_release_copper_screen();
+
+    io_release_level_memory(&state->level);
 
     state->master_pause = false;
     state->slave_pause = false;
@@ -420,8 +418,8 @@ void play_game(GameState *state)
     state->plr2.gun_selected = 0;
 
     /* ---- Bypass menu: go straight to level 1 (testing) ---- */
-    state->current_level = 2;
-    state->max_level = 2;
+    state->current_level = 0;
+    state->max_level = 16;
     state->finished_level = 0;
     state->nasty = true;
     state->plr1.angpos = 0;
@@ -431,16 +429,26 @@ void play_game(GameState *state)
 
     io_load_panel();
 
-    play_the_game(state);
+    /* One-shot: optional debug_save.bin level override (do not apply between in-process transitions). */
+    player_debug_apply_saved_level_before_load(state);
+
+    for (;;) {
+        play_the_game(state);
+
+        if (!state->finished_level) {
+            break;
+        }
+
+        if (state->current_level >= MAX_LEVELS - 1) {
+            break;
+        }
+
+        state->current_level++;
+        printf("[CONTROL] Loading next level %d (player state preserved)\n",
+               (int)state->current_level);
+    }
 
     display_release_panel_memory();
-
-    if (state->finished_level) {
-        state->max_level++;
-        if (state->max_level >= 16) state->max_level = 15;
-        printf("[CONTROL] Level completed! Level %d -> %d\n",
-               state->current_level, state->max_level);
-    }
 
     printf("[CONTROL] PlayGame finished\n");
 }
