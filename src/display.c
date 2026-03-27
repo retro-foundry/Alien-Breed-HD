@@ -13,9 +13,18 @@
 #include "display.h"
 #include "renderer.h"
 #include <SDL.h>
+/* SDL_GL_BindTexture / glGenerateMipmap: framebuffer minification when window < internal size */
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+#include <SDL_opengl.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+typedef void (APIENTRY *DisplayGlGenMipmapFn)(GLenum target);
+typedef void (APIENTRY *DisplayGlTexParameteriFn)(GLenum target, GLenum pname, GLint param);
+#endif
 
 /* -----------------------------------------------------------------------
  * SDL2 state
@@ -30,6 +39,13 @@ static int g_internal_w = RENDER_WIDTH;
 static int g_internal_h = RENDER_HEIGHT;
 static int g_use_fixed_renderer_size = 1;
 
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+static DisplayGlGenMipmapFn     g_gl_generate_mipmap;
+static DisplayGlTexParameteriFn g_gl_tex_parameteri;
+static int g_fb_mipmap_ok_logged;
+static int g_fb_mipmap_fail_logged;
+#endif
+
 /* Initial window size (pixels); does not affect internal render resolution */
 #define DISPLAY_DEFAULT_WINDOW_W 1280
 #define DISPLAY_DEFAULT_WINDOW_H 720
@@ -40,6 +56,72 @@ static int g_use_fixed_renderer_size = 1;
 
 /* Legacy palette no longer needed - colors come from the .wad LUT data
  * and are written directly to the rgb_buffer as ARGB8888 pixels. */
+
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+/* GL enums (avoid pulling full GL headers); values from GL spec */
+#define DGL_TEXTURE_2D 0x0DE1
+#define DGL_TEXTURE_MIN_FILTER 0x2801
+#define DGL_TEXTURE_MAG_FILTER 0x2800
+#define DGL_TEXTURE_WRAP_S 0x2802
+#define DGL_TEXTURE_WRAP_T 0x2803
+#define DGL_LINEAR_MIPMAP_LINEAR 0x2703
+#define DGL_LINEAR 0x2601
+#define DGL_CLAMP_TO_EDGE 0x812F
+
+static void display_load_gl_mipmap_procs(void)
+{
+    g_gl_generate_mipmap = (DisplayGlGenMipmapFn)
+        SDL_GL_GetProcAddress("glGenerateMipmap");
+    g_gl_tex_parameteri = (DisplayGlTexParameteriFn)
+        SDL_GL_GetProcAddress("glTexParameteri");
+}
+
+/* After streaming upload: rebuild mip chain so minification uses trilinear mips.
+ * Resolves GL entry points after the renderer's context exists (lazy first frame). */
+static void display_regenerate_framebuffer_mipmaps_if_downscaled(int tex_w, int tex_h)
+{
+    if (!g_texture || !g_sdl_ren) return;
+    if (g_present_dst_rect.w >= tex_w && g_present_dst_rect.h >= tex_h)
+        return;
+
+    if (!g_gl_generate_mipmap || !g_gl_tex_parameteri)
+        display_load_gl_mipmap_procs();
+    if (!g_gl_generate_mipmap || !g_gl_tex_parameteri) {
+        if (!g_fb_mipmap_fail_logged) {
+            printf("[DISPLAY] framebuffer mipmaps: glGenerateMipmap unavailable (linear scale only)\n");
+            g_fb_mipmap_fail_logged = 1;
+        }
+        return;
+    }
+
+    float tw, th;
+    if (SDL_GL_BindTexture(g_texture, &tw, &th) != 0) {
+        if (!g_fb_mipmap_fail_logged) {
+            SDL_RendererInfo ri;
+            const char *drv = "?";
+            if (SDL_GetRendererInfo(g_sdl_ren, &ri) == 0) drv = ri.name;
+            printf("[DISPLAY] framebuffer mipmaps: SDL_GL_BindTexture failed (driver=%s; OpenGL enables mips)\n",
+                   drv);
+            g_fb_mipmap_fail_logged = 1;
+        }
+        return;
+    }
+
+    if (!g_fb_mipmap_ok_logged) {
+        printf("[DISPLAY] framebuffer mipmaps: active (trilinear minification when window < internal res)\n");
+        g_fb_mipmap_ok_logged = 1;
+    }
+
+    g_gl_tex_parameteri(DGL_TEXTURE_2D, DGL_TEXTURE_MIN_FILTER, (GLint)DGL_LINEAR_MIPMAP_LINEAR);
+    g_gl_tex_parameteri(DGL_TEXTURE_2D, DGL_TEXTURE_MAG_FILTER, (GLint)DGL_LINEAR);
+    g_gl_tex_parameteri(DGL_TEXTURE_2D, DGL_TEXTURE_WRAP_S, (GLint)DGL_CLAMP_TO_EDGE);
+    g_gl_tex_parameteri(DGL_TEXTURE_2D, DGL_TEXTURE_WRAP_T, (GLint)DGL_CLAMP_TO_EDGE);
+    g_gl_generate_mipmap(DGL_TEXTURE_2D);
+    SDL_GL_UnbindTexture(g_texture);
+}
+#else
+#define display_regenerate_framebuffer_mipmaps_if_downscaled(w, h) ((void)0)
+#endif
 
 /* -----------------------------------------------------------------------
  * Letterbox: scale internal image to fit window, centered, aspect kept
@@ -86,7 +168,10 @@ static void display_set_renderer_target_size(int w, int h)
     g_texture = SDL_CreateTexture(g_sdl_ren,
         SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
         g_internal_w, g_internal_h);
-    if (g_texture) SDL_SetTextureScaleMode(g_texture, SDL_ScaleModeNearest);
+    if (g_texture) {
+        /* Linear mag; minification uses GL mip chain when OpenGL + downscale */
+        SDL_SetTextureScaleMode(g_texture, SDL_ScaleModeLinear);
+    }
 }
 
 /* -----------------------------------------------------------------------
@@ -134,11 +219,23 @@ void display_init(GameState *state)
         return;
     }
 
+    /* Prefer OpenGL so SDL_GL_BindTexture + glGenerateMipmap work for framebuffer mips */
+    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
     g_sdl_ren = SDL_CreateRenderer(g_window, -1,
         SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!g_sdl_ren) {
+        SDL_SetHint(SDL_HINT_RENDER_DRIVER, "");
+        g_sdl_ren = SDL_CreateRenderer(g_window, -1,
+            SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    }
+    if (!g_sdl_ren) {
         printf("[DISPLAY] SDL_CreateRenderer failed: %s\n", SDL_GetError());
         return;
+    }
+    {
+        SDL_RendererInfo ri;
+        if (SDL_GetRendererInfo(g_sdl_ren, &ri) == 0)
+            printf("[DISPLAY] SDL renderer driver: %s\n", ri.name);
     }
 
     display_set_renderer_target_size(rw, rh);
@@ -279,6 +376,10 @@ void display_draw_display(GameState *state)
     }
 
     SDL_UnlockTexture(g_texture);
+
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+    display_regenerate_framebuffer_mipmaps_if_downscaled(w, h);
+#endif
 
     /* 3. Letterbox: clear, then blit centered with aspect ratio */
     SDL_SetRenderDrawColor(g_sdl_ren, 0, 0, 0, 255);
