@@ -84,6 +84,7 @@ static uint8_t sdl_to_amiga(SDL_Scancode sc)
 static MouseState g_mouse = {0};
 static bool g_quit_requested = false;
 static bool g_f5_save_requested = false;
+static bool g_f9_load_requested = false;
 static bool g_f6_gouraud_visualize_requested = false;
 
 /* -----------------------------------------------------------------------
@@ -131,6 +132,8 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
             }
             if (ev.key.keysym.scancode == SDL_SCANCODE_F5) {
                 g_f5_save_requested = true;
+            } else if (ev.key.keysym.scancode == SDL_SCANCODE_F9) {
+                g_f9_load_requested = true;
             } else if (ev.key.keysym.scancode == SDL_SCANCODE_F6) {
                 g_f6_gouraud_visualize_requested = true;
             }
@@ -238,6 +241,13 @@ bool input_f5_save_requested(void)
 {
     if (!g_f5_save_requested) return false;
     g_f5_save_requested = false;
+    return true;
+}
+
+bool input_f9_load_requested(void)
+{
+    if (!g_f9_load_requested) return false;
+    g_f9_load_requested = false;
     return true;
 }
 

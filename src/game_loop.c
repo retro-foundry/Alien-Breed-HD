@@ -116,6 +116,10 @@ void game_loop(GameState *state)
         input_update(state->key_map, &state->last_pressed);
         if (input_f5_save_requested())
             player_debug_save_position(state);
+        if (input_f9_load_requested()) {
+            if (!player_debug_load_save_from_file(state))
+                printf("[PLAYER] F9: no debug_save.bin or load failed\n");
+        }
         if (input_f6_gouraud_visualize_requested())
             renderer_toggle_floor_gouraud_debug_view();
 

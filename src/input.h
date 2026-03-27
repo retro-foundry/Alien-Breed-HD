@@ -48,6 +48,8 @@ void input_clear_keyboard(uint8_t *key_map);
 
 /* Debug: F5 save position. Returns true once when F5 was pressed (caller should save). */
 bool input_f5_save_requested(void);
+/* F9 load debug_save.bin (same file as F5). Returns true once when F9 was pressed. */
+bool input_f9_load_requested(void);
 bool input_f6_gouraud_visualize_requested(void);
 
 #endif /* INPUT_H */

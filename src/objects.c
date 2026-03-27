@@ -3034,9 +3034,11 @@ void door_routine(GameState *state)
         uint16_t trigger_mask = 0;
         bool clear_touch_flags = false; /* Amiga simplecheck writes 0 to floorline+14 when conditions not met. */
 
-        /* Amiga NotGoBackUp: if player 1 is in the same zone, door is not at top,
-         * and door is not currently opening, force opening trigger via 0x8000. */
-        if (zone_id == state->plr1.zone && !door_open && door_vel >= 0) {
+        /* Amiga NotGoBackUp (Anims.s DoorRoutine ~707–718): if player 1 is in the door zone,
+         * door not fully open, and velocity >= 0, jump to backfromtst and skip the Conditions
+         * check. That incorrectly opens switch-gated doors (e.g. level 2 exit needing 6 switches)
+         * as soon as you enter the zone. Only take this shortcut when door_flags==0 (no mask). */
+        if (zone_id == state->plr1.zone && !door_open && door_vel >= 0 && door_flags == 0) {
             trigger_vel = -16;
             trigger_mask = (uint16_t)0x8000;
         } else {

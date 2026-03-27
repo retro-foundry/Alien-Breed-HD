@@ -1356,7 +1356,6 @@ fail:
     printf("[PLAYER] debug save: write failed\n");
 }
 
-#ifndef NDEBUG
 static void player_debug_sync_loaded_player(GameState *state, PlayerState *plr, int plr_num)
 {
     int zone_slots = level_zone_slot_count(&state->level);
@@ -1419,17 +1418,17 @@ static void player_debug_sync_loaded_player(GameState *state, PlayerState *plr, 
     }
 }
 
-/* In debug builds: load debug_save.bin and override player start position/orientation. */
-static void player_debug_load_position_if_present(GameState *state)
+bool player_debug_load_save_from_file(GameState *state)
 {
     char path[512];
     io_make_data_path(path, sizeof(path), DEBUG_SAVE_SUBPATH);
     FILE *f = fopen(path, "rb");
-    if (!f) return;
+    if (!f) return false;
     char magic[4];
     if (fread(magic, 1, 4, f) != 4 || memcmp(magic, DEBUG_SAVE_MAGIC, 4) != 0) {
         fclose(f);
-        return;
+        printf("[PLAYER] debug load: invalid or missing magic in %s\n", path);
+        return false;
     }
     if (fread(&state->plr1.xoff, sizeof(state->plr1.xoff), 1, f) != 1) goto load_fail;
     if (fread(&state->plr1.zoff, sizeof(state->plr1.zoff), 1, f) != 1) goto load_fail;
@@ -1453,12 +1452,13 @@ static void player_debug_load_position_if_present(GameState *state)
     state->plr2.s_angpos = state->plr2.angpos;
     player_debug_sync_loaded_player(state, &state->plr1, 1);
     player_debug_sync_loaded_player(state, &state->plr2, 2);
-    printf("[PLAYER] debug load: position/orientation overridden from %s\n", path);
-    return;
+    printf("[PLAYER] debug load: position/orientation restored from %s\n", path);
+    return true;
 load_fail:
     fclose(f);
+    printf("[PLAYER] debug load: read failed (truncated %s?)\n", path);
+    return false;
 }
-#endif
 
 void player_init_from_level(GameState *state)
 {
@@ -1555,7 +1555,7 @@ void player_init_from_level(GameState *state)
 
 #ifndef NDEBUG
         /* In debug build: override start position/orientation from saved file if present */
-        player_debug_load_position_if_present(state);
+        player_debug_load_save_from_file(state);
 #endif
 
         printf("[PLAYER] init_from_level: PLR1 at (%d,%d) zone %d yoff=%d tyoff=%d, "

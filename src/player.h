@@ -37,6 +37,9 @@ void player2_snapshot(GameState *state);
 /* Debug: save current player position/orientation to data/debug_save.bin (F5). */
 void player_debug_save_position(GameState *state);
 
+/* Load F5 save file into live player state (F9; also used on level init in debug builds). */
+bool player_debug_load_save_from_file(GameState *state);
+
 /* If debug_save.bin contains a saved level, set current_level before level load (restart). */
 void player_debug_apply_saved_level_before_load(GameState *state);
 
