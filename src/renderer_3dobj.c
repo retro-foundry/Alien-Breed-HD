@@ -419,7 +419,11 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
     int32_t xpos_mid = orp->x_fine;     /* 32-bit view X of object centre */
     int32_t zpos_mid = orp->z;          /* view Z of object centre  */
     int W = r->width, H = r->height;
-    int half_w = W / 2, half_h = H / 2;
+    /* Match wall/sprite optical center (Amiga 47/96), not geometric half-width.
+     * Using W/2 introduces a constant screen-space offset that appears as larger
+     * world-space drift at longer distances. */
+    int center_x = (W * 47) / 96;
+    int half_h = H / 2;
     int32_t proj_ys = r->proj_y_scale;
     size_t pix_count = (size_t)W * (size_t)H;
     if (!ensure_poly_depth_buffer(pix_count)) return;
@@ -568,7 +572,7 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
             for (int v = 0; v < clipped_n; v++) {
                 int32_t wz = clipped_poly[v].z;
                 if (wz <= 0) wz = 1;
-                sx[v] = (int)((clipped_poly[v].x * RENDER_SCALE) / wz) + half_w;
+                sx[v] = (int)((clipped_poly[v].x * RENDER_SCALE) / wz) + center_x;
                 sy[v] = (int)((int64_t)(clipped_poly[v].y >> WORLD_Y_FRAC_BITS) * proj_ys * RENDER_SCALE
                               / wz) + half_h;
                 sz[v] = wz;
