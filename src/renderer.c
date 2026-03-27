@@ -21,8 +21,9 @@
  *         - Walls  -> column-by-column textured drawing
  *         - Floors -> span-based textured drawing
  *         - Objects -> scaled sprite drawing
- *   6. Draw gun overlay
- *   7. Swap buffers
+ *   6. Resolve underwater tint post-pass
+ *   7. Draw gun overlay
+ *   8. Swap buffers
  */
 
 #include "renderer.h"
@@ -71,9 +72,18 @@ static void renderer_draw_world_slice(GameState *state,
                                       int16_t slice_left, int16_t slice_right,
                                       uint32_t frame_idx, int trace_clip,
                                       int8_t *out_fill_screen_water);
+static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
+                                                  int16_t slice_left, int16_t slice_right,
+                                                  const uint32_t *src_rgb, const uint16_t *src_cw,
+                                                  uint32_t *dst_rgb, uint16_t *dst_cw);
 
 #ifndef AB3D_NO_THREADS
 #define RENDERER_MAX_THREADS 64
+
+typedef enum {
+    RENDERER_THREAD_JOB_WORLD = 0,
+    RENDERER_THREAD_JOB_WATER_TINT = 1
+} RendererThreadJobType;
 
 typedef struct {
     SDL_Thread *thread;
@@ -91,9 +101,15 @@ typedef struct {
     uint32_t job_generation;
     int pending_workers;
     int active_workers;
+    RendererThreadJobType job_type;
     GameState *job_state;
     uint32_t frame_idx;
     int trace_clip;
+    int8_t tint_fill_screen_water;
+    const uint32_t *post_src_rgb;
+    const uint16_t *post_src_cw;
+    uint32_t *post_dst_rgb;
+    uint16_t *post_dst_cw;
     SDL_mutex *mutex;
     SDL_cond *cond_start;
     SDL_cond *cond_done;
@@ -222,16 +238,29 @@ static int renderer_thread_worker_main(void *userdata)
         const int active = (worker->index < pool->active_workers);
         const int16_t slice_left = worker->slice_left;
         const int16_t slice_right = worker->slice_right;
+        const RendererThreadJobType job_type = pool->job_type;
         GameState *state = pool->job_state;
         uint32_t frame_idx = pool->frame_idx;
         int trace_clip = pool->trace_clip;
+        int8_t tint_fill_screen_water = pool->tint_fill_screen_water;
+        const uint32_t *post_src_rgb = pool->post_src_rgb;
+        const uint16_t *post_src_cw = pool->post_src_cw;
+        uint32_t *post_dst_rgb = pool->post_dst_rgb;
+        uint16_t *post_dst_cw = pool->post_dst_cw;
 
         SDL_UnlockMutex(pool->mutex);
 
         int8_t fill_screen_water = 0;
-        if (active && slice_left < slice_right && state) {
-            renderer_draw_world_slice(state, slice_left, slice_right,
-                                      frame_idx, trace_clip, &fill_screen_water);
+        if (active && slice_left < slice_right) {
+            if (job_type == RENDERER_THREAD_JOB_WORLD && state) {
+                renderer_draw_world_slice(state, slice_left, slice_right,
+                                          frame_idx, trace_clip, &fill_screen_water);
+            } else if (job_type == RENDERER_THREAD_JOB_WATER_TINT) {
+                renderer_apply_underwater_tint_slice(tint_fill_screen_water,
+                                                     slice_left, slice_right,
+                                                     post_src_rgb, post_src_cw,
+                                                     post_dst_rgb, post_dst_cw);
+            }
         }
 
         SDL_LockMutex(pool->mutex);
@@ -334,21 +363,12 @@ static void renderer_threads_init(void)
            pool->worker_count, pool->cpu_count);
 }
 
-static int renderer_dispatch_threaded_world(GameState *state, uint32_t frame_idx,
-                                            int trace_clip, int8_t *out_fill_screen_water)
+static int renderer_prepare_worker_slices_locked(RendererThreadPool *pool, int width, int log_slices)
 {
-    RendererThreadPool *pool = &g_renderer_thread_pool;
-    if (!pool->initialized || pool->worker_count <= 0 || pool->cpu_count <= 1) return 0;
-    if (!state) return 0;
-
-    int width = g_renderer.width;
-    if (width <= 0) return 0;
-
     int active_workers = pool->worker_count;
     if (active_workers > width) active_workers = width;
     if (active_workers <= 0) return 0;
 
-    SDL_LockMutex(pool->mutex);
     for (int i = 0; i < active_workers; i++) {
         int start = (i * width) / active_workers;
         int end = ((i + 1) * width) / active_workers;
@@ -362,7 +382,7 @@ static int renderer_dispatch_threaded_world(GameState *state, uint32_t frame_idx
         pool->workers[i].fill_screen_water = 0;
     }
 
-    if (pool->last_logged_width != width || pool->last_logged_workers != active_workers) {
+    if (log_slices && (pool->last_logged_width != width || pool->last_logged_workers != active_workers)) {
         printf("[RENDERER] threading: dispatch %d slice(s) over width=%d\n",
                active_workers, width);
         for (int i = 0; i < active_workers; i++) {
@@ -373,9 +393,35 @@ static int renderer_dispatch_threaded_world(GameState *state, uint32_t frame_idx
         pool->last_logged_workers = active_workers;
     }
 
+    return active_workers;
+}
+
+static int renderer_dispatch_threaded_world(GameState *state, uint32_t frame_idx,
+                                            int trace_clip, int8_t *out_fill_screen_water)
+{
+    RendererThreadPool *pool = &g_renderer_thread_pool;
+    if (!pool->initialized || pool->worker_count <= 0 || pool->cpu_count <= 1) return 0;
+    if (!state) return 0;
+
+    int width = g_renderer.width;
+    if (width <= 0) return 0;
+
+    SDL_LockMutex(pool->mutex);
+    int active_workers = renderer_prepare_worker_slices_locked(pool, width, 1);
+    if (active_workers <= 0) {
+        SDL_UnlockMutex(pool->mutex);
+        return 0;
+    }
+
     pool->job_state = state;
     pool->frame_idx = frame_idx;
     pool->trace_clip = trace_clip;
+    pool->job_type = RENDERER_THREAD_JOB_WORLD;
+    pool->tint_fill_screen_water = 0;
+    pool->post_src_rgb = NULL;
+    pool->post_src_cw = NULL;
+    pool->post_dst_rgb = NULL;
+    pool->post_dst_cw = NULL;
     pool->active_workers = active_workers;
     pool->pending_workers = active_workers;
     pool->job_generation++;
@@ -396,6 +442,52 @@ static int renderer_dispatch_threaded_world(GameState *state, uint32_t frame_idx
     if (out_fill_screen_water) *out_fill_screen_water = fill_screen_water;
     return 1;
 }
+
+static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
+{
+    RendererThreadPool *pool = &g_renderer_thread_pool;
+    if (!pool->initialized || pool->worker_count <= 0 || pool->cpu_count <= 1) return 0;
+    if (fill_screen_water == 0) return 0;
+
+    RendererState *r = &g_renderer;
+    if (!r->rgb_buffer || !r->cw_buffer || !r->rgb_back_buffer || !r->cw_back_buffer) return 0;
+
+    int width = r->width;
+    int height = r->height;
+    if (width <= 0 || height <= 0) return 0;
+
+    size_t count = (size_t)width * (size_t)height;
+    memcpy(r->rgb_back_buffer, r->rgb_buffer, count * sizeof(*r->rgb_buffer));
+    memcpy(r->cw_back_buffer, r->cw_buffer, count * sizeof(*r->cw_buffer));
+
+    SDL_LockMutex(pool->mutex);
+    int active_workers = renderer_prepare_worker_slices_locked(pool, width, 0);
+    if (active_workers <= 0) {
+        SDL_UnlockMutex(pool->mutex);
+        return 0;
+    }
+
+    pool->job_state = NULL;
+    pool->frame_idx = 0;
+    pool->trace_clip = 0;
+    pool->job_type = RENDERER_THREAD_JOB_WATER_TINT;
+    pool->tint_fill_screen_water = fill_screen_water;
+    pool->post_src_rgb = r->rgb_back_buffer;
+    pool->post_src_cw = r->cw_back_buffer;
+    pool->post_dst_rgb = r->rgb_buffer;
+    pool->post_dst_cw = r->cw_buffer;
+    pool->active_workers = active_workers;
+    pool->pending_workers = active_workers;
+    pool->job_generation++;
+
+    SDL_CondBroadcast(pool->cond_start);
+    while (pool->pending_workers > 0) {
+        SDL_CondWait(pool->cond_done, pool->mutex);
+    }
+    SDL_UnlockMutex(pool->mutex);
+
+    return 1;
+}
 #else
 static void renderer_threads_shutdown(void) { }
 static void renderer_threads_init(void) { }
@@ -406,6 +498,11 @@ static int renderer_dispatch_threaded_world(GameState *state, uint32_t frame_idx
     (void)frame_idx;
     (void)trace_clip;
     if (out_fill_screen_water) *out_fill_screen_water = 0;
+    return 0;
+}
+static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
+{
+    (void)fill_screen_water;
     return 0;
 }
 #endif
@@ -4380,32 +4477,50 @@ static void renderer_draw_world_slice(GameState *state,
     if (out_fill_screen_water) *out_fill_screen_water = frame_ctx.fill_screen_water;
 }
 
-static void renderer_apply_underwater_tint(int8_t fill_screen_water)
+static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
+                                                  int16_t slice_left, int16_t slice_right,
+                                                  const uint32_t *src_rgb, const uint16_t *src_cw,
+                                                  uint32_t *dst_rgb, uint16_t *dst_cw)
 {
     if (fill_screen_water == 0) return;
-    if (!g_renderer.rgb_buffer || !g_renderer.cw_buffer) return;
+    if (!src_rgb || !src_cw || !dst_rgb || !dst_cw) return;
+
+    const int w = g_renderer.width;
+    const int h = g_renderer.height;
+    if (w <= 0 || h <= 0) return;
+
+    int x0 = slice_left;
+    int x1 = slice_right;
+    if (x0 < 0) x0 = 0;
+    if (x1 > w) x1 = w;
+    if (x0 >= x1) return;
 
     /* AB3DI fillscrnwater post-pass:
      * AND #$00FF on copper color words. Strong applies to whole view (4*20 lines),
      * weak applies to bottom half only (2*20 lines). */
     const int strong = (fill_screen_water > 0);
-    const int w = g_renderer.width;
-    const int h = g_renderer.height;
     int y0 = strong ? 0 : (h / 2);
     if (y0 < 0) y0 = 0;
     if (y0 > h) y0 = h;
 
-    uint16_t *cw = g_renderer.cw_buffer;
-    uint32_t *rgb = g_renderer.rgb_buffer;
     for (int y = y0; y < h; y++) {
         size_t row = (size_t)y * (size_t)w;
-        for (int x = 0; x < w; x++) {
+        for (int x = x0; x < x1; x++) {
             size_t i = row + (size_t)x;
-            uint16_t c12 = (uint16_t)(cw[i] & 0x00FFu);
-            cw[i] = c12;
-            rgb[i] = amiga12_to_argb(c12);
+            uint16_t c12 = (uint16_t)(src_cw[i] & 0x00FFu);
+            dst_cw[i] = c12;
+            dst_rgb[i] = amiga12_to_argb(c12);
         }
     }
+}
+
+static void renderer_apply_underwater_tint(int8_t fill_screen_water)
+{
+    if (!g_renderer.rgb_buffer || !g_renderer.cw_buffer) return;
+    renderer_apply_underwater_tint_slice(fill_screen_water,
+                                         0, (int16_t)g_renderer.width,
+                                         g_renderer.rgb_buffer, g_renderer.cw_buffer,
+                                         g_renderer.rgb_buffer, g_renderer.cw_buffer);
 }
 
 /* -----------------------------------------------------------------------
@@ -4483,11 +4598,11 @@ void renderer_draw_display(GameState *state)
     renderer_rotate_object_pts(state);
 
     int8_t fill_screen_water = 0;
-    int used_threaded = 0;
+    int used_threaded_world = 0;
 #ifndef AB3D_NO_THREADS
     if (state->cfg_render_threads) {
-        used_threaded = renderer_dispatch_threaded_world(state, frame_idx, trace_clip, &fill_screen_water);
-        if (!used_threaded) {
+        used_threaded_world = renderer_dispatch_threaded_world(state, frame_idx, trace_clip, &fill_screen_water);
+        if (!used_threaded_world) {
             static int s_thread_unavailable_logged = 0;
             if (!s_thread_unavailable_logged) {
                 printf("[RENDERER] threading requested but unavailable (cpu_count=%d, workers=%d)\n",
@@ -4497,16 +4612,26 @@ void renderer_draw_display(GameState *state)
         }
     }
 #endif
-    if (!used_threaded) {
+    if (!used_threaded_world) {
         renderer_draw_world_slice(state, 0, (int16_t)g_renderer.width,
                                   frame_idx, trace_clip, &fill_screen_water);
     }
 
-    /* 6. Draw gun overlay */
-    renderer_draw_gun(state);
-    renderer_apply_underwater_tint(fill_screen_water);
+    /* 6. Resolve water/tint as a post-process after world render barrier. */
+    int used_threaded_tint = 0;
+#ifndef AB3D_NO_THREADS
+    if (used_threaded_world && state->cfg_render_threads && fill_screen_water != 0) {
+        used_threaded_tint = renderer_dispatch_threaded_underwater_tint(fill_screen_water);
+    }
+#endif
+    if (!used_threaded_tint) {
+        renderer_apply_underwater_tint(fill_screen_water);
+    }
 
-    /* 7. Swap buffers (the just-drawn buffer becomes the display buffer) */
+    /* 7. Draw gun overlay (single-threaded after threaded barriers). */
+    renderer_draw_gun(state);
+
+    /* 8. Swap buffers (the just-drawn buffer becomes the display buffer) */
     renderer_swap();
 }
 
