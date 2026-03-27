@@ -70,24 +70,42 @@ static void apply_line(GameState *state, char *line)
         state->infinite_ammo = parse_bool(val) ? true : false;
     } else if (strcmp(key, "all_weapons") == 0) {
         state->cfg_all_weapons = parse_bool(val) ? true : false;
+    } else if (strcmp(key, "render_width") == 0) {
+        int n = atoi(val);
+        if (n >= 96 && n <= 4096) {
+            state->cfg_render_width = (int16_t)n;
+        } else {
+            printf("[SETTINGS] render_width ignored (use 96..4096): %s\n", val);
+        }
+    } else if (strcmp(key, "render_height") == 0) {
+        int n = atoi(val);
+        if (n >= 80 && n <= 4096) {
+            state->cfg_render_height = (int16_t)n;
+        } else {
+            printf("[SETTINGS] render_height ignored (use 80..4096): %s\n", val);
+        }
     }
 }
 
 static void log_effective_settings(const GameState *state, const char *source_label)
 {
     if (state->cfg_start_level >= 0) {
-        printf("[SETTINGS] %s: start_level=%d infinite_health=%d infinite_ammo=%d all_weapons=%d\n",
+        printf("[SETTINGS] %s: start_level=%d infinite_health=%d infinite_ammo=%d all_weapons=%d render=%dx%d\n",
                source_label,
                (int)state->cfg_start_level,
                state->infinite_health ? 1 : 0,
                state->infinite_ammo ? 1 : 0,
-               state->cfg_all_weapons ? 1 : 0);
+               state->cfg_all_weapons ? 1 : 0,
+               (int)state->cfg_render_width,
+               (int)state->cfg_render_height);
     } else {
-        printf("[SETTINGS] %s: start_level=default infinite_health=%d infinite_ammo=%d all_weapons=%d\n",
+        printf("[SETTINGS] %s: start_level=default infinite_health=%d infinite_ammo=%d all_weapons=%d render=%dx%d\n",
                source_label,
                state->infinite_health ? 1 : 0,
                state->infinite_ammo ? 1 : 0,
-               state->cfg_all_weapons ? 1 : 0);
+               state->cfg_all_weapons ? 1 : 0,
+               (int)state->cfg_render_width,
+               (int)state->cfg_render_height);
     }
 }
 

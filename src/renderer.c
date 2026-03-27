@@ -477,8 +477,8 @@ void renderer_resize(int w, int h)
 {
     if (w < 96) w = 96;
     if (h < 80) h = 80;
-    if (w > 2048) w = 2048;
-    if (h > 2048) h = 2048;
+    if (w > 4096) w = 4096;
+    if (h > 4096) h = 4096;
     free_buffers();
     allocate_buffers(w, h);
 }
@@ -493,7 +493,7 @@ void renderer_shutdown(void)
 }
 
 /* Row templates for fast RGB clear (avoid per-pixel loops). Max width from renderer_resize. */
-#define CLEAR_ROW_MAX 2048
+#define CLEAR_ROW_MAX 4096
 static uint32_t s_clear_sky_row[CLEAR_ROW_MAX];
 static uint16_t s_clear_sky_cw_row[CLEAR_ROW_MAX];
 static int s_clear_rows_inited = 0;

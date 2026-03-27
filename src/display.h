@@ -12,8 +12,8 @@
 
 #include "game_state.h"
 
-/* Lifecycle */
-void display_init(void);
+/* Lifecycle (pass state for ab3d.ini render_width/render_height; may be NULL -> 1920x1080) */
+void display_init(GameState *state);
 void display_shutdown(void);
 int display_is_fullscreen(void);  /* non-zero if window is fullscreen */
 void display_on_resize(int w, int h);  /* call on window resize to resize framebuffer */

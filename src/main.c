@@ -23,6 +23,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "logging.h"
 #define printf ab3d_log_printf
@@ -64,7 +65,14 @@ static void setup_game(GameState *state)
     game_state_init(state);
 
     io_init();
-    display_init();
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+        printf("[DISPLAY] SDL_Init failed: %s\n", SDL_GetError());
+        exit(1);
+    }
+    settings_load(state);
+    fflush(stdout);
+
+    display_init(state);
     input_init();
     audio_init();
 
@@ -72,9 +80,6 @@ static void setup_game(GameState *state)
 
     io_load_passwords();
     io_load_prefs(state->prefs_file, sizeof(state->prefs_file));
-
-    settings_load(state);
-    fflush(stdout);
 
     printf("SetupGame complete\n\n");
 }

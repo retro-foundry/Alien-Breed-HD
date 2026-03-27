@@ -206,6 +206,10 @@ typedef struct {
     bool            infinite_ammo;
     bool            cfg_all_weapons;    /* 1 = all guns visible + full ammo (plr1/plr2) */
 
+    /* ab3d.ini: internal software render resolution (window is scaled to fit, letterboxed) */
+    int16_t         cfg_render_width;
+    int16_t         cfg_render_height;
+
     /* Frame timing */
     int16_t         frames_to_draw;     /* FramesToDraw */
     int16_t         temp_frames;        /* TempFrames */

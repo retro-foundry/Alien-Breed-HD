@@ -55,6 +55,8 @@ void game_state_init(GameState *state)
     state->infinite_health = false;
     state->infinite_ammo = false;
     state->cfg_all_weapons = true;
+    state->cfg_render_width = 1920;
+    state->cfg_render_height = 1080;
 }
 
 /*
