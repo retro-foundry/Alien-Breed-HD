@@ -210,6 +210,16 @@ static inline int project_x_to_pixels(int32_t vx, int32_t vz)
     return (int)((int64_t)vx * (int64_t)RENDER_SCALE / (int64_t)vz) + center_x;
 }
 
+/* Project world Y to current render pixel-space Y using nearest-pixel rounding.
+ * Matching wall/floor rounding avoids 1px seams along shared edges. */
+static inline int project_y_to_pixels_round(int32_t vy, int32_t vz, int32_t proj_y_scale, int center_y)
+{
+    int64_t den = (vz > 0) ? (int64_t)vz : 1;
+    int64_t num = (int64_t)vy * (int64_t)proj_y_scale * (int64_t)RENDER_SCALE;
+    int64_t q = (num >= 0) ? ((num + den / 2) / den) : ((num - den / 2) / den);
+    return (int)q + center_y;
+}
+
 static void build_argb24_to_amiga12_lut(void)
 {
     if (argb24_to_amiga12_lut_ready) return;
@@ -1292,28 +1302,6 @@ static void draw_wall_column(int x, int y_top, int y_bot,
         }
     }
 
-    /* Extend column by one row above/below with the edge texel colour to hide thin gaps vs floor/ceiling. */
-    {
-        size_t first_pix = (size_t)ct * (size_t)width + (size_t)x;
-        size_t last_pix = (size_t)cb * (size_t)width + (size_t)x;
-        uint32_t edge_top_rgb = rgb[first_pix];
-        uint32_t edge_bot_rgb = rgb[last_pix];
-        uint16_t edge_top_cw = cw[first_pix];
-        uint16_t edge_bot_cw = cw[last_pix];
-        if (ct > 0) {
-            size_t up = first_pix - (size_t)width;
-            buf[up] = 2;
-            rgb[up] = edge_top_rgb;
-            cw[up] = edge_top_cw;
-        }
-        if (cb + 1 < g_renderer.height) {
-            size_t dn = last_pix + (size_t)width;
-            buf[dn] = 2;
-            rgb[dn] = edge_bot_rgb;
-            cw[dn] = edge_bot_cw;
-        }
-    }
-
     /* Extend strip by one column left/right with edge texel colours (cf. floor span horizontal extend). */
     {
         for (int row = ct; row <= cb; row++) {
@@ -1328,40 +1316,6 @@ static void draw_wall_column(int x, int y_top, int y_bot,
             }
             if (x + 1 < width) {
                 size_t R = mid + 1;
-                buf[R] = 2;
-                rgb[R] = c;
-                cw[R] = wv;
-            }
-        }
-        if (ct > 0) {
-            size_t up = (size_t)(ct - 1) * (size_t)width + (size_t)x;
-            uint32_t c = rgb[up];
-            uint16_t wv = cw[up];
-            if (x > 0) {
-                size_t L = up - 1;
-                buf[L] = 2;
-                rgb[L] = c;
-                cw[L] = wv;
-            }
-            if (x + 1 < width) {
-                size_t R = up + 1;
-                buf[R] = 2;
-                rgb[R] = c;
-                cw[R] = wv;
-            }
-        }
-        if (cb + 1 < g_renderer.height) {
-            size_t dn = (size_t)(cb + 1) * (size_t)width + (size_t)x;
-            uint32_t c = rgb[dn];
-            uint16_t wv = cw[dn];
-            if (x > 0) {
-                size_t L = dn - 1;
-                buf[L] = 2;
-                rgb[L] = c;
-                cw[L] = wv;
-            }
-            if (x + 1 < width) {
-                size_t R = dn + 1;
                 buf[R] = 2;
                 rgb[R] = c;
                 cw[R] = wv;
@@ -3491,8 +3445,8 @@ void renderer_draw_zone(GameState *state, int16_t zone_id, int use_upper)
 
                 /* Project Y: same rule so X and Y stay consistent (no jump when z crosses FLOOR_NEAR). */
                 int32_t rel_h_8 = rel_h >> WORLD_Y_FRAC_BITS;
-                int sy1_raw = (int)((int64_t)rel_h_8 * r->proj_y_scale * RENDER_SCALE / (int32_t)ez1) + center;
-                int sy2_raw = (int)((int64_t)rel_h_8 * r->proj_y_scale * RENDER_SCALE / (int32_t)ez2) + center;
+                int sy1_raw = project_y_to_pixels_round(rel_h_8, ez1, r->proj_y_scale, center);
+                int sy2_raw = project_y_to_pixels_round(rel_h_8, ez2, r->proj_y_scale, center);
 
                 /* Clamp for horizontal edge check */
                 int sy1 = sy1_raw;
