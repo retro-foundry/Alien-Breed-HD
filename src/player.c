@@ -927,6 +927,7 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
              * delta; carry that back into sim Y (without bob offset). */
             plr->s_yoff = ctx.newy - bob_val;
             plr->yoff = ctx.newy;
+            audio_play_sample(26, 64);
         }
     }
 
