@@ -1302,6 +1302,28 @@ static void draw_wall_column(int x, int y_top, int y_bot,
         }
     }
 
+    /* Extend column by one row above/below with the edge texel colour to hide thin gaps vs floor/ceiling. */
+    {
+        size_t first_pix = (size_t)ct * (size_t)width + (size_t)x;
+        size_t last_pix = (size_t)cb * (size_t)width + (size_t)x;
+        uint32_t edge_top_rgb = rgb[first_pix];
+        uint32_t edge_bot_rgb = rgb[last_pix];
+        uint16_t edge_top_cw = cw[first_pix];
+        uint16_t edge_bot_cw = cw[last_pix];
+        if (ct > 0) {
+            size_t up = first_pix - (size_t)width;
+            buf[up] = 2;
+            rgb[up] = edge_top_rgb;
+            cw[up] = edge_top_cw;
+        }
+        if (cb + 1 < g_renderer.height) {
+            size_t dn = last_pix + (size_t)width;
+            buf[dn] = 2;
+            rgb[dn] = edge_bot_rgb;
+            cw[dn] = edge_bot_cw;
+        }
+    }
+
     /* Extend strip by one column left/right with edge texel colours (cf. floor span horizontal extend). */
     {
         for (int row = ct; row <= cb; row++) {
