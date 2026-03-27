@@ -38,6 +38,7 @@ static SDL_Rect g_present_dst_rect;
 static int g_internal_w = RENDER_WIDTH;
 static int g_internal_h = RENDER_HEIGHT;
 static int g_use_fixed_renderer_size = 1;
+static int g_release_borderless_desktop = 0;
 
 #if SDL_VERSION_ATLEAST(2, 0, 12)
 static DisplayGlGenMipmapFn     g_gl_generate_mipmap;
@@ -47,7 +48,7 @@ static int g_fb_mipmap_fail_logged;
 #endif
 
 #ifdef AB3D_RELEASE
-/* Release: optional fullscreen desktop after window creation */
+/* Release: run in borderless desktop-sized window (never request display mode changes). */
 #endif
 
 /* Legacy palette no longer needed - colors come from the .wad LUT data
@@ -196,19 +197,47 @@ void display_init(GameState *state)
         }
     }
 
+#ifdef AB3D_RELEASE
+    printf("[DISPLAY] SDL2 init (internal render %dx%d, startup: borderless desktop window)\n",
+           g_internal_w, g_internal_h);
+#else
     printf("[DISPLAY] SDL2 init (internal render %dx%d, window opens at that size; resize to letterbox)\n",
            g_internal_w, g_internal_h);
+#endif
 
     renderer_init();
 
     int window_w = rw;
     int window_h = rh;
+    Uint32 window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
+    int window_x = SDL_WINDOWPOS_CENTERED;
+    int window_y = SDL_WINDOWPOS_CENTERED;
+#ifdef AB3D_RELEASE
+    SDL_Rect desktop_bounds;
+    SDL_DisplayMode desktop_mode;
+    if (SDL_GetDesktopDisplayMode(0, &desktop_mode) == 0 &&
+        desktop_mode.w >= 96 && desktop_mode.h >= 80) {
+        window_w = desktop_mode.w;
+        window_h = desktop_mode.h;
+    }
+    if (SDL_GetDisplayBounds(0, &desktop_bounds) == 0) {
+        window_x = desktop_bounds.x;
+        window_y = desktop_bounds.y;
+        if (desktop_bounds.w >= 96 && desktop_bounds.h >= 80) {
+            window_w = desktop_bounds.w;
+            window_h = desktop_bounds.h;
+        }
+    }
+    window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS | SDL_WINDOW_OPENGL;
+    printf("[DISPLAY] Release OpenGL path: borderless desktop window + SDL_WINDOW_OPENGL\n");
+    g_release_borderless_desktop = 1;
+#endif
 
     g_window = SDL_CreateWindow(
         "Alien Breed 3D I",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        window_x, window_y,
         window_w, window_h,
-        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+        window_flags
     );
     if (!g_window) {
         printf("[DISPLAY] SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -248,19 +277,6 @@ void display_init(GameState *state)
     g_present_width = out_w;
     g_present_height = out_h;
 
-#ifdef AB3D_RELEASE
-    if (SDL_SetWindowFullscreen(g_window, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
-        printf("[DISPLAY] SDL_SetWindowFullscreenDesktop failed: %s\n", SDL_GetError());
-    }
-    SDL_PumpEvents();
-    if (SDL_GetRendererOutputSize(g_sdl_ren, &out_w, &out_h) == 0 &&
-        out_w >= 1 && out_h >= 1) {
-        display_update_letterbox(out_w, out_h);
-        g_present_width = out_w;
-        g_present_height = out_h;
-    }
-#endif
-
     printf("[DISPLAY] SDL2 ready: window %dx%d, present rect %dx%d at (%d,%d)\n",
            window_w, window_h,
            g_present_dst_rect.w, g_present_dst_rect.h,
@@ -280,18 +296,7 @@ void display_handle_resize(void)
 {
     if (!g_sdl_ren) return;
     int out_w = 0, out_h = 0;
-#ifdef AB3D_RELEASE
-    if (g_window && (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
-        SDL_DisplayMode dm;
-        if (SDL_GetWindowDisplayMode(g_window, &dm) == 0 && dm.w >= 96 && dm.h >= 80) {
-            out_w = dm.w;
-            out_h = dm.h;
-        }
-    }
-#endif
-    if (out_w < 96 || out_h < 80) {
-        if (SDL_GetRendererOutputSize(g_sdl_ren, &out_w, &out_h) != 0) return;
-    }
+    if (SDL_GetRendererOutputSize(g_sdl_ren, &out_w, &out_h) != 0) return;
     if (out_w < 1) out_w = 1;
     if (out_h < 1) out_h = 1;
     printf("[DISPLAY] handle_resize: output %dx%d\n", out_w, out_h);
@@ -303,6 +308,9 @@ void display_handle_resize(void)
 int display_is_fullscreen(void)
 {
     if (!g_window) return 0;
+#ifdef AB3D_RELEASE
+    if (g_release_borderless_desktop) return 1;
+#endif
     return (SDL_GetWindowFlags(g_window) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != 0;
 }
 
