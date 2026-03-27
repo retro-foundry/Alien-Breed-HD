@@ -48,7 +48,7 @@ static int g_fb_mipmap_fail_logged;
 #endif
 
 #ifdef AB3D_RELEASE
-/* Release: run in borderless desktop-sized window (never request display mode changes). */
+/* Release: run in borderless desktop-sized window (never request display mode switch). */
 #endif
 
 /* Legacy palette no longer needed - colors come from the .wad LUT data
@@ -171,6 +171,33 @@ static void display_set_renderer_target_size(int w, int h)
     }
 }
 
+static void display_log_display_mode_snapshot(const char *tag)
+{
+    SDL_DisplayMode cur;
+    SDL_DisplayMode desk;
+    int cur_ok = (SDL_GetCurrentDisplayMode(0, &cur) == 0);
+    int desk_ok = (SDL_GetDesktopDisplayMode(0, &desk) == 0);
+
+    if (cur_ok && desk_ok) {
+        printf("[DISPLAY] %s: current=%dx%d@%d desktop=%dx%d@%d\n",
+               tag,
+               cur.w, cur.h, cur.refresh_rate,
+               desk.w, desk.h, desk.refresh_rate);
+        return;
+    }
+    if (cur_ok) {
+        printf("[DISPLAY] %s: current=%dx%d@%d desktop=unavailable\n",
+               tag, cur.w, cur.h, cur.refresh_rate);
+        return;
+    }
+    if (desk_ok) {
+        printf("[DISPLAY] %s: current=unavailable desktop=%dx%d@%d\n",
+               tag, desk.w, desk.h, desk.refresh_rate);
+        return;
+    }
+    printf("[DISPLAY] %s: display mode query unavailable (%s)\n", tag, SDL_GetError());
+}
+
 /* -----------------------------------------------------------------------
  * Lifecycle
  * ----------------------------------------------------------------------- */
@@ -196,6 +223,7 @@ void display_init(GameState *state)
             return;
         }
     }
+    display_log_display_mode_snapshot("startup-before-window");
 
 #ifdef AB3D_RELEASE
     printf("[DISPLAY] SDL2 init (internal render %dx%d, startup: borderless desktop window)\n",
@@ -207,6 +235,7 @@ void display_init(GameState *state)
 
     renderer_init();
 
+    const char *driver_override = SDL_getenv("AB3D_RENDER_DRIVER");
     int window_w = rw;
     int window_h = rh;
     Uint32 window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
@@ -228,8 +257,12 @@ void display_init(GameState *state)
             window_h = desktop_bounds.h;
         }
     }
-    window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS | SDL_WINDOW_OPENGL;
-    printf("[DISPLAY] Release OpenGL path: borderless desktop window + SDL_WINDOW_OPENGL\n");
+    window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS;
+    if (driver_override && strcmp(driver_override, "opengl") == 0) {
+        /* OpenGL path keeps desktop-sized borderless mode but requests GL-capable window. */
+        window_flags |= SDL_WINDOW_OPENGL;
+        printf("[DISPLAY] Release OpenGL path: borderless desktop window + SDL_WINDOW_OPENGL\n");
+    }
     g_release_borderless_desktop = 1;
 #endif
 
@@ -244,14 +277,42 @@ void display_init(GameState *state)
         return;
     }
 
-    /* Prefer OpenGL so SDL_GL_BindTexture + glGenerateMipmap work for framebuffer mips */
-    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
-    g_sdl_ren = SDL_CreateRenderer(g_window, -1,
-        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (!g_sdl_ren) {
-        SDL_SetHint(SDL_HINT_RENDER_DRIVER, "");
-        g_sdl_ren = SDL_CreateRenderer(g_window, -1,
-            SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    {
+        const char *driver_try[4];
+        int driver_try_count = 0;
+        const char *selected_hint = "";
+
+        if (driver_override && driver_override[0] != '\0' && strcmp(driver_override, "auto") != 0) {
+            driver_try[driver_try_count++] = driver_override;
+            driver_try[driver_try_count++] = "";
+        } else {
+#ifdef AB3D_RELEASE
+            /* Release: avoid forced OpenGL to reduce fullscreen mode-switch regressions. */
+            driver_try[driver_try_count++] = "direct3d11";
+            driver_try[driver_try_count++] = "direct3d";
+            driver_try[driver_try_count++] = "";
+#else
+            /* Dev/debug: keep OpenGL preference for mip-based minification quality testing. */
+            driver_try[driver_try_count++] = "opengl";
+            driver_try[driver_try_count++] = "direct3d11";
+            driver_try[driver_try_count++] = "direct3d";
+            driver_try[driver_try_count++] = "";
+#endif
+        }
+
+        g_sdl_ren = NULL;
+        for (int i = 0; i < driver_try_count; i++) {
+            selected_hint = driver_try[i];
+            SDL_SetHint(SDL_HINT_RENDER_DRIVER, selected_hint);
+            g_sdl_ren = SDL_CreateRenderer(g_window, -1,
+                SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+            if (g_sdl_ren) break;
+        }
+        if (!g_sdl_ren) {
+            selected_hint = "";
+        }
+        printf("[DISPLAY] renderer hint request: %s\n",
+               (selected_hint[0] != '\0') ? selected_hint : "auto");
     }
     if (!g_sdl_ren) {
         printf("[DISPLAY] SDL_CreateRenderer failed: %s\n", SDL_GetError());
@@ -259,8 +320,14 @@ void display_init(GameState *state)
     }
     {
         SDL_RendererInfo ri;
-        if (SDL_GetRendererInfo(g_sdl_ren, &ri) == 0)
+        if (SDL_GetRendererInfo(g_sdl_ren, &ri) == 0) {
             printf("[DISPLAY] SDL renderer driver: %s\n", ri.name);
+#ifdef AB3D_RELEASE
+            if (ri.name && strcmp(ri.name, "opengl") == 0) {
+                printf("[DISPLAY] warning: Release selected OpenGL driver; set AB3D_RENDER_DRIVER=direct3d11 to force D3D\n");
+            }
+#endif
+        }
     }
 
     display_set_renderer_target_size(rw, rh);
@@ -281,6 +348,7 @@ void display_init(GameState *state)
            window_w, window_h,
            g_present_dst_rect.w, g_present_dst_rect.h,
            g_present_dst_rect.x, g_present_dst_rect.y);
+    display_log_display_mode_snapshot("startup-after-window");
 }
 
 void display_on_resize(int w, int h)
