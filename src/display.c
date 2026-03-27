@@ -148,6 +148,15 @@ static void display_update_letterbox(int win_w, int win_h)
     g_present_dst_rect.h = dh;
 
     renderer_set_present_size(dw, dh);
+
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+    /* OpenGL render path: nearest when magnifying the software framebuffer; linear when
+     * minifying (pairs with glGenerateMipmap + trilinear in display_regenerate_*). */
+    if (g_texture) {
+        SDL_SetTextureScaleMode(g_texture,
+            (sc > 1.0) ? SDL_ScaleModeNearest : SDL_ScaleModeLinear);
+    }
+#endif
 }
 
 /* -----------------------------------------------------------------------
@@ -166,7 +175,7 @@ static void display_set_renderer_target_size(int w, int h)
         SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
         g_internal_w, g_internal_h);
     if (g_texture) {
-        /* Linear mag; minification uses GL mip chain when OpenGL + downscale */
+        /* Default; display_update_letterbox sets nearest vs linear from upscale/downscale. */
         SDL_SetTextureScaleMode(g_texture, SDL_ScaleModeLinear);
     }
 }
