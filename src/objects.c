@@ -53,6 +53,7 @@ int8_t  plr2_obs_in_line[MAX_OBJECTS];
 int16_t plr1_obj_dists[MAX_OBJECTS];
 int16_t plr2_obj_dists[MAX_OBJECTS];
 static uint8_t explosion_damage_flag[MAX_OBJECTS];
+static inline uint8_t damage_accumulate_u8(uint8_t current, int32_t add);
 
 /* Animation timer (from Anims.s) */
 static int16_t anim_timer = 2;
@@ -2722,9 +2723,21 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         /* Explosive force splash + blast particles */
         if (shot_size >= 0 && shot_size < 8 &&
             bullet_types[shot_size].explosive_force > 0) {
+            int16_t blast_zone = OBJ_ZONE(obj);
+            int8_t blast_top = obj->obj.in_top;
+            if (ctx.objroom && state->level.data) {
+                int zi = level_zone_index_from_room_ptr(&state->level, ctx.objroom);
+                if (zi < 0) {
+                    int16_t room_zone_word = (int16_t)((ctx.objroom[0] << 8) | ctx.objroom[1]);
+                    zi = level_connect_to_zone_index(&state->level, room_zone_word);
+                }
+                if (zi >= 0 && zi < zone_slots)
+                    blast_zone = (int16_t)zi;
+                blast_top = ctx.stood_in_top;
+            }
             compute_blast(state, ctx.newx, ctx.newz, accypos,
                           bullet_types[shot_size].explosive_force,
-                          OBJ_ZONE(obj), obj->obj.in_top);
+                          blast_zone, blast_top);
         }
 
         /* Pop in place at impact position. */
@@ -2841,7 +2854,7 @@ void object_handle_bullet(GameObject *obj, GameState *state)
                                          bullet_types[shot_size].explosive_force > 0);
 
         /* HIT! Apply damage */
-        target->raw[19] = (uint8_t)(target->raw[19] + (uint8_t)SHOT_POWER(*obj));
+        target->raw[19] = damage_accumulate_u8(target->raw[19], (int32_t)(uint8_t)SHOT_POWER(*obj));
         NASTY_SET_IMPACTX(target, SHOT_XVEL(*obj) >> 16);
         NASTY_SET_IMPACTZ(target, SHOT_ZVEL(*obj) >> 16);
         if (explosive_projectile_hit && check_idx >= 0 && check_idx < MAX_OBJECTS) {
@@ -2862,9 +2875,21 @@ void object_handle_bullet(GameObject *obj, GameState *state)
                               bullet_types[shot_size].hit_volume);
         }
         if (explosive_projectile_hit) {
+            int16_t blast_zone = OBJ_ZONE(obj);
+            int8_t blast_top = obj->obj.in_top;
+            if (ctx.objroom && state->level.data) {
+                int zi = level_zone_index_from_room_ptr(&state->level, ctx.objroom);
+                if (zi < 0) {
+                    int16_t room_zone_word = (int16_t)((ctx.objroom[0] << 8) | ctx.objroom[1]);
+                    zi = level_connect_to_zone_index(&state->level, room_zone_word);
+                }
+                if (zi >= 0 && zi < zone_slots)
+                    blast_zone = (int16_t)zi;
+                blast_top = ctx.stood_in_top;
+            }
             compute_blast(state, ctx.newx, ctx.newz, accypos,
                           bullet_types[shot_size].explosive_force,
-                          OBJ_ZONE(obj), obj->obj.in_top);
+                          blast_zone, blast_top);
         }
         return;
     }
@@ -3790,12 +3815,23 @@ static int16_t compute_blast_dist_sqrt(int16_t dx, int16_t dz)
 
 #define BLAST_IMPACT_BASE_MAG 36
 #define BLAST_IMPACT_MAX_ABS  64
+#define BLAST_LOS_BYPASS_DIST 24
 
 static inline int16_t clamp_blast_impact_component(int32_t v)
 {
     if (v > BLAST_IMPACT_MAX_ABS) return (int16_t)BLAST_IMPACT_MAX_ABS;
     if (v < -BLAST_IMPACT_MAX_ABS) return (int16_t)-BLAST_IMPACT_MAX_ABS;
     return (int16_t)v;
+}
+
+static inline uint8_t damage_accumulate_u8(uint8_t current, int32_t add)
+{
+    if (add <= 0) return current;
+    {
+        int32_t sum = (int32_t)current + add;
+        if (sum > 255) sum = 255;
+        return (uint8_t)sum;
+    }
 }
 
 /* -----------------------------------------------------------------------
@@ -3847,19 +3883,31 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         get_object_pos(&state->level, (int)OBJ_CID(obj), &target_x, &target_z);
         int16_t target_y = obj_w(obj->raw + 4);
 
-        int16_t to_zone_id = (int16_t)((to_room[0] << 8) | to_room[1]);
-        uint8_t vis = can_it_be_seen(&state->level,
-                                     from_room, to_room, to_zone_id,
-                                     viewer_x, viewer_z, viewer_y,
-                                     target_x, target_z, target_y,
-                                     in_top, obj->obj.in_top, 1);
-        if (!vis) continue;
-
         int16_t dx = (int16_t)(target_x - viewer_x);
         int16_t dz = (int16_t)(target_z - viewer_z);
         int16_t dist = compute_blast_dist_sqrt(dx, dz);
 
-        int16_t dist_bucket = (int16_t)(dist >> 3);
+        int16_t target_radius = 40;
+        if (obj->obj.number >= 0 && obj->obj.number < 21)
+            target_radius = col_box_table[(int)obj->obj.number].width;
+        if (target_radius < 0) target_radius = 0;
+
+        /* Treat the target as a cylinder: blast reaches the collision edge, not just center point. */
+        int16_t effective_dist = (int16_t)(dist - target_radius);
+        if (effective_dist < 0) effective_dist = 0;
+
+        int16_t to_zone_id = (int16_t)((to_room[0] << 8) | to_room[1]);
+        /* Very close overlaps are allowed even when LOS is flaky at portal seams/edge cases. */
+        if (effective_dist > BLAST_LOS_BYPASS_DIST) {
+            uint8_t vis = can_it_be_seen(&state->level,
+                                         from_room, to_room, to_zone_id,
+                                         viewer_x, viewer_z, viewer_y,
+                                         target_x, target_z, target_y,
+                                         in_top, obj->obj.in_top, 1);
+            if (!vis) continue;
+        }
+
+        int16_t dist_bucket = (int16_t)(effective_dist >> 3);
         dist_bucket = (int16_t)(dist_bucket - 4);
         if (dist_bucket < 0) dist_bucket = 0;
         if (dist_bucket > 31) continue;
@@ -3867,8 +3915,9 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         int16_t atten = (int16_t)(32 - dist_bucket);
         int32_t damage = ((int32_t)max_damage * (int32_t)atten) >> 5;
         if (damage > max_damage) damage = max_damage;
+        if (damage < 1) damage = 1;
 
-        obj->raw[19] = (uint8_t)((uint8_t)obj->raw[19] + (uint8_t)damage);
+        obj->raw[19] = damage_accumulate_u8(obj->raw[19], damage);
         if (obj_index >= 0 && obj_index < MAX_OBJECTS) {
             explosion_damage_flag[obj_index] = 1;
         }
