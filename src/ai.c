@@ -76,7 +76,15 @@ void explode_into_bits(GameObject *obj, GameState *state, bool explosion_kill, i
     int d2 = (int)gib_level;
     if (d2 < 1) d2 = 1;
     if (d2 > 7) d2 = 7;
-    int num_bits = d2 + 1; /* Amiga: d2 clamped to 7, then decremented through loop */
+    int num_bits = d2 + 1; /* Amiga base: d2 clamped to 7, then decremented through loop */
+    if (explosion_kill) {
+        /* Rocket/grenade kills can delete the source object instantly; compensate with a
+         * significantly denser gib burst so the kill still reads clearly. */
+        num_bits *= 3;
+        if (obj && (obj->obj.number == OBJ_NBR_EYEBALL || obj->obj.number == OBJ_NBR_FLYING_NASTY))
+            num_bits += 12;
+        if (num_bits > 48) num_bits = 48;
+    }
     /* Preserve legacy RNG cadence from pre-71acbab builds where num_bits consumed rand().
      * This keeps gib velocity randomness feeling consistent while using d2-driven counts. */
     (void)rand();
