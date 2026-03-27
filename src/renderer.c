@@ -76,43 +76,6 @@ static inline int32_t rd32(const uint8_t *p) {
     return (int32_t)((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]);
 }
 
-/* View-space X is stored in "fine" units (RotateLevelPts/RotateObjectPts do x<<7),
- * while Z remains in coarse units. Convert X to coarse before radial distance math. */
-static inline int32_t iabs32_sat(int32_t v)
-{
-    if (v >= 0) return v;
-    return (v == INT32_MIN) ? INT32_MAX : -v;
-}
-
-static inline int32_t x_fine_to_coarse_round(int32_t x_fine)
-{
-    if (x_fine >= 0) return (x_fine + 64) >> 7;
-    {
-        int32_t a = iabs32_sat(x_fine);
-        return -(int32_t)((a + 64) >> 7);
-    }
-}
-
-/* Isotropic Euclidean-like distance approximation in XZ plane:
- * d ~= max(|x|,|z|) + 3/8 * min(|x|,|z|), with matched X/Z units. */
-static inline int32_t light_dist_2d_fast(int32_t x_coarse, int32_t z_coarse)
-{
-    int32_t ax = iabs32_sat(x_coarse);
-    int32_t az = iabs32_sat(z_coarse);
-    int32_t mx = (ax > az) ? ax : az;
-    int32_t mn = (ax > az) ? az : ax;
-    int64_t d = (int64_t)mx + (((int64_t)mn * 3) >> 3);
-    if (d > INT32_MAX) d = INT32_MAX;
-    return (int32_t)d;
-}
-
-/* Same XZ radial metric as walls/sprites: screen column -> view X at coarse depth z for this row. */
-static inline int32_t floor_light_dist_for_screen_x(int32_t screen_x, int32_t center_x, int32_t z_coarse)
-{
-    int32_t x_fine = (int32_t)(((int64_t)(screen_x - center_x) * z_coarse) / (int32_t)RENDER_SCALE);
-    return light_dist_2d_fast(x_fine_to_coarse_round(x_fine), z_coarse);
-}
-
 /* -----------------------------------------------------------------------
  * SCALE table (from Macros.i)
  *
@@ -1534,8 +1497,6 @@ void renderer_draw_wall(int32_t x1, int32_t z1, int32_t x2, int32_t z2,
     const int64_t INVZ_ONE = (1LL << 24); /* 8.24 */
     int64_t inv_z1_fp = INVZ_ONE / cz1;
     int64_t inv_z2_fp = INVZ_ONE / cz2;
-    int64_t x_over_z1_fp = (int64_t)cx1 * INVZ_ONE / cz1;
-    int64_t x_over_z2_fp = (int64_t)cx2 * INVZ_ONE / cz2;
     int64_t tex_over_z1_fp = (int64_t)ct1 * INVZ_ONE / cz1;
     int64_t tex_over_z2_fp = (int64_t)ct2 * INVZ_ONE / cz2;
 
@@ -1550,15 +1511,10 @@ void renderer_draw_wall(int32_t x1, int32_t z1, int32_t x2, int32_t z2,
         /* Rounded reciprocal: closer to true z than INVZ_ONE/inv_z truncation alone. */
         int32_t col_z = (int32_t)((INVZ_ONE + inv_z_fp / 2) / inv_z_fp);
         if (col_z < 1) col_z = 1;
-        /* Use radial distance for dimming so off-center surfaces darken by true range,
-         * not just forward depth. */
-        int64_t x_over_z_fp = x_over_z1_fp + ((x_over_z2_fp - x_over_z1_fp) * t_fp) / 65536;
-        int32_t col_x = (int32_t)((x_over_z_fp * (int64_t)col_z) >> 24);
-        int32_t col_dist = light_dist_2d_fast(x_fine_to_coarse_round(col_x), col_z);
 
         int32_t wall_bright = left_brightness +
             (int32_t)(((int64_t)(right_brightness - left_brightness) * t_fp) / 65536LL);
-        int amiga_d6 = (col_dist >> 7) + (wall_bright * 2);
+        int amiga_d6 = (col_z >> 7) + (wall_bright * 2);
         if (amiga_d6 < 0) amiga_d6 = 0;
         if (amiga_d6 > 64) amiga_d6 = 64;
 
@@ -1677,8 +1633,11 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         if (dist > 30000) dist = 30000;
     }
 
-    /* Amiga formula: d6 = (radial_dist >> 7) + zone_bright. Higher d6 = darker.
-     * Radial distance matches wall/sprite light_dist (cylinder in XZ), not depth-only. */
+    /* Amiga formula: d6 = (dist >> 7) + zone_bright. Higher d6 = darker. */
+    int amiga_d6 = (dist >> 7) + zone_d6;
+    if (amiga_d6 < 0) amiga_d6 = 0;
+    if (amiga_d6 > 64) amiga_d6 = 64;
+    int gray = (64 - amiga_d6) * 255 / 64;
 
     /* ---- ASM pastfloorbright (line 6660) ----
      * d1 = d0 * cosval (change in U across whole width)
@@ -1759,16 +1718,19 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     }
 
     const uint8_t *pal_lut_src = floor_pal ? floor_pal : rs->floor_pal;
+    int floor_pal_level = 0;
+    if (pal_lut_src && !use_gour) {
+        int bright_idx = brightness + 5 + (dist >> 8);
+        if (bright_idx < 0) bright_idx = 0;
+        if (bright_idx > 28) bright_idx = 28;
+        floor_pal_level = floor_bright_level_table[bright_idx];
+    }
 
-    const uint32_t *span_argb_levels[FLOOR_PAL_LEVEL_COUNT];
-    const uint16_t *span_cw_levels[FLOOR_PAL_LEVEL_COUNT];
+    const uint32_t *span_argb = NULL;
+    const uint16_t *span_cw = NULL;
     const int use_span_lut = (texture != NULL && pal_lut_src != NULL && !is_water && !use_gour);
     if (use_span_lut) {
-        for (int level = 0; level < FLOOR_PAL_LEVEL_COUNT; level++) {
-            floor_span_prepare_pal_cache(pal_lut_src, level,
-                                         &span_argb_levels[level],
-                                         &span_cw_levels[level]);
-        }
+        floor_span_prepare_pal_cache(pal_lut_src, floor_pal_level, &span_argb, &span_cw);
     }
 
     /* UV accumulators: 32-bit wrapping is sufficient - we only need (fp>>16)&63 for tile coords.
@@ -1845,24 +1807,19 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         water_refr_base1 = (size_t)refr_y_next * (size_t)rs->width;
     }
 
-    /* Fast non-water textured path: per-column radial distance -> palette level (matches walls). */
-    if (use_span_lut && span_argb_levels[0] && span_cw_levels[0]) {
+    /* Fast non-water textured path: no per-pixel branching. */
+    if (use_span_lut && span_argb && span_cw) {
         uint8_t *p8 = row8;
         uint32_t *p32 = row32;
         uint16_t *p16 = row16;
         for (int i = 0; i < span_len; i++) {
-            int32_t col_dist = floor_light_dist_for_screen_x(xl + i, center_x, dist);
-            int bright_idx = brightness + 5 + (col_dist >> 8);
-            if (bright_idx < 0) bright_idx = 0;
-            if (bright_idx > 28) bright_idx = 28;
-            int floor_level = floor_bright_level_table[bright_idx];
             uint8_t texel = texture[((((u_fp >> 16) & 63u)) << 2) | ((((v_fp >> 16) & 63u)) << 10)];
             u_fp += (uint32_t)u_step;
             v_fp += (uint32_t)v_step;
 
             *p8++ = 1;
-            *p32++ = span_argb_levels[floor_level][texel];
-            *p16++ = span_cw_levels[floor_level][texel];
+            *p32++ = span_argb[texel];
+            *p16++ = span_cw[texel];
         }
         floor_span_extend_horizontal_edges(y, xl, xr, w, buf, rgb, cwbuf);
         return;
@@ -1876,12 +1833,10 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         size_t bg_i1 = water_refr_base1 + (size_t)xl;
         const int water_has_file = (g_water_file && g_water_file_size >= 65536u);
         const int water_has_brighten = (g_water_brighten && g_water_brighten_size >= 512u);
+        uint32_t dist_off = (((uint32_t)dist) & 0xFF00u) << 1;
+        if (dist_off > (uint32_t)(12 * 512)) dist_off = (uint32_t)(12 * 512);
 
         for (int i = 0; i < span_len; i++, bg_i0++, bg_i1++) {
-            int32_t col_dist = floor_light_dist_for_screen_x(xl + i, center_x, dist);
-            uint32_t dist_off = (((uint32_t)col_dist) & 0xFF00u) << 1;
-            if (dist_off > (uint32_t)(12 * 512)) dist_off = (uint32_t)(12 * 512);
-
             uint8_t u8 = (uint8_t)((u_fp >> 16) & 0xFFu);
             uint8_t v8 = (uint8_t)((v_fp >> 16) & 0xFFu);
             u_fp += (uint32_t)u_step;
@@ -1987,15 +1942,24 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         return;
     }
 
-    /* Gouraud floor path (Amiga GOURSEL floor/roof): interpolate zone brightness; radial dist >> 7 per pixel. */
-    int64_t gour_zone_fp = 0;
-    int64_t gour_zone_step = 0;
+    /* Gouraud floor path (Amiga GOURSEL floor/roof): interpolate brightness levels across the span. */
+    int64_t gour_level_fp = 0;
+    int64_t gour_level_step = 0;
     int64_t gour_bright_fp = 0;
     int64_t gour_bright_step = 0;
+    const int dist_add = (dist >> 7);
     if (use_gour) {
         int span_w = xr - xl;
-        gour_zone_fp = (int64_t)left_brightness << 16;
-        gour_zone_step = (span_w > 0) ? (((int64_t)(right_brightness - left_brightness) << 16) / span_w) : 0;
+        int left_level = left_brightness + dist_add;
+        int right_level = right_brightness + dist_add;
+        if (left_level < 0) left_level = 0;
+        if (right_level < 0) right_level = 0;
+        left_level >>= 1;
+        right_level >>= 1;
+        if (left_level > 14) left_level = 14;
+        if (right_level > 14) right_level = 14;
+        gour_level_fp = (int64_t)left_level << 16;
+        gour_level_step = (span_w > 0) ? (((int64_t)(right_level - left_level) << 16) / span_w) : 0;
         gour_bright_fp = (int64_t)left_brightness << 16;
         gour_bright_step = (span_w > 0) ? (((int64_t)(right_brightness - left_brightness) << 16) / span_w) : 0;
     }
@@ -2037,12 +2001,9 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             }
 
             for (int i = 0; i < span_len; i++) {
-                int32_t col_dist = floor_light_dist_for_screen_x(xl + i, center_x, dist);
-                int zone_b = (int)(gour_zone_fp >> 16);
-                gour_zone_fp += gour_zone_step;
-                int raw = zone_b + (col_dist >> 7);
-                if (raw < 0) raw = 0;
-                int gour_level = raw >> 1;
+                int gour_level = (int)(gour_level_fp >> 16);
+                gour_level_fp += gour_level_step;
+                if (gour_level < 0) gour_level = 0;
                 if (gour_level > 14) gour_level = 14;
 
                 uint8_t texel = texture[((((u_fp >> 16) & 63u)) << 2) | ((((v_fp >> 16) & 63u)) << 10)];
@@ -2058,13 +2019,8 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         }
 
         {
+            const uint8_t *lut = pal_lut_src + floor_pal_level * 512;
             for (int i = 0; i < span_len; i++) {
-                int32_t col_dist = floor_light_dist_for_screen_x(xl + i, center_x, dist);
-                int bright_idx = brightness + 5 + (col_dist >> 8);
-                if (bright_idx < 0) bright_idx = 0;
-                if (bright_idx > 28) bright_idx = 28;
-                int floor_pal_level = floor_bright_level_table[bright_idx];
-                const uint8_t *lut = pal_lut_src + floor_pal_level * 512;
                 uint8_t texel = texture[((((u_fp >> 16) & 63u)) << 2) | ((((v_fp >> 16) & 63u)) << 10)];
                 u_fp += (uint32_t)u_step;
                 v_fp += (uint32_t)v_step;
@@ -2086,10 +2042,9 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
 
         if (use_gour) {
             for (int i = 0; i < span_len; i++) {
-                int32_t col_dist = floor_light_dist_for_screen_x(xl + i, center_x, dist);
                 int gour_bright = (int)(gour_bright_fp >> 16);
                 gour_bright_fp += gour_bright_step;
-                int d6 = (col_dist >> 7) + (gour_bright * 2);
+                int d6 = dist_add + (gour_bright * 2);
                 if (d6 < 0) d6 = 0;
                 if (d6 > 64) d6 = 64;
                 int gour_gray = (64 - d6) * 255 / 64;
@@ -2109,15 +2064,10 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
         }
 
         for (int i = 0; i < span_len; i++) {
-            int32_t col_dist = floor_light_dist_for_screen_x(xl + i, center_x, dist);
-            int amiga_d6 = (col_dist >> 7) + zone_d6;
-            if (amiga_d6 < 0) amiga_d6 = 0;
-            if (amiga_d6 > 64) amiga_d6 = 64;
-            int px_gray = (64 - amiga_d6) * 255 / 64;
             uint8_t texel = texture[((((u_fp >> 16) & 63u)) << 2) | ((((v_fp >> 16) & 63u)) << 10)];
             u_fp += (uint32_t)u_step;
             v_fp += (uint32_t)v_step;
-            int lit = ((int)texel * px_gray) >> 8;
+            int lit = ((int)texel * gray) >> 8;
             uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)lit << 16) | ((uint32_t)lit << 8) | (uint32_t)lit);
             *row8++ = 1;
             *row32++ = argb;
@@ -2129,10 +2079,9 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
 
     if (use_gour) {
         for (int i = 0; i < span_len; i++) {
-            int32_t col_dist = floor_light_dist_for_screen_x(xl + i, center_x, dist);
             int gour_bright = (int)(gour_bright_fp >> 16);
             gour_bright_fp += gour_bright_step;
-            int d6 = (col_dist >> 7) + (gour_bright * 2);
+            int d6 = dist_add + (gour_bright * 2);
             if (d6 < 0) d6 = 0;
             if (d6 > 64) d6 = 64;
             int g = (64 - d6) * 255 / 64;
@@ -2142,14 +2091,9 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
             *row16++ = argb_to_amiga12(argb);
         }
     } else {
+        uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray);
+        uint16_t out_cw = argb_to_amiga12(argb);
         for (int i = 0; i < span_len; i++) {
-            int32_t col_dist = floor_light_dist_for_screen_x(xl + i, center_x, dist);
-            int amiga_d6 = (col_dist >> 7) + zone_d6;
-            if (amiga_d6 < 0) amiga_d6 = 0;
-            if (amiga_d6 > 64) amiga_d6 = 64;
-            int g = (64 - amiga_d6) * 255 / 64;
-            uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)g << 16) | ((uint32_t)g << 8) | (uint32_t)g);
-            uint16_t out_cw = argb_to_amiga12(argb);
             *row8++ = 1;
             *row32++ = argb;
             *row16++ = out_cw;
@@ -2867,7 +2811,7 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
 
             int32_t clip_top_y = (int)((int64_t)((top_of_room - y_off) >> WORLD_Y_FRAC_BITS) * r->proj_y_scale * RENDER_SCALE / orp_z) + center_y;
             int32_t clip_bot_y = (int)((int64_t)((bot_of_room - y_off) >> WORLD_Y_FRAC_BITS) * r->proj_y_scale * RENDER_SCALE / orp_z) + center_y;
-            int bright = (light_dist_2d_fast(x_fine_to_coarse_round(vx_fine), orp_z) >> 7);
+            int bright = (orp_z >> 7);
             const uint8_t *obj_pal = r->sprite_pal_data[expl_vect];
             size_t obj_pal_size = r->sprite_pal_size[expl_vect];
             renderer_draw_sprite((int16_t)scr_x, (int16_t)scr_y,
@@ -2923,11 +2867,12 @@ static void draw_zone_objects(GameState *state, int16_t zone_id,
         int center_x = (g_renderer.width * 47) / 96;
         int scr_x = (int)(obj_vx_fine * RENDER_SCALE / (int32_t)orp->z) + center_x;
 
-        /* Distance attenuation + object brightness.
-         * Port tweak: use fast radial distance approximation instead of pure forward z-depth
-         * so off-center objects dim by true range. */
+        /* Get brightness + distance attenuation
+         * ASM: asr.w #7,d6 ; add.w (a0)+,d6 (distance>>7 + obj brightness) */
+        /* Raw brightness d6 = (z >> 7) + objVectBright.
+         * Passed to renderer_draw_sprite which uses objscalecols to map to palette level. */
         int16_t obj_bright = rd16(obj + 2);  /* objVectBright */
-        int bright = (light_dist_2d_fast(x_fine_to_coarse_round(obj_vx_fine), orp->z) >> 7) + obj_bright;
+        int bright = (orp->z >> 7) + obj_bright;
         if (bright < 0) bright = 0;
 
         int8_t obj_number = (int8_t)obj[16];

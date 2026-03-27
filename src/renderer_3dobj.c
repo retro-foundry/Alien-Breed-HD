@@ -27,33 +27,6 @@
 #include "logging.h"
 #define printf ab3d_log_printf
 
-static inline int32_t iabs32_sat(int32_t v)
-{
-    if (v >= 0) return v;
-    return (v == INT32_MIN) ? INT32_MAX : -v;
-}
-
-static inline int32_t x_fine_to_coarse_round(int32_t x_fine)
-{
-    if (x_fine >= 0) return (x_fine + 64) >> 7;
-    {
-        int32_t a = iabs32_sat(x_fine);
-        return -(int32_t)((a + 64) >> 7);
-    }
-}
-
-/* Match wall/billboard distance metric, with matched X/Z units. */
-static inline int32_t light_dist_2d_fast(int32_t x_coarse, int32_t z_coarse)
-{
-    int32_t ax = iabs32_sat(x_coarse);
-    int32_t az = iabs32_sat(z_coarse);
-    int32_t mx = (ax > az) ? ax : az;
-    int32_t mn = (ax > az) ? az : ax;
-    int64_t d = (int64_t)mx + (((int64_t)mn * 3) >> 3);
-    if (d > INT32_MAX) d = INT32_MAX;
-    return (int32_t)d;
-}
-
 /* -----------------------------------------------------------------------
  * Global POLYOBJECTS table
  * ----------------------------------------------------------------------- */
@@ -371,11 +344,10 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
     if (!vo->data || vo->num_points == 0 || vo->num_parts == 0) return;
 
     /* ---- 1. Brightness (objBright) ----------------------------------- */
-    /* Base dimming now uses radial range in view-space instead of pure z-depth. */
+    /* Amiga: d3 = zpos>>7; d2 = objVectBright + d3. */
     int16_t obj_bright = vec_rd16(obj + 2);    /* objVectBright */
     int32_t z_mid      = orp->z;
-    int32_t dist_mid = light_dist_2d_fast(x_fine_to_coarse_round(orp->x_fine), z_mid);
-    int obj_bright_base = (int)(dist_mid >> 7) + (int)obj_bright;
+    int obj_bright_base = (int)(z_mid >> 7) + (int)obj_bright;
     if (obj_bright_base < 0)  obj_bright_base = 0;
     if (obj_bright_base > 14) obj_bright_base = 14;
 
