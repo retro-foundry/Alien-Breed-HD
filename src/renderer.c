@@ -376,8 +376,11 @@ static int renderer_thread_worker_main(void *userdata)
 
                 int16_t draw_row_start = row_start;
                 int16_t draw_row_end = row_end;
-                draw_row_start = (int16_t)(draw_row_start - RENDERER_ROW_STRIP_HALO);
-                draw_row_end = (int16_t)(draw_row_end + RENDERER_ROW_STRIP_HALO);
+                int strip_rows = (int)row_end - (int)row_start;
+                if (strip_rows < 0) strip_rows = 0;
+                int row_halo = strip_rows + RENDERER_ROW_STRIP_HALO;
+                draw_row_start = (int16_t)(draw_row_start - row_halo);
+                draw_row_end = (int16_t)(draw_row_end + row_halo);
                 if (draw_row_start < 0) draw_row_start = 0;
                 if (draw_row_end > g_renderer.height) draw_row_end = (int16_t)g_renderer.height;
                 renderer_draw_sky_pass_rows(sky_angpos, draw_row_start, draw_row_end);
@@ -4875,16 +4878,8 @@ void renderer_draw_display(GameState *state)
                                   frame_idx, trace_clip, &fill_screen_water);
     }
 
-    /* 6. Resolve water/tint as a post-process after world render barrier. */
-    int used_threaded_tint = 0;
-#ifndef AB3D_NO_THREADS
-    if (used_threaded_world && state->cfg_render_threads && fill_screen_water != 0) {
-        used_threaded_tint = renderer_dispatch_threaded_underwater_tint(fill_screen_water);
-    }
-#endif
-    if (!used_threaded_tint) {
-        renderer_apply_underwater_tint(fill_screen_water);
-    }
+    /* 6. Keep underwater tint cue enabled. */
+    renderer_apply_underwater_tint(fill_screen_water);
 
     /* 7. Draw gun overlay (single-threaded after threaded barriers). */
     renderer_draw_gun(state);
