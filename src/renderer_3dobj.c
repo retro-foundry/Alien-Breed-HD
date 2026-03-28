@@ -321,7 +321,8 @@ static void draw_filled_polygon(const int *sx, const int *sy, int n,
                                 int clip_top, int clip_bot)
 {
     uint32_t *rgb = renderer_get_active_rgb_target();
-    if (n < 3 || !rgb) return;
+    uint16_t *cw = renderer_get_active_cw_target();
+    if (n < 3 || !rgb || !cw) return;
 
     int min_y = sy[0], max_y = sy[0];
     for (int i = 1; i < n; i++) {
@@ -348,6 +349,7 @@ static void draw_filled_polygon(const int *sx, const int *sy, int n,
     }
 
     int W = g_renderer.width;
+    uint16_t cw_fill = renderer_argb_to_amiga12(color);
     for (int y = min_y; y <= max_y; y++) {
         int x0 = span_min[y - min_y];
         int x1 = span_max[y - min_y];
@@ -355,8 +357,12 @@ static void draw_filled_polygon(const int *sx, const int *sy, int n,
         if (x1 > clip_right) x1 = clip_right;
         if (x0 > x1) continue;
         uint32_t *row = rgb + (size_t)y * W;
-        for (int x = x0; x <= x1; x++)
-            row[x] = color;
+        uint16_t *row_cw = cw + (size_t)y * W;
+        for (int x = x0; x <= x1; x++) {
+            if (renderer_get_rgb_raster_expand())
+                row[x] = color;
+            row_cw[x] = cw_fill;
+        }
     }
 }
 
@@ -716,7 +722,7 @@ static uint8_t sample_poly_texel_index(uint16_t tex_map_word,
     return g_poly_tex_maps[tex_off];
 }
 
-static uint32_t sample_poly_palette(uint8_t pal_idx, int shade_level)
+static uint16_t sample_poly_palette_cw(uint8_t pal_idx, int shade_level)
 {
     if (!poly_textures_ready()) return 0;
     if (shade_level < 0) shade_level = 0;
@@ -724,9 +730,13 @@ static uint32_t sample_poly_palette(uint8_t pal_idx, int shade_level)
 
     size_t pal_off = (size_t)shade_level * 512u + (size_t)pal_idx * 2u;
     if (pal_off + 1u >= g_poly_tex_pal_size) return 0;
-    uint16_t cw = (uint16_t)(((uint16_t)g_poly_tex_pal[pal_off] << 8) |
-                              (uint16_t)g_poly_tex_pal[pal_off + 1u]);
-    return amiga12_to_argb_local(cw);
+    return (uint16_t)(((uint16_t)g_poly_tex_pal[pal_off] << 8) |
+                       (uint16_t)g_poly_tex_pal[pal_off + 1u]);
+}
+
+static uint32_t sample_poly_palette(uint8_t pal_idx, int shade_level)
+{
+    return amiga12_to_argb_local(sample_poly_palette_cw(pal_idx, shade_level));
 }
 
 static void draw_textured_triangle(const int *sx, const int *sy,
@@ -739,7 +749,8 @@ static void draw_textured_triangle(const int *sx, const int *sy,
                                    int clip_top, int clip_bot)
 {
     uint32_t *rgb = renderer_get_active_rgb_target();
-    if (!rgb) return;
+    uint16_t *cw = renderer_get_active_cw_target();
+    if (!rgb || !cw) return;
 
     int min_x = sx[0], max_x = sx[0];
     int min_y = sy[0], max_y = sy[0];
@@ -766,6 +777,7 @@ static void draw_textured_triangle(const int *sx, const int *sy,
 
     for (int y = min_y; y <= max_y; y++) {
         uint32_t *row = rgb + (size_t)y * W;
+        uint16_t *row_cw = cw + (size_t)y * W;
         double py = (double)y + 0.5;
         for (int x = min_x; x <= max_x; x++) {
             double px = (double)x + 0.5;
@@ -796,7 +808,10 @@ static void draw_textured_triangle(const int *sx, const int *sy,
                 depth_buf[didx] = zf;
                 if (depth_gen_buf) depth_gen_buf[didx] = depth_gen_tag;
             }
-            row[x] = sample_poly_palette(pal_idx, pixel_shade);
+            uint16_t pal_cw = sample_poly_palette_cw(pal_idx, pixel_shade);
+            if (renderer_get_rgb_raster_expand())
+                row[x] = amiga12_to_argb_local(pal_cw);
+            row_cw[x] = pal_cw;
         }
     }
 }

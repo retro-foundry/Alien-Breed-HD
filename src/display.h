@@ -40,7 +40,7 @@ void display_clear_title_palette(void);
 
 /* In-game rendering */
 void display_init_copper_screen(void);
-void display_draw_display(GameState *state);  /* Renders 3D scene to chunky buffer */
+void display_draw_display(GameState *state);  /* Renders 3D scene; presents 12-bit cw framebuffer */
 void display_swap_buffers(void);
 void display_wait_vblank(void);
 

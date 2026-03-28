@@ -67,6 +67,16 @@
  * Global renderer state
  * ----------------------------------------------------------------------- */
 RendererState g_renderer;
+/* When zero (default), raster skips redundant ARGB writes; display unpacks from cw_buffer. */
+static int g_renderer_rgb_raster_expand = 0;
+
+#define RASTER_PUT_PP(pp, val) do { \
+    if (g_renderer_rgb_raster_expand) \
+        *(*(pp))++ = (val); \
+    else \
+        (*(pp))++; \
+} while (0)
+
 /* Horizontal projection reference width from config (render_width before supersampling). */
 static int g_proj_base_width = RENDER_DEFAULT_WIDTH;
 
@@ -323,6 +333,21 @@ uint32_t *renderer_get_active_rgb_target(void)
     return renderer_active_rgb();
 }
 
+uint16_t *renderer_get_active_cw_target(void)
+{
+    return renderer_active_cw();
+}
+
+void renderer_set_rgb_raster_expand(int enabled)
+{
+    g_renderer_rgb_raster_expand = enabled ? 1 : 0;
+}
+
+int renderer_get_rgb_raster_expand(void)
+{
+    return g_renderer_rgb_raster_expand;
+}
+
 #ifndef AB3D_NO_THREADS
 static int8_t merge_fill_screen_water(int8_t a, int8_t b)
 {
@@ -493,8 +518,10 @@ static int renderer_thread_worker_main(void *userdata)
                         size_t pix_count = (size_t)copy_rows * (size_t)w;
                         memcpy(g_renderer.buffer + row0, worker->local_buf + row0,
                                pix_count * sizeof(uint8_t));
-                        memcpy(g_renderer.rgb_buffer + row0, worker->local_rgb + row0,
-                               pix_count * sizeof(uint32_t));
+                        if (g_renderer_rgb_raster_expand) {
+                            memcpy(g_renderer.rgb_buffer + row0, worker->local_rgb + row0,
+                                   pix_count * sizeof(uint32_t));
+                        }
                         memcpy(g_renderer.cw_buffer + row0, worker->local_cw + row0,
                                pix_count * sizeof(uint16_t));
                     }
@@ -1168,6 +1195,11 @@ static inline uint16_t argb_to_amiga12(uint32_t c)
     return (uint16_t)((r4 << 8) | (g4 << 4) | b4);
 }
 
+uint16_t renderer_argb_to_amiga12(uint32_t argb)
+{
+    return argb_to_amiga12(argb);
+}
+
 static inline uint32_t blend_argb(uint32_t bg, uint32_t fg, uint32_t alpha_fg)
 {
     if (alpha_fg >= 255u) return fg;
@@ -1205,7 +1237,8 @@ static void floor_span_prepare_pal_cache(RenderSliceContext *ctx,
         const uint8_t *lut = pal_lut_src + level * 512;
         for (int ti = 0; ti < 256; ti++) {
             uint16_t cw = (uint16_t)((lut[ti * 2] << 8) | lut[ti * 2 + 1]);
-            ctx->floor_span_argb_cache[level][ti] = amiga12_to_argb(cw);
+            if (g_renderer_rgb_raster_expand)
+                ctx->floor_span_argb_cache[level][ti] = amiga12_to_argb(cw);
             ctx->floor_span_cw_cache[level][ti] = cw;
         }
         ctx->floor_pal_cache_valid[level] = 1;
@@ -1644,7 +1677,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     uint32_t px = sky_bilinear_argb(c00, c10, c01, c11, fx, fy);
                     size_t p = row + (size_t)x;
                     buf[p] = 0;
-                    rgb[p] = px;
+                    if (g_renderer_rgb_raster_expand)
+                        rgb[p] = px;
                     cw[p] = argb_to_amiga12(px);
                 }
             }
@@ -1677,7 +1711,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     uint32_t px = amiga12_to_argb(cw12);
                     size_t p = row + (size_t)x;
                     buf[p] = 0;
-                    rgb[p] = px;
+                    if (g_renderer_rgb_raster_expand)
+                        rgb[p] = px;
                     cw[p] = argb_to_amiga12(px);
                     sx_fp += sx_step_fp;
                 }
@@ -1713,7 +1748,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     uint32_t px = sky_bilinear_argb(c00, c10, c01, c11, fx, fy);
                     size_t p = row + (size_t)x;
                     buf[p] = 0;
-                    rgb[p] = px;
+                    if (g_renderer_rgb_raster_expand)
+                        rgb[p] = px;
                     cw[p] = argb_to_amiga12(px);
                 }
             }
@@ -1741,7 +1777,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     uint8_t idx = s_sky_pixels[toff];
                     size_t p = row + (size_t)x;
                     buf[p] = 0;
-                    rgb[p] = s_sky_argb[idx];
+                    if (g_renderer_rgb_raster_expand)
+                        rgb[p] = s_sky_argb[idx];
                     cw[p] = s_sky_cw[idx];
                     sx_fp += sx_step_fp;
                 }
@@ -1766,7 +1803,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                 uint32_t px = RENDER_RGB_RASTER_PIXEL(((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b);
                 size_t p = row + (size_t)x;
                 buf[p] = 0;
-                rgb[p] = px;
+                if (g_renderer_rgb_raster_expand)
+                    rgb[p] = px;
                 cw[p] = argb_to_amiga12(px);
                 sx_fp += sx_step_fp;
             }
@@ -1784,7 +1822,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
             for (int y = sky_h; y < h; y++) {
                 size_t row = (size_t)y * (size_t)w;
                 memset(buf + row, 0, (size_t)w);
-                memcpy(rgb + row, s_clear_sky_row, row_bytes_rgb);
+                if (g_renderer_rgb_raster_expand)
+                    memcpy(rgb + row, s_clear_sky_row, row_bytes_rgb);
                 memcpy(cw + row, s_clear_sky_cw_row, row_bytes_cw);
             }
         } else {
@@ -1793,7 +1832,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                 for (int x = 0; x < w; x++) {
                     size_t p = row + (size_t)x;
                     buf[p] = 0;
-                    rgb[p] = below_px;
+                    if (g_renderer_rgb_raster_expand)
+                        rgb[p] = below_px;
                     cw[p] = below_cw;
                 }
             }
@@ -1829,6 +1869,11 @@ const uint8_t *renderer_get_buffer(void)
 const uint32_t *renderer_get_rgb_buffer(void)
 {
     return g_renderer.rgb_back_buffer; /* The just-drawn RGB frame */
+}
+
+const uint16_t *renderer_get_cw_buffer(void)
+{
+    return g_renderer.cw_back_buffer; /* The just-drawn 12-bit color-word frame */
 }
 
 int renderer_get_width(void)  { return g_renderer.width; }
@@ -2137,7 +2182,8 @@ static void draw_wall_column(RenderSliceContext *ctx,
             for (int ti = 0; ti < 32; ti++) {
                 int lut_off = lut_block_off + ti * 2;
                 uint16_t c12 = ((uint16_t)pal[lut_off] << 8) | pal[lut_off + 1];
-                ctx->wall_cache_argb[ti] = amiga12_to_argb(c12);
+                if (g_renderer_rgb_raster_expand)
+                    ctx->wall_cache_argb[ti] = amiga12_to_argb(c12);
                 ctx->wall_cache_cw[ti] = c12;
             }
             ctx->wall_cache_pal = pal;
@@ -2161,7 +2207,8 @@ static void draw_wall_column(RenderSliceContext *ctx,
                               | (uint16_t)texture[byte_off + 1];
                 uint8_t texel5 = (uint8_t)(word & 31u);
                 buf[pix] = 2; /* tag: wall */
-                rgb[pix] = ctx->wall_cache_argb[texel5];
+                if (g_renderer_rgb_raster_expand)
+                    rgb[pix] = ctx->wall_cache_argb[texel5];
                 cw[pix] = ctx->wall_cache_cw[texel5];
                 pix += (size_t)width;
                 tex_y += tex_step;
@@ -2173,7 +2220,8 @@ static void draw_wall_column(RenderSliceContext *ctx,
                               | (uint16_t)texture[byte_off + 1];
                 uint8_t texel5 = (uint8_t)((word >> 5) & 31u);
                 buf[pix] = 2; /* tag: wall */
-                rgb[pix] = ctx->wall_cache_argb[texel5];
+                if (g_renderer_rgb_raster_expand)
+                    rgb[pix] = ctx->wall_cache_argb[texel5];
                 cw[pix] = ctx->wall_cache_cw[texel5];
                 pix += (size_t)width;
                 tex_y += tex_step;
@@ -2185,7 +2233,8 @@ static void draw_wall_column(RenderSliceContext *ctx,
                               | (uint16_t)texture[byte_off + 1];
                 uint8_t texel5 = (uint8_t)((word >> 10) & 31u);
                 buf[pix] = 2; /* tag: wall */
-                rgb[pix] = ctx->wall_cache_argb[texel5];
+                if (g_renderer_rgb_raster_expand)
+                    rgb[pix] = ctx->wall_cache_argb[texel5];
                 cw[pix] = ctx->wall_cache_cw[texel5];
                 pix += (size_t)width;
                 tex_y += tex_step;
@@ -2196,7 +2245,8 @@ static void draw_wall_column(RenderSliceContext *ctx,
         uint16_t cw0 = ctx->wall_cache_cw[0];
         for (int y = ct; y <= cb; y++) {
             buf[pix] = 2; /* tag: wall */
-            rgb[pix] = argb0;
+            if (g_renderer_rgb_raster_expand)
+                rgb[pix] = argb0;
             cw[pix] = cw0;
             pix += (size_t)width;
             tex_y += tex_step;
@@ -2204,7 +2254,8 @@ static void draw_wall_column(RenderSliceContext *ctx,
     } else {
         for (int y = ct; y <= cb; y++) {
             buf[pix] = 2; /* tag: wall */
-            rgb[pix] = fallback;
+            if (g_renderer_rgb_raster_expand)
+                rgb[pix] = fallback;
             cw[pix] = fallback_cw;
             pix += (size_t)width;
             tex_y += tex_step;
@@ -2215,20 +2266,22 @@ static void draw_wall_column(RenderSliceContext *ctx,
     {
         size_t first_pix = (size_t)ct * (size_t)width + (size_t)x;
         size_t last_pix = (size_t)cb * (size_t)width + (size_t)x;
-        uint32_t edge_top_rgb = rgb[first_pix];
-        uint32_t edge_bot_rgb = rgb[last_pix];
         uint16_t edge_top_cw = cw[first_pix];
         uint16_t edge_bot_cw = cw[last_pix];
+        uint32_t edge_top_rgb = g_renderer_rgb_raster_expand ? rgb[first_pix] : amiga12_to_argb(edge_top_cw);
+        uint32_t edge_bot_rgb = g_renderer_rgb_raster_expand ? rgb[last_pix] : amiga12_to_argb(edge_bot_cw);
         if (ct > ctx->top_clip) {
             size_t up = first_pix - (size_t)width;
             buf[up] = 2;
-            rgb[up] = edge_top_rgb;
+            if (g_renderer_rgb_raster_expand)
+                rgb[up] = edge_top_rgb;
             cw[up] = edge_top_cw;
         }
         if (cb + 1 <= ctx->bot_clip) {
             size_t dn = last_pix + (size_t)width;
             buf[dn] = 2;
-            rgb[dn] = edge_bot_rgb;
+            if (g_renderer_rgb_raster_expand)
+                rgb[dn] = edge_bot_rgb;
             cw[dn] = edge_bot_cw;
         }
     }
@@ -2237,18 +2290,20 @@ static void draw_wall_column(RenderSliceContext *ctx,
     {
         for (int row = ct; row <= cb; row++) {
             size_t mid = (size_t)row * (size_t)width + (size_t)x;
-            uint32_t c = rgb[mid];
             uint16_t wv = cw[mid];
+            uint32_t c = g_renderer_rgb_raster_expand ? rgb[mid] : amiga12_to_argb(wv);
             if (x > ctx->slice_left) {
                 size_t L = mid - 1;
                 buf[L] = 2;
-                rgb[L] = c;
+                if (g_renderer_rgb_raster_expand)
+                    rgb[L] = c;
                 cw[L] = wv;
             }
             if (x + 1 < ctx->slice_right) {
                 size_t R = mid + 1;
                 buf[R] = 2;
-                rgb[R] = c;
+                if (g_renderer_rgb_raster_expand)
+                    rgb[R] = c;
                 cw[R] = wv;
             }
         }
@@ -2442,10 +2497,10 @@ static void floor_span_extend_horizontal_edges(const RenderSliceContext *ctx,
     size_t row = (size_t)y * (size_t)width;
     size_t li = row + (size_t)xl;
     size_t ri = row + (size_t)xr;
-    uint32_t cL = rgb[li];
-    uint32_t cR = rgb[ri];
     uint16_t wL = cwbuf[li];
     uint16_t wR = cwbuf[ri];
+    uint32_t cL = g_renderer_rgb_raster_expand ? rgb[li] : amiga12_to_argb(wL);
+    uint32_t cR = g_renderer_rgb_raster_expand ? rgb[ri] : amiga12_to_argb(wR);
     uint8_t tL = buf[li];
     uint8_t tR = buf[ri];
     if (xl > ctx->slice_left) {
@@ -2726,7 +2781,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             v_fp += (uint32_t)v_step;
 
             *p8++ = 1;
-            *p32++ = span_argb[texel];
+            RASTER_PUT_PP(&p32, span_argb[texel]);
             *p16++ = span_cw[texel];
         }
         /* Water: keep top/bottom strip overlap, but skip left/right span halo. */
@@ -2766,14 +2821,14 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 water_level = (uint8_t)(texture[tex_idx] >> 4);
             }
 
-            uint32_t bg0 = rgb[bg_i0];
             uint16_t bg_cw0 = cwbuf[bg_i0];
+            uint32_t bg0 = g_renderer_rgb_raster_expand ? rgb[bg_i0] : amiga12_to_argb(bg_cw0);
             if (buf[bg_i0] == 0 && water_has_back_buffers) {
                 /* AB3DI texturedwater samples from display memory while floor lines are streamed.
                  * When refraction points at rows not written yet this frame, those pixels still
                  * contain prior-frame values; mirror that by sampling back-buffer content. */
-                bg0 = rs->rgb_back_buffer[bg_i0];
                 bg_cw0 = rs->cw_back_buffer[bg_i0];
+                bg0 = g_renderer_rgb_raster_expand ? rs->rgb_back_buffer[bg_i0] : amiga12_to_argb(bg_cw0);
             }
             uint8_t bg_sample0 = (uint8_t)(bg_cw0 & 0xFFu);
 
@@ -2781,11 +2836,11 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             uint16_t bg_cw1 = bg_cw0;
             uint8_t bg_sample1 = bg_sample0;
             if (water_has_next_refr) {
-                bg1 = rgb[bg_i1];
                 bg_cw1 = cwbuf[bg_i1];
+                bg1 = g_renderer_rgb_raster_expand ? rgb[bg_i1] : amiga12_to_argb(bg_cw1);
                 if (buf[bg_i1] == 0 && water_has_back_buffers) {
-                    bg1 = rs->rgb_back_buffer[bg_i1];
                     bg_cw1 = rs->cw_back_buffer[bg_i1];
+                    bg1 = g_renderer_rgb_raster_expand ? rs->rgb_back_buffer[bg_i1] : amiga12_to_argb(bg_cw1);
                 }
                 bg_sample1 = (uint8_t)(bg_cw1 & 0xFFu);
             }
@@ -2843,7 +2898,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             }
 
             *p8++ = 4; /* water tag: avoid wall-join fill smearing */
-            *p32++ = out;
+            RASTER_PUT_PP(&p32, out);
             *p16++ = out_cw;
         }
         floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
@@ -2887,7 +2942,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             }
             uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)g << 16) | ((uint32_t)g << 8) | (uint32_t)g);
             *row8++ = 1;
-            *row32++ = argb;
+            RASTER_PUT_PP(&row32, argb);
             *row16++ = argb_to_amiga12(argb);
         }
         floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
@@ -2919,7 +2974,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 v_fp += (uint32_t)v_step;
 
                 *p8++ = 1;
-                *p32++ = gour_argb_levels[gour_level][texel];
+                RASTER_PUT_PP(&p32, gour_argb_levels[gour_level][texel]);
                 *p16++ = gour_cw_levels[gour_level][texel];
             }
             floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
@@ -2935,7 +2990,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 uint16_t out_cw = (uint16_t)((lut[texel * 2] << 8) | lut[texel * 2 + 1]);
 
                 *p8++ = 1;
-                *p32++ = amiga12_to_argb(out_cw);
+                RASTER_PUT_PP(&p32, amiga12_to_argb(out_cw));
                 *p16++ = out_cw;
             }
             floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
@@ -2964,7 +3019,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 int lit = ((int)texel * gour_gray) >> 8;
                 uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)lit << 16) | ((uint32_t)lit << 8) | (uint32_t)lit);
                 *p8++ = 1;
-                *p32++ = argb;
+                RASTER_PUT_PP(&p32, argb);
                 *p16++ = argb_to_amiga12(argb);
             }
             floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
@@ -2978,7 +3033,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             int lit = ((int)texel * gray) >> 8;
             uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)lit << 16) | ((uint32_t)lit << 8) | (uint32_t)lit);
             *row8++ = 1;
-            *row32++ = argb;
+            RASTER_PUT_PP(&row32, argb);
             *row16++ = argb_to_amiga12(argb);
         }
         floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
@@ -2995,7 +3050,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             int g = (64 - d6) * 255 / 64;
             uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)g << 16) | ((uint32_t)g << 8) | (uint32_t)g);
             *row8++ = 1;
-            *row32++ = argb;
+            RASTER_PUT_PP(&row32, argb);
             *row16++ = argb_to_amiga12(argb);
         }
     } else {
@@ -3003,7 +3058,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         uint16_t out_cw = argb_to_amiga12(argb);
         for (int i = 0; i < span_len; i++) {
             *row8++ = 1;
-            *row32++ = argb;
+            RASTER_PUT_PP(&row32, argb);
             *row16++ = out_cw;
         }
     }
@@ -3189,19 +3244,22 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                 uint32_t ci = level_off + (uint32_t)texel * 2;
                 if (ci + 1 < pal_size) {
                     uint16_t c12 = (uint16_t)((pal[ci] << 8) | pal[ci + 1]);
-                    row32[screen_col] = amiga12_to_argb(c12);
+                    if (g_renderer_rgb_raster_expand)
+                        row32[screen_col] = amiga12_to_argb(c12);
                     row16[screen_col] = c12;
                 } else {
                     int shade = (gray * (int)texel) / 31;
                     uint32_t c = RENDER_RGB_RASTER_PIXEL(((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade);
-                    row32[screen_col] = c;
+                    if (g_renderer_rgb_raster_expand)
+                        row32[screen_col] = c;
                     row16[screen_col] = argb_to_amiga12(c);
                 }
             } else {
                 /* No palette: use texel for shading so sprite shape is visible */
                 int shade = (gray * (int)texel) / 31;
                 uint32_t c = RENDER_RGB_RASTER_PIXEL(((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade);
-                row32[screen_col] = c;
+                if (g_renderer_rgb_raster_expand)
+                    row32[screen_col] = c;
                 row16[screen_col] = argb_to_amiga12(c);
             }
         }
@@ -3350,9 +3408,9 @@ static void renderer_draw_gun_rows(GameState *state, int row_start, int row_end)
                     if (idx == 0) continue;
 
                     uint16_t c12 = (uint16_t)((gun_pal[idx * 2u] << 8) | gun_pal[idx * 2u + 1]);
-                    uint32_t c = amiga12_to_argb(c12);
                     buf[sy * rw + sx] = 15;
-                    rgb[sy * rw + sx] = c;
+                    if (g_renderer_rgb_raster_expand)
+                        rgb[sy * rw + sx] = amiga12_to_argb(c12);
                     cw[sy * rw + sx] = c12;
                 }
             }
@@ -5063,7 +5121,8 @@ static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
             size_t i = row + (size_t)x;
             uint16_t c12 = (uint16_t)(src_cw[i] & 0x00FFu);
             dst_cw[i] = c12;
-            dst_rgb[i] = amiga12_to_argb(c12);
+            if (g_renderer_rgb_raster_expand)
+                dst_rgb[i] = amiga12_to_argb(c12);
         }
     }
 }

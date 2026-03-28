@@ -341,7 +341,14 @@ void renderer_draw_gun(GameState *state);
 /* Get pointer to the current rendered frame for display */
 const uint8_t *renderer_get_buffer(void);
 const uint32_t *renderer_get_rgb_buffer(void);
+/* Completed frame: 16-bit Amiga color words (0x0RGB in low 12 bits), same layout as cw_buffer. */
+const uint16_t *renderer_get_cw_buffer(void);
 uint32_t *renderer_get_active_rgb_target(void);
+uint16_t *renderer_get_active_cw_target(void);
+/* When zero (default), raster skips per-pixel ARGB expansion; cw_buffer is authoritative for display. */
+void renderer_set_rgb_raster_expand(int enabled);
+int renderer_get_rgb_raster_expand(void);
+uint16_t renderer_argb_to_amiga12(uint32_t argb);
 int renderer_get_width(void);
 int renderer_get_height(void);
 int renderer_get_stride(void);
