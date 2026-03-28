@@ -461,22 +461,32 @@ static int renderer_thread_worker_main(void *userdata)
         int8_t fill_screen_water = 0;
         if (active && row_start < row_end) {
             if (job_type == RENDERER_THREAD_JOB_WORLD && state) {
+                int use_local_target = ((worker->index & 1) != 0);
                 RendererThreadTarget target = { 0 };
-                target.buf = worker->local_buf;
-                target.rgb = worker->local_rgb;
-                target.cw = worker->local_cw;
-                renderer_set_thread_target(&target);
-
                 int16_t draw_row_start = row_start;
                 int16_t draw_row_end = row_end;
-                int row_halo_top = RENDERER_ROW_STRIP_HALO_MIN_TOP;
-                int row_halo_bottom = RENDERER_ROW_STRIP_HALO_MIN_BOTTOM;
-                renderer_compute_strip_halo_rows(row_start, row_end,
-                                                 &row_halo_top, &row_halo_bottom);
-                draw_row_start = (int16_t)(draw_row_start - row_halo_top);
-                draw_row_end = (int16_t)(draw_row_end + row_halo_bottom);
-                if (draw_row_start < 0) draw_row_start = 0;
-                if (draw_row_end > g_renderer.height) draw_row_end = (int16_t)g_renderer.height;
+
+                if (use_local_target &&
+                    worker->local_buf && worker->local_rgb && worker->local_cw) {
+                    target.buf = worker->local_buf;
+                    target.rgb = worker->local_rgb;
+                    target.cw = worker->local_cw;
+                    renderer_set_thread_target(&target);
+
+                    int row_halo_top = RENDERER_ROW_STRIP_HALO_MIN_TOP;
+                    int row_halo_bottom = RENDERER_ROW_STRIP_HALO_MIN_BOTTOM;
+                    renderer_compute_strip_halo_rows(row_start, row_end,
+                                                     &row_halo_top, &row_halo_bottom);
+                    draw_row_start = (int16_t)(draw_row_start - row_halo_top);
+                    draw_row_end = (int16_t)(draw_row_end + row_halo_bottom);
+                    if (draw_row_start < 0) draw_row_start = 0;
+                    if (draw_row_end > g_renderer.height) draw_row_end = (int16_t)g_renderer.height;
+                } else {
+                    /* Even worker strips render directly into the shared targets (no copy). */
+                    use_local_target = 0;
+                    renderer_set_thread_target(NULL);
+                }
+
                 renderer_draw_sky_pass_rows(sky_angpos, draw_row_start, draw_row_end);
                 renderer_draw_world_slice(state, world_zone_prepass,
                                           draw_row_start, draw_row_end,
@@ -484,7 +494,8 @@ static int renderer_thread_worker_main(void *userdata)
                 renderer_draw_gun_rows(state, row_start, row_end);
                 renderer_set_thread_target(NULL);
 
-                if (g_renderer.buffer && g_renderer.rgb_buffer && g_renderer.cw_buffer &&
+                if (use_local_target &&
+                    g_renderer.buffer && g_renderer.rgb_buffer && g_renderer.cw_buffer &&
                     worker->local_buf && worker->local_rgb && worker->local_cw) {
                     const int w = g_renderer.width;
                     int copy_rows = (int)row_end - (int)row_start;
@@ -735,6 +746,7 @@ static int renderer_dispatch_threaded_world(GameState *state,
         int width = g_renderer.width;
         int buffers_ok = 1;
         for (int i = 0; i < active_workers; i++) {
+            if ((i & 1) == 0) continue; /* Even strips: direct/no-copy path. */
             if (!renderer_ensure_worker_local_buffers(&pool->workers[i], width, height)) {
                 buffers_ok = 0;
                 break;
@@ -3149,6 +3161,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
         for (int dy = 0; dy < height; dy++) {
             int screen_row = sy + dy;
             if (screen_row < 0 || screen_row >= rh) continue;
+            if (screen_row < ctx->top_clip || screen_row > ctx->bot_clip) continue;
             /* Room band clip: do not draw above ceiling or below floor (floor covers feet). */
             if (clip_top_sy < clip_bot_sy && (screen_row < clip_top_sy || screen_row > clip_bot_sy)) continue;
 
