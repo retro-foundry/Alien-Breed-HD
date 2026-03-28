@@ -100,6 +100,8 @@ typedef struct {
 #ifndef AB3D_NO_THREADS
 #define RENDERER_MAX_THREADS 64
 #define RENDERER_ROW_STRIP_HALO 2
+/* Keep strips reasonably tall to reduce overlap/synchronization overhead. */
+#define RENDERER_MIN_ROWS_PER_WORKER 32
 
 typedef enum {
     RENDERER_THREAD_JOB_WORLD = 0,
@@ -392,16 +394,16 @@ static int renderer_thread_worker_main(void *userdata)
                 if (g_renderer.buffer && g_renderer.rgb_buffer && g_renderer.cw_buffer &&
                     worker->local_buf && worker->local_rgb && worker->local_cw) {
                     const int w = g_renderer.width;
-                    if (w > 0) {
-                        size_t row_bytes_buf = (size_t)w * sizeof(uint8_t);
-                        size_t row_bytes_rgb = (size_t)w * sizeof(uint32_t);
-                        size_t row_bytes_cw = (size_t)w * sizeof(uint16_t);
-                        for (int y = row_start; y < row_end; y++) {
-                            size_t row = (size_t)y * (size_t)w;
-                            memcpy(g_renderer.buffer + row, worker->local_buf + row, row_bytes_buf);
-                            memcpy(g_renderer.rgb_buffer + row, worker->local_rgb + row, row_bytes_rgb);
-                            memcpy(g_renderer.cw_buffer + row, worker->local_cw + row, row_bytes_cw);
-                        }
+                    int copy_rows = (int)row_end - (int)row_start;
+                    if (w > 0 && copy_rows > 0) {
+                        size_t row0 = (size_t)row_start * (size_t)w;
+                        size_t pix_count = (size_t)copy_rows * (size_t)w;
+                        memcpy(g_renderer.buffer + row0, worker->local_buf + row0,
+                               pix_count * sizeof(uint8_t));
+                        memcpy(g_renderer.rgb_buffer + row0, worker->local_rgb + row0,
+                               pix_count * sizeof(uint32_t));
+                        memcpy(g_renderer.cw_buffer + row0, worker->local_cw + row0,
+                               pix_count * sizeof(uint16_t));
                     }
                 }
             } else if (job_type == RENDERER_THREAD_JOB_WATER_TINT) {
@@ -532,6 +534,11 @@ static int renderer_prepare_worker_rows_locked(RendererThreadPool *pool, int hei
 {
     int active_workers = pool->worker_count;
     if (active_workers > height) active_workers = height;
+    {
+        int max_workers_by_rows = height / RENDERER_MIN_ROWS_PER_WORKER;
+        if (max_workers_by_rows < 1) max_workers_by_rows = 1;
+        if (active_workers > max_workers_by_rows) active_workers = max_workers_by_rows;
+    }
     if (active_workers <= 0) return 0;
 
     for (int i = 0; i < active_workers; i++) {
