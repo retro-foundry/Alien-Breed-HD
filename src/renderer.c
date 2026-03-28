@@ -99,7 +99,11 @@ typedef struct {
 
 #ifndef AB3D_NO_THREADS
 #define RENDERER_MAX_THREADS 64
-#define RENDERER_ROW_STRIP_HALO 2
+#define RENDERER_ROW_STRIP_HALO_MIN_TOP 2
+#define RENDERER_ROW_STRIP_HALO_MIN_BOTTOM 2
+/* Extra guard rows to reduce occasional strip-boundary artifacts. */
+#define RENDERER_ROW_STRIP_HALO_WATER_TOP_EXTRA 1
+#define RENDERER_ROW_STRIP_HALO_WATER_BOTTOM_EXTRA 2
 /* Keep strips reasonably tall to reduce overlap/synchronization overhead. */
 #define RENDERER_MIN_ROWS_PER_WORKER 32
 
@@ -331,6 +335,60 @@ static int renderer_ensure_worker_local_buffers(RendererThreadWorker *worker, in
     return 1;
 }
 
+/* Estimate max vertical water refraction span in rows for current frame height.
+ * Mirrors textured-water offset math with conservative bounds:
+ *   - minimum distance clamp (16)
+ *   - maximum sine magnitude
+ *   - +2 row base offset
+ * Callers add per-side minimums/safety margins. */
+static int renderer_estimate_max_water_halo_rows(void)
+{
+    const int32_t dist_min = 16;
+    const int32_t den = dist_min + 300;
+    const int32_t sine_abs_max = 32768;
+    int32_t refr_y_off_fp = 0;
+
+    if (den > 0) {
+        refr_y_off_fp = (int32_t)(((int64_t)sine_abs_max << 8) / ((int64_t)den << 6));
+    }
+    refr_y_off_fp += (2 << 8);
+
+    if (g_renderer.height != 80) {
+        refr_y_off_fp = (int32_t)(((int64_t)refr_y_off_fp * g_renderer.height) / 80);
+    }
+
+    /* ceil from 8.8 fixed-point rows */
+    int rows = (int)((refr_y_off_fp + 255) >> 8);
+    if (rows < 0) rows = 0;
+    return rows;
+}
+
+/* Per-strip halo sizing:
+ *  - keep a 2-row base halo on top+bottom
+ *  - apply larger halo only to directions water can sample:
+ *      rows above horizon sample upward
+ *      rows below horizon sample downward */
+static void renderer_compute_strip_halo_rows(int16_t row_start, int16_t row_end,
+                                             int *out_top_halo, int *out_bottom_halo)
+{
+    int top = RENDERER_ROW_STRIP_HALO_MIN_TOP;
+    int bottom = RENDERER_ROW_STRIP_HALO_MIN_BOTTOM;
+    int horizon = g_renderer.height / 2;
+    int water_halo = renderer_estimate_max_water_halo_rows();
+
+    if (row_start < horizon) {
+        int need = water_halo + RENDERER_ROW_STRIP_HALO_WATER_TOP_EXTRA;
+        if (need > top) top = need;
+    }
+    if (row_end > horizon) {
+        int need = water_halo + RENDERER_ROW_STRIP_HALO_WATER_BOTTOM_EXTRA;
+        if (need > bottom) bottom = need;
+    }
+
+    if (out_top_halo) *out_top_halo = top;
+    if (out_bottom_halo) *out_bottom_halo = bottom;
+}
+
 static int renderer_thread_worker_main(void *userdata)
 {
     RendererThreadWorker *worker = (RendererThreadWorker*)userdata;
@@ -378,11 +436,12 @@ static int renderer_thread_worker_main(void *userdata)
 
                 int16_t draw_row_start = row_start;
                 int16_t draw_row_end = row_end;
-                int strip_rows = (int)row_end - (int)row_start;
-                if (strip_rows < 0) strip_rows = 0;
-                int row_halo = strip_rows + RENDERER_ROW_STRIP_HALO;
-                draw_row_start = (int16_t)(draw_row_start - row_halo);
-                draw_row_end = (int16_t)(draw_row_end + row_halo);
+                int row_halo_top = RENDERER_ROW_STRIP_HALO_MIN_TOP;
+                int row_halo_bottom = RENDERER_ROW_STRIP_HALO_MIN_BOTTOM;
+                renderer_compute_strip_halo_rows(row_start, row_end,
+                                                 &row_halo_top, &row_halo_bottom);
+                draw_row_start = (int16_t)(draw_row_start - row_halo_top);
+                draw_row_end = (int16_t)(draw_row_end + row_halo_bottom);
                 if (draw_row_start < 0) draw_row_start = 0;
                 if (draw_row_end > g_renderer.height) draw_row_end = (int16_t)g_renderer.height;
                 renderer_draw_sky_pass_rows(sky_angpos, draw_row_start, draw_row_end);
@@ -2494,7 +2553,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             *p32++ = span_argb[texel];
             *p16++ = span_cw[texel];
         }
-        floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
+        /* Water: keep top/bottom strip overlap, but skip left/right span halo. */
         return;
     }
 
