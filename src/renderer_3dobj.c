@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
+#include <SDL.h>
 #include "logging.h"
 #define printf ab3d_log_printf
 
@@ -37,12 +38,6 @@ static const uint8_t *g_poly_tex_maps = NULL;
 static size_t         g_poly_tex_maps_size = 0;
 static const uint8_t *g_poly_tex_pal = NULL;
 static size_t         g_poly_tex_pal_size = 0;
-static int32_t       *g_poly_obj_depth = NULL;
-static size_t         g_poly_obj_depth_cap = 0;
-/* Generation counter: increment per object instead of clearing the depth buffer.
- * A depth entry is only valid when its stamp matches g_depth_gen. */
-static uint32_t      *g_poly_obj_depth_gen = NULL;
-static uint32_t       g_depth_gen = 0;
 /* Default in PC port: animated object frame enabled (can be forced static via CLI). */
 static int            g_poly_use_object_frame = 1;
 
@@ -188,9 +183,19 @@ typedef struct { int32_t x, y; int16_t z; } BoxRot;
 typedef struct { int32_t x, y, z; int16_t vb; } ObjVertex;
 typedef struct { int32_t x, y, z; int32_t u, v; int16_t vb; } PolyVertex;
 
-static BoxRot    s_boxrot[MAX_POLY_POINTS];
-static int16_t   s_boxbrights[MAX_POLY_POINTS];
-static ObjVertex s_world[MAX_POLY_POINTS];
+typedef struct {
+    BoxRot boxrot[MAX_POLY_POINTS];
+    int16_t boxbrights[MAX_POLY_POINTS];
+    ObjVertex world[MAX_POLY_POINTS];
+    int32_t *depth;
+    uint32_t *depth_gen;
+    size_t depth_cap;
+    uint32_t generation;
+} PolyThreadContext;
+
+static SDL_TLSID g_poly_thread_tls_id = 0;
+static int g_poly_thread_tls_ready = 0;
+static SDL_SpinLock g_poly_thread_tls_lock = 0;
 
 /* -----------------------------------------------------------------------
  * Polygon scanline rasteriser
@@ -217,24 +222,59 @@ static void draw_textured_polygon(const int *sx, const int *sy,
                                   int n, uint16_t tex_map_word, int shade_level,
                                   const int16_t *shade_values,
                                   int use_gouraud, int use_holes,
+                                  int32_t *depth_buf, uint32_t *depth_gen_buf, uint32_t depth_gen_tag,
                                   int clip_left, int clip_right,
                                   int clip_top, int clip_bot);
-static int ensure_poly_depth_buffer(size_t pixels);
+static int ensure_poly_depth_buffer(PolyThreadContext *ctx, size_t pixels);
+static PolyThreadContext *poly_thread_context_get(void);
+static void poly_thread_context_destroy(void *userdata);
 
-static int s_span_min[POLY_MAX_HEIGHT];
-static int s_span_max[POLY_MAX_HEIGHT];
+static void poly_thread_context_destroy(void *userdata)
+{
+    PolyThreadContext *ctx = (PolyThreadContext*)userdata;
+    if (!ctx) return;
+    free(ctx->depth);
+    free(ctx->depth_gen);
+    free(ctx);
+}
+
+static PolyThreadContext *poly_thread_context_get(void)
+{
+    if (!g_poly_thread_tls_ready) {
+        SDL_AtomicLock(&g_poly_thread_tls_lock);
+        if (!g_poly_thread_tls_ready) {
+            g_poly_thread_tls_id = SDL_TLSCreate();
+            g_poly_thread_tls_ready = 1;
+        }
+        SDL_AtomicUnlock(&g_poly_thread_tls_lock);
+    }
+
+    if (g_poly_thread_tls_id == 0) return NULL;
+
+    PolyThreadContext *ctx = (PolyThreadContext*)SDL_TLSGet(g_poly_thread_tls_id);
+    if (!ctx) {
+        ctx = (PolyThreadContext*)calloc(1, sizeof(*ctx));
+        if (!ctx) return NULL;
+        if (SDL_TLSSet(g_poly_thread_tls_id, ctx, poly_thread_context_destroy) != 0) {
+            free(ctx);
+            return NULL;
+        }
+    }
+    return ctx;
+}
 
 static void trace_edge(int x0, int y0, int x1, int y1,
-                       int y_base, int y_limit)
+                       int y_base, int y_limit,
+                       int *span_min, int *span_max)
 {
     if (y0 == y1) {
         /* Horizontal edge – update span at that row */
         if (y0 < y_base || y0 > y_limit) return;
         int idx = y0 - y_base;
-        if (x0 < s_span_min[idx]) s_span_min[idx] = x0;
-        if (x0 > s_span_max[idx]) s_span_max[idx] = x0;
-        if (x1 < s_span_min[idx]) s_span_min[idx] = x1;
-        if (x1 > s_span_max[idx]) s_span_max[idx] = x1;
+        if (x0 < span_min[idx]) span_min[idx] = x0;
+        if (x0 > span_max[idx]) span_max[idx] = x0;
+        if (x1 < span_min[idx]) span_min[idx] = x1;
+        if (x1 > span_max[idx]) span_max[idx] = x1;
         return;
     }
     if (y0 > y1) {
@@ -248,8 +288,8 @@ static void trace_edge(int x0, int y0, int x1, int y1,
     for (int y = sy; y <= ey; y++) {
         int x = x0 + (dy > 0 ? ((y - y0) * dx) / dy : 0);
         int idx = y - y_base;
-        if (x < s_span_min[idx]) s_span_min[idx] = x;
-        if (x > s_span_max[idx]) s_span_max[idx] = x;
+        if (x < span_min[idx]) span_min[idx] = x;
+        if (x > span_max[idx]) span_max[idx] = x;
     }
 }
 
@@ -258,7 +298,8 @@ static void draw_filled_polygon(const int *sx, const int *sy, int n,
                                 int clip_left, int clip_right,
                                 int clip_top, int clip_bot)
 {
-    if (n < 3 || !g_renderer.rgb_buffer) return;
+    uint32_t *rgb = renderer_get_active_rgb_target();
+    if (n < 3 || !rgb) return;
 
     int min_y = sy[0], max_y = sy[0];
     for (int i = 1; i < n; i++) {
@@ -273,20 +314,21 @@ static void draw_filled_polygon(const int *sx, const int *sy, int n,
     if (range > POLY_MAX_HEIGHT) range = POLY_MAX_HEIGHT;
     max_y = min_y + range - 1;
 
+    int span_min[POLY_MAX_HEIGHT];
+    int span_max[POLY_MAX_HEIGHT];
     for (int i = 0; i < range; i++) {
-        s_span_min[i] = clip_right + 1;
-        s_span_max[i] = clip_left  - 1;
+        span_min[i] = clip_right + 1;
+        span_max[i] = clip_left  - 1;
     }
     for (int i = 0; i < n; i++) {
         trace_edge(sx[i], sy[i], sx[(i + 1) % n], sy[(i + 1) % n],
-                   min_y, max_y);
+                   min_y, max_y, span_min, span_max);
     }
 
     int W = g_renderer.width;
-    uint32_t *rgb = renderer_get_active_rgb_target();
     for (int y = min_y; y <= max_y; y++) {
-        int x0 = s_span_min[y - min_y];
-        int x1 = s_span_max[y - min_y];
+        int x0 = span_min[y - min_y];
+        int x1 = span_max[y - min_y];
         if (x0 < clip_left)  x0 = clip_left;
         if (x1 > clip_right) x1 = clip_right;
         if (x0 > x1) continue;
@@ -384,6 +426,11 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
     int frame_byte_off = (int)vo->frame_off[frame_num];
     if (frame_byte_off + vo->num_points * 6 > (int)vo->size) return;
     const uint8_t *pts = vo->data + frame_byte_off;
+    PolyThreadContext *thread_ctx = poly_thread_context_get();
+    if (!thread_ctx) return;
+    BoxRot *boxrot = thread_ctx->boxrot;
+    int16_t *boxbrights = thread_ctx->boxbrights;
+    ObjVertex *world = thread_ctx->world;
 
     /* ---- 5. rotobj: rotate all vertices ------------------------------ */
     /* Amiga doubles each raw coordinate before muls (add.w d,d), then:
@@ -401,15 +448,15 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
         int32_t ry = (int32_t)ly << 8;
         int16_t rz = (int16_t)(((int32_t)lx * cos_v + (int32_t)lz * sin_v) >> 14);
 
-        s_boxrot[i].x = rx;
-        s_boxrot[i].y = ry;
-        s_boxrot[i].z = rz;
+        boxrot[i].x = rx;
+        boxrot[i].y = ry;
+        boxrot[i].z = rz;
 
         /* Per-vertex brightness: (rz + 20) / 4, clamped 0..13 (Amiga add.w #20 / asr.w #2) */
         int vb = ((int)rz + 20) >> 2;
         if (vb < 0)  vb = 0;
         if (vb > 13) vb = 13;
-        s_boxbrights[i] = (int16_t)vb;
+        boxbrights[i] = (int16_t)vb;
     }
 
     /* ---- 6. convtoscr prep: translate vertices to world/view --------- */
@@ -426,24 +473,24 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
     int half_h = H / 2;
     int32_t proj_ys = r->proj_y_scale;
     size_t pix_count = (size_t)W * (size_t)H;
-    if (!ensure_poly_depth_buffer(pix_count)) return;
+    if (!ensure_poly_depth_buffer(thread_ctx, pix_count)) return;
     /* Advance generation stamp instead of clearing all W*H entries.
      * On overflow back to zero, reset the stamp array so no stale entries match. */
-    g_depth_gen++;
-    if (g_depth_gen == 0) {
-        g_depth_gen = 1;
-        if (g_poly_obj_depth_gen)
-            memset(g_poly_obj_depth_gen, 0, pix_count * sizeof(uint32_t));
+    thread_ctx->generation++;
+    if (thread_ctx->generation == 0) {
+        thread_ctx->generation = 1;
+        if (thread_ctx->depth_gen)
+            memset(thread_ctx->depth_gen, 0, pix_count * sizeof(uint32_t));
     }
 
     for (int i = 0; i < np; i++) {
-        int32_t worldX = s_boxrot[i].x + xpos_mid;
-        int32_t worldY = s_boxrot[i].y + y_adjust;
-        int32_t worldZ = (int32_t)s_boxrot[i].z + zpos_mid;
-        s_world[i].x = worldX;
-        s_world[i].y = worldY;
-        s_world[i].z = worldZ;
-        s_world[i].vb = s_boxbrights[i];
+        int32_t worldX = boxrot[i].x + xpos_mid;
+        int32_t worldY = boxrot[i].y + y_adjust;
+        int32_t worldZ = (int32_t)boxrot[i].z + zpos_mid;
+        world[i].x = worldX;
+        world[i].y = worldY;
+        world[i].z = worldZ;
+        world[i].vb = boxbrights[i];
     }
 
     /* ---- 7. PutinParts: depth-sort polygon parts --------------------- */
@@ -469,9 +516,9 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
          *   key = (x>>7)^2 + (y>>7)^2 + z^2
          * where x/y/z are from boxrot[] (object space after facing/view rotation,
          * before object translation). */
-        int16_t sx = (int16_t)(s_boxrot[sort_pt].x >> 7);
-        int16_t sy = (int16_t)(s_boxrot[sort_pt].y >> 7);
-        int16_t sz = (int16_t)s_boxrot[sort_pt].z;
+        int16_t sx = (int16_t)(boxrot[sort_pt].x >> 7);
+        int16_t sy = (int16_t)(boxrot[sort_pt].y >> 7);
+        int16_t sz = (int16_t)boxrot[sort_pt].z;
         int32_t key = (int32_t)sx * (int32_t)sx +
                       (int32_t)sy * (int32_t)sy +
                       (int32_t)sz * (int32_t)sz;
@@ -551,7 +598,7 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
             PolyVertex in_poly[MAX_CLIP_VERTS];
             for (int v = 0; v < num_verts; v++) {
                 const uint8_t *vrec = poly_start + 4 + v * 4;
-                const ObjVertex *sv = &s_world[vi[v]];
+                const ObjVertex *sv = &world[vi[v]];
                 in_poly[v].x = sv->x;
                 in_poly[v].y = sv->y;
                 in_poly[v].z = sv->z;
@@ -606,6 +653,7 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
                 draw_textured_polygon(sx, sy, sz, su, svt, clipped_n,
                                       tex_map, shade_level,
                                       shade_values, use_gouraud, use_holes,
+                                      thread_ctx->depth, thread_ctx->depth_gen, thread_ctx->generation,
                                       clip_l, clip_r, clip_t, clip_b);
             } else {
                 uint32_t color = make_poly_color(vect_num, tex_map, shade_level);
@@ -663,10 +711,12 @@ static void draw_textured_triangle(const int *sx, const int *sy,
                                    const int16_t *shade_values,
                                    int use_gouraud, int use_holes,
                                    uint16_t tex_map_word, int shade_level,
+                                   int32_t *depth_buf, uint32_t *depth_gen_buf, uint32_t depth_gen_tag,
                                    int clip_left, int clip_right,
                                    int clip_top, int clip_bot)
 {
-    if (!g_renderer.rgb_buffer) return;
+    uint32_t *rgb = renderer_get_active_rgb_target();
+    if (!rgb) return;
 
     int min_x = sx[0], max_x = sx[0];
     int min_y = sy[0], max_y = sy[0];
@@ -690,7 +740,6 @@ static void draw_textured_triangle(const int *sx, const int *sy,
 
     double inv_area = 1.0 / area;
     int W = g_renderer.width;
-    uint32_t *rgb = renderer_get_active_rgb_target();
 
     for (int y = min_y; y <= max_y; y++) {
         uint32_t *row = rgb + (size_t)y * W;
@@ -704,9 +753,9 @@ static void draw_textured_triangle(const int *sx, const int *sy,
 
             int32_t zf = (int32_t)(w0 * (double)sz[0] + w1 * (double)sz[1] + w2 * (double)sz[2]);
             size_t didx = (size_t)y * (size_t)W + (size_t)x;
-            if (g_poly_obj_depth && g_poly_obj_depth_gen &&
-                g_poly_obj_depth_gen[didx] == g_depth_gen &&
-                zf >= g_poly_obj_depth[didx]) continue;
+            if (depth_buf && depth_gen_buf &&
+                depth_gen_buf[didx] == depth_gen_tag &&
+                zf >= depth_buf[didx]) continue;
             int32_t uf = (int32_t)(w0 * (double)u[0] + w1 * (double)u[1] + w2 * (double)u[2]);
             int32_t vf = (int32_t)(w0 * (double)v[0] + w1 * (double)v[1] + w2 * (double)v[2]);
             uint8_t pal_idx = sample_poly_texel_index(tex_map_word, uf, vf);
@@ -720,9 +769,9 @@ static void draw_textured_triangle(const int *sx, const int *sy,
                 if (pixel_shade < 0) pixel_shade = 0;
                 if (pixel_shade > 14) pixel_shade = 14;
             }
-            if (g_poly_obj_depth) {
-                g_poly_obj_depth[didx] = zf;
-                if (g_poly_obj_depth_gen) g_poly_obj_depth_gen[didx] = g_depth_gen;
+            if (depth_buf) {
+                depth_buf[didx] = zf;
+                if (depth_gen_buf) depth_gen_buf[didx] = depth_gen_tag;
             }
             row[x] = sample_poly_palette(pal_idx, pixel_shade);
         }
@@ -735,6 +784,7 @@ static void draw_textured_polygon(const int *sx, const int *sy,
                                   int n, uint16_t tex_map_word, int shade_level,
                                   const int16_t *shade_values,
                                   int use_gouraud, int use_holes,
+                                  int32_t *depth_buf, uint32_t *depth_gen_buf, uint32_t depth_gen_tag,
                                   int clip_left, int clip_right,
                                   int clip_top, int clip_bot)
 {
@@ -765,25 +815,29 @@ static void draw_textured_polygon(const int *sx, const int *sy,
 
         draw_textured_triangle(tsx, tsy, tz, tu, tv,
                                tshade, use_gouraud, use_holes,
-                               tex_map_word, shade_level,
+                               tex_map_word, shade_level, depth_buf, depth_gen_buf, depth_gen_tag,
                                clip_left, clip_right, clip_top, clip_bot);
     }
 }
 
-static int ensure_poly_depth_buffer(size_t pixels)
+static int ensure_poly_depth_buffer(PolyThreadContext *ctx, size_t pixels)
 {
-    if (pixels == 0) return 0;
-    if (pixels > g_poly_obj_depth_cap) {
-        int32_t *new_buf = (int32_t *)realloc(g_poly_obj_depth, pixels * sizeof(int32_t));
+    if (!ctx || pixels == 0) return 0;
+    if (pixels > ctx->depth_cap) {
+        size_t old_cap = ctx->depth_cap;
+        int32_t *new_buf = (int32_t *)realloc(ctx->depth, pixels * sizeof(int32_t));
         if (!new_buf) return 0;
-        uint32_t *new_gen = (uint32_t *)realloc(g_poly_obj_depth_gen, pixels * sizeof(uint32_t));
-        if (!new_gen) { free(new_buf); return 0; }
-        /* Zero new stamp entries so they never accidentally match g_depth_gen. */
-        memset(new_gen + g_poly_obj_depth_cap, 0,
-               (pixels - g_poly_obj_depth_cap) * sizeof(uint32_t));
-        g_poly_obj_depth = new_buf;
-        g_poly_obj_depth_gen = new_gen;
-        g_poly_obj_depth_cap = pixels;
+        uint32_t *new_gen = (uint32_t *)realloc(ctx->depth_gen, pixels * sizeof(uint32_t));
+        if (!new_gen) {
+            /* realloc may have moved depth; keep the valid pointer and fail cleanly. */
+            ctx->depth = new_buf;
+            return 0;
+        }
+        /* Zero new stamp entries so they never accidentally match current generation. */
+        memset(new_gen + old_cap, 0, (pixels - old_cap) * sizeof(uint32_t));
+        ctx->depth = new_buf;
+        ctx->depth_gen = new_gen;
+        ctx->depth_cap = pixels;
     }
     return 1;
 }
