@@ -2448,21 +2448,24 @@ static void renderer_draw_wall_ctx(RenderSliceContext *ctx,
     int64_t inv_z2_fp = INVZ_ONE / cz2;
     int64_t tex_over_z1_fp = (int64_t)ct1 * INVZ_ONE / cz1;
     int64_t tex_over_z2_fp = (int64_t)ct2 * INVZ_ONE / cz2;
+    int64_t inv_z_delta_fp = inv_z2_fp - inv_z1_fp;
+    int64_t tex_over_z_delta_fp = tex_over_z2_fp - tex_over_z1_fp;
+    int32_t bright_delta = (int32_t)right_brightness - (int32_t)left_brightness;
 
     for (int screen_x = draw_start; screen_x <= draw_end; screen_x++) {
-        /* t linear in screen x, 0..65535 (stable, no sensitive denominator) */
-        int64_t t_fp = (int64_t)(screen_x - scr_x1) * 65536LL / span;
-        if (t_fp < 0) t_fp = 0;
-        if (t_fp > 65535) t_fp = 65535;
+        /* Interpolate directly from full-span numerator to avoid 16-bit t quantization.
+         * This removes angle-dependent texcoord jitter when wall spans get very large. */
+        int64_t col_num = (int64_t)(screen_x - scr_x1);
+        if (col_num < 0) col_num = 0;
+        if (col_num > span) col_num = span;
 
-        int64_t inv_z_fp = inv_z1_fp + ((inv_z2_fp - inv_z1_fp) * t_fp) / 65536;
+        int64_t inv_z_fp = inv_z1_fp + (inv_z_delta_fp * col_num) / span;
         if (inv_z_fp <= 0) inv_z_fp = 1;
         /* Rounded reciprocal: closer to true z than INVZ_ONE/inv_z truncation alone. */
         int32_t col_z = (int32_t)((INVZ_ONE + inv_z_fp / 2) / inv_z_fp);
         if (col_z < 1) col_z = 1;
 
-        int32_t wall_bright = left_brightness +
-            (int32_t)(((int64_t)(right_brightness - left_brightness) * t_fp) / 65536LL);
+        int32_t wall_bright = left_brightness + (int32_t)((int64_t)bright_delta * col_num / span);
         int amiga_d6 = (col_z >> 7) + (wall_bright * 2);
         if (amiga_d6 < 0) amiga_d6 = 0;
         if (amiga_d6 > 64) amiga_d6 = 64;
@@ -2473,9 +2476,9 @@ static void renderer_draw_wall_ctx(RenderSliceContext *ctx,
         int ext = 0;
         int y_top_draw = y_top - ext;
 
-        /* tex = (tex/z) * z in the same 8.24 domain, then convert to integer tex units. */
-        int64_t tex_over_z_fp = tex_over_z1_fp + ((tex_over_z2_fp - tex_over_z1_fp) * t_fp) / 65536;
-        int64_t tex_t_fp64 = tex_over_z_fp * (int64_t)col_z; /* 8.24 */
+        /* tex = (tex/z) / (1/z). Keep full 8.24 precision to reduce angle jitter. */
+        int64_t tex_over_z_fp = tex_over_z1_fp + (tex_over_z_delta_fp * col_num) / span;
+        int64_t tex_t_fp64 = (tex_over_z_fp * INVZ_ONE) / inv_z_fp; /* 8.24 */
         int32_t tex_t_int = (int32_t)(tex_t_fp64 >> 24);
         int tex_col = ((int32_t)(tex_t_int & horand)) + fromtile;
 
