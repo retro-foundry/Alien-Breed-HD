@@ -189,8 +189,8 @@ typedef struct {
     /* Column clipping */
     ColumnClip clip;
 
-    /* Unused (Amiga uses no depth buffer; painter's + stream order only). */
-    int16_t *depth_buffer;
+    /* Per-pixel scene depth buffer (view-space Z; lower = nearer). */
+    int32_t *depth_buffer;
 
     /* Zone rendering state */
     int16_t left_clip;
@@ -328,7 +328,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
                               int16_t scaleval, int is_water,
                               int16_t water_rows_left);
 void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
-                          int16_t width, int16_t height, int16_t z,
+                          int16_t width, int16_t height, int32_t z,
                           const uint8_t *wad, size_t wad_size,
                           const uint8_t *ptr_data, size_t ptr_size,
                           const uint8_t *pal, size_t pal_size,
@@ -345,6 +345,7 @@ const uint32_t *renderer_get_rgb_buffer(void);
 const uint16_t *renderer_get_cw_buffer(void);
 uint32_t *renderer_get_active_rgb_target(void);
 uint16_t *renderer_get_active_cw_target(void);
+int32_t *renderer_get_active_depth_target(void);
 /* When zero (default), raster skips per-pixel ARGB expansion; cw_buffer is authoritative for display. */
 void renderer_set_rgb_raster_expand(int enabled);
 int renderer_get_rgb_raster_expand(void);

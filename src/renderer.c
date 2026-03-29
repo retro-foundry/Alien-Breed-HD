@@ -106,6 +106,34 @@ static inline int renderer_sprite_scale_x(void)
 }
 
 #define RENDERER_MAX_ZONE_ORDER 256
+#define RENDERER_DEPTH_FAR 0x3FFFFFFF
+
+typedef enum {
+    RENDER_PASS_FULL = 0,
+    RENDER_PASS_OPAQUE_ONLY = 1,
+    RENDER_PASS_OBJECTS_ONLY = 2
+} RendererPassType;
+
+typedef struct {
+    int16_t y;
+    int16_t x_left;
+    int16_t x_right;
+    int32_t floor_height;
+    const uint8_t *texture;
+    const uint8_t *floor_pal;
+    int16_t brightness;
+    int16_t left_brightness;
+    int16_t right_brightness;
+    int16_t use_gouraud;
+    int16_t scaleval;
+    int16_t water_rows_left;
+} DeferredWaterSpan;
+
+typedef struct {
+    DeferredWaterSpan *items;
+    int count;
+    int capacity;
+} DeferredWaterSpanList;
 
 typedef struct {
     int count;
@@ -118,8 +146,11 @@ typedef struct {
 static void renderer_draw_world_slice(GameState *state,
                                       const RendererWorldZonePrepass *zone_prepass,
                                       int16_t row_start, int16_t row_end,
-                                      uint32_t frame_idx, int trace_clip,
+                                      uint32_t frame_idx, int trace_clip, RendererPassType pass_type,
+                                      DeferredWaterSpanList *water_spans,
                                       int8_t *out_fill_screen_water);
+static void renderer_draw_water_spans_slice(const DeferredWaterSpanList *list,
+                                            int16_t row_start, int16_t row_end);
 static void renderer_draw_gun_rows(GameState *state, int row_start, int row_end);
 static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
                                                   int16_t row_start, int16_t row_end,
@@ -133,6 +164,7 @@ typedef struct {
     uint8_t *buf;
     uint32_t *rgb;
     uint16_t *cw;
+    int32_t *depth;
 } RendererThreadTarget;
 
 #ifndef AB3D_NO_THREADS
@@ -149,7 +181,8 @@ typedef struct {
 
 typedef enum {
     RENDERER_THREAD_JOB_WORLD = 0,
-    RENDERER_THREAD_JOB_WATER_TINT = 1
+    RENDERER_THREAD_JOB_WATER_TINT = 1,
+    RENDERER_THREAD_JOB_DEFERRED = 2
 } RendererThreadJobType;
 
 typedef struct {
@@ -161,6 +194,8 @@ typedef struct {
     uint8_t *local_buf;
     uint32_t *local_rgb;
     uint16_t *local_cw;
+    int32_t *local_depth;
+    DeferredWaterSpanList water_spans;
     int local_w;
     int local_h;
 } RendererThreadWorker;
@@ -261,6 +296,8 @@ typedef struct {
     uint32_t floor_span_argb_cache[FLOOR_PAL_LEVEL_COUNT][256];
     uint16_t floor_span_cw_cache[FLOOR_PAL_LEVEL_COUNT][256];
     int update_column_clip;
+    RendererPassType pass_type;
+    DeferredWaterSpanList *deferred_water_spans;
 } RenderSliceContext;
 
 static void render_slice_context_reset(RenderSliceContext *ctx,
@@ -287,6 +324,58 @@ static void render_slice_context_init(RenderSliceContext *ctx,
     render_slice_context_reset(ctx, left, right, top, bot);
     ctx->wall_cache_block_off = 0xFFFFu;
     ctx->update_column_clip = 1;
+    ctx->pass_type = RENDER_PASS_FULL;
+    ctx->deferred_water_spans = NULL;
+}
+
+static void deferred_water_span_list_reset(DeferredWaterSpanList *list)
+{
+    if (!list) return;
+    list->count = 0;
+}
+
+static void deferred_water_span_list_free(DeferredWaterSpanList *list)
+{
+    if (!list) return;
+    free(list->items);
+    list->items = NULL;
+    list->count = 0;
+    list->capacity = 0;
+}
+
+static int deferred_water_span_list_append(DeferredWaterSpanList *list,
+                                           const DeferredWaterSpan *span)
+{
+    if (!list || !span) return 0;
+    if (list->count >= list->capacity) {
+        int new_cap = (list->capacity > 0) ? (list->capacity * 2) : 256;
+        DeferredWaterSpan *new_items =
+            (DeferredWaterSpan*)realloc(list->items, (size_t)new_cap * sizeof(*new_items));
+        if (!new_items) return 0;
+        list->items = new_items;
+        list->capacity = new_cap;
+    }
+    list->items[list->count++] = *span;
+    return 1;
+}
+
+static void depth_clear_rows(int32_t *depth, int width, int16_t row_start, int16_t row_end)
+{
+    if (!depth || width <= 0) return;
+    if (row_start < 0) row_start = 0;
+    if (row_end < row_start) row_end = row_start;
+    for (int16_t y = row_start; y < row_end; y++) {
+        int32_t *row = depth + (size_t)y * (size_t)width;
+        for (int x = 0; x < width; x++) row[x] = RENDERER_DEPTH_FAR;
+    }
+}
+
+static inline int depth_test_and_store(int32_t *depth, size_t idx, int32_t z)
+{
+    if (!depth) return 1;
+    if (z >= depth[idx]) return 0;
+    depth[idx] = z;
+    return 1;
 }
 
 static inline RendererThreadTarget *renderer_get_thread_target(void)
@@ -328,6 +417,12 @@ static inline uint16_t *renderer_active_cw(void)
     return (t && t->cw) ? t->cw : g_renderer.cw_buffer;
 }
 
+static inline int32_t *renderer_active_depth(void)
+{
+    RendererThreadTarget *t = renderer_get_thread_target();
+    return (t && t->depth) ? t->depth : g_renderer.depth_buffer;
+}
+
 uint32_t *renderer_get_active_rgb_target(void)
 {
     return renderer_active_rgb();
@@ -336,6 +431,11 @@ uint32_t *renderer_get_active_rgb_target(void)
 uint16_t *renderer_get_active_cw_target(void)
 {
     return renderer_active_cw();
+}
+
+int32_t *renderer_get_active_depth_target(void)
+{
+    return renderer_active_depth();
 }
 
 void renderer_set_rgb_raster_expand(int enabled)
@@ -362,9 +462,11 @@ static void renderer_release_worker_local_buffers(RendererThreadWorker *worker)
     free(worker->local_buf);
     free(worker->local_rgb);
     free(worker->local_cw);
+    free(worker->local_depth);
     worker->local_buf = NULL;
     worker->local_rgb = NULL;
     worker->local_cw = NULL;
+    worker->local_depth = NULL;
     worker->local_w = 0;
     worker->local_h = 0;
 }
@@ -372,7 +474,7 @@ static void renderer_release_worker_local_buffers(RendererThreadWorker *worker)
 static int renderer_ensure_worker_local_buffers(RendererThreadWorker *worker, int w, int h)
 {
     if (!worker || w <= 0 || h <= 0) return 0;
-    if (worker->local_buf && worker->local_rgb && worker->local_cw &&
+    if (worker->local_buf && worker->local_rgb && worker->local_cw && worker->local_depth &&
         worker->local_w == w && worker->local_h == h) {
         return 1;
     }
@@ -383,7 +485,8 @@ static int renderer_ensure_worker_local_buffers(RendererThreadWorker *worker, in
     worker->local_buf = (uint8_t*)malloc(count * sizeof(uint8_t));
     worker->local_rgb = (uint32_t*)malloc(count * sizeof(uint32_t));
     worker->local_cw = (uint16_t*)malloc(count * sizeof(uint16_t));
-    if (!worker->local_buf || !worker->local_rgb || !worker->local_cw) {
+    worker->local_depth = (int32_t*)malloc(count * sizeof(int32_t));
+    if (!worker->local_buf || !worker->local_rgb || !worker->local_cw || !worker->local_depth) {
         renderer_release_worker_local_buffers(worker);
         return 0;
     }
@@ -393,55 +496,13 @@ static int renderer_ensure_worker_local_buffers(RendererThreadWorker *worker, in
     return 1;
 }
 
-/* Estimate max vertical water refraction span in rows for current frame height.
- * Mirrors textured-water offset math with conservative bounds:
- *   - minimum distance clamp (16)
- *   - maximum sine magnitude
- *   - +2 row base offset
- * Callers add per-side minimums/safety margins. */
-static int renderer_estimate_max_water_halo_rows(void)
-{
-    const int32_t dist_min = 16;
-    const int32_t den = dist_min + 300;
-    const int32_t sine_abs_max = 32768;
-    int32_t refr_y_off_fp = 0;
-
-    if (den > 0) {
-        refr_y_off_fp = (int32_t)(((int64_t)sine_abs_max << 8) / ((int64_t)den << 6));
-    }
-    refr_y_off_fp += (2 << 8);
-
-    if (g_renderer.height != 80) {
-        refr_y_off_fp = (int32_t)(((int64_t)refr_y_off_fp * g_renderer.height) / 80);
-    }
-
-    /* ceil from 8.8 fixed-point rows */
-    int rows = (int)((refr_y_off_fp + 255) >> 8);
-    if (rows < 0) rows = 0;
-    return rows;
-}
-
-/* Per-strip halo sizing:
- *  - keep a 2-row base halo on top+bottom
- *  - apply larger halo only to directions water can sample:
- *      rows above horizon sample upward
- *      rows below horizon sample downward */
 static void renderer_compute_strip_halo_rows(int16_t row_start, int16_t row_end,
                                              int *out_top_halo, int *out_bottom_halo)
 {
+    (void)row_start;
+    (void)row_end;
     int top = RENDERER_ROW_STRIP_HALO_MIN_TOP;
     int bottom = RENDERER_ROW_STRIP_HALO_MIN_BOTTOM;
-    int horizon = g_renderer.height / 2;
-    int water_halo = renderer_estimate_max_water_halo_rows();
-
-    if (row_start < horizon) {
-        int need = water_halo + RENDERER_ROW_STRIP_HALO_WATER_TOP_EXTRA;
-        if (need > top) top = need;
-    }
-    if (row_end > horizon) {
-        int need = water_halo + RENDERER_ROW_STRIP_HALO_WATER_BOTTOM_EXTRA;
-        if (need > bottom) bottom = need;
-    }
 
     if (out_top_halo) *out_top_halo = top;
     if (out_bottom_halo) *out_bottom_halo = bottom;
@@ -490,7 +551,9 @@ static int renderer_thread_worker_main(void *userdata)
                 target.buf = worker->local_buf;
                 target.rgb = worker->local_rgb;
                 target.cw = worker->local_cw;
+                target.depth = worker->local_depth;
                 renderer_set_thread_target(&target);
+                deferred_water_span_list_reset(&worker->water_spans);
 
                 int16_t draw_row_start = row_start;
                 int16_t draw_row_end = row_end;
@@ -502,15 +565,19 @@ static int renderer_thread_worker_main(void *userdata)
                 draw_row_end = (int16_t)(draw_row_end + row_halo_bottom);
                 if (draw_row_start < 0) draw_row_start = 0;
                 if (draw_row_end > g_renderer.height) draw_row_end = (int16_t)g_renderer.height;
+                depth_clear_rows(worker->local_depth, g_renderer.width, draw_row_start, draw_row_end);
                 renderer_draw_sky_pass_rows(sky_angpos, draw_row_start, draw_row_end);
                 renderer_draw_world_slice(state, world_zone_prepass,
                                           draw_row_start, draw_row_end,
-                                          frame_idx, trace_clip, &fill_screen_water);
-                renderer_draw_gun_rows(state, row_start, row_end);
+                                          frame_idx, trace_clip, RENDER_PASS_OPAQUE_ONLY,
+                                          &worker->water_spans,
+                                          &fill_screen_water);
                 renderer_set_thread_target(NULL);
 
                 if (g_renderer.buffer && g_renderer.rgb_buffer && g_renderer.cw_buffer &&
-                    worker->local_buf && worker->local_rgb && worker->local_cw) {
+                    g_renderer.depth_buffer &&
+                    worker->local_buf && worker->local_rgb && worker->local_cw &&
+                    worker->local_depth) {
                     const int w = g_renderer.width;
                     int copy_rows = (int)row_end - (int)row_start;
                     if (w > 0 && copy_rows > 0) {
@@ -524,6 +591,53 @@ static int renderer_thread_worker_main(void *userdata)
                         }
                         memcpy(g_renderer.cw_buffer + row0, worker->local_cw + row0,
                                pix_count * sizeof(uint16_t));
+                        memcpy(g_renderer.depth_buffer + row0, worker->local_depth + row0,
+                               pix_count * sizeof(int32_t));
+                    }
+                }
+            } else if (job_type == RENDERER_THREAD_JOB_DEFERRED && state) {
+                if (g_renderer.buffer && g_renderer.rgb_buffer && g_renderer.cw_buffer &&
+                    g_renderer.depth_buffer &&
+                    worker->local_buf && worker->local_rgb && worker->local_cw &&
+                    worker->local_depth) {
+                    const int w = g_renderer.width;
+                    const int h = g_renderer.height;
+                    size_t pix_count = (size_t)w * (size_t)h;
+                    memcpy(worker->local_buf, g_renderer.buffer, pix_count * sizeof(uint8_t));
+                    memcpy(worker->local_cw, g_renderer.cw_buffer, pix_count * sizeof(uint16_t));
+                    memcpy(worker->local_depth, g_renderer.depth_buffer, pix_count * sizeof(int32_t));
+                    if (g_renderer_rgb_raster_expand) {
+                        memcpy(worker->local_rgb, g_renderer.rgb_buffer, pix_count * sizeof(uint32_t));
+                    }
+
+                    RendererThreadTarget target = { 0 };
+                    target.buf = worker->local_buf;
+                    target.rgb = worker->local_rgb;
+                    target.cw = worker->local_cw;
+                    target.depth = worker->local_depth;
+                    renderer_set_thread_target(&target);
+                    renderer_draw_world_slice(state, world_zone_prepass,
+                                              row_start, row_end,
+                                              frame_idx, trace_clip, RENDER_PASS_OBJECTS_ONLY,
+                                              NULL,
+                                              NULL);
+                    renderer_draw_water_spans_slice(&worker->water_spans, row_start, row_end);
+                    renderer_set_thread_target(NULL);
+
+                    int copy_rows = (int)row_end - (int)row_start;
+                    if (w > 0 && h > 0 && copy_rows > 0) {
+                        size_t row0 = (size_t)row_start * (size_t)w;
+                        size_t copy_pix = (size_t)copy_rows * (size_t)w;
+                        memcpy(g_renderer.buffer + row0, worker->local_buf + row0,
+                               copy_pix * sizeof(uint8_t));
+                        memcpy(g_renderer.cw_buffer + row0, worker->local_cw + row0,
+                               copy_pix * sizeof(uint16_t));
+                        memcpy(g_renderer.depth_buffer + row0, worker->local_depth + row0,
+                               copy_pix * sizeof(int32_t));
+                        if (g_renderer_rgb_raster_expand) {
+                            memcpy(g_renderer.rgb_buffer + row0, worker->local_rgb + row0,
+                                   copy_pix * sizeof(uint32_t));
+                        }
                     }
                 }
             } else if (job_type == RENDERER_THREAD_JOB_WATER_TINT) {
@@ -563,6 +677,7 @@ static void renderer_threads_shutdown(void)
             pool->workers[i].thread = NULL;
         }
         renderer_release_worker_local_buffers(&pool->workers[i]);
+        deferred_water_span_list_free(&pool->workers[i].water_spans);
     }
 
     if (pool->cond_done) {
@@ -631,6 +746,10 @@ static void renderer_threads_init(void)
         pool->workers[i].local_buf = NULL;
         pool->workers[i].local_rgb = NULL;
         pool->workers[i].local_cw = NULL;
+        pool->workers[i].local_depth = NULL;
+        pool->workers[i].water_spans.items = NULL;
+        pool->workers[i].water_spans.count = 0;
+        pool->workers[i].water_spans.capacity = 0;
         pool->workers[i].local_w = 0;
         pool->workers[i].local_h = 0;
         pool->workers[i].thread = SDL_CreateThread(renderer_thread_worker_main,
@@ -811,6 +930,55 @@ static int renderer_dispatch_threaded_world(GameState *state,
     return 1;
 }
 
+static int renderer_dispatch_threaded_deferred(GameState *state,
+                                               const RendererWorldZonePrepass *zone_prepass,
+                                               uint32_t frame_idx, int trace_clip)
+{
+    RendererThreadPool *pool = &g_renderer_thread_pool;
+    if (!pool->initialized || pool->worker_count <= 0 || pool->cpu_count <= 1) return 0;
+    if (!state) return 0;
+    if (!zone_prepass) return 0;
+
+    int width = g_renderer.width;
+    int height = g_renderer.height;
+    if (width <= 0 || height <= 0) return 0;
+
+    SDL_LockMutex(pool->mutex);
+    int active_workers = renderer_prepare_worker_rows_locked(pool, height, 0, 0);
+    if (active_workers <= 0) {
+        SDL_UnlockMutex(pool->mutex);
+        return 0;
+    }
+    for (int i = 0; i < active_workers; i++) {
+        if (!renderer_ensure_worker_local_buffers(&pool->workers[i], width, height)) {
+            SDL_UnlockMutex(pool->mutex);
+            return 0;
+        }
+    }
+
+    pool->job_state = state;
+    pool->world_zone_prepass = zone_prepass;
+    pool->sky_angpos = 0;
+    pool->frame_idx = frame_idx;
+    pool->trace_clip = trace_clip;
+    pool->job_type = RENDERER_THREAD_JOB_DEFERRED;
+    pool->tint_fill_screen_water = 0;
+    pool->post_src_rgb = NULL;
+    pool->post_src_cw = NULL;
+    pool->post_dst_rgb = NULL;
+    pool->post_dst_cw = NULL;
+    pool->active_workers = active_workers;
+    pool->pending_workers = active_workers;
+    pool->job_generation++;
+
+    SDL_CondBroadcast(pool->cond_start);
+    while (pool->pending_workers > 0) {
+        SDL_CondWait(pool->cond_done, pool->mutex);
+    }
+    SDL_UnlockMutex(pool->mutex);
+    return 1;
+}
+
 static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
 {
     RendererThreadPool *pool = &g_renderer_thread_pool;
@@ -872,6 +1040,16 @@ static int renderer_dispatch_threaded_world(GameState *state,
     (void)frame_idx;
     (void)trace_clip;
     if (out_fill_screen_water) *out_fill_screen_water = 0;
+    return 0;
+}
+static int renderer_dispatch_threaded_deferred(GameState *state,
+                                               const RendererWorldZonePrepass *zone_prepass,
+                                               uint32_t frame_idx, int trace_clip)
+{
+    (void)state;
+    (void)zone_prepass;
+    (void)frame_idx;
+    (void)trace_clip;
     return 0;
 }
 static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
@@ -1350,7 +1528,10 @@ static void allocate_buffers(int w, int h)
     g_renderer.cw_buffer = (uint16_t*)calloc(1, cw_size);
     g_renderer.cw_back_buffer = (uint16_t*)calloc(1, cw_size);
 
-    g_renderer.depth_buffer = NULL;  /* Amiga: no depth buffer; painter's + stream order only */
+    g_renderer.depth_buffer = (int32_t*)malloc(buf_size * sizeof(int32_t));
+    if (g_renderer.depth_buffer) {
+        for (size_t i = 0; i < buf_size; i++) g_renderer.depth_buffer[i] = RENDERER_DEPTH_FAR;
+    }
 
     size_t clip_size = (size_t)w * sizeof(int16_t);
     g_renderer.clip.top = (int16_t*)calloc(1, clip_size);
@@ -1441,6 +1622,9 @@ void renderer_clear(uint8_t color)
                 for (int x = 0; x < w; x++) p[y * w + x] = 0x0EEEu;
             }
         }
+    }
+    if (g_renderer.depth_buffer) {
+        depth_clear_rows(g_renderer.depth_buffer, w, 0, (int16_t)h);
     }
 }
 
@@ -2102,6 +2286,7 @@ static void draw_wall_column(RenderSliceContext *ctx,
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
     uint16_t *cw = renderer_active_cw();
+    int32_t *depth = renderer_active_depth();
     if (!buf || !rgb || !cw) return;
     if (x < ctx->left_clip || x >= ctx->right_clip) return;
 
@@ -2199,6 +2384,7 @@ static void draw_wall_column(RenderSliceContext *ctx,
     }
 
     size_t pix = (size_t)ct * (size_t)width + (size_t)x;
+    int any_drawn = 0;
     if (texture && pal && strip_offset >= 0) {
         if (pack_mode == 0) {
             for (int y = ct; y <= cb; y++) {
@@ -2206,10 +2392,16 @@ static void draw_wall_column(RenderSliceContext *ctx,
                 uint16_t word = ((uint16_t)texture[byte_off] << 8)
                               | (uint16_t)texture[byte_off + 1];
                 uint8_t texel5 = (uint8_t)(word & 31u);
+                if (depth && !depth_test_and_store(depth, pix, col_z)) {
+                    pix += (size_t)width;
+                    tex_y += tex_step;
+                    continue;
+                }
                 buf[pix] = 2; /* tag: wall */
                 if (g_renderer_rgb_raster_expand)
                     rgb[pix] = ctx->wall_cache_argb[texel5];
                 cw[pix] = ctx->wall_cache_cw[texel5];
+                any_drawn = 1;
                 pix += (size_t)width;
                 tex_y += tex_step;
             }
@@ -2219,10 +2411,16 @@ static void draw_wall_column(RenderSliceContext *ctx,
                 uint16_t word = ((uint16_t)texture[byte_off] << 8)
                               | (uint16_t)texture[byte_off + 1];
                 uint8_t texel5 = (uint8_t)((word >> 5) & 31u);
+                if (depth && !depth_test_and_store(depth, pix, col_z)) {
+                    pix += (size_t)width;
+                    tex_y += tex_step;
+                    continue;
+                }
                 buf[pix] = 2; /* tag: wall */
                 if (g_renderer_rgb_raster_expand)
                     rgb[pix] = ctx->wall_cache_argb[texel5];
                 cw[pix] = ctx->wall_cache_cw[texel5];
+                any_drawn = 1;
                 pix += (size_t)width;
                 tex_y += tex_step;
             }
@@ -2232,10 +2430,16 @@ static void draw_wall_column(RenderSliceContext *ctx,
                 uint16_t word = ((uint16_t)texture[byte_off] << 8)
                               | (uint16_t)texture[byte_off + 1];
                 uint8_t texel5 = (uint8_t)((word >> 10) & 31u);
+                if (depth && !depth_test_and_store(depth, pix, col_z)) {
+                    pix += (size_t)width;
+                    tex_y += tex_step;
+                    continue;
+                }
                 buf[pix] = 2; /* tag: wall */
                 if (g_renderer_rgb_raster_expand)
                     rgb[pix] = ctx->wall_cache_argb[texel5];
                 cw[pix] = ctx->wall_cache_cw[texel5];
+                any_drawn = 1;
                 pix += (size_t)width;
                 tex_y += tex_step;
             }
@@ -2244,26 +2448,38 @@ static void draw_wall_column(RenderSliceContext *ctx,
         uint32_t argb0 = ctx->wall_cache_argb[0];
         uint16_t cw0 = ctx->wall_cache_cw[0];
         for (int y = ct; y <= cb; y++) {
+            if (depth && !depth_test_and_store(depth, pix, col_z)) {
+                pix += (size_t)width;
+                tex_y += tex_step;
+                continue;
+            }
             buf[pix] = 2; /* tag: wall */
             if (g_renderer_rgb_raster_expand)
                 rgb[pix] = argb0;
             cw[pix] = cw0;
+            any_drawn = 1;
             pix += (size_t)width;
             tex_y += tex_step;
         }
     } else {
         for (int y = ct; y <= cb; y++) {
+            if (depth && !depth_test_and_store(depth, pix, col_z)) {
+                pix += (size_t)width;
+                tex_y += tex_step;
+                continue;
+            }
             buf[pix] = 2; /* tag: wall */
             if (g_renderer_rgb_raster_expand)
                 rgb[pix] = fallback;
             cw[pix] = fallback_cw;
+            any_drawn = 1;
             pix += (size_t)width;
             tex_y += tex_step;
         }
     }
 
     /* Extend column by one row above/below with the edge texel colour to hide thin gaps vs floor/ceiling. */
-    {
+    if (any_drawn) {
         size_t first_pix = (size_t)ct * (size_t)width + (size_t)x;
         size_t last_pix = (size_t)cb * (size_t)width + (size_t)x;
         uint16_t edge_top_cw = cw[first_pix];
@@ -2272,39 +2488,47 @@ static void draw_wall_column(RenderSliceContext *ctx,
         uint32_t edge_bot_rgb = g_renderer_rgb_raster_expand ? rgb[last_pix] : amiga12_to_argb(edge_bot_cw);
         if (ct > ctx->top_clip) {
             size_t up = first_pix - (size_t)width;
-            buf[up] = 2;
-            if (g_renderer_rgb_raster_expand)
-                rgb[up] = edge_top_rgb;
-            cw[up] = edge_top_cw;
+            if (!depth || depth_test_and_store(depth, up, col_z)) {
+                buf[up] = 2;
+                if (g_renderer_rgb_raster_expand)
+                    rgb[up] = edge_top_rgb;
+                cw[up] = edge_top_cw;
+            }
         }
         if (cb + 1 <= ctx->bot_clip) {
             size_t dn = last_pix + (size_t)width;
-            buf[dn] = 2;
-            if (g_renderer_rgb_raster_expand)
-                rgb[dn] = edge_bot_rgb;
-            cw[dn] = edge_bot_cw;
+            if (!depth || depth_test_and_store(depth, dn, col_z)) {
+                buf[dn] = 2;
+                if (g_renderer_rgb_raster_expand)
+                    rgb[dn] = edge_bot_rgb;
+                cw[dn] = edge_bot_cw;
+            }
         }
     }
 
     /* Extend strip by one column left/right with edge texel colours (cf. floor span horizontal extend). */
-    {
+    if (any_drawn) {
         for (int row = ct; row <= cb; row++) {
             size_t mid = (size_t)row * (size_t)width + (size_t)x;
             uint16_t wv = cw[mid];
             uint32_t c = g_renderer_rgb_raster_expand ? rgb[mid] : amiga12_to_argb(wv);
             if (x > ctx->slice_left) {
                 size_t L = mid - 1;
-                buf[L] = 2;
-                if (g_renderer_rgb_raster_expand)
-                    rgb[L] = c;
-                cw[L] = wv;
+                if (!depth || depth_test_and_store(depth, L, col_z)) {
+                    buf[L] = 2;
+                    if (g_renderer_rgb_raster_expand)
+                        rgb[L] = c;
+                    cw[L] = wv;
+                }
             }
             if (x + 1 < ctx->slice_right) {
                 size_t R = mid + 1;
-                buf[R] = 2;
-                if (g_renderer_rgb_raster_expand)
-                    rgb[R] = c;
-                cw[R] = wv;
+                if (!depth || depth_test_and_store(depth, R, col_z)) {
+                    buf[R] = 2;
+                    if (g_renderer_rgb_raster_expand)
+                        rgb[R] = c;
+                    cw[R] = wv;
+                }
             }
         }
     }
@@ -2490,7 +2714,8 @@ void renderer_draw_wall(int32_t x1, int32_t z1, int32_t x2, int32_t z2,
 /* Extend floor/ceiling span by one column left/right with edge colours (cf. draw_wall_column +1 row). */
 static void floor_span_extend_horizontal_edges(const RenderSliceContext *ctx,
                                                int16_t y, int xl, int xr, int width,
-                                                uint8_t *buf, uint32_t *rgb, uint16_t *cwbuf)
+                                               uint8_t *buf, uint32_t *rgb, uint16_t *cwbuf,
+                                               int32_t *depth, int32_t depth_z)
 {
     if (!buf || !rgb || !cwbuf || xl > xr || width < 1) return;
     if (y < 0 || y >= g_renderer.height) return;
@@ -2505,15 +2730,19 @@ static void floor_span_extend_horizontal_edges(const RenderSliceContext *ctx,
     uint8_t tR = buf[ri];
     if (xl > ctx->slice_left) {
         size_t L = li - 1;
-        buf[L] = tL;
-        rgb[L] = cL;
-        cwbuf[L] = wL;
+        if (!depth || depth_test_and_store(depth, L, depth_z)) {
+            buf[L] = tL;
+            rgb[L] = cL;
+            cwbuf[L] = wL;
+        }
     }
     if (xr + 1 < ctx->slice_right) {
         size_t R = ri + 1;
-        buf[R] = tR;
-        rgb[R] = cR;
-        cwbuf[R] = wR;
+        if (!depth || depth_test_and_store(depth, R, depth_z)) {
+            buf[R] = tR;
+            rgb[R] = cR;
+            cwbuf[R] = wR;
+        }
     }
 }
 
@@ -2548,6 +2777,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
     uint16_t *cwbuf = renderer_active_cw();
+    int32_t *depth = renderer_active_depth();
     if (!buf || !rgb || !cwbuf) return;
     if (y < 0 || y >= rs->height) return;
 
@@ -2581,6 +2811,8 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         if (dist < 16) dist = 16;
         if (dist > 30000) dist = 30000;
     }
+    int32_t span_depth = dist;
+    if (span_depth < 1) span_depth = 1;
 
     /* Amiga formula: d6 = (dist >> 7) + zone_bright. Higher d6 = darker. */
     int amiga_d6 = (dist >> 7) + zone_d6;
@@ -2751,6 +2983,8 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     uint8_t *row8 = buf + (size_t)y * w + (size_t)xl;
     uint32_t *row32 = rgb + (size_t)y * w + (size_t)xl;
     uint16_t *row16 = cwbuf + (size_t)y * w + (size_t)xl;
+    int32_t *row_depth = depth ? (depth + (size_t)y * (size_t)w + (size_t)xl) : NULL;
+    int any_drawn = 0;
     size_t water_refr_base0 = 0;
     size_t water_refr_base1 = 0;
     int water_refr_frac = 0;
@@ -2775,16 +3009,29 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         uint8_t *p8 = row8;
         uint32_t *p32 = row32;
         uint16_t *p16 = row16;
+        int32_t *pdepth = row_depth;
         for (int i = 0; i < span_len; i++) {
             uint8_t texel = texture[((((u_fp >> 16) & 63u)) << 2) | ((((v_fp >> 16) & 63u)) << 10)];
             u_fp += (uint32_t)u_step;
             v_fp += (uint32_t)v_step;
 
+            if (pdepth && span_depth >= *pdepth) {
+                p8++;
+                p32++;
+                p16++;
+                pdepth++;
+                continue;
+            }
+            if (pdepth) *pdepth = span_depth;
             *p8++ = 1;
             RASTER_PUT_PP(&p32, span_argb[texel]);
             *p16++ = span_cw[texel];
+            if (pdepth) pdepth++;
+            any_drawn = 1;
         }
-        /* Water: keep top/bottom strip overlap, but skip left/right span halo. */
+        if (any_drawn) {
+            floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf, depth, span_depth);
+        }
         return;
     }
 
@@ -2792,6 +3039,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         uint8_t *p8 = row8;
         uint32_t *p32 = row32;
         uint16_t *p16 = row16;
+        int32_t *pdepth = row_depth;
         size_t bg_i0 = water_refr_base0 + (size_t)xl;
         size_t bg_i1 = water_refr_base1 + (size_t)xl;
         const int water_has_file = (g_water_file && g_water_file_size >= 65536u);
@@ -2804,6 +3052,14 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             uint8_t v8 = (uint8_t)((v_fp >> 16) & 0xFFu);
             u_fp += (uint32_t)u_step;
             v_fp += (uint32_t)v_step;
+            if (pdepth && span_depth >= *pdepth) {
+                p8++;
+                p32++;
+                p16++;
+                pdepth++;
+                continue;
+            }
+            if (pdepth) *pdepth = span_depth;
 
             /* Amiga-style textured water: refract existing pixels instead of drawing a solid color. */
             uint16_t d5_word = (uint16_t)(((uint16_t)v8 << 8) | (uint16_t)u8);
@@ -2900,8 +3156,12 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             *p8++ = 4; /* water tag: avoid wall-join fill smearing */
             RASTER_PUT_PP(&p32, out);
             *p16++ = out_cw;
+            if (pdepth) pdepth++;
+            any_drawn = 1;
         }
-        floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
+        if (any_drawn) {
+            floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf, depth, span_depth);
+        }
         return;
     }
 
@@ -2928,6 +3188,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     }
 
     if (g_debug_floor_gouraud_only && !is_water) {
+        int32_t *pdepth = row_depth;
         for (int i = 0; i < span_len; i++) {
             int g;
             if (use_gour) {
@@ -2940,12 +3201,24 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             } else {
                 g = 96;
             }
+            if (pdepth && span_depth >= *pdepth) {
+                row8++;
+                row32++;
+                row16++;
+                pdepth++;
+                continue;
+            }
+            if (pdepth) *pdepth = span_depth;
             uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)g << 16) | ((uint32_t)g << 8) | (uint32_t)g);
             *row8++ = 1;
             RASTER_PUT_PP(&row32, argb);
             *row16++ = argb_to_amiga12(argb);
+            if (pdepth) pdepth++;
+            any_drawn = 1;
         }
-        floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
+        if (any_drawn) {
+            floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf, depth, span_depth);
+        }
         return;
     }
 
@@ -2953,6 +3226,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         uint8_t *p8 = row8;
         uint32_t *p32 = row32;
         uint16_t *p16 = row16;
+        int32_t *pdepth = row_depth;
 
         if (use_gour) {
             const uint32_t *gour_argb_levels[FLOOR_PAL_LEVEL_COUNT];
@@ -2973,11 +3247,23 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 u_fp += (uint32_t)u_step;
                 v_fp += (uint32_t)v_step;
 
+                if (pdepth && span_depth >= *pdepth) {
+                    p8++;
+                    p32++;
+                    p16++;
+                    pdepth++;
+                    continue;
+                }
+                if (pdepth) *pdepth = span_depth;
                 *p8++ = 1;
                 RASTER_PUT_PP(&p32, gour_argb_levels[gour_level][texel]);
                 *p16++ = gour_cw_levels[gour_level][texel];
+                if (pdepth) pdepth++;
+                any_drawn = 1;
             }
-            floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
+            if (any_drawn) {
+                floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf, depth, span_depth);
+            }
             return;
         }
 
@@ -2989,11 +3275,23 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 v_fp += (uint32_t)v_step;
                 uint16_t out_cw = (uint16_t)((lut[texel * 2] << 8) | lut[texel * 2 + 1]);
 
+                if (pdepth && span_depth >= *pdepth) {
+                    p8++;
+                    p32++;
+                    p16++;
+                    pdepth++;
+                    continue;
+                }
+                if (pdepth) *pdepth = span_depth;
                 *p8++ = 1;
                 RASTER_PUT_PP(&p32, amiga12_to_argb(out_cw));
                 *p16++ = out_cw;
+                if (pdepth) pdepth++;
+                any_drawn = 1;
             }
-            floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
+            if (any_drawn) {
+                floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf, depth, span_depth);
+            }
             return;
         }
     }
@@ -3002,6 +3300,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         uint8_t *p8 = row8;
         uint32_t *p32 = row32;
         uint16_t *p16 = row16;
+        int32_t *pdepth = row_depth;
 
         if (use_gour) {
             for (int i = 0; i < span_len; i++) {
@@ -3018,11 +3317,23 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
 
                 int lit = ((int)texel * gour_gray) >> 8;
                 uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)lit << 16) | ((uint32_t)lit << 8) | (uint32_t)lit);
+                if (pdepth && span_depth >= *pdepth) {
+                    p8++;
+                    p32++;
+                    p16++;
+                    pdepth++;
+                    continue;
+                }
+                if (pdepth) *pdepth = span_depth;
                 *p8++ = 1;
                 RASTER_PUT_PP(&p32, argb);
                 *p16++ = argb_to_amiga12(argb);
+                if (pdepth) pdepth++;
+                any_drawn = 1;
             }
-            floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
+            if (any_drawn) {
+                floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf, depth, span_depth);
+            }
             return;
         }
 
@@ -3032,15 +3343,28 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             v_fp += (uint32_t)v_step;
             int lit = ((int)texel * gray) >> 8;
             uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)lit << 16) | ((uint32_t)lit << 8) | (uint32_t)lit);
+            if (row_depth && span_depth >= *row_depth) {
+                row8++;
+                row32++;
+                row16++;
+                row_depth++;
+                continue;
+            }
+            if (row_depth) *row_depth = span_depth;
             *row8++ = 1;
             RASTER_PUT_PP(&row32, argb);
             *row16++ = argb_to_amiga12(argb);
+            if (row_depth) row_depth++;
+            any_drawn = 1;
         }
-        floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
+        if (any_drawn) {
+            floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf, depth, span_depth);
+        }
         return;
     }
 
     if (use_gour) {
+        int32_t *pdepth = row_depth;
         for (int i = 0; i < span_len; i++) {
             int gour_bright = (int)(gour_bright_fp >> 16);
             gour_bright_fp += gour_bright_step;
@@ -3049,20 +3373,43 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             if (d6 > 64) d6 = 64;
             int g = (64 - d6) * 255 / 64;
             uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)g << 16) | ((uint32_t)g << 8) | (uint32_t)g);
+            if (pdepth && span_depth >= *pdepth) {
+                row8++;
+                row32++;
+                row16++;
+                pdepth++;
+                continue;
+            }
+            if (pdepth) *pdepth = span_depth;
             *row8++ = 1;
             RASTER_PUT_PP(&row32, argb);
             *row16++ = argb_to_amiga12(argb);
+            if (pdepth) pdepth++;
+            any_drawn = 1;
         }
     } else {
         uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray);
         uint16_t out_cw = argb_to_amiga12(argb);
+        int32_t *pdepth = row_depth;
         for (int i = 0; i < span_len; i++) {
+            if (pdepth && span_depth >= *pdepth) {
+                row8++;
+                row32++;
+                row16++;
+                pdepth++;
+                continue;
+            }
+            if (pdepth) *pdepth = span_depth;
             *row8++ = 1;
             RASTER_PUT_PP(&row32, argb);
             *row16++ = out_cw;
+            if (pdepth) pdepth++;
+            any_drawn = 1;
         }
     }
-    floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
+    if (any_drawn) {
+        floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf, depth, span_depth);
+    }
 }
 
 void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
@@ -3105,7 +3452,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
  * ----------------------------------------------------------------------- */
 static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                      int16_t screen_x, int16_t screen_y,
-                                     int16_t width, int16_t height, int16_t z,
+                                     int16_t width, int16_t height, int32_t z,
                                      const uint8_t *wad, size_t wad_size,
                                      const uint8_t *ptr_data, size_t ptr_size,
                                      const uint8_t *pal, size_t pal_size,
@@ -3114,10 +3461,14 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                      int16_t brightness, int sprite_type,
                                      int32_t clip_top_sy, int32_t clip_bot_sy)
 {
+    (void)ctx;
     (void)sprite_type;
+    (void)clip_top_sy;
+    (void)clip_bot_sy;
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
     uint16_t *cw = renderer_active_cw();
+    int32_t *depth = renderer_active_depth();
     if (!buf || !rgb || !cw) return;
     if (z <= SPRITE_NEAR_CLIP_Z) return;
     if (!wad || !ptr_data) return;
@@ -3158,24 +3509,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     sx = screen_x - width / 2;
     sy = screen_y - height / 2;
 
-    int clip_left = ctx->left_clip;
-    int clip_right = ctx->right_clip;
-    if (clip_left < 0) clip_left = 0;
-    if (clip_right > rw) clip_right = rw;
-    int dx_start = 0;
-    int dx_end = width;
-    int col_start = sx;
-    if (col_start < clip_left) col_start = clip_left;
-    if (col_start < 0) col_start = 0;
-    dx_start = col_start - sx;
-    if (dx_start < 0) dx_start = 0;
-    int col_end = sx + width;
-    if (col_end > clip_right) col_end = clip_right;
-    if (col_end > rw) col_end = rw;
-    dx_end = col_end - sx;
-    if (dx_end > width) dx_end = width;
-    if (dx_end < 0) dx_end = 0;
-    for (int dx = dx_start; dx < dx_end; dx++) {
+    for (int dx = 0; dx < width; dx++) {
         int screen_col = sx + dx;
         if (screen_col < 0 || screen_col >= rw) continue;
 
@@ -3204,8 +3538,6 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
         for (int dy = 0; dy < height; dy++) {
             int screen_row = sy + dy;
             if (screen_row < 0 || screen_row >= rh) continue;
-            /* Room band clip: do not draw above ceiling or below floor (floor covers feet). */
-            if (clip_top_sy < clip_bot_sy && (screen_row < clip_top_sy || screen_row > clip_bot_sy)) continue;
 
             /* Billboards are drawn last in the zone (after all walls), so we draw on top with no clip test. */
             /* Map screen row to source row 0..eff_rows-1 */
@@ -3231,6 +3563,9 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
             uint8_t *row8 = buf + (size_t)screen_row * rw;
             uint32_t *row32 = rgb + (size_t)screen_row * rw;
             uint16_t *row16 = cw + (size_t)screen_row * rw;
+            size_t didx = (size_t)screen_row * (size_t)rw + (size_t)screen_col;
+            if (depth && z >= depth[didx]) continue;
+            if (depth) depth[didx] = z;
 
             /* Geometry tag buffer is used by wall-join post-pass:
              * 1=floor/ceiling, 2=wall. Sprites must use a neutral tag so
@@ -3267,7 +3602,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
 }
 
 void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
-                          int16_t width, int16_t height, int16_t z,
+                          int16_t width, int16_t height, int32_t z,
                           const uint8_t *wad, size_t wad_size,
                           const uint8_t *ptr_data, size_t ptr_size,
                           const uint8_t *pal, size_t pal_size,
@@ -3832,7 +4167,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             size_t obj_pal_size = r->sprite_pal_size[expl_vect];
             renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
                                      (int16_t)sprite_w, (int16_t)sprite_h,
-                                     (int16_t)(orp_z > 32767 ? 32767 : orp_z),
+                                     orp_z,
                                      r->sprite_wad[expl_vect], r->sprite_wad_size[expl_vect],
                                      r->sprite_ptr[expl_vect], r->sprite_ptr_size[expl_vect],
                                      obj_pal, obj_pal_size,
@@ -4003,7 +4338,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
 
         renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
                                  (int16_t)sprite_w, (int16_t)sprite_h,
-                                 (int16_t)(orp->z > 32767 ? 32767 : orp->z),
+                                 orp->z,
                                  r->sprite_wad[vect_num], r->sprite_wad_size[vect_num],
                                  r->sprite_ptr[vect_num], r->sprite_ptr_size[vect_num],
                                  obj_pal, obj_pal_size,
@@ -4092,6 +4427,29 @@ static int zone_has_lift(const uint8_t *lift_data, int16_t zone_id)
         lift_data += LIFT_ENTRY_SIZE;
     }
     return 0;
+}
+
+static void renderer_record_water_span(RenderSliceContext *ctx,
+                                       int16_t y, int16_t x_left, int16_t x_right,
+                                       int32_t floor_height, const uint8_t *texture, const uint8_t *floor_pal,
+                                       int16_t brightness, int16_t left_brightness, int16_t right_brightness,
+                                       int16_t use_gouraud, int16_t scaleval, int16_t water_rows_left)
+{
+    if (!ctx || !ctx->deferred_water_spans) return;
+    DeferredWaterSpan span;
+    span.y = y;
+    span.x_left = x_left;
+    span.x_right = x_right;
+    span.floor_height = floor_height;
+    span.texture = texture;
+    span.floor_pal = floor_pal;
+    span.brightness = brightness;
+    span.left_brightness = left_brightness;
+    span.right_brightness = right_brightness;
+    span.use_gouraud = use_gouraud;
+    span.scaleval = scaleval;
+    span.water_rows_left = water_rows_left;
+    (void)deferred_water_span_list_append(ctx->deferred_water_spans, &span);
 }
 
 static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, int16_t zone_id, int use_upper)
@@ -4184,6 +4542,10 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
         case 0:  /* Wall */
         case 13: /* See-through wall */
         {
+            if (ctx->pass_type == RENDER_PASS_OBJECTS_ONLY) {
+                ptr += 28;
+                break;
+            }
             /* Wall entry: 28 bytes of data
              * Translated from WallRoutine3.ChipMem.s itsawalldraw (line 1761).
              * Amiga: draw immediately in stream order (polyloop calls itsawalldraw per wall). */
@@ -4373,6 +4735,9 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
             int16_t scaleval = rd16(ptr); ptr += 2;
             int16_t whichtile = rd16(ptr); ptr += 2;
             int16_t floor_bright_off = rd16(ptr); ptr += 2;
+            if (ctx->pass_type == RENDER_PASS_OBJECTS_ONLY) {
+                continue;
+            }
 
             /* Polygon height in world coords (same scale as y_off: *256). */
             int32_t poly_h_world = (int32_t)ypos << 6; /* ASM: asl.l #6,d7 */
@@ -4699,11 +5064,18 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     row_bright_r = right_bright_tab[row];
                     row_use_gour = 1;
                 }
-                renderer_draw_floor_span_ctx(ctx, (int16_t)row, le, re,
-                                             rel_h, floor_tex, floor_pal,
-                                             bright, row_bright_l, row_bright_r, row_use_gour,
-                                             scaleval, (entry_type == 7) ? 1 : 0,
-                                             water_rows_left);
+                if (entry_type == 7 && ctx->pass_type == RENDER_PASS_OPAQUE_ONLY) {
+                    renderer_record_water_span(ctx, (int16_t)row, le, re,
+                                               rel_h, floor_tex, floor_pal,
+                                               bright, row_bright_l, row_bright_r, row_use_gour,
+                                               scaleval, water_rows_left);
+                } else {
+                    renderer_draw_floor_span_ctx(ctx, (int16_t)row, le, re,
+                                                 rel_h, floor_tex, floor_pal,
+                                                 bright, row_bright_l, row_bright_r, row_use_gour,
+                                                 scaleval, (entry_type == 7) ? 1 : 0,
+                                                 water_rows_left);
+                }
             }
             free(left_edge);
             free(right_edge_tab);
@@ -4721,6 +5093,10 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
         {
             /* Amiga ObjDraw clip mode:
              *   <1 = before water, ==1 = after water, >1 = full room. */
+            if (ctx->pass_type == RENDER_PASS_OPAQUE_ONLY) {
+                ptr += 2;
+                break;
+            }
             int16_t obj_clip_mode = rd16(ptr);
             ptr += 2;
 
@@ -5017,7 +5393,8 @@ static void renderer_build_world_zone_prepass(GameState *state, uint32_t frame_i
 static void renderer_draw_world_slice(GameState *state,
                                       const RendererWorldZonePrepass *zone_prepass,
                                       int16_t row_start, int16_t row_end,
-                                      uint32_t frame_idx, int trace_clip,
+                                      uint32_t frame_idx, int trace_clip, RendererPassType pass_type,
+                                      DeferredWaterSpanList *water_spans,
                                       int8_t *out_fill_screen_water)
 {
     RenderSliceContext frame_ctx;
@@ -5037,6 +5414,8 @@ static void renderer_draw_world_slice(GameState *state,
 
     render_slice_context_init(&frame_ctx, 0, (int16_t)g_renderer.width, strip_top, strip_bot);
     frame_ctx.update_column_clip = (strip_top == 0 && strip_bot == (int16_t)(g_renderer.height - 1)) ? 1 : 0;
+    frame_ctx.pass_type = pass_type;
+    frame_ctx.deferred_water_spans = water_spans;
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
 
     int zone_count = zone_prepass->count;
@@ -5049,6 +5428,8 @@ static void renderer_draw_world_slice(GameState *state,
 
         render_slice_context_reset(&frame_ctx, 0, (int16_t)g_renderer.width,
                                    strip_top, strip_bot);
+        frame_ctx.pass_type = pass_type;
+        frame_ctx.deferred_water_spans = water_spans;
 
         int left_clip_px = (int)zone_prepass->left_px[i];
         int right_clip_px = (int)zone_prepass->right_px[i];
@@ -5087,7 +5468,32 @@ static void renderer_draw_world_slice(GameState *state,
         renderer_draw_zone_ctx(&frame_ctx, state, zone_id, 0);
     }
 
-    if (out_fill_screen_water) *out_fill_screen_water = frame_ctx.fill_screen_water;
+    if (out_fill_screen_water) {
+        *out_fill_screen_water = (pass_type == RENDER_PASS_OPAQUE_ONLY || pass_type == RENDER_PASS_FULL)
+            ? frame_ctx.fill_screen_water : 0;
+    }
+}
+
+static void renderer_draw_water_spans_slice(const DeferredWaterSpanList *list,
+                                            int16_t row_start, int16_t row_end)
+{
+    if (!list || list->count <= 0 || row_start >= row_end) return;
+    RenderSliceContext ctx;
+    int16_t top = row_start;
+    int16_t bot = (int16_t)(row_end - 1);
+    if (top < 0) top = 0;
+    if (bot >= g_renderer.height) bot = (int16_t)(g_renderer.height - 1);
+    if (top > bot) return;
+    render_slice_context_init(&ctx, 0, (int16_t)g_renderer.width, top, bot);
+
+    for (int i = 0; i < list->count; i++) {
+        const DeferredWaterSpan *s = &list->items[i];
+        if (s->y < row_start || s->y >= row_end) continue;
+        renderer_draw_floor_span_ctx(&ctx, s->y, s->x_left, s->x_right,
+                                     s->floor_height, s->texture, s->floor_pal,
+                                     s->brightness, s->left_brightness, s->right_brightness,
+                                     s->use_gouraud, s->scaleval, 1, s->water_rows_left);
+    }
 }
 
 static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
@@ -5234,6 +5640,8 @@ void renderer_draw_display(GameState *state)
 
     int8_t fill_screen_water = 0;
     int used_threaded_world = 0;
+    int used_threaded_deferred = 0;
+    DeferredWaterSpanList single_thread_water_spans = { 0 };
 #ifndef AB3D_NO_THREADS
     if (state->cfg_render_threads) {
         used_threaded_world = renderer_dispatch_threaded_world(state, &world_zone_prepass,
@@ -5260,8 +5668,36 @@ void renderer_draw_display(GameState *state)
         renderer_draw_sky_pass(sky_angpos);
         renderer_draw_world_slice(state, &world_zone_prepass,
                                   0, (int16_t)g_renderer.height,
-                                  frame_idx, trace_clip, &fill_screen_water);
+                                  frame_idx, trace_clip, RENDER_PASS_OPAQUE_ONLY,
+                                  &single_thread_water_spans, &fill_screen_water);
+        renderer_draw_world_slice(state, &world_zone_prepass,
+                                  0, (int16_t)g_renderer.height,
+                                  frame_idx, trace_clip, RENDER_PASS_OBJECTS_ONLY,
+                                  NULL, NULL);
+        renderer_draw_water_spans_slice(&single_thread_water_spans,
+                                        0, (int16_t)g_renderer.height);
         world_workers = 1;
+    } else {
+#ifndef AB3D_NO_THREADS
+        used_threaded_deferred = renderer_dispatch_threaded_deferred(state, &world_zone_prepass,
+                                                                      frame_idx, trace_clip);
+        if (!used_threaded_deferred) {
+            renderer_draw_world_slice(state, &world_zone_prepass,
+                                      0, (int16_t)g_renderer.height,
+                                      frame_idx, trace_clip, RENDER_PASS_OBJECTS_ONLY,
+                                      NULL, NULL);
+            int active_workers = g_renderer_thread_pool.active_workers;
+            if (active_workers < 0) active_workers = 0;
+            if (active_workers > g_renderer_thread_pool.worker_count)
+                active_workers = g_renderer_thread_pool.worker_count;
+            for (int wi = 0; wi < active_workers; wi++) {
+                int16_t worker_row_start = g_renderer_thread_pool.workers[wi].row_start;
+                int16_t worker_row_end = g_renderer_thread_pool.workers[wi].row_end;
+                renderer_draw_water_spans_slice(&g_renderer_thread_pool.workers[wi].water_spans,
+                                                worker_row_start, worker_row_end);
+            }
+        }
+#endif
     }
     if (prof_on) t_after_world = SDL_GetPerformanceCounter();
 
@@ -5282,12 +5718,11 @@ void renderer_draw_display(GameState *state)
     }
     if (prof_on) t_after_tint = SDL_GetPerformanceCounter();
 
-    /* 7. Draw gun overlay.
-     * In threaded-world mode the gun is already drawn per worker slice. */
-    if (!used_threaded_world) {
-        renderer_draw_gun(state);
-    }
+    /* 7. Draw gun overlay after all world/object/water passes. */
+    renderer_draw_gun(state);
     if (prof_on) t_after_gun = SDL_GetPerformanceCounter();
+
+    deferred_water_span_list_free(&single_thread_water_spans);
 
     /* 8. Swap buffers (the just-drawn buffer becomes the display buffer) */
     renderer_swap();
