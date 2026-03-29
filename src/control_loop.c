@@ -346,7 +346,7 @@ void play_the_game(GameState *state)
         if (state->debug_f9_pending_apply_save) {
             state->debug_f9_pending_apply_save = false;
             player_debug_apply_save_payload_after_level_load(state);
-            printf("[PLAYER] debug load: position/orientation restored from save (level %d)\n",
+            printf("[PLAYER] debug load: save restored (level %d)\n",
                    (int)state->current_level);
         }
 
@@ -358,7 +358,7 @@ void play_the_game(GameState *state)
         if (state->debug_f9_need_level_reload) {
             state->debug_f9_need_level_reload = false;
             state->debug_f9_pending_apply_save = true;
-            printf("[GAME] F9: reloading level %d and applying save\n",
+            printf("[GAME] F9: reloading level %d and applying save state\n",
                    (int)state->current_level);
             audio_mt_end();
             io_release_level_memory(&state->level);

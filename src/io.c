@@ -541,6 +541,7 @@ static void build_test_level_graphics(LevelState *level)
     }
 
     level->graphics = buf;
+    level->graphics_byte_count = (size_t)total;
     level->zone_graph_adds = buf;              /* graph adds at start of buffer */
     level->list_of_graph_rooms = buf + off_lgr;
 
@@ -578,6 +579,7 @@ static void build_test_level_clips(LevelState *level)
         wr16(buf + i, -1);
     }
     level->clips = buf;
+    level->clips_byte_count = (size_t)total;
 }
 
 /* -----------------------------------------------------------------------
@@ -718,6 +720,7 @@ int io_load_level_graphics(LevelState *level, int level_num)
     size_t size = 0;
     if (sb_load_file(path, &data, &size) == 0 && data) {
         level->graphics = data;
+        level->graphics_byte_count = size;
         printf("[IO] Loaded level graphics: %s (%zu bytes)\n", path, size);
         return 0;
     }
@@ -738,6 +741,7 @@ int io_load_level_clips(LevelState *level, int level_num)
     size_t size = 0;
     if (sb_load_file(path, &data, &size) == 0 && data) {
         level->clips = data;
+        level->clips_byte_count = size;
         printf("[IO] Loaded level clips: %s (%zu bytes)\n", path, size);
         return 0;
     }
@@ -824,7 +828,9 @@ void io_release_level_memory(LevelState *level)
     free(level->data);              level->data = NULL;
     level->data_byte_count = 0;
     free(level->graphics);          level->graphics = NULL;
+    level->graphics_byte_count = 0;
     free(level->clips);             level->clips = NULL;
+    level->clips_byte_count = 0;
 
     /* Clear remaining pointers (they pointed into the freed buffers) */
     level->lift_data = NULL;

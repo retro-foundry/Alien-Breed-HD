@@ -122,7 +122,9 @@ typedef struct {
     uint8_t *data;               /* LEVELDATA - raw level data buffer */
     size_t   data_byte_count;    /* size of data buffer when loaded from file; 0 = unknown */
     uint8_t *graphics;           /* LEVELGRAPHICS */
+    size_t   graphics_byte_count;/* size of graphics buffer when loaded from file; 0 = unknown */
     uint8_t *clips;              /* LEVELCLIPS */
+    size_t   clips_byte_count;   /* size of clips buffer when loaded from file; 0 = unknown */
 
     /* Parsed pointers (offsets resolved at level load time) */
     uint8_t *door_data;

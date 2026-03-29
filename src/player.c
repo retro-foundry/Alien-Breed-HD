@@ -1319,38 +1319,547 @@ void player2_control(GameState *state)
     player_full_control(&state->plr2, state, 2);
 }
 
-/* Debug save file: debug_save.bin under data directory. Binary format: magic "AB3D", then per player:
- * xoff(int32), zoff(int32), zone(int16), angpos(int16), yoff(int32) x2 = 32 bytes.
- * Optional tail: current_level(int16) — present in saves written after this extension. */
-#define DEBUG_SAVE_MAGIC "AB3D"
+/* Debug save file: debug_save.bin under data directory.
+ * New format (magic "AB3S") stores full game + level runtime state.
+ * Legacy format (magic "AB3D") remains readable for old position-only saves. */
+#define DEBUG_SAVE_MAGIC_LEGACY "AB3D"
+#define DEBUG_SAVE_MAGIC_FULL   "AB3S"
+#define DEBUG_SAVE_VERSION_FULL 2u
 #define DEBUG_SAVE_SUBPATH "debug_save.bin"
-#define DEBUG_SAVE_PLAYER_PAYLOAD_BYTES 32
+#define DEBUG_SAVE_MAX_TABLE_ENTRIES 4096
+#define DEBUG_SAVE_MAX_CHUNK_BYTES (256u * 1024u * 1024u)
+#define DEBUG_SAVE_NASTY_SLOT_SCRATCH_BYTES 64u
+
+typedef struct {
+    char     magic[4];
+    uint32_t version;
+    uint32_t game_state_size;
+    uint32_t level_data_bytes;
+    uint32_t level_graphics_bytes;
+    uint32_t level_clips_bytes;
+    uint32_t player_shot_bytes;
+    uint32_t nasty_shot_bytes;
+    uint32_t object_points_bytes;
+    uint32_t door_data_bytes;
+    uint32_t switch_data_bytes;
+    uint32_t lift_data_bytes;
+    uint32_t zone_adds_bytes;
+    uint32_t door_wall_list_bytes;
+    uint32_t door_wall_offsets_bytes;
+    uint32_t lift_wall_list_bytes;
+    uint32_t lift_wall_offsets_bytes;
+    uint32_t workspace_bytes;
+    int16_t  current_level;
+    int16_t  num_object_points;
+    int16_t  num_zones;
+    int16_t  num_zone_slots;
+    int32_t  num_floor_lines;
+    int32_t  num_doors;
+    int32_t  num_lifts;
+    uint8_t  zone_brightness_le;
+    uint8_t  door_data_owned;
+    uint8_t  switch_data_owned;
+    uint8_t  lift_data_owned;
+    uint8_t  zone_adds_owned;
+    uint8_t  door_wall_list_owned;
+    uint8_t  lift_wall_list_owned;
+    uint8_t  reserved0;
+    int16_t  bright_anim_values[3];
+    uint32_t bright_anim_indices[3];
+} DebugFullSaveHeader;
+
+typedef struct {
+    bool     valid;
+    DebugFullSaveHeader header;
+    GameState game_state;
+    uint8_t *level_data;
+    uint8_t *level_graphics;
+    uint8_t *level_clips;
+    uint8_t *player_shot_data;
+    uint8_t *nasty_shot_data;
+    uint8_t *object_points;
+    uint8_t *door_data;
+    uint8_t *switch_data;
+    uint8_t *lift_data;
+    uint8_t *zone_adds;
+    uint8_t *door_wall_list;
+    uint8_t *door_wall_offsets;
+    uint8_t *lift_wall_list;
+    uint8_t *lift_wall_offsets;
+    uint8_t *workspace;
+} DebugFullSavePending;
+
+static DebugFullSavePending g_debug_full_save_pending;
+
+static int16_t player_debug_read_word_be(const uint8_t *p)
+{
+    return (int16_t)((p[0] << 8) | p[1]);
+}
+
+static bool player_debug_size_to_u32(size_t value, uint32_t *out)
+{
+    if (!out) return false;
+    if (value > 0xFFFFFFFFu) return false;
+    *out = (uint32_t)value;
+    return true;
+}
+
+static bool player_debug_write_exact(FILE *f, const void *data, size_t bytes)
+{
+    if (bytes == 0) return true;
+    return f && data && fwrite(data, 1, bytes, f) == bytes;
+}
+
+static bool player_debug_read_exact(FILE *f, void *data, size_t bytes)
+{
+    if (bytes == 0) return true;
+    return f && data && fread(data, 1, bytes, f) == bytes;
+}
+
+static size_t player_debug_table_size_with_sentinel(const uint8_t *table,
+                                                    size_t stride)
+{
+    if (!table || stride == 0) return 0;
+    for (int i = 0; i < DEBUG_SAVE_MAX_TABLE_ENTRIES; i++) {
+        const uint8_t *entry = table + (size_t)i * stride;
+        if (player_debug_read_word_be(entry) < 0)
+            return (size_t)(i + 1) * stride;
+    }
+    return 0;
+}
+
+static size_t player_debug_zone_adds_size(const LevelState *level)
+{
+    int slots = level_zone_slot_count(level);
+    if (!level || !level->zone_adds || slots <= 0) return 0;
+    return (size_t)slots * 4u;
+}
+
+static size_t player_debug_workspace_size(const LevelState *level)
+{
+    int slots = level_zone_slot_count(level);
+    if (!level || !level->workspace || slots <= 0) return 0;
+    return (size_t)(slots + 1);
+}
+
+static size_t player_debug_door_wall_list_size(const LevelState *level)
+{
+    if (!level || !level->door_wall_list || !level->door_wall_list_offsets ||
+        level->num_doors < 0 || level->num_doors > DEBUG_SAVE_MAX_TABLE_ENTRIES)
+        return 0;
+    return (size_t)level->door_wall_list_offsets[level->num_doors] * 10u;
+}
+
+static size_t player_debug_lift_wall_list_size(const LevelState *level)
+{
+    if (!level || !level->lift_wall_list || !level->lift_wall_list_offsets ||
+        level->num_lifts < 0 || level->num_lifts > DEBUG_SAVE_MAX_TABLE_ENTRIES)
+        return 0;
+    return (size_t)level->lift_wall_list_offsets[level->num_lifts] * 10u;
+}
+
+static size_t player_debug_door_wall_offsets_size(const LevelState *level)
+{
+    if (!level || !level->door_wall_list_offsets ||
+        level->num_doors < 0 || level->num_doors > DEBUG_SAVE_MAX_TABLE_ENTRIES)
+        return 0;
+    return (size_t)(level->num_doors + 1) * sizeof(uint32_t);
+}
+
+static size_t player_debug_lift_wall_offsets_size(const LevelState *level)
+{
+    if (!level || !level->lift_wall_list_offsets ||
+        level->num_lifts < 0 || level->num_lifts > DEBUG_SAVE_MAX_TABLE_ENTRIES)
+        return 0;
+    return (size_t)(level->num_lifts + 1) * sizeof(uint32_t);
+}
+
+static void player_debug_clear_pending_full_save(void)
+{
+    free(g_debug_full_save_pending.level_data);
+    free(g_debug_full_save_pending.level_graphics);
+    free(g_debug_full_save_pending.level_clips);
+    free(g_debug_full_save_pending.player_shot_data);
+    free(g_debug_full_save_pending.nasty_shot_data);
+    free(g_debug_full_save_pending.object_points);
+    free(g_debug_full_save_pending.door_data);
+    free(g_debug_full_save_pending.switch_data);
+    free(g_debug_full_save_pending.lift_data);
+    free(g_debug_full_save_pending.zone_adds);
+    free(g_debug_full_save_pending.door_wall_list);
+    free(g_debug_full_save_pending.door_wall_offsets);
+    free(g_debug_full_save_pending.lift_wall_list);
+    free(g_debug_full_save_pending.lift_wall_offsets);
+    free(g_debug_full_save_pending.workspace);
+    memset(&g_debug_full_save_pending, 0, sizeof(g_debug_full_save_pending));
+}
+
+static bool player_debug_alloc_read_chunk(FILE *f, uint32_t size, uint8_t **out)
+{
+    uint8_t *buf = NULL;
+    if (!out) return false;
+    *out = NULL;
+    if (size == 0) return true;
+    if (size > DEBUG_SAVE_MAX_CHUNK_BYTES) return false;
+    buf = (uint8_t *)malloc((size_t)size);
+    if (!buf) return false;
+    if (!player_debug_read_exact(f, buf, (size_t)size)) {
+        free(buf);
+        return false;
+    }
+    *out = buf;
+    return true;
+}
+
+static bool player_debug_apply_chunk(const char *label, void *dst, size_t dst_size,
+                                     const uint8_t *src, uint32_t src_size)
+{
+    if (src_size == 0) return true;
+    if (!src || !dst) {
+        printf("[PLAYER] debug load: missing destination for %s (%u bytes)\n",
+               label ? label : "chunk", (unsigned)src_size);
+        return false;
+    }
+    if (dst_size < (size_t)src_size) {
+        printf("[PLAYER] debug load: %s too small (%zu < %u)\n",
+               label ? label : "chunk", dst_size, (unsigned)src_size);
+        return false;
+    }
+    memcpy(dst, src, (size_t)src_size);
+    return true;
+}
+
+static bool player_debug_read_full_save(FILE *f, GameState *state, const char *path)
+{
+    DebugFullSaveHeader hdr;
+    if (!player_debug_read_exact(f, &hdr, sizeof(hdr))) {
+        printf("[PLAYER] debug load: full save header read failed (%s)\n", path);
+        return false;
+    }
+    if (memcmp(hdr.magic, DEBUG_SAVE_MAGIC_FULL, 4) != 0 ||
+        hdr.version != DEBUG_SAVE_VERSION_FULL) {
+        printf("[PLAYER] debug load: unsupported full save format in %s\n", path);
+        return false;
+    }
+    if (hdr.game_state_size != (uint32_t)sizeof(GameState)) {
+        printf("[PLAYER] debug load: save game state size mismatch (%u != %u)\n",
+               (unsigned)hdr.game_state_size, (unsigned)sizeof(GameState));
+        return false;
+    }
+
+    player_debug_clear_pending_full_save();
+    g_debug_full_save_pending.header = hdr;
+
+    if (!player_debug_read_exact(f, &g_debug_full_save_pending.game_state, sizeof(GameState)))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.level_data_bytes, &g_debug_full_save_pending.level_data))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.level_graphics_bytes, &g_debug_full_save_pending.level_graphics))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.level_clips_bytes, &g_debug_full_save_pending.level_clips))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.player_shot_bytes, &g_debug_full_save_pending.player_shot_data))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.nasty_shot_bytes, &g_debug_full_save_pending.nasty_shot_data))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.object_points_bytes, &g_debug_full_save_pending.object_points))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.door_data_bytes, &g_debug_full_save_pending.door_data))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.switch_data_bytes, &g_debug_full_save_pending.switch_data))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.lift_data_bytes, &g_debug_full_save_pending.lift_data))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.zone_adds_bytes, &g_debug_full_save_pending.zone_adds))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.door_wall_list_bytes, &g_debug_full_save_pending.door_wall_list))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.door_wall_offsets_bytes, &g_debug_full_save_pending.door_wall_offsets))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.lift_wall_list_bytes, &g_debug_full_save_pending.lift_wall_list))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.lift_wall_offsets_bytes, &g_debug_full_save_pending.lift_wall_offsets))
+        goto fail;
+    if (!player_debug_alloc_read_chunk(f, hdr.workspace_bytes, &g_debug_full_save_pending.workspace))
+        goto fail;
+
+    g_debug_full_save_pending.valid = true;
+    state->current_level = hdr.current_level;
+    printf("[PLAYER] debug load: full save read (level %d), reloading level to restore state\n",
+           (int)hdr.current_level);
+    return true;
+
+fail:
+    player_debug_clear_pending_full_save();
+    printf("[PLAYER] debug load: full save read failed (truncated %s?)\n", path);
+    return false;
+}
+
+static bool player_debug_apply_pending_full_save_after_level_load(GameState *state)
+{
+    const DebugFullSaveHeader *hdr;
+    LevelState live_level;
+    size_t door_data_dst;
+    size_t switch_data_dst;
+    size_t lift_data_dst;
+    size_t zone_adds_dst;
+    size_t door_wall_list_dst;
+    size_t door_wall_offsets_dst;
+    size_t lift_wall_list_dst;
+    size_t lift_wall_offsets_dst;
+    size_t workspace_dst;
+
+    if (!g_debug_full_save_pending.valid) return false;
+
+    hdr = &g_debug_full_save_pending.header;
+    live_level = state->level;
+    *state = g_debug_full_save_pending.game_state;
+    state->level = live_level;
+    state->view_list_of_graph_rooms = NULL;
+
+    door_data_dst = player_debug_table_size_with_sentinel(state->level.door_data, 22u);
+    switch_data_dst = player_debug_table_size_with_sentinel(state->level.switch_data, 14u);
+    lift_data_dst = player_debug_table_size_with_sentinel(state->level.lift_data, 20u);
+    zone_adds_dst = player_debug_zone_adds_size(&state->level);
+    door_wall_list_dst = player_debug_door_wall_list_size(&state->level);
+    door_wall_offsets_dst = player_debug_door_wall_offsets_size(&state->level);
+    lift_wall_list_dst = player_debug_lift_wall_list_size(&state->level);
+    lift_wall_offsets_dst = player_debug_lift_wall_offsets_size(&state->level);
+    workspace_dst = player_debug_workspace_size(&state->level);
+
+    if (!player_debug_apply_chunk("level data",
+            state->level.data, state->level.data_byte_count,
+            g_debug_full_save_pending.level_data, hdr->level_data_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("level graphics",
+            state->level.graphics, state->level.graphics_byte_count,
+            g_debug_full_save_pending.level_graphics, hdr->level_graphics_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("level clips",
+            state->level.clips, state->level.clips_byte_count,
+            g_debug_full_save_pending.level_clips, hdr->level_clips_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("player shots",
+            state->level.player_shot_data, (size_t)PLAYER_SHOT_SLOT_COUNT * OBJECT_SIZE,
+            g_debug_full_save_pending.player_shot_data, hdr->player_shot_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("nasty shots",
+            state->level.nasty_shot_data,
+            (size_t)NASTY_SHOT_SLOT_COUNT * (OBJECT_SIZE + DEBUG_SAVE_NASTY_SLOT_SCRATCH_BYTES),
+            g_debug_full_save_pending.nasty_shot_data, hdr->nasty_shot_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("object points",
+            state->level.object_points,
+            (state->level.num_object_points > 0) ? (size_t)state->level.num_object_points * 8u : 0u,
+            g_debug_full_save_pending.object_points, hdr->object_points_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("door table",
+            state->level.door_data, door_data_dst,
+            g_debug_full_save_pending.door_data, hdr->door_data_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("switch table",
+            state->level.switch_data, switch_data_dst,
+            g_debug_full_save_pending.switch_data, hdr->switch_data_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("lift table",
+            state->level.lift_data, lift_data_dst,
+            g_debug_full_save_pending.lift_data, hdr->lift_data_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("zone adds",
+            state->level.zone_adds, zone_adds_dst,
+            g_debug_full_save_pending.zone_adds, hdr->zone_adds_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("door wall list",
+            state->level.door_wall_list, door_wall_list_dst,
+            g_debug_full_save_pending.door_wall_list, hdr->door_wall_list_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("door wall offsets",
+            state->level.door_wall_list_offsets, door_wall_offsets_dst,
+            g_debug_full_save_pending.door_wall_offsets, hdr->door_wall_offsets_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("lift wall list",
+            state->level.lift_wall_list, lift_wall_list_dst,
+            g_debug_full_save_pending.lift_wall_list, hdr->lift_wall_list_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("lift wall offsets",
+            state->level.lift_wall_list_offsets, lift_wall_offsets_dst,
+            g_debug_full_save_pending.lift_wall_offsets, hdr->lift_wall_offsets_bytes))
+        goto fail;
+    if (!player_debug_apply_chunk("workspace",
+            state->level.workspace, workspace_dst,
+            g_debug_full_save_pending.workspace, hdr->workspace_bytes))
+        goto fail;
+
+    state->level.num_object_points = hdr->num_object_points;
+    state->level.num_zones = hdr->num_zones;
+    state->level.num_zone_slots = hdr->num_zone_slots;
+    state->level.num_floor_lines = hdr->num_floor_lines;
+    state->level.num_doors = hdr->num_doors;
+    state->level.num_lifts = hdr->num_lifts;
+    state->level.zone_brightness_le = hdr->zone_brightness_le ? true : false;
+    state->level.door_data_owned = hdr->door_data_owned ? true : false;
+    state->level.switch_data_owned = hdr->switch_data_owned ? true : false;
+    state->level.lift_data_owned = hdr->lift_data_owned ? true : false;
+    state->level.zone_adds_owned = hdr->zone_adds_owned ? true : false;
+    state->level.door_wall_list_owned = hdr->door_wall_list_owned ? true : false;
+    state->level.lift_wall_list_owned = hdr->lift_wall_list_owned ? true : false;
+    memcpy(state->level.bright_anim_values, hdr->bright_anim_values,
+           sizeof(state->level.bright_anim_values));
+    memcpy(state->level.bright_anim_indices, hdr->bright_anim_indices,
+           sizeof(state->level.bright_anim_indices));
+
+    if (state->level.nasty_shot_data) {
+        state->level.other_nasty_data =
+            state->level.nasty_shot_data + (size_t)NASTY_SHOT_SLOT_COUNT * OBJECT_SIZE;
+    } else {
+        state->level.other_nasty_data = NULL;
+    }
+
+    state->debug_f9_need_level_reload = false;
+    state->debug_f9_pending_apply_save = false;
+
+    player_debug_clear_pending_full_save();
+    printf("[PLAYER] debug load: full game + level state restored\n");
+    return true;
+
+fail:
+    player_debug_clear_pending_full_save();
+    printf("[PLAYER] debug load: full save apply failed\n");
+    return false;
+}
 
 void player_debug_save_position(GameState *state)
 {
     char path[512];
+    FILE *f = NULL;
+    DebugFullSaveHeader hdr;
+    GameState game_snapshot;
+    uint32_t level_data_bytes = 0, level_graphics_bytes = 0, level_clips_bytes = 0;
+    uint32_t player_shot_bytes = 0, nasty_shot_bytes = 0, object_points_bytes = 0;
+    uint32_t door_data_bytes = 0, switch_data_bytes = 0, lift_data_bytes = 0;
+    uint32_t zone_adds_bytes = 0;
+    uint32_t door_wall_list_bytes = 0, door_wall_offsets_bytes = 0;
+    uint32_t lift_wall_list_bytes = 0, lift_wall_offsets_bytes = 0;
+    uint32_t workspace_bytes = 0;
+    size_t door_data_sz, switch_data_sz, lift_data_sz;
+
+    if (!state) return;
+
+    if (state->level.data && state->level.data_byte_count == 0) {
+        printf("[PLAYER] debug save: level data size unknown; aborting save\n");
+        return;
+    }
+    if (state->level.graphics && state->level.graphics_byte_count == 0) {
+        printf("[PLAYER] debug save: level graphics size unknown; aborting save\n");
+        return;
+    }
+    if (state->level.clips && state->level.clips_byte_count == 0) {
+        printf("[PLAYER] debug save: level clips size unknown; aborting save\n");
+        return;
+    }
+
+    door_data_sz = player_debug_table_size_with_sentinel(state->level.door_data, 22u);
+    switch_data_sz = player_debug_table_size_with_sentinel(state->level.switch_data, 14u);
+    lift_data_sz = player_debug_table_size_with_sentinel(state->level.lift_data, 20u);
+    if (state->level.door_data && door_data_sz == 0) {
+        printf("[PLAYER] debug save: door table missing terminator; aborting save\n");
+        return;
+    }
+    if (state->level.switch_data && switch_data_sz == 0) {
+        printf("[PLAYER] debug save: switch table missing terminator; aborting save\n");
+        return;
+    }
+    if (state->level.lift_data && lift_data_sz == 0) {
+        printf("[PLAYER] debug save: lift table missing terminator; aborting save\n");
+        return;
+    }
+
+    if (!player_debug_size_to_u32(state->level.data ? state->level.data_byte_count : 0, &level_data_bytes) ||
+        !player_debug_size_to_u32(state->level.graphics ? state->level.graphics_byte_count : 0, &level_graphics_bytes) ||
+        !player_debug_size_to_u32(state->level.clips ? state->level.clips_byte_count : 0, &level_clips_bytes) ||
+        !player_debug_size_to_u32(state->level.player_shot_data ? (size_t)PLAYER_SHOT_SLOT_COUNT * OBJECT_SIZE : 0, &player_shot_bytes) ||
+        !player_debug_size_to_u32(state->level.nasty_shot_data ? (size_t)NASTY_SHOT_SLOT_COUNT * (OBJECT_SIZE + DEBUG_SAVE_NASTY_SLOT_SCRATCH_BYTES) : 0, &nasty_shot_bytes) ||
+        !player_debug_size_to_u32((state->level.object_points && state->level.num_object_points > 0) ? (size_t)state->level.num_object_points * 8u : 0u, &object_points_bytes) ||
+        !player_debug_size_to_u32(door_data_sz, &door_data_bytes) ||
+        !player_debug_size_to_u32(switch_data_sz, &switch_data_bytes) ||
+        !player_debug_size_to_u32(lift_data_sz, &lift_data_bytes) ||
+        !player_debug_size_to_u32(player_debug_zone_adds_size(&state->level), &zone_adds_bytes) ||
+        !player_debug_size_to_u32(player_debug_door_wall_list_size(&state->level), &door_wall_list_bytes) ||
+        !player_debug_size_to_u32(player_debug_door_wall_offsets_size(&state->level), &door_wall_offsets_bytes) ||
+        !player_debug_size_to_u32(player_debug_lift_wall_list_size(&state->level), &lift_wall_list_bytes) ||
+        !player_debug_size_to_u32(player_debug_lift_wall_offsets_size(&state->level), &lift_wall_offsets_bytes) ||
+        !player_debug_size_to_u32(player_debug_workspace_size(&state->level), &workspace_bytes)) {
+        printf("[PLAYER] debug save: payload too large; aborting save\n");
+        return;
+    }
+
+    memset(&hdr, 0, sizeof(hdr));
+    memcpy(hdr.magic, DEBUG_SAVE_MAGIC_FULL, 4);
+    hdr.version = DEBUG_SAVE_VERSION_FULL;
+    hdr.game_state_size = (uint32_t)sizeof(GameState);
+    hdr.level_data_bytes = level_data_bytes;
+    hdr.level_graphics_bytes = level_graphics_bytes;
+    hdr.level_clips_bytes = level_clips_bytes;
+    hdr.player_shot_bytes = player_shot_bytes;
+    hdr.nasty_shot_bytes = nasty_shot_bytes;
+    hdr.object_points_bytes = object_points_bytes;
+    hdr.door_data_bytes = door_data_bytes;
+    hdr.switch_data_bytes = switch_data_bytes;
+    hdr.lift_data_bytes = lift_data_bytes;
+    hdr.zone_adds_bytes = zone_adds_bytes;
+    hdr.door_wall_list_bytes = door_wall_list_bytes;
+    hdr.door_wall_offsets_bytes = door_wall_offsets_bytes;
+    hdr.lift_wall_list_bytes = lift_wall_list_bytes;
+    hdr.lift_wall_offsets_bytes = lift_wall_offsets_bytes;
+    hdr.workspace_bytes = workspace_bytes;
+    hdr.current_level = state->current_level;
+    hdr.num_object_points = state->level.num_object_points;
+    hdr.num_zones = state->level.num_zones;
+    hdr.num_zone_slots = state->level.num_zone_slots;
+    hdr.num_floor_lines = state->level.num_floor_lines;
+    hdr.num_doors = state->level.num_doors;
+    hdr.num_lifts = state->level.num_lifts;
+    hdr.zone_brightness_le = state->level.zone_brightness_le ? 1u : 0u;
+    hdr.door_data_owned = state->level.door_data_owned ? 1u : 0u;
+    hdr.switch_data_owned = state->level.switch_data_owned ? 1u : 0u;
+    hdr.lift_data_owned = state->level.lift_data_owned ? 1u : 0u;
+    hdr.zone_adds_owned = state->level.zone_adds_owned ? 1u : 0u;
+    hdr.door_wall_list_owned = state->level.door_wall_list_owned ? 1u : 0u;
+    hdr.lift_wall_list_owned = state->level.lift_wall_list_owned ? 1u : 0u;
+    memcpy(hdr.bright_anim_values, state->level.bright_anim_values, sizeof(hdr.bright_anim_values));
+    memcpy(hdr.bright_anim_indices, state->level.bright_anim_indices, sizeof(hdr.bright_anim_indices));
+
     io_make_data_path(path, sizeof(path), DEBUG_SAVE_SUBPATH);
-    FILE *f = fopen(path, "wb");
+    f = fopen(path, "wb");
     if (!f) {
         printf("[PLAYER] debug save: could not open %s for write\n", path);
         return;
     }
-    if (fwrite(DEBUG_SAVE_MAGIC, 1, 4, f) != 4) goto fail;
-    if (fwrite(&state->plr1.xoff, sizeof(state->plr1.xoff), 1, f) != 1) goto fail;
-    if (fwrite(&state->plr1.zoff, sizeof(state->plr1.zoff), 1, f) != 1) goto fail;
-    if (fwrite(&state->plr1.zone, sizeof(state->plr1.zone), 1, f) != 1) goto fail;
-    if (fwrite(&state->plr1.angpos, sizeof(state->plr1.angpos), 1, f) != 1) goto fail;
-    if (fwrite(&state->plr1.yoff, sizeof(state->plr1.yoff), 1, f) != 1) goto fail;
-    if (fwrite(&state->plr2.xoff, sizeof(state->plr2.xoff), 1, f) != 1) goto fail;
-    if (fwrite(&state->plr2.zoff, sizeof(state->plr2.zoff), 1, f) != 1) goto fail;
-    if (fwrite(&state->plr2.zone, sizeof(state->plr2.zone), 1, f) != 1) goto fail;
-    if (fwrite(&state->plr2.angpos, sizeof(state->plr2.angpos), 1, f) != 1) goto fail;
-    if (fwrite(&state->plr2.yoff, sizeof(state->plr2.yoff), 1, f) != 1) goto fail;
-    if (fwrite(&state->current_level, sizeof(state->current_level), 1, f) != 1) goto fail;
+
+    game_snapshot = *state;
+    if (!player_debug_write_exact(f, &hdr, sizeof(hdr))) goto fail;
+    if (!player_debug_write_exact(f, &game_snapshot, sizeof(game_snapshot))) goto fail;
+    if (!player_debug_write_exact(f, state->level.data, hdr.level_data_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.graphics, hdr.level_graphics_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.clips, hdr.level_clips_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.player_shot_data, hdr.player_shot_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.nasty_shot_data, hdr.nasty_shot_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.object_points, hdr.object_points_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.door_data, hdr.door_data_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.switch_data, hdr.switch_data_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.lift_data, hdr.lift_data_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.zone_adds, hdr.zone_adds_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.door_wall_list, hdr.door_wall_list_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.door_wall_list_offsets, hdr.door_wall_offsets_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.lift_wall_list, hdr.lift_wall_list_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.lift_wall_list_offsets, hdr.lift_wall_offsets_bytes)) goto fail;
+    if (!player_debug_write_exact(f, state->level.workspace, hdr.workspace_bytes)) goto fail;
+
     fclose(f);
-    printf("[PLAYER] debug save: position/orientation/level %d written to %s\n",
+    printf("[PLAYER] debug save: full game + level state (level %d) written to %s\n",
            (int)state->current_level, path);
     return;
+
 fail:
     fclose(f);
     printf("[PLAYER] debug save: write failed\n");
@@ -1441,6 +1950,9 @@ static void player_debug_seed_facing_and_snapshots(GameState *state)
 
 void player_debug_apply_save_payload_after_level_load(GameState *state)
 {
+    if (player_debug_apply_pending_full_save_after_level_load(state))
+        return;
+
     state->plr1.s_xoff = state->plr1.xoff;
     state->plr1.s_zoff = state->plr1.zoff;
     state->plr1.s_yoff = state->plr1.yoff;
@@ -1458,11 +1970,32 @@ void player_debug_apply_save_payload_after_level_load(GameState *state)
 PlayerDebugLoadResult player_debug_load_save_from_file(GameState *state)
 {
     char path[512];
+    int16_t file_level = -1;
+    bool has_level = false;
+    char magic[4];
+
+    player_debug_clear_pending_full_save();
     io_make_data_path(path, sizeof(path), DEBUG_SAVE_SUBPATH);
     FILE *f = fopen(path, "rb");
     if (!f) return PLAYER_DEBUG_LOAD_FAILED;
-    char magic[4];
-    if (fread(magic, 1, 4, f) != 4 || memcmp(magic, DEBUG_SAVE_MAGIC, 4) != 0) {
+
+    if (fread(magic, 1, 4, f) != 4) {
+        fclose(f);
+        printf("[PLAYER] debug load: read failed (truncated %s?)\n", path);
+        return PLAYER_DEBUG_LOAD_FAILED;
+    }
+
+    if (memcmp(magic, DEBUG_SAVE_MAGIC_FULL, 4) == 0) {
+        rewind(f);
+        if (!player_debug_read_full_save(f, state, path)) {
+            fclose(f);
+            return PLAYER_DEBUG_LOAD_FAILED;
+        }
+        fclose(f);
+        return PLAYER_DEBUG_LOAD_NEED_LEVEL_RELOAD;
+    }
+
+    if (memcmp(magic, DEBUG_SAVE_MAGIC_LEGACY, 4) != 0) {
         fclose(f);
         printf("[PLAYER] debug load: invalid or missing magic in %s\n", path);
         return PLAYER_DEBUG_LOAD_FAILED;
@@ -1478,8 +2011,7 @@ PlayerDebugLoadResult player_debug_load_save_from_file(GameState *state)
     if (fread(&state->plr2.angpos, sizeof(state->plr2.angpos), 1, f) != 1) goto load_fail;
     if (fread(&state->plr2.yoff, sizeof(state->plr2.yoff), 1, f) != 1) goto load_fail;
 
-    int16_t file_level = -1;
-    bool has_level = (fread(&file_level, sizeof(file_level), 1, f) == 1);
+    has_level = (fread(&file_level, sizeof(file_level), 1, f) == 1);
     fclose(f);
 
     if (has_level && file_level >= 0 && file_level < MAX_LEVELS &&
