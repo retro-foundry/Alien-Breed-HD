@@ -184,6 +184,10 @@ typedef struct {
     /* Rotated geometry */
     RotatedPoint  rotated[MAX_POINTS];
     OnScreenPoint on_screen[MAX_POINTS];
+    /* Per-point frame stamp: non-zero when rotated[]/on_screen[] for that
+     * index were produced in rotate_stamp frame. */
+    uint32_t      rotated_stamp[MAX_POINTS];
+    uint32_t      rotate_stamp;
     ObjRotatedPoint obj_rotated[MAX_OBJ_POINTS];
 
     /* Column clipping */

@@ -1963,6 +1963,27 @@ static void rotate_one_point(RendererState *r, const uint8_t *pts, int idx)
         r->on_screen[idx].screen_x = (int16_t)(((int16_t)vx_fine > 0) ? 96 : 0);
         r->on_screen[idx].flags = 1;
     }
+    r->rotated_stamp[idx] = r->rotate_stamp;
+}
+
+static void renderer_begin_rotate_frame(RendererState *r)
+{
+    if (!r) return;
+    r->rotate_stamp++;
+    if (r->rotate_stamp == 0) {
+        memset(r->rotated_stamp, 0, sizeof(r->rotated_stamp));
+        r->rotate_stamp = 1;
+    }
+}
+
+static int renderer_ensure_level_point_rotated(GameState *state, int16_t idx)
+{
+    RendererState *r = &g_renderer;
+    if (!state || !state->level.points) return 0;
+    if (idx < 0 || idx >= MAX_POINTS) return 0;
+    if (r->rotate_stamp != 0 && r->rotated_stamp[idx] == r->rotate_stamp) return 1;
+    rotate_one_point(r, state->level.points, idx);
+    return 1;
 }
 
 /* -----------------------------------------------------------------------
@@ -1982,6 +2003,7 @@ void renderer_rotate_level_pts(GameState *state)
 
     if (!state->level.points) return;
     const uint8_t *pts = state->level.points;
+    renderer_begin_rotate_frame(r);
 
     /* Get the PointsToRotatePtr from the current player's zone data.
      * It's stored as an offset from the room pointer into level data. */
@@ -4100,6 +4122,12 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
     LevelState *level = &state->level;
 
     if (!level->data || !level->zone_adds || !level->zone_graph_adds) return;
+    {
+        int zone_slots = level_zone_slot_count(level);
+        if (zone_id < 0 || zone_id >= zone_slots) return;
+        /* zone_graph_adds is authored for drawable zone range (num_zones). */
+        if (level->num_zones > 0 && zone_id >= level->num_zones) return;
+    }
 
     /* Get zone data (same level->data that door_routine/lift_routine write to each frame). */
     int32_t zone_off = rd32(level->zone_adds + zone_id * 4);
@@ -4900,6 +4928,18 @@ static int renderer_compute_zone_clip_span(GameState *state, int16_t zone_id,
 
     int left_clip_px = 0;
     int right_clip_px = g_renderer.width;
+    int num_level_points = MAX_POINTS;
+    if (state->level.data) {
+        int npts = rd16(state->level.data + 14);
+        if (npts > 0 && npts < MAX_POINTS) {
+            num_level_points = npts;
+        }
+    }
+    size_t clip_word_count = 0;
+    if (state->level.clips && state->level.connect_table &&
+        state->level.connect_table >= state->level.clips) {
+        clip_word_count = (size_t)(state->level.connect_table - state->level.clips) / 2u;
+    }
     int16_t clip_off = rd16(lgr_entry + 2);
     if (trace_clip) {
         printf("[CLIP][frame %u] zone=%d clip_off=%d\n",
@@ -4908,19 +4948,50 @@ static int renderer_compute_zone_clip_span(GameState *state, int16_t zone_id,
 
     if (clip_off >= 0) {
         const uint8_t *connect_table = state->level.connect_table;
-        const uint8_t *clip_ptr = state->level.clips + clip_off * 2;
+        if (clip_word_count > 0 && (size_t)clip_off >= clip_word_count) {
+            if (trace_clip) {
+                printf("[CLIP][frame %u] zone=%d clip_off=%d out_of_range max=%zu\n",
+                       (unsigned)frame_idx, (int)zone_id, (int)clip_off, clip_word_count);
+            }
+            clip_off = -1;
+        }
+        const uint8_t *clip_ptr = (clip_off >= 0) ? (state->level.clips + clip_off * 2) : NULL;
 
-        while (rd16(clip_ptr) >= 0) {
+        int invalid_clip = 0;
+        int guard = 0;
+
+        while (clip_ptr && rd16(clip_ptr) >= 0) {
+            if (++guard > 1024) { invalid_clip = 1; break; }
+            if (clip_word_count > 0) {
+                size_t clip_idx = (size_t)(clip_ptr - state->level.clips) / 2u;
+                if (clip_idx >= clip_word_count) { invalid_clip = 1; break; }
+            }
             int16_t pt = rd16(clip_ptr);
             clip_ptr += 2;
-            if (pt >= 0 && pt < MAX_POINTS) {
+            if (pt >= 0 && pt < num_level_points) {
+                if (!renderer_ensure_level_point_rotated(state, pt)) {
+                    if (trace_clip) {
+                        printf("[CLIP][frame %u] zone=%d left pt=%d rotate_failed\n",
+                               (unsigned)frame_idx, (int)zone_id, (int)pt);
+                    }
+                    continue;
+                }
                 int16_t z = (int16_t)r->rotated[pt].z;
                 if (z > 0) {
                     int sxpx = project_x_to_pixels(r->rotated[pt].x, r->rotated[pt].z);
                     int allow = 1;
                     if (connect_table) {
                         int16_t cpt = rd16(connect_table + (size_t)pt * 4u + 2u);
-                        if (cpt >= 0 && cpt < MAX_POINTS) {
+                        if (cpt >= 0 && cpt < num_level_points) {
+                            if (!renderer_ensure_level_point_rotated(state, cpt)) {
+                                if (trace_clip) {
+                                    printf("[CLIP][frame %u] zone=%d left pt=%d cpt=%d rotate_failed\n",
+                                           (unsigned)frame_idx, (int)zone_id, (int)pt, (int)cpt);
+                                }
+                                allow = 0;
+                            }
+                        }
+                        if (allow && cpt >= 0 && cpt < num_level_points) {
                             int csxpx = project_x_to_pixels(r->rotated[cpt].x, r->rotated[cpt].z);
                             if (csxpx > sxpx) allow = 0;
                         } else if (trace_clip) {
@@ -4934,19 +5005,50 @@ static int renderer_compute_zone_clip_span(GameState *state, int16_t zone_id,
                 }
             }
         }
-        clip_ptr += 2;
+        if (invalid_clip) {
+            if (trace_clip) {
+                printf("[CLIP][frame %u] zone=%d invalid left clip sequence; fallback full span\n",
+                       (unsigned)frame_idx, (int)zone_id);
+            }
+            left_clip_px = 0;
+            right_clip_px = g_renderer.width;
+            clip_ptr = NULL;
+        } else if (clip_ptr) {
+            clip_ptr += 2;
+        }
 
-        while (rd16(clip_ptr) >= 0) {
+        while (clip_ptr && rd16(clip_ptr) >= 0) {
+            if (++guard > 2048) { invalid_clip = 1; break; }
+            if (clip_word_count > 0) {
+                size_t clip_idx = (size_t)(clip_ptr - state->level.clips) / 2u;
+                if (clip_idx >= clip_word_count) { invalid_clip = 1; break; }
+            }
             int16_t pt = rd16(clip_ptr);
             clip_ptr += 2;
-            if (pt >= 0 && pt < MAX_POINTS) {
+            if (pt >= 0 && pt < num_level_points) {
+                if (!renderer_ensure_level_point_rotated(state, pt)) {
+                    if (trace_clip) {
+                        printf("[CLIP][frame %u] zone=%d right pt=%d rotate_failed\n",
+                               (unsigned)frame_idx, (int)zone_id, (int)pt);
+                    }
+                    continue;
+                }
                 int16_t z = (int16_t)r->rotated[pt].z;
                 if (z > 0) {
                     int sxpx = project_x_to_pixels(r->rotated[pt].x, r->rotated[pt].z);
                     int allow = 1;
                     if (connect_table) {
                         int16_t cpt = rd16(connect_table + (size_t)pt * 4u);
-                        if (cpt >= 0 && cpt < MAX_POINTS) {
+                        if (cpt >= 0 && cpt < num_level_points) {
+                            if (!renderer_ensure_level_point_rotated(state, cpt)) {
+                                if (trace_clip) {
+                                    printf("[CLIP][frame %u] zone=%d right pt=%d cpt=%d rotate_failed\n",
+                                           (unsigned)frame_idx, (int)zone_id, (int)pt, (int)cpt);
+                                }
+                                allow = 0;
+                            }
+                        }
+                        if (allow && cpt >= 0 && cpt < num_level_points) {
                             int csxpx = project_x_to_pixels(r->rotated[cpt].x, r->rotated[cpt].z);
                             if (csxpx < sxpx) allow = 0;
                         } else if (trace_clip) {
@@ -4959,6 +5061,14 @@ static int renderer_compute_zone_clip_span(GameState *state, int16_t zone_id,
                     }
                 }
             }
+        }
+        if (invalid_clip && trace_clip) {
+            printf("[CLIP][frame %u] zone=%d invalid right clip sequence; fallback full span\n",
+                   (unsigned)frame_idx, (int)zone_id);
+        }
+        if (invalid_clip) {
+            left_clip_px = 0;
+            right_clip_px = g_renderer.width;
         }
     }
 
@@ -5043,6 +5153,7 @@ static void renderer_draw_world_slice(GameState *state,
     for (int i = zone_count - 1; i >= 0; i--) {
         int16_t zone_id = zone_prepass->zone_ids[i];
         if (zone_id < 0 || !zone_prepass->valid[i]) continue;
+        if (state->level.num_zones > 0 && zone_id >= state->level.num_zones) continue;
 
         render_slice_context_reset(&frame_ctx, 0, (int16_t)g_renderer.width,
                                    strip_top, strip_bot);

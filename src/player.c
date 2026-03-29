@@ -45,6 +45,12 @@
 static const int8_t gun_key_map[6] = { 0, 7, 1, 4, 2, 3 };
 #define GUN_KEY_COUNT ((int)(sizeof(gun_key_map) / sizeof(gun_key_map[0])))
 
+static int16_t player_room_zone_word(const uint8_t *room)
+{
+    if (!room) return -1;
+    return (int16_t)((room[0] << 8) | room[1]);
+}
+
 static int player_weapon_slot_from_gun(int16_t gun_idx)
 {
     for (int i = 0; i < GUN_KEY_COUNT; i++) {
@@ -87,7 +93,9 @@ static uint8_t *resolve_player_room_ptr(GameState *state, const PlayerState *plr
 {
     if (!state || !state->level.data || !plr) return NULL;
     if (plr->roompt >= 0) {
-        return state->level.data + plr->roompt;
+        size_t data_len = state->level.data_byte_count;
+        if (data_len == 0 || ((size_t)plr->roompt + 2u) <= data_len)
+            return state->level.data + plr->roompt;
     }
     if (state->level.zone_adds) {
         int zi = level_connect_to_zone_index(&state->level, plr->zone);
@@ -1049,9 +1057,10 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
             cur_top = step.stood_in_top;
             if (step.hitwall) any_hit = 1;
 
-            /* One zone transition per frame so stairs climb step-by-step. After
-             * transitioning, validate position in the new zone so we don't end up
-             * inside a wall (wall clipping) or trigger phantom walls next frame. */
+            /* After transitioning, validate position in the new zone so we don't end up
+             * inside a wall (wall clipping) or trigger phantom walls next frame.
+             * Do not stop the sub-step sweep here: Amiga MoveObject can continue
+             * evaluating further transitions within the same move tick. */
             if (cur_room != room_before) {
                 /* Run move_object again in the new zone so we check the new zone's
                  * walls and slide/revert if we stepped into a wall. */
@@ -1070,8 +1079,11 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
                 cur_room = step2.objroom;
                 cur_top = step2.stood_in_top;
                 if (step2.hitwall) any_hit = 1;
-                plr->no_transition_back_roompt = (int32_t)(room_before - state->level.data);
-                break;
+                if (state->level.data && room_before) {
+                    int32_t no_back_off = (int32_t)(room_before - state->level.data);
+                    plr->no_transition_back_roompt = no_back_off;
+                    ctx.no_transition_back = state->level.data + no_back_off;
+                }
             }
         }
 
@@ -1091,21 +1103,36 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
      * ctx.objroom may have changed if the player crossed into a new zone.
      * We use zone to set objroom next frame, so zone must stay in sync. */
     if (ctx.objroom && state->level.data) {
+        int16_t room_zone_word = player_room_zone_word(ctx.objroom);
+        int room_zone_from_ptr = level_zone_index_from_room_ptr(&state->level, ctx.objroom);
+        int16_t new_zone = -1;
+
         plr->roompt = (int32_t)(ctx.objroom - state->level.data);
 
         /* Room pointer is authoritative. Some levels have incorrect zone words at room+0. */
-        int16_t new_zone = -1;
-        int room_zone = level_zone_index_from_room_ptr(&state->level, ctx.objroom);
-        if (room_zone >= 0) {
-            new_zone = (int16_t)room_zone;
+        if (room_zone_from_ptr >= 0) {
+            new_zone = (int16_t)room_zone_from_ptr;
         } else {
-            int16_t room_zone_word = (int16_t)((ctx.objroom[0] << 8) | ctx.objroom[1]);
-            int mapped = level_connect_to_zone_index(&state->level, room_zone_word);
-            if (mapped >= 0)
-                new_zone = (int16_t)mapped;
+            int mapped_room_word = level_connect_to_zone_index(&state->level, room_zone_word);
+            if (mapped_room_word >= 0) new_zone = (int16_t)mapped_room_word;
         }
+
+        /* Recovery path: if room pointer/word mapping both fail, infer by point-in-zone. */
+        if (new_zone < 0) {
+            int guessed_from_point = level_find_zone_for_point(
+                &state->level, ctx.newx, ctx.newz, prev_zone);
+            if (guessed_from_point >= 0) new_zone = (int16_t)guessed_from_point;
+        }
+
         if (new_zone >= 0 && new_zone < zone_slots)
             plr->zone = new_zone;
+    }
+
+    if (plr->zone < 0 || plr->zone >= zone_slots) {
+        int recovered_zone = level_find_zone_for_point(
+            &state->level, ctx.newx, ctx.newz, prev_zone);
+        if (recovered_zone >= 0 && recovered_zone < zone_slots)
+            plr->zone = (int16_t)recovered_zone;
     }
 
     /* Write MoveObject's integer result back to the 16.16 position.

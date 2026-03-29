@@ -53,6 +53,24 @@ static void write_long_be(uint8_t *p, int32_t v)
     p[3] = (uint8_t)(uint32_t)v;
 }
 
+static int32_t pick_next_section_offset(int32_t floor_offset, int32_t data_size,
+                                        const int32_t *candidates, int candidate_count)
+{
+    int32_t next = data_size;
+    int found = 0;
+    for (int i = 0; i < candidate_count; i++) {
+        int32_t off = candidates[i];
+        if (off > floor_offset && off <= data_size) {
+            if (!found || off < next) {
+                next = off;
+                found = 1;
+            }
+        }
+    }
+    if (!found) return -1;
+    return next;
+}
+
 static int level_expand_nasty_shot_pool(LevelState *level)
 {
     const int old_slots = PLAYER_SHOT_SLOT_COUNT;
@@ -541,11 +559,37 @@ int level_parse(LevelState *level)
     int32_t obj_offset = read_long(ld + 30);
     level->object_data = ld + obj_offset;
 
-    /* Number of floor lines: derived at runtime (do not trust header). Amiga indexes with *16 so 16 bytes per line.
-     * 1) Layout: how many 16-byte slots fit between floor block and object data.
-     * 2) Zone exit lists: max floor line index referenced; we need at least max_index+1.
-     * Use the smaller of the two when both are valid so we don't read past real data. */
-    int32_t layout_count = (floor_offset  - obj_offset) / 16;
+    /* Number of floor lines: derived at runtime (do not trust header).
+     * Amiga uses 16-byte floor line entries (index * 16).
+     *
+     * Determine two bounds:
+     * 1) Layout bound: floor block size until the nearest known following section.
+     * 2) Reference bound: highest floor line index actually referenced by zone lists.
+     *
+     * Then clamp to the safer bound when both exist. */
+    int32_t pshot_offset = read_long(ld + 34);
+    int32_t nshot_offset = read_long(ld + 38);
+    int32_t objpts_offset = read_long(ld + 42);
+    int32_t plr1_offset = read_long(ld + 46);
+    int32_t plr2_offset = read_long(ld + 50);
+
+    int32_t next_candidates[] = {
+        obj_offset,
+        pshot_offset,
+        nshot_offset,
+        objpts_offset,
+        plr1_offset,
+        plr2_offset
+    };
+    int32_t next_after_floor = pick_next_section_offset(
+        floor_offset, (int32_t)level->data_byte_count,
+        next_candidates, (int)(sizeof(next_candidates) / sizeof(next_candidates[0])));
+    int32_t layout_count = 0;
+    if (next_after_floor > floor_offset) {
+        layout_count = (next_after_floor - floor_offset) / 16;
+    } else if (level->data_byte_count > 0 && (size_t)floor_offset < level->data_byte_count) {
+        layout_count = (int32_t)((level->data_byte_count - (size_t)floor_offset) / 16u);
+    }
     if (layout_count < 0) layout_count = 0;
     int32_t max_ref_index = -1;
     if (level->zone_adds && level->num_zone_slots > 0) {
@@ -580,23 +624,23 @@ int level_parse(LevelState *level)
         }
     }
     if (max_ref_index >= 0 && layout_count > 0) {
-        level->num_floor_lines = (max_ref_index + 1 <= layout_count) ? (max_ref_index + 1) : layout_count;
+        int32_t ref_count = max_ref_index + 1;
+        level->num_floor_lines = (ref_count <= layout_count) ? ref_count : layout_count;
+    } else if (max_ref_index >= 0) {
+        level->num_floor_lines = max_ref_index + 1;
     } else {
         level->num_floor_lines = layout_count;
     }
 
     /* Long 34: Offset to player shot data */
-    int32_t pshot_offset = read_long(ld + 34);
     level->player_shot_data = ld + pshot_offset;
 
     /* Long 38: Offset to nasty shot data */
-    int32_t nshot_offset = read_long(ld + 38);
     level->nasty_shot_data = ld + nshot_offset;
     /* Other nasty data follows after shot records. */
     level->other_nasty_data = level->nasty_shot_data + (size_t)PLAYER_SHOT_SLOT_COUNT * OBJECT_SIZE;
 
     /* Long 42: Offset to object points */
-    int32_t objpts_offset = read_long(ld + 42);
     level->object_points = ld + objpts_offset;
 
     if (level_expand_nasty_shot_pool(level) == 0) {
@@ -608,11 +652,9 @@ int level_parse(LevelState *level)
     }
 
     /* Long 46: Offset to player 1 object */
-    int32_t plr1_offset = read_long(ld + 46);
     level->plr1_obj = ld + plr1_offset;
 
     /* Long 50: Offset to player 2 object */
-    int32_t plr2_offset = read_long(ld + 50);
     level->plr2_obj = ld + plr2_offset;
 
     printf("[LEVEL] Parsed: %d zones, %d points, %d obj_points, %d floor_lines\n",
@@ -835,13 +877,13 @@ int level_connect_to_zone_index(const LevelState *level, int16_t connect)
             return z;
     }
     {
-        int max_index = (int)level->num_zones;
-        if (max_index <= 0 || max_index > zone_slots)
-            max_index = zone_slots;
-        if (connect >= 0 && connect < max_index) {
-        int32_t zoff = read_long(level->zone_adds + (size_t)connect * 4u);
-        if (zoff >= 0 && (data_len == 0 || (size_t)zoff + 2u <= data_len))
-            return (int)connect;
+        /* Amiga ObjectMove uses floor-line connect as a direct index into zoneAdds.
+         * Some levels have an extra slot (zone_slots > num_zones), so allow the
+         * full slot range here, not just [0, num_zones). */
+        if (connect >= 0 && connect < zone_slots) {
+            int32_t zoff = read_long(level->zone_adds + (size_t)connect * 4u);
+            if (zoff >= 0 && (data_len == 0 || (size_t)zoff + 2u <= data_len))
+                return (int)connect;
         }
     }
     return -1;
@@ -898,12 +940,13 @@ static int zone_contains_point(const LevelState *level, int zone_index, int32_t 
 
         const uint8_t *zd = level->data + zoff;
         int16_t list_off = read_word(zd + 32);
-        if (list_off < 0)
+        int64_t list_abs = (int64_t)zoff + (int64_t)list_off;
+        if (list_abs < 0)
             return 0;
-        if (data_len != 0 && (size_t)zoff + (size_t)list_off + 2u > data_len)
+        if (data_len != 0 && (size_t)list_abs + 2u > data_len)
             return 0;
 
-        const uint8_t *list = zd + list_off;
+        const uint8_t *list = level->data + (size_t)list_abs;
         int inside = 0;
         int edges = 0;
 
