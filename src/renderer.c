@@ -158,11 +158,18 @@ typedef struct {
     int16_t row_start;
     int16_t row_end;
     int8_t fill_screen_water;
-    uint8_t *local_buf;
+    /* Biased pointers: local_buf[row * w + x] is valid for row in [local_strip_start, local_strip_end).
+     * The backing allocations are local_buf_alloc etc., which are strip-sized, not full-frame. */
+    uint8_t  *local_buf;
     uint32_t *local_rgb;
     uint16_t *local_cw;
+    uint8_t  *local_buf_alloc;
+    uint32_t *local_rgb_alloc;
+    uint16_t *local_cw_alloc;
     int local_w;
     int local_h;
+    int local_strip_start;
+    int local_strip_end;
 } RendererThreadWorker;
 
 typedef struct {
@@ -852,40 +859,82 @@ static int8_t merge_fill_screen_water(int8_t a, int8_t b)
     return 0;
 }
 
+/* Forward declaration — defined after the water-halo helpers. */
+static void renderer_compute_strip_halo_rows(int16_t row_start, int16_t row_end,
+                                             int *out_top_halo, int *out_bottom_halo);
+
 static void renderer_release_worker_local_buffers(RendererThreadWorker *worker)
 {
     if (!worker) return;
-    free(worker->local_buf);
-    free(worker->local_rgb);
-    free(worker->local_cw);
+    free(worker->local_buf_alloc);
+    free(worker->local_rgb_alloc);
+    free(worker->local_cw_alloc);
+    worker->local_buf_alloc = NULL;
+    worker->local_rgb_alloc = NULL;
+    worker->local_cw_alloc  = NULL;
     worker->local_buf = NULL;
     worker->local_rgb = NULL;
-    worker->local_cw = NULL;
+    worker->local_cw  = NULL;
     worker->local_w = 0;
     worker->local_h = 0;
+    worker->local_strip_start = 0;
+    worker->local_strip_end   = 0;
 }
 
+/* Allocate per-worker strip buffers sized to just the rows this worker will draw
+ * (assigned strip + halo).  Biased pointers let rasterizers index by the global
+ * row coordinate with no offset arithmetic changes anywhere else.
+ *
+ * E.g. strip rows [48, 96) with halo 4 → draw range [44, 100):
+ *   strip_h = 56 rows allocated
+ *   local_buf = alloc_base - 44 * w
+ *   local_buf[row * w + x]  (row >= 44)  → alloc_base[(row-44) * w + x]  ✓
+ */
 static int renderer_ensure_worker_local_buffers(RendererThreadWorker *worker, int w, int h)
 {
     if (!worker || w <= 0 || h <= 0) return 0;
-    if (worker->local_buf && worker->local_rgb && worker->local_cw &&
-        worker->local_w == w && worker->local_h == h) {
+
+    /* Compute the draw strip this worker will actually render, including halo. */
+    int row_halo_top    = RENDERER_ROW_STRIP_HALO_MIN_TOP;
+    int row_halo_bottom = RENDERER_ROW_STRIP_HALO_MIN_BOTTOM;
+    renderer_compute_strip_halo_rows(worker->row_start, worker->row_end,
+                                     &row_halo_top, &row_halo_bottom);
+    int draw_start = (int)worker->row_start - row_halo_top;
+    int draw_end   = (int)worker->row_end   + row_halo_bottom;
+    if (draw_start < 0) draw_start = 0;
+    if (draw_end   > h) draw_end   = h;
+    int strip_h = draw_end - draw_start;
+    if (strip_h <= 0) strip_h = 1;
+
+    /* Reuse existing allocation when geometry hasn't changed. */
+    if (worker->local_buf_alloc && worker->local_rgb_alloc && worker->local_cw_alloc &&
+        worker->local_w == w && worker->local_h == h &&
+        worker->local_strip_start == draw_start && worker->local_strip_end == draw_end) {
         return 1;
     }
 
     renderer_release_worker_local_buffers(worker);
 
-    size_t count = (size_t)w * (size_t)h;
-    worker->local_buf = (uint8_t*)malloc(count * sizeof(uint8_t));
-    worker->local_rgb = (uint32_t*)malloc(count * sizeof(uint32_t));
-    worker->local_cw = (uint16_t*)malloc(count * sizeof(uint16_t));
-    if (!worker->local_buf || !worker->local_rgb || !worker->local_cw) {
-        renderer_release_worker_local_buffers(worker);
+    size_t count = (size_t)w * (size_t)strip_h;
+    uint8_t  *buf_alloc = (uint8_t* )malloc(count * sizeof(uint8_t));
+    uint32_t *rgb_alloc = (uint32_t*)malloc(count * sizeof(uint32_t));
+    uint16_t *cw_alloc  = (uint16_t*)malloc(count * sizeof(uint16_t));
+    if (!buf_alloc || !rgb_alloc || !cw_alloc) {
+        free(buf_alloc); free(rgb_alloc); free(cw_alloc);
         return 0;
     }
 
-    worker->local_w = w;
-    worker->local_h = h;
+    ptrdiff_t bias = (ptrdiff_t)draw_start * (ptrdiff_t)w;
+    worker->local_buf_alloc = buf_alloc;
+    worker->local_rgb_alloc = rgb_alloc;
+    worker->local_cw_alloc  = cw_alloc;
+    worker->local_buf = buf_alloc - bias;
+    worker->local_rgb = rgb_alloc - bias;
+    worker->local_cw  = cw_alloc  - bias;
+    worker->local_w          = w;
+    worker->local_h          = h;
+    worker->local_strip_start = draw_start;
+    worker->local_strip_end   = draw_end;
     return 1;
 }
 
@@ -1127,11 +1176,16 @@ static void renderer_threads_init(void)
         pool->workers[i].row_start = 0;
         pool->workers[i].row_end = 0;
         pool->workers[i].fill_screen_water = 0;
-        pool->workers[i].local_buf = NULL;
-        pool->workers[i].local_rgb = NULL;
-        pool->workers[i].local_cw = NULL;
-        pool->workers[i].local_w = 0;
-        pool->workers[i].local_h = 0;
+        pool->workers[i].local_buf       = NULL;
+        pool->workers[i].local_rgb       = NULL;
+        pool->workers[i].local_cw        = NULL;
+        pool->workers[i].local_buf_alloc = NULL;
+        pool->workers[i].local_rgb_alloc = NULL;
+        pool->workers[i].local_cw_alloc  = NULL;
+        pool->workers[i].local_w           = 0;
+        pool->workers[i].local_h           = 0;
+        pool->workers[i].local_strip_start = 0;
+        pool->workers[i].local_strip_end   = 0;
         pool->workers[i].thread = SDL_CreateThread(renderer_thread_worker_main,
                                                    "ab3d_render_worker",
                                                    &pool->workers[i]);
@@ -3079,6 +3133,8 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     uint16_t *cwbuf = renderer_active_cw();
     if (!buf || !rgb || !cwbuf) return;
     if (y < 0 || y >= rs->height) return;
+    /* Clip to this worker's assigned row strip. */
+    if (y < (int)ctx->top_clip || y > (int)ctx->bot_clip) return;
 
     int xl = (x_left < ctx->left_clip) ? ctx->left_clip : x_left;
     int xr = (x_right >= ctx->right_clip) ? ctx->right_clip - 1 : x_right;
@@ -3733,6 +3789,8 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
         for (int dy = 0; dy < height; dy++) {
             int screen_row = sy + dy;
             if (screen_row < 0 || screen_row >= rh) continue;
+            /* Clip to this worker's assigned row strip (ctx->top_clip..bot_clip). */
+            if (screen_row < (int)ctx->top_clip || screen_row > (int)ctx->bot_clip) continue;
             /* Room band clip: do not draw above ceiling or below floor (floor covers feet). */
             if (clip_top_sy < clip_bot_sy && (screen_row < clip_top_sy || screen_row > clip_bot_sy)) continue;
 
