@@ -2086,6 +2086,9 @@ static int s_sky_bytes_per_col = SKY_AMIGA_BYTES_PER_COL;
 static int s_sky_row_major = 0;
 /* 0 = Amiga 16-bit BE column-major (no separate palette), 1 = 8-bit row-major + LUT, 2 = procedural */
 static int s_sky_mode = 2;
+/* Cached sky column count: depends on width + projection (recomputed when width changes). */
+static int s_cached_sky_view_cols = 0;
+static int s_cached_sky_view_cols_w = -1;
 static uint32_t s_sky_argb[256];
 static uint16_t s_sky_cw[256];
 
@@ -2126,6 +2129,18 @@ static inline uint16_t sky_fetch_cw_mode0(int tx, int ty)
         off = (size_t)tx * (size_t)s_sky_bytes_per_col + (size_t)ty * 2u;
     }
     if (off + 1u >= s_sky_data_bytes) return 0x0FFFu;
+    return (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1u]);
+}
+
+/* Unchecked: tx, ty must be in [0,tw-1] x [0,th-1] and off in bounds (bilinear inner loop). */
+static inline uint16_t sky_fetch_cw_mode0_uc(int tx, int ty)
+{
+    size_t off;
+    if (s_sky_row_major) {
+        off = (size_t)ty * (size_t)s_sky_tex_w * 2u + (size_t)tx * 2u;
+    } else {
+        off = (size_t)tx * (size_t)s_sky_bytes_per_col + (size_t)ty * 2u;
+    }
     return (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1u]);
 }
 
@@ -2253,15 +2268,13 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
     if (y0 >= y1) return;
 
     /* Use sub-column pan precision so sky rotation does not quantize/judder at small turns. */
-    const int64_t sky_pan_period_fp = ((int64_t)SKY_PAN_WIDTH << 16);
-    int64_t u0_fp = ((int64_t)(angpos & 8191) * sky_pan_period_fp) / 8192;
+    const int32_t sky_pan_period_fp = SKY_PAN_WIDTH << 16;
+    int32_t u0_fp = (int32_t)(((int64_t)(angpos & 8191) * ((int64_t)SKY_PAN_WIDTH << 16)) / 8192);
     /* Full-screen sky background so each threaded row strip can clear itself. */
     int sky_h = h;
-    /* Match sky horizontal span to the renderer's actual projection FOV.
-     * World projection uses: screen_x = center_x + (64*proj_x_scale)*tan(theta),
-     * so derive FOV from the same center/focal values and convert it to sky columns. */
+    /* Match sky horizontal span to the renderer's actual projection FOV (cached: same for all strips). */
     int sky_view_cols;
-    {
+    if (w != s_cached_sky_view_cols_w) {
         int center_x = (w * 47) / 96;
         int left_px = center_x;
         int right_px = (w - 1) - center_x;
@@ -2271,16 +2284,21 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
             atan((double)right_px / focal_px);
         double sky_cols_f = ((double)SKY_PAN_WIDTH * hfov) / (2.0 * 3.14159265358979323846);
         sky_view_cols = (int)(sky_cols_f + 0.5);
+        if (sky_view_cols < 1) sky_view_cols = 1;
+        if (sky_view_cols > SKY_PAN_WIDTH) sky_view_cols = SKY_PAN_WIDTH;
+        s_cached_sky_view_cols = sky_view_cols;
+        s_cached_sky_view_cols_w = w;
+    } else {
+        sky_view_cols = s_cached_sky_view_cols;
     }
-    if (sky_view_cols < 1) sky_view_cols = 1;
-    if (sky_view_cols > SKY_PAN_WIDTH) sky_view_cols = SKY_PAN_WIDTH;
 
     if (s_sky_pixels && s_sky_mode == 0) {
         int th = s_sky_tex_h;
         int tw = s_sky_tex_w;
+        const int32_t tw_scale_fp = ((int32_t)tw << 16) / SKY_PAN_WIDTH;
 #if SKY_BILINEAR_FILTER
         if (th > 1 && tw > 1 && w > 1 && sky_h > 1) {
-            const int64_t sx_step_fp = (((int64_t)(sky_view_cols - 1)) << 16) / (int64_t)(w - 1);
+            const int32_t sx_step_fp = (int32_t)(((int64_t)(sky_view_cols - 1) << 16) / (int64_t)(w - 1));
             const int64_t v_den = (int64_t)(sky_h > 1 ? sky_h - 1 : 1);
             for (int y = y0; y < y1 && y < sky_h; y++) {
                 int64_t v_fp = (((int64_t)y * (th - 1)) << 16) / v_den;
@@ -2288,20 +2306,19 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                 int v1 = (v0 < th - 1) ? (v0 + 1) : v0;
                 uint32_t fy = (uint32_t)(v_fp & 0xFFFF);
                 size_t row = (size_t)y * (size_t)w;
-                int64_t sx_fp = 0;
+                int32_t sx_fp = 0;
                 for (int x = 0; x < w; x++, sx_fp += sx_step_fp) {
-                    int64_t pan_fp = u0_fp + sx_fp;
-                    pan_fp %= sky_pan_period_fp;
-                    if (pan_fp < 0) pan_fp += sky_pan_period_fp;
-                    int64_t tx_fp = (pan_fp * (int64_t)tw) / (int64_t)SKY_PAN_WIDTH;
+                    int32_t pan_fp = u0_fp + sx_fp;
+                    if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
+                    int32_t tx_fp = (int32_t)(((int64_t)pan_fp * (int64_t)tw_scale_fp) >> 16);
                     int tx0 = (int)(tx_fp >> 16);
                     uint32_t fx = (uint32_t)(tx_fp & 0xFFFF);
                     int tx1 = tx0 + 1;
                     if (tx1 >= tw) tx1 = 0;
-                    uint32_t c00 = sky_fetch_argb_mode0(tx0, v0);
-                    uint32_t c10 = sky_fetch_argb_mode0(tx1, v0);
-                    uint32_t c01 = sky_fetch_argb_mode0(tx0, v1);
-                    uint32_t c11 = sky_fetch_argb_mode0(tx1, v1);
+                    uint32_t c00 = amiga12_to_argb(sky_fetch_cw_mode0_uc(tx0, v0));
+                    uint32_t c10 = amiga12_to_argb(sky_fetch_cw_mode0_uc(tx1, v0));
+                    uint32_t c01 = amiga12_to_argb(sky_fetch_cw_mode0_uc(tx0, v1));
+                    uint32_t c11 = amiga12_to_argb(sky_fetch_cw_mode0_uc(tx1, v1));
                     uint32_t px = sky_bilinear_argb(c00, c10, c01, c11, fx, fy);
                     size_t p = row + (size_t)x;
                     buf[p] = 0;
@@ -2317,31 +2334,29 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
             int bpc = s_sky_bytes_per_col;
             size_t row_stride = (size_t)tw * 2u;
             const int64_t r_den = (int64_t)(sky_h > 1 ? sky_h - 1 : 1);
-            const int64_t sx_step_fp = ((int64_t)sky_view_cols << 16) / (int64_t)w;
+            const int32_t sx_step_fp = (int32_t)(((int64_t)sky_view_cols << 16) / (int64_t)w);
             for (int y = y0; y < y1 && y < sky_h; y++) {
                 int rpix = (int)((int64_t)y * (th - 1) / r_den);
                 if (rpix < 0) rpix = 0;
                 if (rpix >= th) rpix = th - 1;
                 size_t row = (size_t)y * (size_t)w;
-                int64_t sx_fp = 0;
+                int32_t sx_fp = 0;
                 for (int x = 0; x < w; x++) {
-                    int64_t pan_fp = u0_fp + sx_fp;
-                    pan_fp %= sky_pan_period_fp;
-                    if (pan_fp < 0) pan_fp += sky_pan_period_fp;
+                    int32_t pan_fp = u0_fp + sx_fp;
+                    if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
                     int c = (int)(pan_fp >> 16);
-                    c = (c * tw) / SKY_PAN_WIDTH;
+                    c = (int)(((int64_t)c * (int64_t)tw_scale_fp) >> 16);
                     if (c >= tw) c = tw - 1;
                     size_t off;
                     if (s_sky_row_major) off = (size_t)rpix * row_stride + (size_t)c * 2u;
                     else                 off = (size_t)c * (size_t)bpc + (size_t)rpix * 2u;
                     if (off + 2u > s_sky_data_bytes) continue;
                     uint16_t cw12 = (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1]);
-                    uint32_t px = amiga12_to_argb(cw12);
                     size_t p = row + (size_t)x;
                     buf[p] = 0;
                     if (g_renderer_rgb_raster_expand)
-                        rgb[p] = px;
-                    cw[p] = argb_to_amiga12(px);
+                        rgb[p] = amiga12_to_argb(cw12);
+                    cw[p] = cw12;
                     sx_fp += sx_step_fp;
                 }
             }
@@ -2349,9 +2364,10 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
     } else if (s_sky_pixels && s_sky_mode == 1) {
         int th = s_sky_tex_h;
         int tw = s_sky_tex_w;
+        const int32_t tw_scale_fp = ((int32_t)tw << 16) / SKY_PAN_WIDTH;
 #if SKY_BILINEAR_FILTER
         if (th > 1 && tw > 1 && w > 1 && sky_h > 1) {
-            const int64_t sx_step_fp = (((int64_t)(sky_view_cols - 1)) << 16) / (int64_t)(w - 1);
+            const int32_t sx_step_fp = (int32_t)(((int64_t)(sky_view_cols - 1) << 16) / (int64_t)(w - 1));
             const int64_t v_den = (int64_t)(sky_h > 1 ? sky_h - 1 : 1);
             for (int y = y0; y < y1 && y < sky_h; y++) {
                 int64_t v_fp = (((int64_t)y * (th - 1)) << 16) / v_den;
@@ -2359,12 +2375,11 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                 int v1 = (v0 < th - 1) ? (v0 + 1) : v0;
                 uint32_t fy = (uint32_t)(v_fp & 0xFFFF);
                 size_t row = (size_t)y * (size_t)w;
-                int64_t sx_fp = 0;
+                int32_t sx_fp = 0;
                 for (int x = 0; x < w; x++, sx_fp += sx_step_fp) {
-                    int64_t pan_fp = u0_fp + sx_fp;
-                    pan_fp %= sky_pan_period_fp;
-                    if (pan_fp < 0) pan_fp += sky_pan_period_fp;
-                    int64_t tx_fp = (pan_fp * (int64_t)tw) / (int64_t)SKY_PAN_WIDTH;
+                    int32_t pan_fp = u0_fp + sx_fp;
+                    if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
+                    int32_t tx_fp = (int32_t)(((int64_t)pan_fp * (int64_t)tw_scale_fp) >> 16);
                     int tx0 = (int)(tx_fp >> 16);
                     uint32_t fx = (uint32_t)(tx_fp & 0xFFFF);
                     int tx1 = tx0 + 1;
@@ -2386,19 +2401,18 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
         {
             /* Nearest-neighbour path (or filtering disabled). */
             const int64_t v_den = (int64_t)(sky_h > 1 ? sky_h - 1 : 1);
-            const int64_t sx_step_fp = ((int64_t)sky_view_cols << 16) / (int64_t)w;
+            const int32_t sx_step_fp = (int32_t)(((int64_t)sky_view_cols << 16) / (int64_t)w);
             for (int y = y0; y < y1 && y < sky_h; y++) {
                 int v = (int)((int64_t)y * (th - 1) / v_den);
                 if (v < 0) v = 0;
                 if (v >= th) v = th - 1;
                 size_t row = (size_t)y * (size_t)w;
-                int64_t sx_fp = 0;
+                int32_t sx_fp = 0;
                 for (int x = 0; x < w; x++) {
-                    int64_t pan_fp = u0_fp + sx_fp;
-                    pan_fp %= sky_pan_period_fp;
-                    if (pan_fp < 0) pan_fp += sky_pan_period_fp;
+                    int32_t pan_fp = u0_fp + sx_fp;
+                    if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
                     int tu = (int)(pan_fp >> 16);
-                    tu = (tu * tw) / SKY_PAN_WIDTH;
+                    tu = (int)(((int64_t)tu * (int64_t)tw_scale_fp) >> 16);
                     if (tu >= tw) tu = tw - 1;
                     size_t toff = (size_t)v * (size_t)tw + (size_t)tu;
                     if (toff >= (size_t)tw * (size_t)th) continue;
@@ -2413,17 +2427,17 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
             }
         }
     } else {
-        const int64_t sx_step_fp = ((int64_t)sky_view_cols << 16) / (int64_t)w;
+        const int32_t sx_step_fp = (int32_t)(((int64_t)sky_view_cols << 16) / (int64_t)w);
+        const int32_t shade_u_scale_fp = ((int32_t)40 << 16) / SKY_PAN_WIDTH;
         for (int y = y0; y < y1 && y < sky_h; y++) {
             int t = (y * 255) / (sky_h > 1 ? sky_h - 1 : 1);
             size_t row = (size_t)y * (size_t)w;
-            int64_t sx_fp = 0;
+            int32_t sx_fp = 0;
             for (int x = 0; x < w; x++) {
-                int64_t pan_fp = u0_fp + sx_fp;
-                pan_fp %= sky_pan_period_fp;
-                if (pan_fp < 0) pan_fp += sky_pan_period_fp;
+                int32_t pan_fp = u0_fp + sx_fp;
+                if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
                 int u = (int)(pan_fp >> 16);
-                int shade = t + (u * 40) / SKY_PAN_WIDTH;
+                int shade = t + (int)(((int64_t)u * (int64_t)shade_u_scale_fp) >> 16);
                 if (shade > 255) shade = 255;
                 int r = (shade * 40) / 255;
                 int g = (shade * 90) / 255;
@@ -3496,15 +3510,17 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             uint8_t *p8 = row8;
             uint32_t *p32 = row32;
             uint16_t *p16 = row16;
+            uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
+            uint32_t v_pf = v_fp + (uint32_t)v_step * 8u;
             for (int i = 0; i < span_len; i++) {
                 if (i + 8 < span_len) {
-                    uint32_t ua = u_fp + (uint32_t)u_step * 8u;
-                    uint32_t va = v_fp + (uint32_t)v_step * 8u;
-                    AB3D_PREFETCH_READ(&texture[((((ua >> 16) & 63u)) << 2) | ((((va >> 16) & 63u)) << 10)]);
+                    AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
                 }
-                uint8_t texel = texture[((((u_fp >> 16) & 63u)) << 2) | ((((v_fp >> 16) & 63u)) << 10)];
+                uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
                 u_fp += (uint32_t)u_step;
                 v_fp += (uint32_t)v_step;
+                u_pf += (uint32_t)u_step;
+                v_pf += (uint32_t)v_step;
 
                 *p8++ = 1;
                 *p32++ = span_argb[texel];
@@ -3513,15 +3529,17 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         } else {
             uint8_t *p8 = row8;
             uint16_t *p16 = row16;
+            uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
+            uint32_t v_pf = v_fp + (uint32_t)v_step * 8u;
             for (int i = 0; i < span_len; i++) {
                 if (i + 8 < span_len) {
-                    uint32_t ua = u_fp + (uint32_t)u_step * 8u;
-                    uint32_t va = v_fp + (uint32_t)v_step * 8u;
-                    AB3D_PREFETCH_READ(&texture[((((ua >> 16) & 63u)) << 2) | ((((va >> 16) & 63u)) << 10)]);
+                    AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
                 }
-                uint8_t texel = texture[((((u_fp >> 16) & 63u)) << 2) | ((((v_fp >> 16) & 63u)) << 10)];
+                uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
                 u_fp += (uint32_t)u_step;
                 v_fp += (uint32_t)v_step;
+                u_pf += (uint32_t)u_step;
+                v_pf += (uint32_t)v_step;
 
                 *p8++ = 1;
                 *p16++ = span_cw[texel];
@@ -3649,10 +3667,10 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     }
 
     /* Gouraud floor path (Amiga GOURSEL floor/roof): interpolate brightness levels across the span. */
-    int64_t gour_level_fp = 0;
-    int64_t gour_level_step = 0;
-    int64_t gour_bright_fp = 0;
-    int64_t gour_bright_step = 0;
+    int32_t gour_level_fp = 0;
+    int32_t gour_level_step = 0;
+    int32_t gour_bright_fp = 0;
+    int32_t gour_bright_step = 0;
     const int dist_add = (dist >> 7);
     if (use_gour) {
         int span_w = xr - xl;
@@ -3664,10 +3682,10 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         right_level >>= 1;
         if (left_level > 14) left_level = 14;
         if (right_level > 14) right_level = 14;
-        gour_level_fp = (int64_t)left_level << 16;
-        gour_level_step = (span_w > 0) ? (((int64_t)(right_level - left_level) << 16) / span_w) : 0;
-        gour_bright_fp = (int64_t)left_brightness << 16;
-        gour_bright_step = (span_w > 0) ? (((int64_t)(right_brightness - left_brightness) << 16) / span_w) : 0;
+        gour_level_fp = (int32_t)left_level << 16;
+        gour_level_step = (span_w > 0) ? (int32_t)(((int64_t)(right_level - left_level) << 16) / span_w) : 0;
+        gour_bright_fp = (int32_t)left_brightness << 16;
+        gour_bright_step = (span_w > 0) ? (int32_t)(((int64_t)(right_brightness - left_brightness) << 16) / span_w) : 0;
     }
 
     if (g_debug_floor_gouraud_only && !is_water) {
@@ -3712,7 +3730,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 if (gour_level < 0) gour_level = 0;
                 if (gour_level > 14) gour_level = 14;
 
-                uint8_t texel = texture[((((u_fp >> 16) & 63u)) << 2) | ((((v_fp >> 16) & 63u)) << 10)];
+                uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
                 u_fp += (uint32_t)u_step;
                 v_fp += (uint32_t)v_step;
 
@@ -3727,15 +3745,17 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         {
             const uint8_t *lut = pal_lut_src + floor_pal_level * 512;
             if (expand) {
+                uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
+                uint32_t v_pf = v_fp + (uint32_t)v_step * 8u;
                 for (int i = 0; i < span_len; i++) {
                     if (i + 8 < span_len) {
-                        uint32_t ua = u_fp + (uint32_t)u_step * 8u;
-                        uint32_t va = v_fp + (uint32_t)v_step * 8u;
-                        AB3D_PREFETCH_READ(&texture[((((ua >> 16) & 63u)) << 2) | ((((va >> 16) & 63u)) << 10)]);
+                        AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
                     }
-                    uint8_t texel = texture[((((u_fp >> 16) & 63u)) << 2) | ((((v_fp >> 16) & 63u)) << 10)];
+                    uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
                     u_fp += (uint32_t)u_step;
                     v_fp += (uint32_t)v_step;
+                    u_pf += (uint32_t)u_step;
+                    v_pf += (uint32_t)v_step;
                     uint16_t out_cw = (uint16_t)((lut[texel * 2] << 8) | lut[texel * 2 + 1]);
 
                     *p8++ = 1;
@@ -3743,15 +3763,17 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     *p16++ = out_cw;
                 }
             } else {
+                uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
+                uint32_t v_pf = v_fp + (uint32_t)v_step * 8u;
                 for (int i = 0; i < span_len; i++) {
                     if (i + 8 < span_len) {
-                        uint32_t ua = u_fp + (uint32_t)u_step * 8u;
-                        uint32_t va = v_fp + (uint32_t)v_step * 8u;
-                        AB3D_PREFETCH_READ(&texture[((((ua >> 16) & 63u)) << 2) | ((((va >> 16) & 63u)) << 10)]);
+                        AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
                     }
-                    uint8_t texel = texture[((((u_fp >> 16) & 63u)) << 2) | ((((v_fp >> 16) & 63u)) << 10)];
+                    uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
                     u_fp += (uint32_t)u_step;
                     v_fp += (uint32_t)v_step;
+                    u_pf += (uint32_t)u_step;
+                    v_pf += (uint32_t)v_step;
                     uint16_t out_cw = (uint16_t)((lut[texel * 2] << 8) | lut[texel * 2 + 1]);
 
                     *p8++ = 1;
@@ -3777,7 +3799,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 if (d6 > 64) d6 = 64;
                 int gour_gray = (64 - d6) * 255 / 64;
 
-                uint8_t texel = texture[((((u_fp >> 16) & 63u)) << 2) | ((((v_fp >> 16) & 63u)) << 10)];
+                uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
                 u_fp += (uint32_t)u_step;
                 v_fp += (uint32_t)v_step;
 
@@ -3792,7 +3814,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         }
 
         for (int i = 0; i < span_len; i++) {
-            uint8_t texel = texture[((((u_fp >> 16) & 63u)) << 2) | ((((v_fp >> 16) & 63u)) << 10)];
+            uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
             u_fp += (uint32_t)u_step;
             v_fp += (uint32_t)v_step;
             int lit = ((int)texel * gray) >> 8;
