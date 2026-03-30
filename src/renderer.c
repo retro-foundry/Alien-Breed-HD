@@ -27,6 +27,7 @@
  */
 
 #include "renderer.h"
+#include "renderer_alloc.h"
 #include "renderer_3dobj.h"
 #include "level.h"
 #include "math_tables.h"
@@ -207,7 +208,7 @@ typedef enum {
     RENDERER_THREAD_JOB_WATER_TINT = 1
 } RendererThreadJobType;
 
-typedef struct {
+struct RendererThreadWorker {
     SDL_Thread *thread;
     int index;
     int16_t row_start;
@@ -225,7 +226,15 @@ typedef struct {
     int local_h;
     int local_strip_start;
     int local_strip_end;
-} RendererThreadWorker;
+#if UINTPTR_MAX > 0xFFFFFFFFu
+    char _pad[40];
+#else
+    char _pad[72];
+#endif
+};
+typedef struct RendererThreadWorker RendererThreadWorker;
+
+_Static_assert(sizeof(RendererThreadWorker) == 128, "RendererThreadWorker must be 128 bytes for cache-line isolation");
 
 typedef struct {
     int initialized;
@@ -233,7 +242,7 @@ typedef struct {
     int worker_count;
     SDL_atomic_t stop;
     SDL_atomic_t job_generation;
-    SDL_atomic_t pending_workers;
+    _Alignas(64) SDL_atomic_t pending_workers;
     int active_workers;
     RendererThreadJobType job_type;
     GameState *job_state;
@@ -921,9 +930,9 @@ static void renderer_compute_strip_halo_rows(int16_t row_start, int16_t row_end,
 static void renderer_release_worker_local_buffers(RendererThreadWorker *worker)
 {
     if (!worker) return;
-    free(worker->local_buf_alloc);
-    free(worker->local_rgb_alloc);
-    free(worker->local_cw_alloc);
+    ab3d_aligned_free(worker->local_buf_alloc);
+    ab3d_aligned_free(worker->local_rgb_alloc);
+    ab3d_aligned_free(worker->local_cw_alloc);
     worker->local_buf_alloc = NULL;
     worker->local_rgb_alloc = NULL;
     worker->local_cw_alloc  = NULL;
@@ -971,13 +980,18 @@ static int renderer_ensure_worker_local_buffers(RendererThreadWorker *worker, in
     renderer_release_worker_local_buffers(worker);
 
     size_t count = (size_t)w * (size_t)strip_h;
-    uint8_t  *buf_alloc = (uint8_t* )malloc(count * sizeof(uint8_t));
-    uint32_t *rgb_alloc = (uint32_t*)malloc(count * sizeof(uint32_t));
-    uint16_t *cw_alloc  = (uint16_t*)malloc(count * sizeof(uint16_t));
+    uint8_t  *buf_alloc = (uint8_t *)ab3d_aligned_alloc(64, count * sizeof(uint8_t));
+    uint32_t *rgb_alloc = (uint32_t *)ab3d_aligned_alloc(64, count * sizeof(uint32_t));
+    uint16_t *cw_alloc  = (uint16_t *)ab3d_aligned_alloc(64, count * sizeof(uint16_t));
     if (!buf_alloc || !rgb_alloc || !cw_alloc) {
-        free(buf_alloc); free(rgb_alloc); free(cw_alloc);
+        ab3d_aligned_free(buf_alloc);
+        ab3d_aligned_free(rgb_alloc);
+        ab3d_aligned_free(cw_alloc);
         return 0;
     }
+    memset(buf_alloc, 0, count * sizeof(uint8_t));
+    memset(rgb_alloc, 0, count * sizeof(uint32_t));
+    memset(cw_alloc, 0, count * sizeof(uint16_t));
 
     ptrdiff_t bias = (ptrdiff_t)draw_start * (ptrdiff_t)w;
     worker->local_buf_alloc = buf_alloc;
@@ -1919,25 +1933,25 @@ static const uint32_t gun_ptr_frame_offsets[32] = {
  * ----------------------------------------------------------------------- */
 static void free_buffers(void)
 {
-    free(g_renderer.buffer);
+    ab3d_aligned_free(g_renderer.buffer);
     g_renderer.buffer = NULL;
-    free(g_renderer.back_buffer);
+    ab3d_aligned_free(g_renderer.back_buffer);
     g_renderer.back_buffer = NULL;
-    free(g_renderer.rgb_buffer);
+    ab3d_aligned_free(g_renderer.rgb_buffer);
     g_renderer.rgb_buffer = NULL;
-    free(g_renderer.rgb_back_buffer);
+    ab3d_aligned_free(g_renderer.rgb_back_buffer);
     g_renderer.rgb_back_buffer = NULL;
-    free(g_renderer.cw_buffer);
+    ab3d_aligned_free(g_renderer.cw_buffer);
     g_renderer.cw_buffer = NULL;
-    free(g_renderer.cw_back_buffer);
+    ab3d_aligned_free(g_renderer.cw_back_buffer);
     g_renderer.cw_back_buffer = NULL;
-    free(g_renderer.depth_buffer);
+    ab3d_aligned_free(g_renderer.depth_buffer);
     g_renderer.depth_buffer = NULL;
-    free(g_renderer.clip.top);
+    ab3d_aligned_free(g_renderer.clip.top);
     g_renderer.clip.top = NULL;
-    free(g_renderer.clip.bot);
+    ab3d_aligned_free(g_renderer.clip.bot);
     g_renderer.clip.bot = NULL;
-    free(g_renderer.clip.z);
+    ab3d_aligned_free(g_renderer.clip.z);
     g_renderer.clip.z = NULL;
 }
 
@@ -1949,23 +1963,23 @@ static void allocate_buffers(int w, int h)
     g_renderer.present_height = h;
 
     size_t buf_size = (size_t)w * h;
-    g_renderer.buffer = (uint8_t*)calloc(1, buf_size);
-    g_renderer.back_buffer = (uint8_t*)calloc(1, buf_size);
+    g_renderer.buffer = (uint8_t *)ab3d_aligned_calloc(32, buf_size, 1);
+    g_renderer.back_buffer = (uint8_t *)ab3d_aligned_calloc(32, buf_size, 1);
 
     size_t rgb_size = buf_size * sizeof(uint32_t);
-    g_renderer.rgb_buffer = (uint32_t*)calloc(1, rgb_size);
-    g_renderer.rgb_back_buffer = (uint32_t*)calloc(1, rgb_size);
+    g_renderer.rgb_buffer = (uint32_t *)ab3d_aligned_calloc(32, 1, rgb_size);
+    g_renderer.rgb_back_buffer = (uint32_t *)ab3d_aligned_calloc(32, 1, rgb_size);
 
     size_t cw_size = buf_size * sizeof(uint16_t);
-    g_renderer.cw_buffer = (uint16_t*)calloc(1, cw_size);
-    g_renderer.cw_back_buffer = (uint16_t*)calloc(1, cw_size);
+    g_renderer.cw_buffer = (uint16_t *)ab3d_aligned_calloc(32, 1, cw_size);
+    g_renderer.cw_back_buffer = (uint16_t *)ab3d_aligned_calloc(32, 1, cw_size);
 
     g_renderer.depth_buffer = NULL;  /* Amiga: no depth buffer; painter's + stream order only */
 
     size_t clip_size = (size_t)w * sizeof(int16_t);
-    g_renderer.clip.top = (int16_t*)calloc(1, clip_size);
-    g_renderer.clip.bot = (int16_t*)calloc(1, clip_size);
-    g_renderer.clip.z = (int32_t*)calloc(1, (size_t)w * sizeof(int32_t));
+    g_renderer.clip.top = (int16_t *)ab3d_aligned_calloc(32, 1, clip_size);
+    g_renderer.clip.bot = (int16_t *)ab3d_aligned_calloc(32, 1, clip_size);
+    g_renderer.clip.z = (int32_t *)ab3d_aligned_calloc(32, (size_t)w, sizeof(int32_t));
 
     g_renderer.top_clip = 0;
     g_renderer.bot_clip = (int16_t)(h - 1);

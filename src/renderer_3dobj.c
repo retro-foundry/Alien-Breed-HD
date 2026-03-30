@@ -18,6 +18,7 @@
 
 #include "renderer_3dobj.h"
 #include "renderer.h"
+#include "renderer_alloc.h"
 #include "math_tables.h"
 #include "game_types.h"
 #include <string.h>
@@ -257,7 +258,7 @@ static void poly_thread_context_destroy(void *userdata)
     if (!ctx) return;
     free(ctx->depth);
     free(ctx->depth_gen);
-    free(ctx);
+    ab3d_aligned_free(ctx);
 }
 
 static PolyThreadContext *poly_thread_context_get(void)
@@ -275,10 +276,10 @@ static PolyThreadContext *poly_thread_context_get(void)
 
     PolyThreadContext *ctx = (PolyThreadContext*)SDL_TLSGet(g_poly_thread_tls_id);
     if (!ctx) {
-        ctx = (PolyThreadContext*)calloc(1, sizeof(*ctx));
+        ctx = (PolyThreadContext *)ab3d_aligned_calloc(64, 1, sizeof(*ctx));
         if (!ctx) return NULL;
         if (SDL_TLSSet(g_poly_thread_tls_id, ctx, poly_thread_context_destroy) != 0) {
-            free(ctx);
+            ab3d_aligned_free(ctx);
             return NULL;
         }
     }
