@@ -1759,6 +1759,20 @@ static inline int project_y_to_pixels_round(int32_t vy, int32_t vz, int32_t proj
     return (int)q + center_y;
 }
 
+/* 16.16 fixed-point screen X to pixel column: floor for left span bound, ceil for right.
+ * Polygon DDA used truncation for both; trunc underestimates the right edge by up to 1px. */
+static inline int renderer_fp16_x_floor_px(int64_t x_fp)
+{
+    return (int)(x_fp >> 16);
+}
+
+static inline int renderer_fp16_x_ceil_px(int64_t x_fp)
+{
+    if (x_fp <= 0)
+        return (int)(x_fp >> 16);
+    return (int)((x_fp + 65535LL) >> 16);
+}
+
 static void build_argb24_to_amiga12_lut(void)
 {
     if (argb24_to_amiga12_lut_ready) return;
@@ -3217,36 +3231,6 @@ void renderer_draw_wall(int32_t x1, int32_t z1, int32_t x2, int32_t z2,
                            totalyoff, fromtile, tex_id, wall_height_for_tex, d6_max);
 }
 
-/* Extend floor/ceiling span by one column left/right with edge colours (cf. draw_wall_column +1 row). */
-static void floor_span_extend_horizontal_edges(const RenderSliceContext *ctx,
-                                               int16_t y, int xl, int xr, int width,
-                                                uint8_t *buf, uint32_t *rgb, uint16_t *cwbuf)
-{
-    if (!buf || !rgb || !cwbuf || xl > xr || width < 1) return;
-    if (y < 0 || y >= g_renderer.height) return;
-    size_t row = (size_t)y * (size_t)width;
-    size_t li = row + (size_t)xl;
-    size_t ri = row + (size_t)xr;
-    uint16_t wL = cwbuf[li];
-    uint16_t wR = cwbuf[ri];
-    uint32_t cL = g_renderer_rgb_raster_expand ? rgb[li] : amiga12_to_argb(wL);
-    uint32_t cR = g_renderer_rgb_raster_expand ? rgb[ri] : amiga12_to_argb(wR);
-    uint8_t tL = buf[li];
-    uint8_t tR = buf[ri];
-    if (xl > ctx->slice_left) {
-        size_t L = li - 1;
-        buf[L] = tL;
-        rgb[L] = cL;
-        cwbuf[L] = wL;
-    }
-    if (xr + 1 < ctx->slice_right) {
-        size_t R = ri + 1;
-        buf[R] = tR;
-        rgb[R] = cR;
-        cwbuf[R] = wR;
-    }
-}
-
 /* -----------------------------------------------------------------------
  * Floor/ceiling span rendering
  *
@@ -3545,7 +3529,6 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 *p16++ = span_cw[texel];
             }
         }
-        /* Water: keep top/bottom strip overlap, but skip left/right span halo. */
         return;
     }
 
@@ -3662,7 +3645,6 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             RASTER_PUT_PP(&p32, out);
             *p16++ = out_cw;
         }
-        floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
         return;
     }
 
@@ -3706,7 +3688,6 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             RASTER_PUT_PP(&row32, argb);
             *row16++ = argb_to_amiga12(argb);
         }
-        floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
         return;
     }
 
@@ -3738,7 +3719,6 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 RASTER_PUT_PP(&p32, gour_argb_levels[gour_level][texel]);
                 *p16++ = gour_cw_levels[gour_level][texel];
             }
-            floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
             return;
         }
 
@@ -3780,7 +3760,6 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     *p16++ = out_cw;
                 }
             }
-            floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
             return;
         }
     }
@@ -3809,7 +3788,6 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 RASTER_PUT_PP(&p32, argb);
                 *p16++ = argb_to_amiga12(argb);
             }
-            floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
             return;
         }
 
@@ -3823,7 +3801,6 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             RASTER_PUT_PP(&row32, argb);
             *row16++ = argb_to_amiga12(argb);
         }
-        floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
         return;
     }
 
@@ -3849,7 +3826,6 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             *row16++ = out_cw;
         }
     }
-    floor_span_extend_horizontal_edges(ctx, y, xl, xr, w, buf, rgb, cwbuf);
 }
 
 void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
@@ -5413,10 +5389,9 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 
                 for (int row = row_start; row <= row_end; row++) {
                     if (row < 0 || row >= h) { x_fp += dx_fp; b_fp += db_fp; continue; }
-                    int x = (int)(x_fp >> 16);
                     int32_t edge_bright = (int32_t)(b_fp >> 16);
-                    int left_x = x;
-                    int right_x = x;
+                    int left_x = renderer_fp16_x_floor_px(x_fp);
+                    int right_x = renderer_fp16_x_ceil_px(x_fp);
                     if (left_x < ctx->left_clip) left_x = ctx->left_clip;
                     if (right_x >= ctx->right_clip) right_x = ctx->right_clip - 1;
                     if (left_x < left_edge[row]) {
