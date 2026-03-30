@@ -315,6 +315,12 @@ void renderer_step_water_anim(int steps);
 void renderer_step_water_anim_ms(uint32_t elapsed_ms);
 int renderer_toggle_floor_gouraud_debug_view(void);
 int renderer_get_floor_gouraud_debug_view(void);
+/* Automap: change world-units-per-pixel (PgUp = zoom in, PgDn = zoom out). */
+void renderer_automap_adjust_scale(int delta_steps);
+/* Collect line segments in internal render pixel coords (for SDL overlay in display.c). */
+int renderer_automap_collect_line_segments(GameState *state,
+                                           int *x0, int *y0, int *x1, int *y1,
+                                           uint16_t *c12, int max_lines);
 
 /* Sub-routines (called by draw_display) */
 void renderer_rotate_level_pts(GameState *state);

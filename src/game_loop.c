@@ -134,6 +134,12 @@ void game_loop(GameState *state)
         }
         if (input_f6_gouraud_visualize_requested())
             renderer_toggle_floor_gouraud_debug_view();
+        if (input_automap_toggle_requested())
+            state->automap_visible = !state->automap_visible;
+        if (input_automap_pgup_requested())
+            renderer_automap_adjust_scale(-1); /* zoom in: fewer world units per pixel */
+        if (input_automap_pgdn_requested())
+            renderer_automap_adjust_scale(1);  /* zoom out */
 
         /* ================================================================
          * Frame timing: accumulate 50Hz VBlanks from real elapsed time

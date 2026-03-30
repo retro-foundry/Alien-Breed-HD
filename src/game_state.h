@@ -114,6 +114,22 @@ typedef struct {
 } PlayerState;
 
 /* -----------------------------------------------------------------------
+ * Automap runtime state
+ *
+ * We store "seen" wall segments by their wall record offset inside the
+ * LEVELGRAPHICS buffer (gfx_off). That is stable for a given level file and
+ * compact to serialize.
+ * ----------------------------------------------------------------------- */
+typedef struct {
+    uint32_t gfx_off;      /* offset into level->graphics for the wall record data */
+    int16_t  x1, z1;       /* world endpoints */
+    int16_t  x2, z2;
+    uint8_t  is_door;      /* 1 if this wall is a door panel */
+    uint8_t  door_key_id;  /* key bit id (usually one-bit) used for coloring; 0 = none/unknown */
+    uint16_t reserved;
+} AutomapSeenWall;
+
+/* -----------------------------------------------------------------------
  * Level data pointers (from LevelData2.s)
  * In the original code these are absolute Amiga memory pointers.
  * Here they are byte offsets or C pointers into allocated buffers.
@@ -178,6 +194,14 @@ typedef struct {
     int16_t  num_zone_slots;      /* Number of entries in zone_adds table (can be num_zones+1 on Amiga data) */
     int32_t  num_floor_lines;    /* Number of floor/wall line segments (for brute-force collision) */
 
+    /* Automap: seen wall list + lookup set.
+     * Single-threaded for now; updated from renderer wall draw. */
+    AutomapSeenWall *automap_seen_walls;
+    uint32_t         automap_seen_count;
+    uint32_t         automap_seen_cap;
+    uint32_t        *automap_seen_hash;     /* open-addressing table storing gfx_off+1, 0 = empty */
+    uint32_t         automap_seen_hash_cap; /* power-of-two */
+
 } LevelState;
 
 /* -----------------------------------------------------------------------
@@ -226,6 +250,7 @@ typedef struct {
     bool            do_anything;        /* doAnything */
     bool            nasty;              /* NASTY - enemies active */
     bool            read_controls;      /* READCONTROLS */
+    bool            automap_visible;    /* PC: Tab toggles overlay; default off */
 
     /* F9 debug_save: load different level from file, then apply positions */
     bool            debug_f9_need_level_reload;

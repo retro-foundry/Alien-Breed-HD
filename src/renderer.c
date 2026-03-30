@@ -210,6 +210,410 @@ static inline int32_t rd32(const uint8_t *p) {
     return (int32_t)((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]);
 }
 
+/* Forward decls used by early helpers (defined later). */
+static uint32_t amiga12_to_argb(uint16_t c12);
+
+/* -----------------------------------------------------------------------
+ * Automap (seen wall list + raster)
+ * ----------------------------------------------------------------------- */
+#define AUTOMAP_HASH_EMPTY 0u
+
+/* Automap zoom scalar: world units per pixel (bigger = zoom out). */
+static int32_t g_automap_units_per_px = 8; /* was 4: zoomed out 2x */
+#define AUTOMAP_UNITS_PER_PX_MIN 2
+#define AUTOMAP_UNITS_PER_PX_MAX 128
+
+/* Cached key-bit -> automap color mapping (derived from key sprites). */
+static uintptr_t g_automap_key_cache_tag = 0;
+static uint16_t g_automap_key_bit_to_c12[8]; /* bits 0..7 -> color; 0 = unknown */
+static uint8_t  g_automap_key_bit_valid_mask = 0;
+
+static uint32_t automap_hash_u32(uint32_t x)
+{
+    /* Simple 32-bit mix (good enough for gfx offsets). */
+    x ^= x >> 16;
+    x *= 0x7FEB352Du;
+    x ^= x >> 15;
+    x *= 0x846CA68Bu;
+    x ^= x >> 16;
+    return x;
+}
+
+static void automap_reset(LevelState *level)
+{
+    if (!level) return;
+    level->automap_seen_count = 0;
+    if (level->automap_seen_hash && level->automap_seen_hash_cap) {
+        memset(level->automap_seen_hash, 0, (size_t)level->automap_seen_hash_cap * sizeof(uint32_t));
+    }
+}
+
+static int automap_ensure_hash(LevelState *level, uint32_t want_cap_pow2)
+{
+    if (!level) return 0;
+    if (want_cap_pow2 < 1024u) want_cap_pow2 = 1024u;
+    /* ensure power-of-two */
+    if ((want_cap_pow2 & (want_cap_pow2 - 1u)) != 0u) {
+        uint32_t p = 1u;
+        while (p < want_cap_pow2) p <<= 1u;
+        want_cap_pow2 = p;
+    }
+
+    if (level->automap_seen_hash && level->automap_seen_hash_cap >= want_cap_pow2)
+        return 1;
+
+    uint32_t *new_tab = (uint32_t *)calloc((size_t)want_cap_pow2, sizeof(uint32_t));
+    if (!new_tab) return 0;
+
+    /* Rehash existing entries if any. Table stores (gfx_off+1), 0 = empty. */
+    if (level->automap_seen_hash && level->automap_seen_hash_cap) {
+        for (uint32_t i = 0; i < level->automap_seen_hash_cap; i++) {
+            uint32_t v = level->automap_seen_hash[i];
+            if (v == AUTOMAP_HASH_EMPTY) continue;
+            uint32_t key_plus1 = v;
+            uint32_t cap = want_cap_pow2;
+            uint32_t mask = cap - 1u;
+            uint32_t h = automap_hash_u32(key_plus1) & mask;
+            while (new_tab[h] != AUTOMAP_HASH_EMPTY) h = (h + 1u) & mask;
+            new_tab[h] = key_plus1;
+        }
+        free(level->automap_seen_hash);
+    }
+
+    level->automap_seen_hash = new_tab;
+    level->automap_seen_hash_cap = want_cap_pow2;
+    return 1;
+}
+
+static int automap_ensure_walls(LevelState *level, uint32_t want_cap)
+{
+    if (!level) return 0;
+    if (want_cap < 256u) want_cap = 256u;
+    if (level->automap_seen_walls && level->automap_seen_cap >= want_cap)
+        return 1;
+    uint32_t new_cap = (level->automap_seen_cap > 0) ? level->automap_seen_cap : 256u;
+    while (new_cap < want_cap) new_cap *= 2u;
+    AutomapSeenWall *nw = (AutomapSeenWall *)realloc(level->automap_seen_walls, (size_t)new_cap * sizeof(AutomapSeenWall));
+    if (!nw) return 0;
+    level->automap_seen_walls = nw;
+    level->automap_seen_cap = new_cap;
+    return 1;
+}
+
+static uint8_t automap_level_key_mask(const LevelState *level)
+{
+    /* Derive which condition bits correspond to keys by scanning key pickup objects.
+     * Keys store their condition bit(s) in obj.can_see (int8). */
+    if (!level || !level->object_data) return 0;
+    uint8_t mask = 0;
+    for (int i = 0; i < 250; i++) {
+        const GameObject *obj = (const GameObject *)(level->object_data + (size_t)i * OBJECT_SIZE);
+        if ((int8_t)obj->obj.number != (int8_t)OBJ_NBR_KEY) continue;
+        /* Ignore inactive slots (zone < 0). */
+        if (OBJ_ZONE(obj) < 0) continue;
+        mask |= (uint8_t)obj->obj.can_see;
+    }
+    return mask;
+}
+
+/* Key sprite (type 5) layout matches frames_keys[] below. */
+static const uint16_t k_automap_key_ptr_off[4] = { 0u, 0u, 32u * 4u, 32u * 4u };
+static const uint16_t k_automap_key_down_strip[4] = { 0u, 32u, 0u, 32u };
+
+static uint32_t automap_c12_saturation(uint16_t c12)
+{
+    uint32_t r = (uint32_t)((c12 >> 8) & 0xFu);
+    uint32_t g = (uint32_t)((c12 >> 4) & 0xFu);
+    uint32_t b = (uint32_t)(c12 & 0xFu);
+    uint32_t mx = r > g ? r : g;
+    mx = mx > b ? mx : b;
+    uint32_t mn = r < g ? r : g;
+    mn = mn < b ? mn : b;
+    return mx - mn;
+}
+
+/* Sample key art like in-game sprites: brightness-graded .pal + pick saturated texels (not grey metal average). */
+static uint16_t automap_key_frame_representative_c12(const RendererState *r, int frame_idx)
+{
+    if (!r) return 0;
+    if (frame_idx < 0 || frame_idx >= 4) return 0;
+    if (!r->sprite_wad[5] || !r->sprite_ptr[5] || !r->sprite_pal_data[5]) return 0;
+
+    uint32_t ptr_off = (uint32_t)k_automap_key_ptr_off[frame_idx];
+    uint16_t down_strip = k_automap_key_down_strip[frame_idx];
+
+    const uint8_t *wad = r->sprite_wad[5];
+    size_t wad_size = r->sprite_wad_size[5];
+    const uint8_t *ptr = r->sprite_ptr[5];
+    size_t ptr_size = r->sprite_ptr_size[5];
+    const uint8_t *pal = r->sprite_pal_data[5];
+    size_t pal_size = r->sprite_pal_size[5];
+
+    if (ptr_size < ptr_off + 4u) return 0;
+    /* Multi-level palette: 15 x 32 colors x 2 bytes (see renderer_draw_sprite_ctx). */
+    uint32_t pal_level_off = 0;
+    if (pal_size >= 960u)
+        pal_level_off = 64u * 7u; /* mid brightness (~typical mid-distance key) */
+    if (pal_level_off + 64u > pal_size)
+        pal_level_off = 0;
+
+    const int cols = 32;
+    const int rows = 32;
+    uint16_t best_c12 = 0;
+    uint32_t best_sat = 0;
+    uint32_t best_luma = 0;
+
+    for (int c = 0; c < cols; c++) {
+        uint32_t entry_off = ptr_off + (uint32_t)c * 4u;
+        if (entry_off + 4u > ptr_size) continue;
+        const uint8_t *entry = ptr + entry_off;
+        uint8_t mode = entry[0];
+        uint32_t wad_off = ((uint32_t)entry[1] << 16) | ((uint32_t)entry[2] << 8) | (uint32_t)entry[3];
+        if (mode == 0 && wad_off == 0) continue;
+        if (wad_off >= wad_size) continue;
+        const uint8_t *src = wad + wad_off;
+
+        for (int r0 = 0; r0 < rows; r0++) {
+            int row_idx = (int)down_strip + r0;
+            if (wad_off + (size_t)(row_idx + 1) * 2u > wad_size) continue;
+            uint16_t w = (uint16_t)((src[row_idx * 2u] << 8) | src[row_idx * 2u + 1u]);
+            uint8_t texel;
+            if (mode == 0) texel = (uint8_t)(w & 0x1Fu);
+            else if (mode == 1) texel = (uint8_t)((w >> 5) & 0x1Fu);
+            else texel = (uint8_t)((w >> 10) & 0x1Fu);
+            if (texel == 0) continue;
+            uint32_t ci = pal_level_off + (uint32_t)texel * 2u;
+            if (ci + 1u >= pal_size) continue;
+            uint16_t c12 = (uint16_t)((pal[ci] << 8) | pal[ci + 1u]);
+            uint32_t sat = automap_c12_saturation(c12);
+            uint32_t luma = (uint32_t)((c12 >> 8) & 0xFu) + (uint32_t)((c12 >> 4) & 0xFu) + (uint32_t)(c12 & 0xFu);
+            if (sat > best_sat || (sat == best_sat && luma > best_luma)) {
+                best_sat = sat;
+                best_luma = luma;
+                best_c12 = c12;
+            }
+        }
+    }
+    return best_c12;
+}
+
+static void automap_refresh_key_bit_colors(const LevelState *level)
+{
+    /* Recompute when level or key sprite assets change. */
+    uintptr_t tag = 0;
+    if (level && level->object_data)
+        tag = (uintptr_t)level->object_data ^ ((uintptr_t)g_renderer.sprite_wad[5] << 1);
+    if (tag == g_automap_key_cache_tag) return;
+    g_automap_key_cache_tag = tag;
+    memset(g_automap_key_bit_to_c12, 0, sizeof(g_automap_key_bit_to_c12));
+    g_automap_key_bit_valid_mask = 0;
+    if (!level || !level->object_data) return;
+
+    /* Per-frame key color (sprite type 5), saturated texel at mid palette level. */
+    uint16_t frame_c12[4];
+    for (int fi = 0; fi < 4; fi++)
+        frame_c12[fi] = automap_key_frame_representative_c12(&g_renderer, fi);
+
+    /* Map condition bits -> key art: each key object ties can_see bits to objVectFrameNumber. */
+    for (int i = 0; i < 250; i++) {
+        const GameObject *obj = (const GameObject *)(level->object_data + (size_t)i * OBJECT_SIZE);
+        if ((int8_t)obj->obj.number != (int8_t)OBJ_NBR_KEY) continue;
+        if (OBJ_ZONE(obj) < 0) continue;
+        uint8_t bitmask = (uint8_t)obj->obj.can_see;
+        int16_t frame_num = rd16(obj->raw + 10);
+        int fi = (int)((frame_num % 4 + 4) % 4);
+
+        for (int b = 0; b < 8; b++) {
+            uint8_t bit = (uint8_t)(1u << b);
+            if ((bitmask & bit) == 0) continue;
+            if ((g_automap_key_bit_valid_mask & bit) != 0) continue;
+            g_automap_key_bit_to_c12[b] = frame_c12[fi];
+            g_automap_key_bit_valid_mask |= bit;
+        }
+    }
+
+    /* Fallback when a door bit has no key object in the map: 1->frame0, 2->frame1, 4->frame2, 8->frame3. */
+    static const uint8_t k_nibble_to_frame[4] = { 0, 1, 2, 3 };
+    for (int n = 0; n < 4; n++) {
+        uint8_t bit = (uint8_t)(1u << n);
+        if ((g_automap_key_bit_valid_mask & bit) != 0) continue;
+        uint16_t c = frame_c12[k_nibble_to_frame[n]];
+        if (c != 0) g_automap_key_bit_to_c12[n] = c;
+    }
+}
+
+static uint8_t automap_key_id_from_door_flags_masked(uint16_t door_flags, uint8_t key_mask)
+{
+    /* Return:
+     * - 0x00: no key requirement
+     * - power-of-two bit present in key_mask: keyed door
+     * - 0x80: switch/condition door (non-zero flags but no key bits) */
+    uint8_t f = (uint8_t)(door_flags & 0x00FFu);
+    uint8_t keys = (uint8_t)(f & key_mask);
+    if (keys != 0) {
+        /* Prefer single bit if present, else pick lowest set key bit. */
+        if ((keys & (uint8_t)(keys - 1u)) == 0u) return keys;
+        return (uint8_t)(keys & (uint8_t)(-(int8_t)keys));
+    }
+    if (f != 0) return 0x80u;
+    return 0u;
+}
+
+static uint8_t automap_door_key_for_wall_gfx_off(const LevelState *level, uint32_t gfx_off, int *out_is_door)
+{
+    if (out_is_door) *out_is_door = 0;
+    if (!level || !level->door_wall_list || !level->door_wall_list_offsets || level->num_doors <= 0)
+        return 0;
+
+    uint8_t key_mask = automap_level_key_mask(level);
+
+    /* door_wall_list entries are 10 bytes: fline(be16) + gfx_off(be32) + gfx_base(be32) */
+    const uint8_t *lst = level->door_wall_list;
+    for (int di = 0; di < level->num_doors; di++) {
+        uint32_t start = level->door_wall_list_offsets[di];
+        uint32_t end = level->door_wall_list_offsets[di + 1];
+        for (uint32_t j = start; j < end; j++) {
+            const uint8_t *ent = lst + (size_t)j * 10u;
+            uint32_t ent_gfx = (uint32_t)rd32(ent + 2);
+            if (ent_gfx != gfx_off) continue;
+            if (out_is_door) *out_is_door = 1;
+            if (!level->door_data) return 0;
+            const uint8_t *door = level->door_data + (size_t)di * 22u;
+            uint16_t door_flags = (uint16_t)rd16(door + 20);
+            return automap_key_id_from_door_flags_masked(door_flags, key_mask);
+        }
+    }
+    return 0;
+}
+
+static void automap_mark_seen(LevelState *level,
+                              uint32_t gfx_off,
+                              int16_t x1, int16_t z1, int16_t x2, int16_t z2,
+                              uint8_t is_door, uint8_t door_key_id)
+{
+    if (!level) return;
+    if (!level->graphics || level->graphics_byte_count == 0) return;
+    if (gfx_off == 0 || gfx_off >= level->graphics_byte_count) return;
+
+    /* Lazy init structures. */
+    if (!automap_ensure_hash(level, 2048u)) return;
+
+    /* Maintain load factor <= ~0.6 */
+    if (level->automap_seen_hash_cap && level->automap_seen_count * 10u >= level->automap_seen_hash_cap * 6u) {
+        if (!automap_ensure_hash(level, level->automap_seen_hash_cap * 2u))
+            return;
+    }
+
+    uint32_t key_plus1 = gfx_off + 1u;
+    uint32_t cap = level->automap_seen_hash_cap;
+    uint32_t mask = cap - 1u;
+    uint32_t h = automap_hash_u32(key_plus1) & mask;
+    while (1) {
+        uint32_t v = level->automap_seen_hash[h];
+        if (v == AUTOMAP_HASH_EMPTY) break;
+        if (v == key_plus1) return; /* already seen */
+        h = (h + 1u) & mask;
+    }
+
+    if (!automap_ensure_walls(level, level->automap_seen_count + 1u)) return;
+
+    AutomapSeenWall *w = &level->automap_seen_walls[level->automap_seen_count++];
+    w->gfx_off = gfx_off;
+    w->x1 = x1; w->z1 = z1;
+    w->x2 = x2; w->z2 = z2;
+    w->is_door = is_door;
+    w->door_key_id = door_key_id;
+    w->reserved = 0;
+
+    level->automap_seen_hash[h] = key_plus1;
+}
+
+static inline uint16_t automap_color_for(const LevelState *level, uint8_t is_door, uint8_t key_id)
+{
+    if (!is_door) return 0x0FFFu; /* white */
+    if (key_id == 0) return 0x0888u; /* grey: door without key */
+    if (key_id == 0x80u) return 0x0444u; /* dark grey: switch/condition door */
+
+    automap_refresh_key_bit_colors(level);
+    for (int b = 0; b < 8; b++) {
+        uint8_t bit = (uint8_t)(1u << b);
+        if ((key_id & bit) == 0) continue;
+        uint16_t c12 = g_automap_key_bit_to_c12[b];
+        if (c12 != 0) return c12;
+    }
+    return 0x0FFFu; /* unknown key: white */
+}
+
+int renderer_automap_collect_line_segments(GameState *state,
+                                           int *x0, int *y0, int *x1, int *y1,
+                                           uint16_t *c12, int max_lines)
+{
+    if (!state || max_lines < 1 || !x0 || !y0 || !x1 || !y1 || !c12) return 0;
+    LevelState *level = &state->level;
+
+    PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
+    int16_t px = (int16_t)(plr->xoff >> 16);
+    int16_t pz = (int16_t)(plr->zoff >> 16);
+
+    int w = g_renderer.width;
+    int h = g_renderer.height;
+    int cx = w / 2;
+    int cy = h / 2;
+    const int mx = w - 1; /* horizontal flip: x' = mx - x */
+
+    int32_t map_scale = g_automap_units_per_px;
+    if (map_scale < 1) map_scale = 1;
+
+    int n = 0;
+
+    /* Player arrow */
+    {
+        uint16_t cw = 0x0FFFu;
+        int ang = (int)(plr->angpos & 0x1FFF);
+        int32_t fx = (int32_t)sin_lookup(ang);
+        int32_t fz = (int32_t)cos_lookup(ang);
+        int32_t len = 40;
+        int tipx = cx + (int)((fx * len) / 32768);
+        int tipy = cy + (int)((fz * len) / 32768);
+        int aL = (ang + (ANGLE_FULL * 3) / 8) & ANGLE_MASK;
+        int aR = (ang + (ANGLE_FULL * 5) / 8) & ANGLE_MASK;
+        int32_t lx = (int32_t)sin_lookup(aL);
+        int32_t lz = (int32_t)cos_lookup(aL);
+        int32_t rx = (int32_t)sin_lookup(aR);
+        int32_t rz = (int32_t)cos_lookup(aR);
+        int wing = 20;
+        int lox = tipx + (int)((lx * wing) / 32768);
+        int loy = tipy + (int)((lz * wing) / 32768);
+        int rox = tipx + (int)((rx * wing) / 32768);
+        int roy = tipy + (int)((rz * wing) / 32768);
+
+        if (n < max_lines) { x0[n] = mx - cx; y0[n] = cy; x1[n] = mx - tipx; y1[n] = tipy; c12[n] = cw; n++; }
+        if (n < max_lines) { x0[n] = mx - tipx; y0[n] = tipy; x1[n] = mx - lox; y1[n] = loy; c12[n] = cw; n++; }
+        if (n < max_lines) { x0[n] = mx - tipx; y0[n] = tipy; x1[n] = mx - rox; y1[n] = roy; c12[n] = cw; n++; }
+    }
+
+    if (!level->automap_seen_walls || level->automap_seen_count == 0) return n;
+
+    for (uint32_t i = 0; i < level->automap_seen_count && n < max_lines; i++) {
+        const AutomapSeenWall *sw = &level->automap_seen_walls[i];
+        int32_t ax0 = (int32_t)sw->x1 - (int32_t)px;
+        int32_t az0 = (int32_t)sw->z1 - (int32_t)pz;
+        int32_t ax1 = (int32_t)sw->x2 - (int32_t)px;
+        int32_t az1 = (int32_t)sw->z2 - (int32_t)pz;
+        int wx0 = cx + (int)(ax0 / map_scale);
+        int wy0 = cy + (int)(az0 / map_scale);
+        int wx1 = cx + (int)(ax1 / map_scale);
+        int wy1 = cy + (int)(az1 / map_scale);
+        x0[n] = mx - wx0;
+        y0[n] = wy0;
+        x1[n] = mx - wx1;
+        y1[n] = wy1;
+        c12[n] = automap_color_for(level, sw->is_door, sw->door_key_id);
+        n++;
+    }
+    return n;
+}
+
 /* -----------------------------------------------------------------------
  * SCALE table (from Macros.i)
  *
@@ -961,6 +1365,14 @@ int renderer_toggle_floor_gouraud_debug_view(void)
 int renderer_get_floor_gouraud_debug_view(void)
 {
     return g_debug_floor_gouraud_only;
+}
+
+void renderer_automap_adjust_scale(int delta_steps)
+{
+    int32_t v = g_automap_units_per_px + (int32_t)delta_steps;
+    if (v < (int32_t)AUTOMAP_UNITS_PER_PX_MIN) v = (int32_t)AUTOMAP_UNITS_PER_PX_MIN;
+    if (v > (int32_t)AUTOMAP_UNITS_PER_PX_MAX) v = (int32_t)AUTOMAP_UNITS_PER_PX_MAX;
+    g_automap_units_per_px = v;
 }
 
 /* -----------------------------------------------------------------------
@@ -4337,7 +4749,20 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     ctx->cur_wall_pal = NULL;
                 /* Amiga seethru path (type 13) clamps d6 to 32; normal walls clamp to 64. */
                 int16_t wall_d6_max = (entry_type == 13) ? 32 : 64;
-                if (!skip_this_wall)
+                if (!skip_this_wall) {
+                    /* Automap: tag this wall as seen (single-threaded path). */
+                    if (level->points && level->graphics) {
+                        /* door_wall_list gfx_off points to the wall record starting at the type word. */
+                        uint32_t wall_gfx_off = (uint32_t)((ptr - 2) - level->graphics);
+                        int is_door = 0;
+                        uint8_t key_id = automap_door_key_for_wall_gfx_off(level, wall_gfx_off, &is_door);
+                        int16_t wx1 = rd16(level->points + (size_t)p1 * 4u + 0u);
+                        int16_t wz1 = rd16(level->points + (size_t)p1 * 4u + 2u);
+                        int16_t wx2 = rd16(level->points + (size_t)p2 * 4u + 0u);
+                        int16_t wz2 = rd16(level->points + (size_t)p2 * 4u + 2u);
+                        automap_mark_seen(level, wall_gfx_off, wx1, wz1, wx2, wz2,
+                                          (uint8_t)(is_door ? 1 : 0), key_id);
+                    }
                     renderer_draw_wall_ctx(ctx, rx1, rz1, rx2, rz2,
                                            wall_top, wall_bot,
                                            wall_tex, leftend, rightend,
@@ -4345,6 +4770,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                            use_valand, use_valshift, horand,
                                            eff_totalyoff, eff_fromtile, tex_id,
                                            wall_height_for_tex, wall_d6_max);
+                }
             }
             ptr += 28;
             break;
@@ -5428,6 +5854,8 @@ void renderer_draw_display(GameState *state)
 
     /* 8. Swap buffers (the just-drawn buffer becomes the display buffer) */
     renderer_swap();
+
+    /* Automap is drawn via SDL in display.c after the frame is composited. */
     if (prof_on) {
         RendererProfileState *ps = &g_renderer_profile;
         t_after_swap = SDL_GetPerformanceCounter();

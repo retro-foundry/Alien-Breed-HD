@@ -1324,7 +1324,7 @@ void player2_control(GameState *state)
  * Legacy format (magic "AB3D") remains readable for old position-only saves. */
 #define DEBUG_SAVE_MAGIC_LEGACY "AB3D"
 #define DEBUG_SAVE_MAGIC_FULL   "AB3S"
-#define DEBUG_SAVE_VERSION_FULL 2u
+#define DEBUG_SAVE_VERSION_FULL 3u
 #define DEBUG_SAVE_SUBPATH "debug_save.bin"
 #define DEBUG_SAVE_MAX_TABLE_ENTRIES 4096
 #define DEBUG_SAVE_MAX_CHUNK_BYTES (256u * 1024u * 1024u)
@@ -1349,6 +1349,7 @@ typedef struct {
     uint32_t lift_wall_list_bytes;
     uint32_t lift_wall_offsets_bytes;
     uint32_t workspace_bytes;
+    uint32_t automap_seen_bytes;
     int16_t  current_level;
     int16_t  num_object_points;
     int16_t  num_zones;
@@ -1369,6 +1370,13 @@ typedef struct {
 } DebugFullSaveHeader;
 
 typedef struct {
+    uint32_t gfx_off;
+    int16_t  x1, z1;
+    int16_t  x2, z2;
+    uint16_t flags; /* bit0: is_door, bits8..15: door_key_id */
+} DebugAutomapSeenWallDisk;
+
+typedef struct {
     bool     valid;
     DebugFullSaveHeader header;
     GameState game_state;
@@ -1387,6 +1395,7 @@ typedef struct {
     uint8_t *lift_wall_list;
     uint8_t *lift_wall_offsets;
     uint8_t *workspace;
+    uint8_t *automap_seen;
 } DebugFullSavePending;
 
 static DebugFullSavePending g_debug_full_save_pending;
@@ -1491,6 +1500,7 @@ static void player_debug_clear_pending_full_save(void)
     free(g_debug_full_save_pending.lift_wall_list);
     free(g_debug_full_save_pending.lift_wall_offsets);
     free(g_debug_full_save_pending.workspace);
+    free(g_debug_full_save_pending.automap_seen);
     memset(&g_debug_full_save_pending, 0, sizeof(g_debug_full_save_pending));
 }
 
@@ -1537,7 +1547,7 @@ static bool player_debug_read_full_save(FILE *f, GameState *state, const char *p
         return false;
     }
     if (memcmp(hdr.magic, DEBUG_SAVE_MAGIC_FULL, 4) != 0 ||
-        hdr.version != DEBUG_SAVE_VERSION_FULL) {
+        hdr.version < 2u || hdr.version > DEBUG_SAVE_VERSION_FULL) {
         printf("[PLAYER] debug load: unsupported full save format in %s\n", path);
         return false;
     }
@@ -1582,6 +1592,10 @@ static bool player_debug_read_full_save(FILE *f, GameState *state, const char *p
         goto fail;
     if (!player_debug_alloc_read_chunk(f, hdr.workspace_bytes, &g_debug_full_save_pending.workspace))
         goto fail;
+    if (hdr.version >= 3u) {
+        if (!player_debug_alloc_read_chunk(f, hdr.automap_seen_bytes, &g_debug_full_save_pending.automap_seen))
+            goto fail;
+    }
 
     g_debug_full_save_pending.valid = true;
     state->current_level = hdr.current_level;
@@ -1717,6 +1731,67 @@ static bool player_debug_apply_pending_full_save_after_level_load(GameState *sta
             g_debug_full_save_pending.workspace, hdr->workspace_bytes))
         goto fail;
 
+    /* Automap (v3+): restore seen wall list. */
+    if (hdr->version >= 3u && hdr->automap_seen_bytes > 0) {
+        uint32_t bytes = hdr->automap_seen_bytes;
+        if (bytes % (uint32_t)sizeof(DebugAutomapSeenWallDisk) != 0u) {
+            printf("[PLAYER] debug load: automap chunk size invalid (%u)\n", (unsigned)bytes);
+            goto fail;
+        }
+        uint32_t count = bytes / (uint32_t)sizeof(DebugAutomapSeenWallDisk);
+        if (count > 200000u) {
+            printf("[PLAYER] debug load: automap chunk too large (%u)\n", (unsigned)count);
+            goto fail;
+        }
+
+        free(state->level.automap_seen_walls);
+        free(state->level.automap_seen_hash);
+        state->level.automap_seen_walls = NULL;
+        state->level.automap_seen_hash = NULL;
+        state->level.automap_seen_count = 0;
+        state->level.automap_seen_cap = 0;
+        state->level.automap_seen_hash_cap = 0;
+
+        if (count > 0) {
+            state->level.automap_seen_walls = (AutomapSeenWall *)malloc((size_t)count * sizeof(AutomapSeenWall));
+            if (!state->level.automap_seen_walls) goto fail;
+            state->level.automap_seen_cap = count;
+
+            const DebugAutomapSeenWallDisk *disk = (const DebugAutomapSeenWallDisk *)g_debug_full_save_pending.automap_seen;
+            for (uint32_t i = 0; i < count; i++) {
+                AutomapSeenWall *w = &state->level.automap_seen_walls[i];
+                w->gfx_off = disk[i].gfx_off;
+                w->x1 = disk[i].x1; w->z1 = disk[i].z1;
+                w->x2 = disk[i].x2; w->z2 = disk[i].z2;
+                w->is_door = (uint8_t)((disk[i].flags & 0x0001u) ? 1u : 0u);
+                w->door_key_id = (uint8_t)((disk[i].flags >> 8) & 0x00FFu);
+                w->reserved = 0;
+            }
+            state->level.automap_seen_count = count;
+
+            uint32_t want = 1024u;
+            while (want < count * 2u) want <<= 1u;
+            state->level.automap_seen_hash = (uint32_t *)calloc((size_t)want, sizeof(uint32_t));
+            if (!state->level.automap_seen_hash) goto fail;
+            state->level.automap_seen_hash_cap = want;
+
+            /* Same hash as renderer.c (inline). */
+            for (uint32_t i = 0; i < count; i++) {
+                uint32_t keyp1 = state->level.automap_seen_walls[i].gfx_off + 1u;
+                uint32_t mask = want - 1u;
+                uint32_t h = keyp1;
+                h ^= h >> 16;
+                h *= 0x7FEB352Du;
+                h ^= h >> 15;
+                h *= 0x846CA68Bu;
+                h ^= h >> 16;
+                h &= mask;
+                while (state->level.automap_seen_hash[h] != 0u) h = (h + 1u) & mask;
+                state->level.automap_seen_hash[h] = keyp1;
+            }
+        }
+    }
+
     state->level.num_object_points = hdr->num_object_points;
     state->level.num_zones = hdr->num_zones;
     state->level.num_zone_slots = hdr->num_zone_slots;
@@ -1768,6 +1843,7 @@ void player_debug_save_position(GameState *state)
     uint32_t door_wall_list_bytes = 0, door_wall_offsets_bytes = 0;
     uint32_t lift_wall_list_bytes = 0, lift_wall_offsets_bytes = 0;
     uint32_t workspace_bytes = 0;
+    uint32_t automap_seen_bytes = 0;
     size_t door_data_sz, switch_data_sz, lift_data_sz;
 
     if (!state) return;
@@ -1820,6 +1896,15 @@ void player_debug_save_position(GameState *state)
         return;
     }
 
+    {
+        size_t count = (size_t)state->level.automap_seen_count;
+        size_t bytes = count * sizeof(DebugAutomapSeenWallDisk);
+        if (!player_debug_size_to_u32(bytes, &automap_seen_bytes)) {
+            printf("[PLAYER] debug save: automap payload too large; aborting save\n");
+            return;
+        }
+    }
+
     memset(&hdr, 0, sizeof(hdr));
     memcpy(hdr.magic, DEBUG_SAVE_MAGIC_FULL, 4);
     hdr.version = DEBUG_SAVE_VERSION_FULL;
@@ -1839,6 +1924,7 @@ void player_debug_save_position(GameState *state)
     hdr.lift_wall_list_bytes = lift_wall_list_bytes;
     hdr.lift_wall_offsets_bytes = lift_wall_offsets_bytes;
     hdr.workspace_bytes = workspace_bytes;
+    hdr.automap_seen_bytes = automap_seen_bytes;
     hdr.current_level = state->current_level;
     hdr.num_object_points = state->level.num_object_points;
     hdr.num_zones = state->level.num_zones;
@@ -1881,6 +1967,21 @@ void player_debug_save_position(GameState *state)
     if (!player_debug_write_exact(f, state->level.lift_wall_list, hdr.lift_wall_list_bytes)) goto fail;
     if (!player_debug_write_exact(f, state->level.lift_wall_list_offsets, hdr.lift_wall_offsets_bytes)) goto fail;
     if (!player_debug_write_exact(f, state->level.workspace, hdr.workspace_bytes)) goto fail;
+    if (hdr.automap_seen_bytes > 0) {
+        size_t count = (size_t)state->level.automap_seen_count;
+        DebugAutomapSeenWallDisk *tmp = (DebugAutomapSeenWallDisk *)malloc(count * sizeof(DebugAutomapSeenWallDisk));
+        if (!tmp) goto fail;
+        for (size_t i = 0; i < count; i++) {
+            const AutomapSeenWall *w = &state->level.automap_seen_walls[i];
+            tmp[i].gfx_off = w->gfx_off;
+            tmp[i].x1 = w->x1; tmp[i].z1 = w->z1;
+            tmp[i].x2 = w->x2; tmp[i].z2 = w->z2;
+            tmp[i].flags = (uint16_t)((w->is_door ? 1u : 0u) | ((uint16_t)w->door_key_id << 8));
+        }
+        bool ok = player_debug_write_exact(f, tmp, count * sizeof(DebugAutomapSeenWallDisk));
+        free(tmp);
+        if (!ok) goto fail;
+    }
 
     fclose(f);
     printf("[PLAYER] debug save: full game + level state (level %d) written to %s\n",

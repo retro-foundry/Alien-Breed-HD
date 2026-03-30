@@ -21,6 +21,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 
 /* OpenGL 3.0+ integer texture (not always in SDL's bundled gl.h) */
 #ifndef GL_R16UI
@@ -484,8 +485,6 @@ static void display_gl_present_cw(const uint16_t *src, int w, int h)
     g_gl_draw_arrays(GL_TRIANGLE_STRIP, 0, 4);
     g_gl_bind_vertex_array(0);
     g_gl_use_program(0);
-
-    SDL_RenderPresent(g_sdl_ren);
 }
 
 static void display_cpu_unpack_cw_to_texture(const uint16_t *src, int w, int h)
@@ -845,6 +844,71 @@ void display_clear_title_palette(void)      { }
 
 void display_init_copper_screen(void)       { }
 
+#define DISPLAY_AUTOMAP_MAX_SEGS 4096
+
+static void display_automap_amiga12_to_rgb(uint16_t cw, Uint8 *r, Uint8 *g, Uint8 *b)
+{
+    uint16_t c = (uint16_t)(cw & 0xFFFu);
+    *r = (Uint8)(((c >> 8) & 0xFu) * 17u);
+    *g = (Uint8)(((c >> 4) & 0xFu) * 17u);
+    *b = (Uint8)((c & 0xFu) * 17u);
+}
+
+static void display_automap_map_pt(int x, int y, int iw, int ih, int *ox, int *oy)
+{
+    if (iw < 1) iw = 1;
+    if (ih < 1) ih = 1;
+    *ox = g_present_dst_rect.x + (x * g_present_dst_rect.w) / iw;
+    *oy = g_present_dst_rect.y + (y * g_present_dst_rect.h) / ih;
+}
+
+/* ~3px black outline (3 parallel SDL lines), then foreground color on top. */
+static void display_automap_draw_line_outlined(SDL_Renderer *ren,
+                                               int ax0, int ay0, int ax1, int ay1,
+                                               Uint8 fr, Uint8 fg, Uint8 fb)
+{
+    int dx = ax1 - ax0;
+    int dy = ay1 - ay0;
+    double len = hypot((double)dx, (double)dy);
+    if (len < 1e-6) return;
+    double px = -dy / len;
+    double py = dx / len;
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+    for (int k = -1; k <= 1; k++) {
+        double oxk = k * px, oyk = k * py;
+        int ox = (int)(oxk + (oxk >= 0.0 ? 0.5 : -0.5));
+        int oy = (int)(oyk + (oyk >= 0.0 ? 0.5 : -0.5));
+        SDL_RenderDrawLine(ren, ax0 + ox, ay0 + oy, ax1 + ox, ay1 + oy);
+    }
+    SDL_SetRenderDrawColor(ren, fr, fg, fb, 255);
+    SDL_RenderDrawLine(ren, ax0, ay0, ax1, ay1);
+}
+
+static void display_automap_sdl_overlay(GameState *state)
+{
+    if (!state || !state->automap_visible || !g_sdl_ren) return;
+
+    int ix0[DISPLAY_AUTOMAP_MAX_SEGS], iy0[DISPLAY_AUTOMAP_MAX_SEGS];
+    int ix1[DISPLAY_AUTOMAP_MAX_SEGS], iy1[DISPLAY_AUTOMAP_MAX_SEGS];
+    uint16_t c12[DISPLAY_AUTOMAP_MAX_SEGS];
+    int n = renderer_automap_collect_line_segments(state, ix0, iy0, ix1, iy1, c12,
+                                                   DISPLAY_AUTOMAP_MAX_SEGS);
+    if (n <= 0) return;
+
+    int iw = renderer_get_width();
+    int ih = renderer_get_height();
+
+    for (int i = 0; i < n; i++) {
+        int ax0, ay0, ax1, ay1;
+        display_automap_map_pt(ix0[i], iy0[i], iw, ih, &ax0, &ay0);
+        display_automap_map_pt(ix1[i], iy1[i], iw, ih, &ax1, &ay1);
+        Uint8 fr, fg, fb;
+        display_automap_amiga12_to_rgb(c12[i], &fr, &fg, &fb);
+        display_automap_draw_line_outlined(g_sdl_ren, ax0, ay0, ax1, ay1, fr, fg, fb);
+    }
+}
+
 /* -----------------------------------------------------------------------
  * Main rendering
  * ----------------------------------------------------------------------- */
@@ -871,8 +935,12 @@ void display_draw_display(GameState *state)
         SDL_SetRenderDrawColor(g_sdl_ren, 0, 0, 0, 255);
         SDL_RenderClear(g_sdl_ren);
         SDL_RenderCopy(g_sdl_ren, g_texture, NULL, &g_present_dst_rect);
-        SDL_RenderPresent(g_sdl_ren);
     }
+
+    if (state && state->automap_visible)
+        display_automap_sdl_overlay(state);
+
+    SDL_RenderPresent(g_sdl_ren);
 
     /* Debug: show player position in window title (throttled) */
     if (state && g_window) {

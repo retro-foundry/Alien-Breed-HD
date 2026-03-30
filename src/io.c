@@ -753,6 +753,15 @@ int io_load_level_clips(LevelState *level, int level_num)
 
 void io_release_level_memory(LevelState *level)
 {
+    /* Automap runtime state */
+    free(level->automap_seen_walls);
+    level->automap_seen_walls = NULL;
+    level->automap_seen_count = 0;
+    level->automap_seen_cap = 0;
+    free(level->automap_seen_hash);
+    level->automap_seen_hash = NULL;
+    level->automap_seen_hash_cap = 0;
+
     /* player_shot_data and nasty_shot_data point into the data buffer
      * when loaded from real files (level_parse resolves them as offsets
      * into level->data). Only free them if they DON'T point into data. */
