@@ -838,6 +838,7 @@ void io_release_level_memory(LevelState *level)
     level->data_byte_count = 0;
     free(level->graphics);          level->graphics = NULL;
     level->graphics_byte_count = 0;
+    level->num_zone_graph_entries = 0;
     free(level->clips);             level->clips = NULL;
     level->clips_byte_count = 0;
 

@@ -7,6 +7,7 @@
 
 #include "level.h"
 #include "game_types.h"
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -486,10 +487,32 @@ int level_parse(LevelState *level)
         level->num_zone_slots = (int16_t)slots;
     }
 
+    /* Rows in zone_graph_adds (8 bytes each). Bounds draws/LOS without clamping to num_zones so
+     * extra zone_adds slots (level 2) stay valid; graph index cap fixes level 3 OOB. */
+    level->num_zone_graph_entries = 0;
+    {
+        size_t gbc = level->graphics_byte_count;
+        if (level->graphics && gbc > (size_t)zone_graph_offset && zone_graph_offset >= 0) {
+            int32_t gbc32 = (gbc > (size_t)INT_MAX) ? INT_MAX : (int32_t)gbc;
+            int32_t zg_cands[] = { door_offset, lift_offset, switch_offset };
+            int32_t zg_next = pick_next_section_offset(
+                zone_graph_offset, gbc32, zg_cands,
+                (int)(sizeof(zg_cands) / sizeof(zg_cands[0])));
+            if (zg_next <= zone_graph_offset || zg_next > gbc32)
+                zg_next = gbc32;
+            int64_t span = (int64_t)zg_next - (int64_t)zone_graph_offset;
+            if (span >= 8) {
+                int32_t nent = (int32_t)(span / 8);
+                if (nent > 32767) nent = 32767;
+                level->num_zone_graph_entries = (int16_t)nent;
+            }
+        }
+    }
+
     /* Zone offset table at lg+16 is big-endian. Log each zone's loaded data. */
     if (level->num_zones > 0) {
-        printf("[LEVEL] Zones: %d zones, %d zone slots (offset table big-endian)\n",
-               level->num_zones, level->num_zone_slots);
+        printf("[LEVEL] Zones: %d zones, %d zone slots, %d zone_graph rows (offset table big-endian)\n",
+               level->num_zones, level->num_zone_slots, (int)level->num_zone_graph_entries);
         for (int z = 0; z < level->num_zones; z++) {
             int32_t zoff = read_long(level->zone_adds + z * 4);
             size_t data_len = level->data_byte_count;

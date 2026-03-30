@@ -179,11 +179,15 @@ void order_zones(ZoneOrder *out, const LevelState *level,
 
     if (list_of_graph_rooms) {
         const uint8_t *lgr = list_of_graph_rooms;
-        int drawable_zones = (int)level->num_zones;
+        int zone_slots = level_zone_slot_count(level);
+        int graph_n = (int)level->num_zone_graph_entries;
+        int max_zid = zone_slots;
+        if (graph_n > 0 && graph_n < max_zid)
+            max_zid = graph_n;
         while (num_zones < MAX_ORDER_ENTRIES) {
             int16_t zid = read_be16(lgr);
             if (zid < 0) break;
-            if (zid < 256 && (drawable_zones <= 0 || zid < drawable_zones)) {
+            if (zid < 256 && (max_zid <= 0 || zid < max_zid)) {
                 to_draw_tab[zid] = 1;
                 workspace[zid] = read_be32(lgr + 4);
                 zone_list[num_zones++] = zid;
@@ -343,7 +347,7 @@ uint8_t can_it_be_seen(const LevelState *level,
 
             if (amiga_graph) {
                 /* Amiga format: word0 = graph index -> offset in graphics -> zone id */
-                if (level->num_zones > 0 && word0 >= level->num_zones) {
+                if (level->num_zone_graph_entries > 0 && word0 >= level->num_zone_graph_entries) {
                     entry += 8;
                     continue;
                 }

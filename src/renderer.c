@@ -4637,8 +4637,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
     {
         int zone_slots = level_zone_slot_count(level);
         if (zone_id < 0 || zone_id >= zone_slots) return;
-        /* zone_graph_adds is authored for drawable zone range (num_zones). */
-        if (level->num_zones > 0 && zone_id >= level->num_zones) return;
+        if (level->num_zone_graph_entries > 0 && zone_id >= level->num_zone_graph_entries)
+            return;
     }
 
     /* Get zone data (same level->data that door_routine/lift_routine write to each frame). */
@@ -4706,7 +4706,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
 
     /* Zone brightness from level data (no table); anim applied via level_get_zone_brightness. */
     int16_t zone_bright = 0;
-    if (zone_id >= 0 && zone_id < level->num_zones)
+    if (zone_id >= 0 && zone_id < level_zone_slot_count(level))
         zone_bright = level_get_zone_brightness(level, zone_id, use_upper ? 1 : 0);
 
 
@@ -5682,7 +5682,12 @@ static void renderer_draw_world_slice(GameState *state,
     for (int i = zone_count - 1; i >= 0; i--) {
         int16_t zone_id = zone_prepass->zone_ids[i];
         if (zone_id < 0 || !zone_prepass->valid[i]) continue;
-        if (state->level.num_zones > 0 && zone_id >= state->level.num_zones) continue;
+        {
+            int zs = level_zone_slot_count(&state->level);
+            if (zone_id >= zs) continue;
+            if (state->level.num_zone_graph_entries > 0 && zone_id >= state->level.num_zone_graph_entries)
+                continue;
+        }
 
         render_slice_context_reset(&frame_ctx, 0, (int16_t)g_renderer.width,
                                    strip_top, strip_bot);
