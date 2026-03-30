@@ -15,7 +15,7 @@ infinite_health=0
 infinite_ammo=0
 
 # 1 = start with every weapon unlocked and full ammo (both players).
-all_weapons=1
+all_weapons=0
 
 # 1 = treat every key in the level as collected (door/lift condition bits only; switches unchanged).
 all_keys=0
@@ -26,7 +26,6 @@ volume=100
 # Vertical projection scale (affects wall/floor/sprite vertical size vs depth).
 # 100 = default engine behavior; lower = flatter / wider vertical FOV feel, higher = taller.
 # Allowed range: 25..1000 (percent of engine default vertical scale).
-# Edit ab3d.ini next to ab3d1.exe (or this template if no ini exists there yet); repo-only edits are ignored.
 y_proj_scale=100
 
 # Internal software render resolution (game draws at this size). The window is
