@@ -39,6 +39,11 @@
 #define STEP_UP_DUCKED      (10 * 256)   /* 2560 - AB3DI.s ducked step-up */
 #define STEP_DOWN_DEFAULT   0x1000000    /* AB3DI.s step-down */
 #define INSTANT_TRACE_MAX_ITERS 1024
+/* Amiga assembly still applies ±20, but effective in-game aim uses larger deltas; a tiny
+ * cap here made the port feel nothing like the real game. Match ItsABullet's per-tick
+ * vertical velocity ceiling (10*256 = ±2560) so auto-aim is only bounded by the same
+ * physics limits as flight, not an extra stricter ceiling. */
+#define PLAYER_PROJECTILE_BULYSPD_CLAMP (10 * 256)
 
 /* Gun selection key -> gun index mapping (from GUNVALS in Plr1Control.s):
  * key1 pistol, key2 shotgun, key3 plasma, key4 grenade, key5 rocket, key6 flamethrower. */
@@ -2462,9 +2467,16 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         /* Projectile weapon: Amiga uses PlayerShotData for player projectiles. */
         if (!state->level.player_shot_data) return;
         /* PlayerShoot.s nothingtoshoot path zeros bulyspd before PLR1FIREBULLET.
-         * This applies to rockets/grenades/plasma equally; grenade behavior differs
-         * via gun data (bullet_y_offset, gravity, flags). */
-        if (!has_target) bulyspd = 0;
+         * All projectile guns share this; per-gun arc differs via gun data
+         * (bullet_y_offset, gravity, flags). */
+        if (!has_target) {
+            bulyspd = 0;
+        } else {
+            if (bulyspd > PLAYER_PROJECTILE_BULYSPD_CLAMP)
+                bulyspd = (int16_t)PLAYER_PROJECTILE_BULYSPD_CLAMP;
+            else if (bulyspd < -PLAYER_PROJECTILE_BULYSPD_CLAMP)
+                bulyspd = (int16_t)-PLAYER_PROJECTILE_BULYSPD_CLAMP;
+        }
 
         /* Find free slot in player_shot_data */
         uint8_t *shots = state->level.player_shot_data;
@@ -2524,11 +2536,8 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         int32_t zvel = ((int32_t)cos_val) << (shift + 1);
         SHOT_SET_XVEL(*bullet, xvel);
         SHOT_SET_ZVEL(*bullet, zvel);
-        /* PlayerShoot.s PLR1FIREBULLET: clamp bulyspd to [-20,20], then add word 20 (bullet Y tweak). */
-        int16_t final_yvel = bulyspd;
-        if (final_yvel > 20) final_yvel = 20;
-        else if (final_yvel < -20) final_yvel = -20;
-        final_yvel = (int16_t)(final_yvel + gun->bullet_y_offset);
+        /* bulyspd already clamped (PLAYER_PROJECTILE_BULYSPD_CLAMP); add gun Y tweak. */
+        int16_t final_yvel = (int16_t)((int32_t)bulyspd + (int32_t)gun->bullet_y_offset);
         SHOT_SET_YVEL(*bullet, final_yvel);
         SHOT_POWER(*bullet) = gun->shot_power;
         SHOT_STATUS(*bullet) = 0;
