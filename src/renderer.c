@@ -169,9 +169,9 @@ typedef struct {
     int initialized;
     int cpu_count;
     int worker_count;
-    int stop;
-    uint32_t job_generation;
-    int pending_workers;
+    SDL_atomic_t stop;
+    SDL_atomic_t job_generation;
+    SDL_atomic_t pending_workers;
     int active_workers;
     RendererThreadJobType job_type;
     GameState *job_state;
@@ -184,9 +184,8 @@ typedef struct {
     const uint16_t *post_src_cw;
     uint32_t *post_dst_rgb;
     uint16_t *post_dst_cw;
-    SDL_mutex *mutex;
-    SDL_cond *cond_start;
-    SDL_cond *cond_done;
+    SDL_sem *done_sem;
+    SDL_sem *worker_sems[RENDERER_MAX_THREADS];
     RendererThreadWorker workers[RENDERER_MAX_THREADS];
     int last_logged_height;
     int last_logged_workers;
@@ -948,21 +947,19 @@ static int renderer_thread_worker_main(void *userdata)
 {
     RendererThreadWorker *worker = (RendererThreadWorker*)userdata;
     RendererThreadPool *pool = &g_renderer_thread_pool;
-    uint32_t seen_generation = 0;
 
-    if (!pool->mutex || !pool->cond_start || !pool->cond_done) return 0;
+    if (worker->index < 0 || worker->index >= pool->worker_count ||
+        !pool->worker_sems[worker->index] || !pool->done_sem) {
+        return 0;
+    }
 
-    SDL_LockMutex(pool->mutex);
     for (;;) {
-        while (!pool->stop && pool->job_generation == seen_generation) {
-            SDL_CondWait(pool->cond_start, pool->mutex);
-        }
-        if (pool->stop) {
-            SDL_UnlockMutex(pool->mutex);
+        SDL_SemWait(pool->worker_sems[worker->index]);
+
+        if (SDL_AtomicGet(&pool->stop)) {
             return 0;
         }
 
-        uint32_t gen = pool->job_generation;
         const int active = (worker->index < pool->active_workers);
         const int16_t row_start = worker->row_start;
         const int16_t row_end = worker->row_end;
@@ -977,8 +974,6 @@ static int renderer_thread_worker_main(void *userdata)
         const uint16_t *post_src_cw = pool->post_src_cw;
         uint32_t *post_dst_rgb = pool->post_dst_rgb;
         uint16_t *post_dst_cw = pool->post_dst_cw;
-
-        SDL_UnlockMutex(pool->mutex);
 
         int8_t fill_screen_water = 0;
         if (active && row_start < row_end) {
@@ -1031,13 +1026,12 @@ static int renderer_thread_worker_main(void *userdata)
             }
         }
 
-        SDL_LockMutex(pool->mutex);
         worker->fill_screen_water = fill_screen_water;
-        seen_generation = gen;
         if (active) {
-            pool->pending_workers--;
-            if (pool->pending_workers <= 0) {
-                SDL_CondSignal(pool->cond_done);
+            /* SDL_AtomicAdd returns the value before the add; last worker sees previous==1. */
+            int prev = SDL_AtomicAdd(&pool->pending_workers, -1);
+            if (prev == 1) {
+                SDL_SemPost(pool->done_sem);
             }
         }
     }
@@ -1047,11 +1041,11 @@ static void renderer_threads_shutdown(void)
 {
     RendererThreadPool *pool = &g_renderer_thread_pool;
 
-    if (pool->mutex) {
-        SDL_LockMutex(pool->mutex);
-        pool->stop = 1;
-        if (pool->cond_start) SDL_CondBroadcast(pool->cond_start);
-        SDL_UnlockMutex(pool->mutex);
+    SDL_AtomicSet(&pool->stop, 1);
+    for (int i = 0; i < pool->worker_count; i++) {
+        if (pool->worker_sems[i]) {
+            SDL_SemPost(pool->worker_sems[i]);
+        }
     }
 
     for (int i = 0; i < pool->worker_count; i++) {
@@ -1062,24 +1056,23 @@ static void renderer_threads_shutdown(void)
         renderer_release_worker_local_buffers(&pool->workers[i]);
     }
 
-    if (pool->cond_done) {
-        SDL_DestroyCond(pool->cond_done);
-        pool->cond_done = NULL;
+    if (pool->done_sem) {
+        SDL_DestroySemaphore(pool->done_sem);
+        pool->done_sem = NULL;
     }
-    if (pool->cond_start) {
-        SDL_DestroyCond(pool->cond_start);
-        pool->cond_start = NULL;
-    }
-    if (pool->mutex) {
-        SDL_DestroyMutex(pool->mutex);
-        pool->mutex = NULL;
+    for (int i = 0; i < RENDERER_MAX_THREADS; i++) {
+        if (pool->worker_sems[i]) {
+            SDL_DestroySemaphore(pool->worker_sems[i]);
+            pool->worker_sems[i] = NULL;
+        }
     }
 
     pool->initialized = 0;
     pool->worker_count = 0;
     pool->cpu_count = 0;
-    pool->pending_workers = 0;
+    SDL_AtomicSet(&pool->pending_workers, 0);
     pool->active_workers = 0;
+    SDL_AtomicSet(&pool->stop, 0);
 }
 
 static void renderer_threads_init(void)
@@ -1110,16 +1103,25 @@ static void renderer_threads_init(void)
         return;
     }
 
-    pool->mutex = SDL_CreateMutex();
-    pool->cond_start = SDL_CreateCond();
-    pool->cond_done = SDL_CreateCond();
-    if (!pool->mutex || !pool->cond_start || !pool->cond_done) {
-        printf("[RENDERER] threading: disabled (failed to create SDL mutex/cond)\n");
+    pool->done_sem = SDL_CreateSemaphore(0);
+    if (!pool->done_sem) {
+        printf("[RENDERER] threading: disabled (failed to create done semaphore)\n");
         renderer_threads_shutdown();
         return;
     }
 
     pool->worker_count = cpu_count;
+    for (int i = 0; i < pool->worker_count; i++) {
+        pool->worker_sems[i] = SDL_CreateSemaphore(0);
+        if (!pool->worker_sems[i]) {
+            printf("[RENDERER] threading: disabled (failed to create worker semaphore %d)\n", i);
+            pool->worker_count = i;
+            renderer_threads_shutdown();
+            pool->initialized = 1;
+            return;
+        }
+    }
+
     for (int i = 0; i < pool->worker_count; i++) {
         pool->workers[i].index = i;
         pool->workers[i].row_start = 0;
@@ -1147,8 +1149,8 @@ static void renderer_threads_init(void)
            pool->worker_count, pool->cpu_count);
 }
 
-static int renderer_prepare_worker_rows_locked(RendererThreadPool *pool, int height,
-                                               int weight_bottom_rows, int log_rows)
+static int renderer_prepare_worker_rows(RendererThreadPool *pool, int height,
+                                        int weight_bottom_rows, int log_rows)
 {
     int active_workers = pool->worker_count;
     int worker_cap = g_renderer_thread_max_workers;
@@ -1249,10 +1251,8 @@ static int renderer_dispatch_threaded_world(GameState *state,
     int height = g_renderer.height;
     if (height <= 0) return 0;
 
-    SDL_LockMutex(pool->mutex);
-    int active_workers = renderer_prepare_worker_rows_locked(pool, height, 0, 1);
+    int active_workers = renderer_prepare_worker_rows(pool, height, 0, 1);
     if (active_workers <= 0) {
-        SDL_UnlockMutex(pool->mutex);
         return 0;
     }
     {
@@ -1270,7 +1270,6 @@ static int renderer_dispatch_threaded_world(GameState *state,
                 printf("[RENDERER] threading: failed to allocate per-worker strip buffers; falling back to single-threaded\n");
                 s_worker_buffer_fail_logged = 1;
             }
-            SDL_UnlockMutex(pool->mutex);
             return 0;
         }
     }
@@ -1287,22 +1286,20 @@ static int renderer_dispatch_threaded_world(GameState *state,
     pool->post_dst_rgb = NULL;
     pool->post_dst_cw = NULL;
     pool->active_workers = active_workers;
-    pool->pending_workers = active_workers;
-    pool->job_generation++;
-
-    SDL_CondBroadcast(pool->cond_start);
-
-    /* Single barrier wait phase for this frame's world-render jobs. */
-    while (pool->pending_workers > 0) {
-        SDL_CondWait(pool->cond_done, pool->mutex);
+    SDL_AtomicSet(&pool->pending_workers, active_workers);
+    SDL_AtomicAdd(&pool->job_generation, 1);
+    SDL_MemoryBarrierRelease();
+    for (int i = 0; i < pool->worker_count; i++) {
+        SDL_SemPost(pool->worker_sems[i]);
     }
+
+    SDL_SemWait(pool->done_sem);
 
     int8_t fill_screen_water = 0;
     for (int i = 0; i < active_workers; i++) {
         fill_screen_water = merge_fill_screen_water(fill_screen_water, pool->workers[i].fill_screen_water);
     }
     g_prof_last_world_workers = active_workers;
-    SDL_UnlockMutex(pool->mutex);
 
     if (out_fill_screen_water) *out_fill_screen_water = fill_screen_water;
     return 1;
@@ -1322,10 +1319,8 @@ static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
     int height = r->height;
     if (width <= 0 || height <= 0) return 0;
 
-    SDL_LockMutex(pool->mutex);
-    int active_workers = renderer_prepare_worker_rows_locked(pool, height, 0, 0);
+    int active_workers = renderer_prepare_worker_rows(pool, height, 0, 0);
     if (active_workers <= 0) {
-        SDL_UnlockMutex(pool->mutex);
         return 0;
     }
 
@@ -1341,15 +1336,15 @@ static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
     pool->post_dst_rgb = r->rgb_buffer;
     pool->post_dst_cw = r->cw_buffer;
     pool->active_workers = active_workers;
-    pool->pending_workers = active_workers;
-    pool->job_generation++;
-
-    SDL_CondBroadcast(pool->cond_start);
-    while (pool->pending_workers > 0) {
-        SDL_CondWait(pool->cond_done, pool->mutex);
+    SDL_AtomicSet(&pool->pending_workers, active_workers);
+    SDL_AtomicAdd(&pool->job_generation, 1);
+    SDL_MemoryBarrierRelease();
+    for (int i = 0; i < pool->worker_count; i++) {
+        SDL_SemPost(pool->worker_sems[i]);
     }
+
+    SDL_SemWait(pool->done_sem);
     g_prof_last_tint_workers = active_workers;
-    SDL_UnlockMutex(pool->mutex);
 
     return 1;
 }
