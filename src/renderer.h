@@ -321,6 +321,13 @@ void renderer_automap_adjust_scale(int delta_steps);
 int renderer_automap_collect_line_segments(GameState *state,
                                            int *x0, int *y0, int *x1, int *y1,
                                            uint16_t *c12, int max_lines);
+/* HUD: Amiga12 tint for key condition bit 0..3 (same palette as automap key sprites). */
+uint16_t renderer_key_condition_bit_color_c12(const GameState *state, int bit_index);
+/* HUD: key sprite frame index 0..3 for condition bit (from level key objects / fallback). */
+int renderer_key_sprite_frame_for_condition_bit(const GameState *state, int bit_index);
+uintptr_t renderer_key_sprite_hud_cache_tag(const GameState *state);
+/* Rasterize key sprite frame to 32 rows; stride_pixels >= 32; ARGB with alpha 0 = transparent. */
+int renderer_key_sprite_rasterize_frame_argb(int frame_index, uint32_t *out, int stride_pixels);
 
 /* Sub-routines (called by draw_display) */
 void renderer_rotate_level_pts(GameState *state);

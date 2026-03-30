@@ -13,6 +13,7 @@
 
 #include "display.h"
 #include "renderer.h"
+#include "game_data.h"
 #include <SDL.h>
 #include <SDL_opengl.h>
 /* SDL_GL_BindTexture / glGenerateMipmap: framebuffer minification when window < internal size */
@@ -66,6 +67,10 @@ typedef void (APIENTRY *DisplayGlTexParameteriFn)(GLenum target, GLenum pname, G
 static SDL_Window   *g_window   = NULL;
 static SDL_Renderer *g_sdl_ren  = NULL;
 static SDL_Texture  *g_texture  = NULL;
+/* Key HUD: one SDL texture per key sprite frame 0..3 (invalidated when level/assets change). */
+static SDL_Texture *g_key_hud_tex[4];
+static uintptr_t    g_key_hud_tex_tag;
+static void display_key_hud_free_textures(void);
 static int g_gl_unpack_ok; /* OpenGL R16UI + shader path active */
 static int g_present_width = 0;
 static int g_present_height = 0;
@@ -813,6 +818,8 @@ int display_is_fullscreen(void)
 
 void display_shutdown(void)
 {
+    display_key_hud_free_textures();
+    g_key_hud_tex_tag = 0;
     renderer_shutdown();
     display_gl_shutdown_unpack();
     if (g_texture)  SDL_DestroyTexture(g_texture);
@@ -885,6 +892,147 @@ static void display_automap_draw_line_outlined(SDL_Renderer *ren,
     SDL_RenderDrawLine(ren, ax0, ay0, ax1, ay1);
 }
 
+/* Map internal render pixel rect to SDL output coordinates (letterboxed). */
+static void display_map_internal_rect(int ix, int iy, int irw, int irh, SDL_Rect *out)
+{
+    int rw = renderer_get_width();
+    int rh = renderer_get_height();
+    int ax0, ay0, ax1, ay1;
+    display_automap_map_pt(ix, iy, rw, rh, &ax0, &ay0);
+    display_automap_map_pt(ix + irw, iy + irh, rw, rh, &ax1, &ay1);
+    out->x = ax0;
+    out->y = ay0;
+    out->w = ax1 - ax0;
+    out->h = ay1 - ay0;
+}
+
+static void display_key_hud_fill_rect(SDL_Renderer *ren, int ix, int iy, int iw, int ih,
+                                      Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+{
+    SDL_Rect rr;
+    display_map_internal_rect(ix, iy, iw, ih, &rr);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(ren, r, g, b, a);
+    SDL_RenderFillRect(ren, &rr);
+}
+
+static void display_key_hud_free_textures(void)
+{
+    for (int i = 0; i < 4; i++) {
+        if (g_key_hud_tex[i]) {
+            SDL_DestroyTexture(g_key_hud_tex[i]);
+            g_key_hud_tex[i] = NULL;
+        }
+    }
+}
+
+static SDL_Texture *display_key_hud_texture_for_frame(int frame_idx)
+{
+    if (frame_idx < 0 || frame_idx >= 4 || !g_sdl_ren) return NULL;
+    if (g_key_hud_tex[frame_idx]) return g_key_hud_tex[frame_idx];
+
+    uint32_t pixels[32 * 32];
+    if (!renderer_key_sprite_rasterize_frame_argb(frame_idx, pixels, 32)) return NULL;
+
+    SDL_Texture *t = SDL_CreateTexture(g_sdl_ren, SDL_PIXELFORMAT_ARGB8888,
+                                         SDL_TEXTUREACCESS_STATIC, 32, 32);
+    if (!t) return NULL;
+    if (SDL_UpdateTexture(t, NULL, pixels, (int)(32 * sizeof(uint32_t))) != 0) {
+        SDL_DestroyTexture(t);
+        return NULL;
+    }
+    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+    g_key_hud_tex[frame_idx] = t;
+    return t;
+}
+
+static void display_key_hud_sdl_overlay(const GameState *state)
+{
+    if (!state || !g_sdl_ren) return;
+
+    int iw = renderer_get_width();
+    int ih = renderer_get_height();
+    if (iw < 8 || ih < 8) return;
+
+    uintptr_t tag = renderer_key_sprite_hud_cache_tag(state);
+    if (tag != g_key_hud_tex_tag) {
+        display_key_hud_free_textures();
+        g_key_hud_tex_tag = tag;
+    }
+
+    int margin = ih / 48;
+    if (margin < 2) margin = 2;
+    int kh = ih / 6;
+    if (kh < 14) kh = 14;
+    if (kh > 44) kh = 44;
+    /* Tight horizontal group, bottom-right of the render buffer */
+    int gap = kh / 10;
+    if (gap < 2) gap = 2;
+    int group_w = 4 * kh + 3 * gap;
+    int ix0 = iw - margin - group_w;
+    if (ix0 < 0) ix0 = 0;
+    int iy = ih - margin - kh;
+
+    static const Uint8 fallback_rgb[4][3] = {
+        { 255, 210, 32 },
+        { 255, 64, 64 },
+        { 64, 220, 96 },
+        { 64, 140, 255 },
+    };
+
+    for (int i = 0; i < 4; i++) {
+        uint8_t bit = (uint8_t)(1u << i);
+        int collected = (((uint16_t)game_conditions & (uint16_t)bit) != 0);
+        Uint8 alpha = collected ? (Uint8)255 : (Uint8)128;
+
+        int frame = renderer_key_sprite_frame_for_condition_bit(state, i);
+        if (frame < 0) frame = 0;
+        if (frame > 3) frame = 3;
+
+        int ix = ix0 + i * (kh + gap);
+
+        SDL_Texture *tex = display_key_hud_texture_for_frame(frame);
+        if (tex) {
+            SDL_SetTextureAlphaMod(tex, alpha);
+            SDL_Rect dst;
+            display_map_internal_rect(ix, iy, kh, kh, &dst);
+            SDL_RenderCopy(g_sdl_ren, tex, NULL, &dst);
+            continue;
+        }
+
+        /* Fallback if key .wad/.ptr not loaded */
+        int kw = (kh * 5) / 8;
+        if (kw < 10) kw = 10;
+        int cx = ix + kh / 2;
+        ix = cx - kw / 2;
+        uint16_t c12 = renderer_key_condition_bit_color_c12(state, i);
+        Uint8 r, g, b;
+        if (c12 != 0)
+            display_automap_amiga12_to_rgb(c12, &r, &g, &b);
+        else {
+            r = fallback_rgb[i][0];
+            g = fallback_rgb[i][1];
+            b = fallback_rgb[i][2];
+        }
+        int bow_w = kw * 2 / 3;
+        int bow_h = kh * 5 / 12;
+        display_key_hud_fill_rect(g_sdl_ren, ix, iy, bow_w, bow_h, r, g, b, alpha);
+        int sw = kw / 3;
+        if (sw < 3) sw = 3;
+        int sx = ix + kw / 3;
+        int sy = iy + kh / 4;
+        int sh = kh - kh / 4;
+        display_key_hud_fill_rect(g_sdl_ren, sx, sy, sw, sh, r, g, b, alpha);
+        int tw = kw / 3;
+        int th = kh / 7;
+        if (th < 2) th = 2;
+        int tx = ix + kw * 2 / 3;
+        int ty = iy + kh - th - margin / 2;
+        if (ty < sy + sh / 2) ty = sy + sh / 2;
+        display_key_hud_fill_rect(g_sdl_ren, tx, ty, tw, th, r, g, b, alpha);
+    }
+}
+
 static void display_automap_sdl_overlay(GameState *state)
 {
     if (!state || !state->automap_visible || !g_sdl_ren) return;
@@ -937,8 +1085,11 @@ void display_draw_display(GameState *state)
         SDL_RenderCopy(g_sdl_ren, g_texture, NULL, &g_present_dst_rect);
     }
 
-    if (state && state->automap_visible)
-        display_automap_sdl_overlay(state);
+    if (state) {
+        display_key_hud_sdl_overlay(state);
+        if (state->automap_visible)
+            display_automap_sdl_overlay(state);
+    }
 
     SDL_RenderPresent(g_sdl_ren);
 

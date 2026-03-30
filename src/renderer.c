@@ -226,6 +226,7 @@ static int32_t g_automap_units_per_px = 8; /* was 4: zoomed out 2x */
 /* Cached key-bit -> automap color mapping (derived from key sprites). */
 static uintptr_t g_automap_key_cache_tag = 0;
 static uint16_t g_automap_key_bit_to_c12[8]; /* bits 0..7 -> color; 0 = unknown */
+static uint8_t  g_automap_key_bit_frame_idx[8]; /* bits 0..7 -> key sprite frame 0..3 */
 static uint8_t  g_automap_key_bit_valid_mask = 0;
 
 static uint32_t automap_hash_u32(uint32_t x)
@@ -406,6 +407,7 @@ static void automap_refresh_key_bit_colors(const LevelState *level)
     if (tag == g_automap_key_cache_tag) return;
     g_automap_key_cache_tag = tag;
     memset(g_automap_key_bit_to_c12, 0, sizeof(g_automap_key_bit_to_c12));
+    memset(g_automap_key_bit_frame_idx, 0, sizeof(g_automap_key_bit_frame_idx));
     g_automap_key_bit_valid_mask = 0;
     if (!level || !level->object_data) return;
 
@@ -428,6 +430,7 @@ static void automap_refresh_key_bit_colors(const LevelState *level)
             if ((bitmask & bit) == 0) continue;
             if ((g_automap_key_bit_valid_mask & bit) != 0) continue;
             g_automap_key_bit_to_c12[b] = frame_c12[fi];
+            g_automap_key_bit_frame_idx[b] = (uint8_t)fi;
             g_automap_key_bit_valid_mask |= bit;
         }
     }
@@ -439,6 +442,7 @@ static void automap_refresh_key_bit_colors(const LevelState *level)
         if ((g_automap_key_bit_valid_mask & bit) != 0) continue;
         uint16_t c = frame_c12[k_nibble_to_frame[n]];
         if (c != 0) g_automap_key_bit_to_c12[n] = c;
+        g_automap_key_bit_frame_idx[n] = k_nibble_to_frame[n];
     }
 }
 
@@ -542,6 +546,95 @@ static inline uint16_t automap_color_for(const LevelState *level, uint8_t is_doo
         if (c12 != 0) return c12;
     }
     return 0x0FFFu; /* unknown key: white */
+}
+
+uint16_t renderer_key_condition_bit_color_c12(const GameState *state, int bit_index)
+{
+    if (!state || bit_index < 0 || bit_index > 3) return 0;
+    automap_refresh_key_bit_colors(&state->level);
+    return g_automap_key_bit_to_c12[bit_index];
+}
+
+int renderer_key_sprite_frame_for_condition_bit(const GameState *state, int bit_index)
+{
+    if (!state || bit_index < 0 || bit_index > 3) return 0;
+    automap_refresh_key_bit_colors(&state->level);
+    return (int)g_automap_key_bit_frame_idx[bit_index];
+}
+
+uintptr_t renderer_key_sprite_hud_cache_tag(const GameState *state)
+{
+    if (!state || !state->level.object_data) return 0;
+    return (uintptr_t)state->level.object_data ^ ((uintptr_t)g_renderer.sprite_wad[5] << 1);
+}
+
+/* Rasterize key sprite type 5 frame (0..3) to ARGB8888; texel 0 = transparent. Matches automap sampling. */
+int renderer_key_sprite_rasterize_frame_argb(int frame_index, uint32_t *out, int stride_pixels)
+{
+    if (frame_index < 0 || frame_index >= 4 || !out || stride_pixels < 32) return 0;
+    if (!g_renderer.sprite_wad[5] || !g_renderer.sprite_ptr[5] || !g_renderer.sprite_pal_data[5]) return 0;
+
+    uint32_t ptr_off = (uint32_t)k_automap_key_ptr_off[frame_index];
+    uint16_t down_strip = k_automap_key_down_strip[frame_index];
+
+    const uint8_t *wad = g_renderer.sprite_wad[5];
+    size_t wad_size = g_renderer.sprite_wad_size[5];
+    const uint8_t *ptr = g_renderer.sprite_ptr[5];
+    size_t ptr_size = g_renderer.sprite_ptr_size[5];
+    const uint8_t *pal = g_renderer.sprite_pal_data[5];
+    size_t pal_size = g_renderer.sprite_pal_size[5];
+
+    uint32_t pal_level_off = 0;
+    if (pal_size >= 960u)
+        pal_level_off = 64u * 7u;
+    if (pal_level_off + 64u > pal_size)
+        pal_level_off = 0;
+
+    for (int y = 0; y < 32; y++) {
+        for (int x = 0; x < 32; x++) {
+            uint32_t *dst = out + x + y * stride_pixels;
+            uint32_t entry_off = ptr_off + (uint32_t)x * 4u;
+            if (entry_off + 4u > ptr_size) {
+                *dst = 0;
+                continue;
+            }
+            const uint8_t *entry = ptr + entry_off;
+            uint8_t mode = entry[0];
+            uint32_t wad_off = ((uint32_t)entry[1] << 16) | ((uint32_t)entry[2] << 8) | (uint32_t)entry[3];
+            if (mode == 0 && wad_off == 0) {
+                *dst = 0;
+                continue;
+            }
+            if (wad_off >= wad_size) {
+                *dst = 0;
+                continue;
+            }
+            const uint8_t *src = wad + wad_off;
+            int row_idx = (int)down_strip + y;
+            if (wad_off + (size_t)(row_idx + 1) * 2u > wad_size) {
+                *dst = 0;
+                continue;
+            }
+            uint16_t w = (uint16_t)((src[row_idx * 2u] << 8) | src[row_idx * 2u + 1u]);
+            uint8_t texel;
+            if (mode == 0) texel = (uint8_t)(w & 0x1Fu);
+            else if (mode == 1) texel = (uint8_t)((w >> 5) & 0x1Fu);
+            else texel = (uint8_t)((w >> 10) & 0x1Fu);
+            if (texel == 0) {
+                *dst = 0;
+                continue;
+            }
+            uint32_t ci = pal_level_off + (uint32_t)texel * 2u;
+            if (ci + 1u >= pal_size) {
+                *dst = 0;
+                continue;
+            }
+            uint16_t c12 = (uint16_t)((pal[ci] << 8) | pal[ci + 1u]);
+            uint32_t argb = amiga12_to_argb(c12);
+            *dst = (argb & 0x00FFFFFFu) | 0xFF000000u;
+        }
+    }
+    return 1;
 }
 
 int renderer_automap_collect_line_segments(GameState *state,
