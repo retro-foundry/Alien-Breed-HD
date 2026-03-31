@@ -3424,7 +3424,11 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     int32_t gour_bright_step = 0;
     const int dist_add = (dist >> 7);
     if (use_gour) {
-        int span_w = xr - xl;
+        /* Use the full original polygon span (x_left..x_right) for the gradient, then
+         * advance to the clipped draw start xl.  Using the clipped width (xr-xl) here
+         * was the column-strip shading artifact: strips with a clipped left edge would
+         * start at the wrong brightness and step at the wrong rate. */
+        int full_span_w = (int)x_right - (int)x_left;
         int left_level = left_brightness + dist_add;
         int right_level = right_brightness + dist_add;
         if (left_level < 0) left_level = 0;
@@ -3433,10 +3437,12 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         right_level >>= 1;
         if (left_level > 14) left_level = 14;
         if (right_level > 14) right_level = 14;
-        gour_level_fp = (int32_t)left_level << 16;
-        gour_level_step = (span_w > 0) ? (int32_t)(((int64_t)(right_level - left_level) << 16) / span_w) : 0;
-        gour_bright_fp = (int32_t)left_brightness << 16;
-        gour_bright_step = (span_w > 0) ? (int32_t)(((int64_t)(right_brightness - left_brightness) << 16) / span_w) : 0;
+        gour_level_step  = (full_span_w > 0) ? (int32_t)(((int64_t)(right_level      - left_level)      << 16) / full_span_w) : 0;
+        gour_bright_step = (full_span_w > 0) ? (int32_t)(((int64_t)(right_brightness - left_brightness) << 16) / full_span_w) : 0;
+        /* Advance from the polygon's left edge to the clipped draw start. */
+        int clip_advance = xl - (int)x_left;
+        gour_level_fp  = ((int32_t)left_level      << 16) + (int32_t)((int64_t)gour_level_step  * clip_advance);
+        gour_bright_fp = ((int32_t)left_brightness << 16) + (int32_t)((int64_t)gour_bright_step * clip_advance);
     }
 
     if (g_debug_floor_gouraud_only && !is_water) {
@@ -5119,8 +5125,6 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                         int hi = sx1 > sx2 ? sx1 : sx2;
                         int32_t lo_b = (sx1 <= sx2) ? eb1 : eb2;
                         int32_t hi_b = (sx1 <= sx2) ? eb2 : eb1;
-                        if (lo < ctx->left_clip) lo = ctx->left_clip;
-                        if (hi >= ctx->right_clip) hi = ctx->right_clip - 1;
                         if (lo < left_edge[row]) {
                             left_edge[row] = (int16_t)lo;
                             if (use_gour_floor) left_bright_tab[row] = (int16_t)lo_b;
@@ -5165,8 +5169,6 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     int32_t edge_bright = (int32_t)(b_fp >> 16);
                     int left_x = renderer_fp16_x_floor_px(x_fp);
                     int right_x = renderer_fp16_x_ceil_px(x_fp);
-                    if (left_x < ctx->left_clip) left_x = ctx->left_clip;
-                    if (right_x >= ctx->right_clip) right_x = ctx->right_clip - 1;
                     if (left_x < left_edge[row]) {
                         left_edge[row] = (int16_t)left_x;
                         if (use_gour_floor) left_bright_tab[row] = (int16_t)edge_bright;
@@ -5237,9 +5239,14 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 int16_t le = left_edge[row];
                 int16_t re = right_edge_tab[row];
                 if (le >= g_renderer.width || re < 0) continue;
-                if (le < ctx->left_clip) le = (int16_t)ctx->left_clip;
-                if (re >= ctx->right_clip) re = (int16_t)(ctx->right_clip - 1);
-                if (le > re) continue;
+                /* Check whether any of this span falls within the column strip. */
+                {
+                    int16_t cle = (le < (int16_t)ctx->left_clip)  ? (int16_t)ctx->left_clip      : le;
+                    int16_t cre = (re >= (int16_t)ctx->right_clip) ? (int16_t)(ctx->right_clip-1) : re;
+                    if (cle > cre) continue;
+                }
+                /* le/re intentionally passed unclipped: renderer_draw_floor_span_ctx clips
+                 * internally and needs the full polygon span width for correct Gouraud shading. */
                 /* Water (entry_type 7) and floor drawn inline in stream order (Amiga itsafloordraw). */
                 int16_t water_rows_left = 0;
                 if (entry_type == 7) {
