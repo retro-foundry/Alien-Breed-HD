@@ -137,22 +137,24 @@ typedef struct {
 
 static void renderer_draw_world_slice(GameState *state,
                                       const RendererWorldZonePrepass *zone_prepass,
-                                      int16_t row_start, int16_t row_end,
+                                      int16_t col_start, int16_t col_end,
                                       uint32_t frame_idx, int trace_clip,
                                       int8_t *out_fill_screen_water);
-static void renderer_draw_gun_rows(GameState *state, int row_start, int row_end);
+static void renderer_draw_gun_columns(GameState *state, int col_start, int col_end);
 static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
                                                   int16_t row_start, int16_t row_end,
+                                                  int16_t col_start, int16_t col_end,
                                                   const uint32_t *src_rgb, const uint16_t *src_cw,
                                                   uint32_t *dst_rgb, uint16_t *dst_cw);
 static void renderer_build_world_zone_prepass(GameState *state, uint32_t frame_idx,
                                               int trace_clip, RendererWorldZonePrepass *out);
-static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16_t row_end);
+static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16_t row_end,
+                                        int16_t col_start, int16_t col_end);
 
 #ifndef AB3D_NO_THREADS
 #define RENDERER_MAX_THREADS 64
-/* Keep strips reasonably tall to reduce overlap/synchronization overhead. */
-#define RENDERER_MIN_ROWS_PER_WORKER 32
+/* Keep column strips wide enough to reduce overlap/synchronization overhead. */
+#define RENDERER_MIN_COLS_PER_WORKER 32
 /* Auto worker cap tuned for current software renderer/memory bandwidth balance. */
 #define RENDERER_AUTO_MAX_WORKERS 12
 
@@ -164,8 +166,8 @@ typedef enum {
 struct RendererThreadWorker {
     SDL_Thread *thread;
     int index;
-    int16_t row_start;
-    int16_t row_end;
+    int16_t col_start;
+    int16_t col_end;
     int8_t fill_screen_water;
 #if UINTPTR_MAX > 0xFFFFFFFFu
     char _pad[104];
@@ -199,7 +201,7 @@ typedef struct {
     SDL_sem *done_sem;
     SDL_sem *worker_sems[RENDERER_MAX_THREADS];
     RendererThreadWorker workers[RENDERER_MAX_THREADS];
-    int last_logged_height;
+    int last_logged_strip_width;
     int last_logged_workers;
 } RendererThreadPool;
 
@@ -856,8 +858,8 @@ static int renderer_thread_worker_main(void *userdata)
         }
 
         const int active = (worker->index < pool->active_workers);
-        const int16_t row_start = worker->row_start;
-        const int16_t row_end = worker->row_end;
+        const int16_t col_start = worker->col_start;
+        const int16_t col_end = worker->col_end;
         const RendererThreadJobType job_type = pool->job_type;
         GameState *state = pool->job_state;
         const RendererWorldZonePrepass *world_zone_prepass = pool->world_zone_prepass;
@@ -871,16 +873,18 @@ static int renderer_thread_worker_main(void *userdata)
         uint16_t *post_dst_cw = pool->post_dst_cw;
 
         int8_t fill_screen_water = 0;
-        if (active && row_start < row_end) {
+        if (active && col_start < col_end) {
             if (job_type == RENDERER_THREAD_JOB_WORLD && state) {
-                renderer_draw_sky_pass_rows(sky_angpos, row_start, row_end);
+                renderer_draw_sky_pass_rows(sky_angpos, 0, (int16_t)g_renderer.height,
+                                            col_start, col_end);
                 renderer_draw_world_slice(state, world_zone_prepass,
-                                          row_start, row_end,
+                                          col_start, col_end,
                                           frame_idx, trace_clip, &fill_screen_water);
-                renderer_draw_gun_rows(state, row_start, row_end);
+                renderer_draw_gun_columns(state, col_start, col_end);
             } else if (job_type == RENDERER_THREAD_JOB_WATER_TINT) {
                 renderer_apply_underwater_tint_slice(tint_fill_screen_water,
-                                                     row_start, row_end,
+                                                     0, (int16_t)g_renderer.height,
+                                                     col_start, col_end,
                                                      post_src_rgb, post_src_cw,
                                                      post_dst_rgb, post_dst_cw);
             }
@@ -938,7 +942,7 @@ static void renderer_threads_init(void)
 {
     RendererThreadPool *pool = &g_renderer_thread_pool;
     memset(pool, 0, sizeof(*pool));
-    pool->last_logged_height = -1;
+    pool->last_logged_strip_width = -1;
     pool->last_logged_workers = -1;
 
     int cpu_count = SDL_GetCPUCount();
@@ -973,8 +977,8 @@ static void renderer_threads_init(void)
 
     for (int i = 0; i < pool->worker_count; i++) {
         pool->workers[i].index = i;
-        pool->workers[i].row_start = 0;
-        pool->workers[i].row_end = 0;
+        pool->workers[i].col_start = 0;
+        pool->workers[i].col_end = 0;
         pool->workers[i].fill_screen_water = 0;
         pool->workers[i].thread = SDL_CreateThread(renderer_thread_worker_main,
                                                    "ab3d_render_worker",
@@ -993,87 +997,48 @@ static void renderer_threads_init(void)
            pool->worker_count, pool->cpu_count);
 }
 
-static int renderer_prepare_worker_rows(RendererThreadPool *pool, int height,
-                                        int weight_bottom_rows, int log_rows)
+static int renderer_prepare_worker_columns(RendererThreadPool *pool, int width,
+                                           int log_columns)
 {
     int active_workers = pool->worker_count;
     int worker_cap = g_renderer_thread_max_workers;
     if (worker_cap <= 0) worker_cap = RENDERER_AUTO_MAX_WORKERS;
     if (worker_cap > RENDERER_MAX_THREADS) worker_cap = RENDERER_MAX_THREADS;
-    if (active_workers > height) active_workers = height;
+    if (active_workers > width) active_workers = width;
     if (active_workers > worker_cap) {
         active_workers = worker_cap;
     }
     {
-        int max_workers_by_rows = height / RENDERER_MIN_ROWS_PER_WORKER;
-        if (max_workers_by_rows < 1) max_workers_by_rows = 1;
-        if (active_workers > max_workers_by_rows) active_workers = max_workers_by_rows;
+        int max_workers_by_cols = width / RENDERER_MIN_COLS_PER_WORKER;
+        if (max_workers_by_cols < 1) max_workers_by_cols = 1;
+        if (active_workers > max_workers_by_cols) active_workers = max_workers_by_cols;
     }
     if (active_workers <= 0) return 0;
 
     int32_t bounds[RENDERER_MAX_THREADS + 1];
-    if (weight_bottom_rows && active_workers > 1) {
-        const int horizon = height / 2;
-        const int bottom_rows = (height > horizon) ? (height - horizon) : 1;
-        int64_t total_weight = 0;
-        for (int y = 0; y < height; y++) {
-            int64_t row_weight = 256;
-            if (y >= horizon) {
-                row_weight += ((int64_t)(y - horizon) * 512) / bottom_rows;
-            }
-            total_weight += row_weight;
-        }
-
-        bounds[0] = 0;
-        bounds[active_workers] = height;
-        int next_boundary = 1;
-        int64_t running_weight = 0;
-        for (int y = 0; y < height && next_boundary < active_workers; y++) {
-            int64_t row_weight = 256;
-            if (y >= horizon) {
-                row_weight += ((int64_t)(y - horizon) * 512) / bottom_rows;
-            }
-            running_weight += row_weight;
-            while (next_boundary < active_workers &&
-                   running_weight * (int64_t)active_workers >= total_weight * (int64_t)next_boundary) {
-                bounds[next_boundary++] = y + 1;
-            }
-        }
-        while (next_boundary < active_workers) {
-            bounds[next_boundary++] = height;
-        }
-
-        for (int i = 1; i < active_workers; i++) {
-            int min_start = bounds[i - 1] + 1;
-            int max_start = height - (active_workers - i);
-            if (bounds[i] < min_start) bounds[i] = min_start;
-            if (bounds[i] > max_start) bounds[i] = max_start;
-        }
-    } else {
-        for (int i = 0; i <= active_workers; i++) {
-            bounds[i] = (int32_t)(((int64_t)i * (int64_t)height) / (int64_t)active_workers);
-        }
+    for (int i = 0; i <= active_workers; i++) {
+        bounds[i] = (int32_t)(((int64_t)i * (int64_t)width) / (int64_t)active_workers);
     }
 
     for (int i = 0; i < active_workers; i++) {
-        pool->workers[i].row_start = (int16_t)bounds[i];
-        pool->workers[i].row_end = (int16_t)bounds[i + 1];
+        pool->workers[i].col_start = (int16_t)bounds[i];
+        pool->workers[i].col_end = (int16_t)bounds[i + 1];
         pool->workers[i].fill_screen_water = 0;
     }
     for (int i = active_workers; i < pool->worker_count; i++) {
-        pool->workers[i].row_start = 0;
-        pool->workers[i].row_end = 0;
+        pool->workers[i].col_start = 0;
+        pool->workers[i].col_end = 0;
         pool->workers[i].fill_screen_water = 0;
     }
 
-    if (log_rows && (pool->last_logged_height != height || pool->last_logged_workers != active_workers)) {
-        printf("[RENDERER] threading: dispatch %d row strip(s) over height=%d\n",
-               active_workers, height);
+    if (log_columns && (pool->last_logged_strip_width != width || pool->last_logged_workers != active_workers)) {
+        printf("[RENDERER] threading: dispatch %d column strip(s) over width=%d\n",
+               active_workers, width);
         for (int i = 0; i < active_workers; i++) {
-            printf("[RENDERER] threading: rows %d = [%d,%d)\n",
-                   i, (int)pool->workers[i].row_start, (int)pool->workers[i].row_end);
+            printf("[RENDERER] threading: cols %d = [%d,%d)\n",
+                   i, (int)pool->workers[i].col_start, (int)pool->workers[i].col_end);
         }
-        pool->last_logged_height = height;
+        pool->last_logged_strip_width = width;
         pool->last_logged_workers = active_workers;
     }
 
@@ -1092,10 +1057,10 @@ static int renderer_dispatch_threaded_world(GameState *state,
     if (!state) return 0;
     if (!zone_prepass) return 0;
 
-    int height = g_renderer.height;
-    if (height <= 0) return 0;
+    int width = g_renderer.width;
+    if (width <= 0) return 0;
 
-    int active_workers = renderer_prepare_worker_rows(pool, height, 1, 1);
+    int active_workers = renderer_prepare_worker_columns(pool, width, 1);
     if (active_workers <= 0) {
         return 0;
     }
@@ -1145,7 +1110,7 @@ static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
     int height = r->height;
     if (width <= 0 || height <= 0) return 0;
 
-    int active_workers = renderer_prepare_worker_rows(pool, height, 0, 0);
+    int active_workers = renderer_prepare_worker_columns(pool, width, 0);
     if (active_workers <= 0) {
         return 0;
     }
@@ -1968,7 +1933,8 @@ void renderer_set_sky_assets(const uint8_t *chunky_pixels, int tex_w, int tex_h,
     sky_build_lut_default();
 }
 
-static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16_t row_end)
+static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16_t row_end,
+                                        int16_t col_start, int16_t col_end)
 {
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
@@ -1982,11 +1948,16 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
     if (y0 < 0) y0 = 0;
     if (y1 > h) y1 = h;
     if (y0 >= y1) return;
+    int x0 = (int)col_start;
+    int x1 = (int)col_end;
+    if (x0 < 0) x0 = 0;
+    if (x1 > w) x1 = w;
+    if (x0 >= x1) return;
 
     /* Use sub-column pan precision so sky rotation does not quantize/judder at small turns. */
     const int32_t sky_pan_period_fp = SKY_PAN_WIDTH << 16;
     int32_t u0_fp = (int32_t)(((int64_t)(angpos & 8191) * ((int64_t)SKY_PAN_WIDTH << 16)) / 8192);
-    /* Full-screen sky background so each threaded row strip can clear itself. */
+    /* Sky + below-band clear: each threaded worker fills only its column strip. */
     int sky_h = h;
     /* Match sky horizontal span to the renderer's actual projection FOV (cached: same for all strips). */
     int sky_view_cols;
@@ -2023,7 +1994,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                 uint32_t fy = (uint32_t)(v_fp & 0xFFFF);
                 size_t row = (size_t)y * (size_t)w;
                 int32_t sx_fp = 0;
-                for (int x = 0; x < w; x++, sx_fp += sx_step_fp) {
+                for (int xi = 0; xi < x0; xi++) sx_fp += sx_step_fp;
+                for (int x = x0; x < x1; x++, sx_fp += sx_step_fp) {
                     int32_t pan_fp = u0_fp + sx_fp;
                     if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
                     int32_t tx_fp = (int32_t)(((int64_t)pan_fp * (int64_t)tw_scale_fp) >> 16);
@@ -2057,7 +2029,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                 if (rpix >= th) rpix = th - 1;
                 size_t row = (size_t)y * (size_t)w;
                 int32_t sx_fp = 0;
-                for (int x = 0; x < w; x++) {
+                for (int xi = 0; xi < x0; xi++) sx_fp += sx_step_fp;
+                for (int x = x0; x < x1; x++) {
                     int32_t pan_fp = u0_fp + sx_fp;
                     if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
                     int c = (int)(pan_fp >> 16);
@@ -2092,7 +2065,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                 uint32_t fy = (uint32_t)(v_fp & 0xFFFF);
                 size_t row = (size_t)y * (size_t)w;
                 int32_t sx_fp = 0;
-                for (int x = 0; x < w; x++, sx_fp += sx_step_fp) {
+                for (int xi = 0; xi < x0; xi++) sx_fp += sx_step_fp;
+                for (int x = x0; x < x1; x++, sx_fp += sx_step_fp) {
                     int32_t pan_fp = u0_fp + sx_fp;
                     if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
                     int32_t tx_fp = (int32_t)(((int64_t)pan_fp * (int64_t)tw_scale_fp) >> 16);
@@ -2124,7 +2098,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                 if (v >= th) v = th - 1;
                 size_t row = (size_t)y * (size_t)w;
                 int32_t sx_fp = 0;
-                for (int x = 0; x < w; x++) {
+                for (int xi = 0; xi < x0; xi++) sx_fp += sx_step_fp;
+                for (int x = x0; x < x1; x++) {
                     int32_t pan_fp = u0_fp + sx_fp;
                     if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
                     int tu = (int)(pan_fp >> 16);
@@ -2149,7 +2124,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
             int t = (y * 255) / (sky_h > 1 ? sky_h - 1 : 1);
             size_t row = (size_t)y * (size_t)w;
             int32_t sx_fp = 0;
-            for (int x = 0; x < w; x++) {
+            for (int xi = 0; xi < x0; xi++) sx_fp += sx_step_fp;
+            for (int x = x0; x < x1; x++) {
                 int32_t pan_fp = u0_fp + sx_fp;
                 if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
                 int u = (int)(pan_fp >> 16);
@@ -2174,20 +2150,20 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
         init_clear_rows();
         const uint32_t below_px = RENDER_RGB_CLEAR_SKY_PIXEL;
         const uint16_t below_cw = 0x0EEEu;
-        size_t row_bytes_rgb = (size_t)w * sizeof(uint32_t);
-        size_t row_bytes_cw = (size_t)w * sizeof(uint16_t);
+        size_t row_bytes_rgb = (size_t)(x1 - x0) * sizeof(uint32_t);
+        size_t row_bytes_cw = (size_t)(x1 - x0) * sizeof(uint16_t);
         if (w <= CLEAR_ROW_MAX) {
             for (int y = sky_h; y < h; y++) {
-                size_t row = (size_t)y * (size_t)w;
-                memset(buf + row, 0, (size_t)w);
+                size_t row = (size_t)y * (size_t)w + (size_t)x0;
+                memset(buf + row, 0, (size_t)(x1 - x0));
                 if (g_renderer_rgb_raster_expand)
-                    memcpy(rgb + row, s_clear_sky_row, row_bytes_rgb);
-                memcpy(cw + row, s_clear_sky_cw_row, row_bytes_cw);
+                    memcpy(rgb + row, s_clear_sky_row + (size_t)x0, row_bytes_rgb);
+                memcpy(cw + row, s_clear_sky_cw_row + (size_t)x0, row_bytes_cw);
             }
         } else {
             for (int y = sky_h; y < h; y++) {
                 size_t row = (size_t)y * (size_t)w;
-                for (int x = 0; x < w; x++) {
+                for (int x = x0; x < x1; x++) {
                     size_t p = row + (size_t)x;
                     buf[p] = 0;
                     if (g_renderer_rgb_raster_expand)
@@ -2201,7 +2177,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
 
 void renderer_draw_sky_pass(int16_t angpos)
 {
-    renderer_draw_sky_pass_rows(angpos, 0, (int16_t)g_renderer.height);
+    renderer_draw_sky_pass_rows(angpos, 0, (int16_t)g_renderer.height,
+                                0, (int16_t)g_renderer.width);
 }
 
 void renderer_swap(void)
@@ -2966,7 +2943,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     uint16_t *cwbuf = renderer_active_cw();
     if (!buf || !rgb || !cwbuf) return;
     if (y < 0 || y >= rs->height) return;
-    /* Clip to this worker's assigned row strip. */
+    /* Clip to active slice vertical band (full height for column-threaded workers). */
     if (y < (int)ctx->top_clip || y > (int)ctx->bot_clip) return;
 
     int xl = (x_left < ctx->left_clip) ? ctx->left_clip : x_left;
@@ -3669,7 +3646,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
         for (int dy = 0; dy < height; dy++) {
             int screen_row = sy + dy;
             if (screen_row < 0 || screen_row >= rh) continue;
-            /* Clip to this worker's assigned row strip (ctx->top_clip..bot_clip). */
+            /* Clip to active slice vertical band (full height for column-threaded workers). */
             if (screen_row < (int)ctx->top_clip || screen_row > (int)ctx->bot_clip) continue;
             /* Room band clip: do not draw above ceiling or below floor (floor covers feet). */
             if (clip_top_sy < clip_bot_sy && (screen_row < clip_top_sy || screen_row > clip_bot_sy)) continue;
@@ -3759,7 +3736,7 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
  * Amiga: gun graphic from Objects+9, GUNYOFFS=20, 3 chunks x 32 = 96 wide,
  * 78-GUNYOFFS = 58 lines tall. If gun graphics are not loaded, nothing is drawn.
  * ----------------------------------------------------------------------- */
-static void renderer_draw_gun_rows(GameState *state, int row_start, int row_end)
+static void renderer_draw_gun_columns(GameState *state, int col_start, int col_end)
 {
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
@@ -3768,9 +3745,9 @@ static void renderer_draw_gun_rows(GameState *state, int row_start, int row_end)
     if (!state) return;
 
     int rw = g_renderer.width, rh = g_renderer.height;
-    if (row_start < 0) row_start = 0;
-    if (row_end > rh) row_end = rh;
-    if (row_start >= row_end) return;
+    if (col_start < 0) col_start = 0;
+    if (col_end > rw) col_end = rw;
+    if (col_start >= col_end) return;
 
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
     if (plr->gun_selected < 0) return;
@@ -3813,12 +3790,18 @@ static void renderer_draw_gun_rows(GameState *state, int row_start, int row_end)
     /* Keep the weapon at the bottom of the view. */
     int gy = rh - gun_h_draw;
     if (gy < 0) gy = 0;
-    if (gy >= row_end || (gy + gun_h_draw) <= row_start) return;
     int gx = (rw - gun_w_draw) / 2;
     if (gun_type == ROCKET_LAUNCHER_GUN_IDX) {
         /* Port quirk: rocket launcher overlay is anchored to the right edge. */
         gx = rw - gun_w_draw;
     }
+
+    int gun_x1 = gx + gun_w_draw;
+    int draw_x0 = col_start;
+    if (draw_x0 < gx) draw_x0 = gx;
+    int draw_x1 = col_end;
+    if (draw_x1 > gun_x1) draw_x1 = gun_x1;
+    if (draw_x0 >= draw_x1) return;
 
     /* Draw from loaded gun data (newgunsinhand.wad + .ptr + .pal) if present */
     const uint8_t *gun_wad = g_renderer.gun_wad;
@@ -3840,15 +3823,13 @@ static void renderer_draw_gun_rows(GameState *state, int row_start, int row_end)
             /* Draw scaled: map screen pixel to source by (draw size / source size) ratio */
             int draw_sy0 = gy;
             int draw_sy1 = gy + gun_h_draw;
-            if (draw_sy0 < row_start) draw_sy0 = row_start;
-            if (draw_sy1 > row_end) draw_sy1 = row_end;
             if (draw_sy0 < 0) draw_sy0 = 0;
             if (draw_sy1 > rh) draw_sy1 = rh;
             for (int sy = draw_sy0; sy < draw_sy1; sy++) {
                 if (sy < 0) continue;
                 int src_row = (int)((int64_t)(sy - gy) * (int64_t)gun_h_src / gun_h_draw);
                 if (src_row >= gun_h_src) continue;
-                for (int sx = gx; sx < gx + gun_w_draw && sx < rw; sx++) {
+                for (int sx = draw_x0; sx < draw_x1 && sx < rw; sx++) {
                     if (sx < 0) continue;
                     int src_col = (int)((int64_t)(sx - gx) * (int64_t)gun_w_src / gun_w_draw);
                     if (src_col >= gun_w_src) continue;
@@ -3890,7 +3871,7 @@ static void renderer_draw_gun_rows(GameState *state, int row_start, int row_end)
 
 void renderer_draw_gun(GameState *state)
 {
-    renderer_draw_gun_rows(state, 0, g_renderer.height);
+    renderer_draw_gun_columns(state, 0, g_renderer.width);
 }
 
 /* -----------------------------------------------------------------------
@@ -5587,27 +5568,38 @@ static void renderer_build_world_zone_prepass(GameState *state, uint32_t frame_i
 
 static void renderer_draw_world_slice(GameState *state,
                                       const RendererWorldZonePrepass *zone_prepass,
-                                      int16_t row_start, int16_t row_end,
+                                      int16_t col_start, int16_t col_end,
                                       uint32_t frame_idx, int trace_clip,
                                       int8_t *out_fill_screen_water)
 {
     RenderSliceContext frame_ctx;
-    if (!state || !zone_prepass || row_start >= row_end) {
+    if (!state || !zone_prepass || col_start >= col_end) {
         if (out_fill_screen_water) *out_fill_screen_water = 0;
         return;
     }
 
-    int16_t strip_top = row_start;
-    int16_t strip_bot = (int16_t)(row_end - 1);
-    if (strip_top < 0) strip_top = 0;
-    if (strip_bot >= g_renderer.height) strip_bot = (int16_t)(g_renderer.height - 1);
-    if (strip_top > strip_bot) {
+    int w = g_renderer.width;
+    int h = g_renderer.height;
+    if (w <= 0 || h <= 0) {
         if (out_fill_screen_water) *out_fill_screen_water = 0;
         return;
     }
 
-    render_slice_context_init(&frame_ctx, 0, (int16_t)g_renderer.width, strip_top, strip_bot);
-    frame_ctx.update_column_clip = (strip_top == 0 && strip_bot == (int16_t)(g_renderer.height - 1)) ? 1 : 0;
+    int cs = (int)col_start;
+    int ce = (int)col_end;
+    if (cs < 0) cs = 0;
+    if (ce > w) ce = w;
+    if (cs >= ce) {
+        if (out_fill_screen_water) *out_fill_screen_water = 0;
+        return;
+    }
+
+    int16_t strip_top = 0;
+    int16_t strip_bot = (int16_t)(h - 1);
+
+    render_slice_context_init(&frame_ctx, (int16_t)cs, (int16_t)ce, strip_top, strip_bot);
+    /* Column strips assign disjoint x ranges to workers; single-threaded full-width is one worker. */
+    frame_ctx.update_column_clip = 1;
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
 
     int zone_count = zone_prepass->count;
@@ -5624,16 +5616,18 @@ static void renderer_draw_world_slice(GameState *state,
                 continue;
         }
 
-        render_slice_context_reset(&frame_ctx, 0, (int16_t)g_renderer.width,
-                                   strip_top, strip_bot);
-
         int left_clip_px = (int)zone_prepass->left_px[i];
         int right_clip_px = (int)zone_prepass->right_px[i];
         if (left_clip_px < 0) left_clip_px = 0;
-        if (right_clip_px > g_renderer.width) right_clip_px = g_renderer.width;
+        if (right_clip_px > w) right_clip_px = w;
+        if (left_clip_px < cs) left_clip_px = cs;
+        if (right_clip_px > ce) right_clip_px = ce;
         if (left_clip_px >= right_clip_px) {
             continue;
         }
+
+        render_slice_context_reset(&frame_ctx, (int16_t)left_clip_px, (int16_t)right_clip_px,
+                                   strip_top, strip_bot);
 
         frame_ctx.left_clip = (int16_t)left_clip_px;
         frame_ctx.right_clip = (int16_t)right_clip_px;
@@ -5669,6 +5663,7 @@ static void renderer_draw_world_slice(GameState *state,
 
 static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
                                                   int16_t row_start, int16_t row_end,
+                                                  int16_t col_start, int16_t col_end,
                                                   const uint32_t *src_rgb, const uint16_t *src_cw,
                                                   uint32_t *dst_rgb, uint16_t *dst_cw)
 {
@@ -5678,6 +5673,12 @@ static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
     const int w = g_renderer.width;
     const int h = g_renderer.height;
     if (w <= 0 || h <= 0) return;
+
+    int x0 = (int)col_start;
+    int x1 = (int)col_end;
+    if (x0 < 0) x0 = 0;
+    if (x1 > w) x1 = w;
+    if (x0 >= x1) return;
 
     int y0 = row_start;
     int y1 = row_end;
@@ -5694,7 +5695,7 @@ static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
 
     for (int y = y0; y < y1; y++) {
         size_t row = (size_t)y * (size_t)w;
-        for (int x = 0; x < w; x++) {
+        for (int x = x0; x < x1; x++) {
             size_t i = row + (size_t)x;
             uint16_t c12 = (uint16_t)(src_cw[i] & 0x00FFu);
             dst_cw[i] = c12;
@@ -5709,6 +5710,7 @@ static void renderer_apply_underwater_tint(int8_t fill_screen_water)
     if (!g_renderer.rgb_buffer || !g_renderer.cw_buffer) return;
     renderer_apply_underwater_tint_slice(fill_screen_water,
                                          0, (int16_t)g_renderer.height,
+                                         0, (int16_t)g_renderer.width,
                                          g_renderer.rgb_buffer, g_renderer.cw_buffer,
                                          g_renderer.rgb_buffer, g_renderer.cw_buffer);
 }
@@ -5855,7 +5857,7 @@ void renderer_draw_display(GameState *state)
         renderer_clear(0);
         renderer_draw_sky_pass(sky_angpos);
         renderer_draw_world_slice(state, &world_zone_prepass,
-                                  0, (int16_t)g_renderer.height,
+                                  0, (int16_t)g_renderer.width,
                                   frame_idx, trace_clip, &fill_screen_water);
         world_workers = 1;
     }
@@ -5879,7 +5881,7 @@ void renderer_draw_display(GameState *state)
     if (prof_on) t_after_tint = SDL_GetPerformanceCounter();
 
     /* 7. Draw gun overlay.
-     * In threaded-world mode the gun is already drawn per worker slice. */
+     * In threaded-world mode the gun is already drawn per worker column strip. */
     if (!used_threaded_world) {
         renderer_draw_gun(state);
     }
