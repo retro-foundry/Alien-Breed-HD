@@ -15,6 +15,7 @@
 #include "input.h"
 #include "audio.h"
 #include "io.h"
+#include "renderer.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1749,6 +1750,7 @@ static bool player_debug_apply_pending_full_save_after_level_load(GameState *sta
             goto fail;
         }
 
+        renderer_automap_lock();
         free(state->level.automap_seen_walls);
         free(state->level.automap_seen_hash);
         state->level.automap_seen_walls = NULL;
@@ -1759,7 +1761,10 @@ static bool player_debug_apply_pending_full_save_after_level_load(GameState *sta
 
         if (count > 0) {
             state->level.automap_seen_walls = (AutomapSeenWall *)malloc((size_t)count * sizeof(AutomapSeenWall));
-            if (!state->level.automap_seen_walls) goto fail;
+            if (!state->level.automap_seen_walls) {
+                renderer_automap_unlock();
+                goto fail;
+            }
             state->level.automap_seen_cap = count;
 
             const DebugAutomapSeenWallDisk *disk = (const DebugAutomapSeenWallDisk *)g_debug_full_save_pending.automap_seen;
@@ -1777,7 +1782,10 @@ static bool player_debug_apply_pending_full_save_after_level_load(GameState *sta
             uint32_t want = 1024u;
             while (want < count * 2u) want <<= 1u;
             state->level.automap_seen_hash = (uint32_t *)calloc((size_t)want, sizeof(uint32_t));
-            if (!state->level.automap_seen_hash) goto fail;
+            if (!state->level.automap_seen_hash) {
+                renderer_automap_unlock();
+                goto fail;
+            }
             state->level.automap_seen_hash_cap = want;
 
             /* Same hash as renderer.c (inline). */
@@ -1795,6 +1803,7 @@ static bool player_debug_apply_pending_full_save_after_level_load(GameState *sta
                 state->level.automap_seen_hash[h] = keyp1;
             }
         }
+        renderer_automap_unlock();
     }
 
     state->level.num_object_points = hdr->num_object_points;

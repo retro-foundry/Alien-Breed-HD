@@ -200,7 +200,7 @@ typedef struct {
     size_t   zone_index_by_data_offset_len;
 
     /* Automap: seen wall list + lookup set.
-     * Single-threaded for now; updated from renderer wall draw. */
+     * Updated from renderer wall draw; guarded by renderer automap mutex when threading is on. */
     AutomapSeenWall *automap_seen_walls;
     uint32_t         automap_seen_count;
     uint32_t         automap_seen_cap;

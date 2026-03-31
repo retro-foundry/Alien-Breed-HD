@@ -754,6 +754,7 @@ int io_load_level_clips(LevelState *level, int level_num)
 void io_release_level_memory(LevelState *level)
 {
     /* Automap runtime state */
+    renderer_automap_lock();
     free(level->automap_seen_walls);
     level->automap_seen_walls = NULL;
     level->automap_seen_count = 0;
@@ -761,6 +762,7 @@ void io_release_level_memory(LevelState *level)
     free(level->automap_seen_hash);
     level->automap_seen_hash = NULL;
     level->automap_seen_hash_cap = 0;
+    renderer_automap_unlock();
 
     free(level->zone_index_by_data_offset);
     level->zone_index_by_data_offset = NULL;

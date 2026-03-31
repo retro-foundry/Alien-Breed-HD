@@ -325,6 +325,9 @@ int renderer_toggle_floor_gouraud_debug_view(void);
 int renderer_get_floor_gouraud_debug_view(void);
 /* Automap: change world-units-per-pixel (PgUp = zoom in, PgDn = zoom out). */
 void renderer_automap_adjust_scale(int delta_steps);
+/* Serialize automap hash/wall list (threaded world draw vs overlay / level unload). */
+void renderer_automap_lock(void);
+void renderer_automap_unlock(void);
 /* Collect line segments in internal render pixel coords (for SDL overlay in display.c). */
 int renderer_automap_collect_line_segments(GameState *state,
                                            int *x0, int *y0, int *x1, int *y1,

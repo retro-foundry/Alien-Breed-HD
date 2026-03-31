@@ -240,6 +240,19 @@ static uint16_t g_automap_key_bit_to_c12[8]; /* bits 0..7 -> color; 0 = unknown 
 static uint8_t  g_automap_key_bit_frame_idx[8]; /* bits 0..7 -> key sprite frame 0..3 */
 static uint8_t  g_automap_key_bit_valid_mask = 0;
 
+/* Workers run renderer_draw_world_slice in parallel; automap updates must be serialized. */
+static SDL_mutex *g_automap_mutex;
+
+static void automap_lock(void)
+{
+    if (g_automap_mutex) SDL_LockMutex(g_automap_mutex);
+}
+
+static void automap_unlock(void)
+{
+    if (g_automap_mutex) SDL_UnlockMutex(g_automap_mutex);
+}
+
 static uint32_t automap_hash_u32(uint32_t x)
 {
     /* Simple 32-bit mix (good enough for gfx offsets). */
@@ -510,13 +523,20 @@ static void automap_mark_seen(LevelState *level,
     if (!level->graphics || level->graphics_byte_count == 0) return;
     if (gfx_off == 0 || gfx_off >= level->graphics_byte_count) return;
 
+    automap_lock();
+
     /* Lazy init structures. */
-    if (!automap_ensure_hash(level, 2048u)) return;
+    if (!automap_ensure_hash(level, 2048u)) {
+        automap_unlock();
+        return;
+    }
 
     /* Maintain load factor <= ~0.6 */
     if (level->automap_seen_hash_cap && level->automap_seen_count * 10u >= level->automap_seen_hash_cap * 6u) {
-        if (!automap_ensure_hash(level, level->automap_seen_hash_cap * 2u))
+        if (!automap_ensure_hash(level, level->automap_seen_hash_cap * 2u)) {
+            automap_unlock();
             return;
+        }
     }
 
     uint32_t key_plus1 = gfx_off + 1u;
@@ -526,11 +546,17 @@ static void automap_mark_seen(LevelState *level,
     while (1) {
         uint32_t v = level->automap_seen_hash[h];
         if (v == AUTOMAP_HASH_EMPTY) break;
-        if (v == key_plus1) return; /* already seen */
+        if (v == key_plus1) {
+            automap_unlock();
+            return; /* already seen */
+        }
         h = (h + 1u) & mask;
     }
 
-    if (!automap_ensure_walls(level, level->automap_seen_count + 1u)) return;
+    if (!automap_ensure_walls(level, level->automap_seen_count + 1u)) {
+        automap_unlock();
+        return;
+    }
 
     AutomapSeenWall *w = &level->automap_seen_walls[level->automap_seen_count++];
     w->gfx_off = gfx_off;
@@ -541,6 +567,7 @@ static void automap_mark_seen(LevelState *level,
     w->reserved = 0;
 
     level->automap_seen_hash[h] = key_plus1;
+    automap_unlock();
 }
 
 static inline uint16_t automap_color_for(const LevelState *level, uint8_t is_door, uint8_t key_id)
@@ -648,6 +675,16 @@ int renderer_key_sprite_rasterize_frame_argb(int frame_index, uint32_t *out, int
     return 1;
 }
 
+void renderer_automap_lock(void)
+{
+    automap_lock();
+}
+
+void renderer_automap_unlock(void)
+{
+    automap_unlock();
+}
+
 int renderer_automap_collect_line_segments(GameState *state,
                                            int *x0, int *y0, int *x1, int *y1,
                                            uint16_t *c12, int max_lines)
@@ -696,7 +733,11 @@ int renderer_automap_collect_line_segments(GameState *state,
         if (n < max_lines) { x0[n] = mx - tipx; y0[n] = tipy; x1[n] = mx - rox; y1[n] = roy; c12[n] = cw; n++; }
     }
 
-    if (!level->automap_seen_walls || level->automap_seen_count == 0) return n;
+    automap_lock();
+    if (!level->automap_seen_walls || level->automap_seen_count == 0) {
+        automap_unlock();
+        return n;
+    }
 
     for (uint32_t i = 0; i < level->automap_seen_count && n < max_lines; i++) {
         const AutomapSeenWall *sw = &level->automap_seen_walls[i];
@@ -715,6 +756,7 @@ int renderer_automap_collect_line_segments(GameState *state,
         c12[n] = automap_color_for(level, sw->is_door, sw->door_key_id);
         n++;
     }
+    automap_unlock();
     return n;
 }
 
@@ -1679,6 +1721,10 @@ void renderer_init(void)
     build_amiga12_lut();
     memset(&g_renderer, 0, sizeof(g_renderer));
     allocate_buffers(RENDER_WIDTH, RENDER_HEIGHT);
+    g_automap_mutex = SDL_CreateMutex();
+    if (!g_automap_mutex) {
+        printf("[RENDERER] Warning: automap mutex unavailable (possible data races with threaded draw)\n");
+    }
     renderer_threads_init();
     printf("[RENDERER] Initialized: %dx%d\n", g_renderer.width, g_renderer.height);
 }
@@ -1696,6 +1742,10 @@ void renderer_resize(int w, int h)
 void renderer_shutdown(void)
 {
     renderer_threads_shutdown();
+    if (g_automap_mutex) {
+        SDL_DestroyMutex(g_automap_mutex);
+        g_automap_mutex = NULL;
+    }
     free_buffers();
     free(argb24_to_amiga12_lut);
     argb24_to_amiga12_lut = NULL;
@@ -4797,7 +4847,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 /* Amiga seethru path (type 13) clamps d6 to 32; normal walls clamp to 64. */
                 int16_t wall_d6_max = (entry_type == 13) ? 32 : 64;
                 if (!skip_this_wall) {
-                    /* Automap: tag this wall as seen (single-threaded path). */
+                    /* Automap: tag this wall as seen (serialized via g_automap_mutex). */
                     if (level->points && level->graphics) {
                         /* door_wall_list gfx_off points to the wall record starting at the type word. */
                         uint32_t wall_gfx_off = (uint32_t)((ptr - 2) - level->graphics);
