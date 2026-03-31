@@ -183,12 +183,31 @@ static inline int poly_clamp_base_width(int w)
     return w;
 }
 
-/* Match renderer.c horizontal projection behavior so supersampling changes
- * detail only, not 3D polygon-object FOV. */
+/* Match renderer.c horizontal projection behavior so same-aspect resolutions
+ * keep identical on-screen geometry, regardless of render size. */
+static inline int poly_effective_base_width(const GameState *state)
+{
+    int w = RENDER_DEFAULT_WIDTH;
+    int h = RENDER_DEFAULT_HEIGHT;
+    if (state) {
+        w = (int)state->cfg_render_width;
+        h = (int)state->cfg_render_height;
+    }
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    {
+        int64_t scaled = ((int64_t)w * 1080 + (int64_t)h / 2) / (int64_t)h;
+        if (scaled < 1) scaled = 1;
+        if (scaled > INT_MAX) scaled = INT_MAX;
+        w = (int)scaled;
+    }
+    return poly_clamp_base_width(w);
+}
+
 static inline int poly_proj_x_scale_px(const RendererState *r, const GameState *state)
 {
     int base_w = RENDER_DEFAULT_WIDTH;
-    if (state) base_w = poly_clamp_base_width((int)state->cfg_render_width);
+    if (state) base_w = poly_effective_base_width(state);
     else base_w = poly_clamp_base_width(base_w);
 
     int cur_w = (r && r->width > 0) ? r->width : base_w;

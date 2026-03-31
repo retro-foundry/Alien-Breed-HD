@@ -99,7 +99,7 @@ static int g_renderer_rgb_raster_expand = 0;
         (*(pp))++; \
 } while (0)
 
-/* Horizontal projection reference width from config (render_width before supersampling). */
+/* Horizontal projection reference width (effective logical width used for X projection). */
 static int g_proj_base_width = RENDER_DEFAULT_WIDTH;
 
 static inline int renderer_clamp_base_width(int w)
@@ -109,10 +109,32 @@ static inline int renderer_clamp_base_width(int w)
     return w;
 }
 
+/* Keep projection stable when users change render size at the same aspect
+ * (e.g. 1280x720 <-> 1920x1080 <-> 3840x2160). Normalize logical width to a
+ * fixed 1080-high baseline so same-aspect resolutions share one X-FOV. */
+static inline int renderer_proj_effective_base_width_from_state(const GameState *state)
+{
+    int w = RENDER_DEFAULT_WIDTH;
+    int h = RENDER_DEFAULT_HEIGHT;
+    if (state) {
+        w = (int)state->cfg_render_width;
+        h = (int)state->cfg_render_height;
+    }
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    {
+        int64_t scaled = ((int64_t)w * 1080 + (int64_t)h / 2) / (int64_t)h;
+        if (scaled < 1) scaled = 1;
+        if (scaled > INT_MAX) scaled = INT_MAX;
+        w = (int)scaled;
+    }
+    return renderer_clamp_base_width(w);
+}
+
 static inline int renderer_proj_x_scale_px_for_state(const RendererState *r, const GameState *state)
 {
     int base_w = RENDER_DEFAULT_WIDTH;
-    if (state) base_w = renderer_clamp_base_width((int)state->cfg_render_width);
+    if (state) base_w = renderer_proj_effective_base_width_from_state(state);
     else base_w = renderer_clamp_base_width(g_proj_base_width);
     int cur_w = (r && r->width > 0) ? r->width : base_w;
     int64_t s = ((int64_t)RENDER_SCALE * (int64_t)cur_w + (int64_t)base_w / 2) / (int64_t)base_w;
@@ -6595,11 +6617,11 @@ void renderer_draw_display(GameState *state)
     }
 
     /* 1. Projection setup.
-     * Horizontal projection references the pre-supersample render width from settings,
-     * so changing supersampling only changes detail, not camera FOV. */
+     * Horizontal projection uses a normalized logical width so supersampling changes
+     * detail only, and UHD (same aspect) keeps the same on-screen geometry. */
     int w = (r->width  > 0) ? r->width  : 1;
     int h = (r->height > 0) ? r->height : 1;
-    if (state) g_proj_base_width = renderer_clamp_base_width((int)state->cfg_render_width);
+    if (state) g_proj_base_width = renderer_proj_effective_base_width_from_state(state);
     else g_proj_base_width = renderer_clamp_base_width(RENDER_DEFAULT_WIDTH);
 #ifndef AB3D_NO_THREADS
     if (state) {
