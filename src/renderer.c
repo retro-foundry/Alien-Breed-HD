@@ -4622,7 +4622,9 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
          * the PolygonObj pipeline (renderer_3dobj.c). */
         if ((uint8_t)obj[6] == (uint8_t)OBJ_3D_SPRITE) {
             ObjRotatedPoint *orp3d = &r->obj_rotated[rd16(obj)];
-            draw_3d_vector_object(obj, orp3d, state);
+            draw_3d_vector_object(obj, orp3d, state,
+                                  (int)ctx->left_clip, (int)ctx->right_clip - 1,
+                                  (int)ctx->top_clip, (int)ctx->bot_clip);
             continue;
         }
 

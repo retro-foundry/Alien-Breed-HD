@@ -400,7 +400,8 @@ static uint32_t make_poly_color(int slot, uint16_t tex_map_word, int shade_level
  * Main entry point – implements the PolygonObj pipeline from
  * ObjDraw3.ChipRam.s.
  * ----------------------------------------------------------------------- */
-void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameState *state)
+void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameState *state,
+                           int clip_left, int clip_right, int clip_top, int clip_bot)
 {
     RendererState *r = &g_renderer;
 
@@ -563,10 +564,10 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
     }
 
     /* ---- 8. Partloop / polyloo: draw each polygon -------------------- */
-    int clip_l = (int)r->left_clip;
-    int clip_r = (int)r->right_clip - 1;
-    int clip_t = (int)r->top_clip;
-    int clip_b = (int)r->bot_clip;
+    int clip_l = clip_left;
+    int clip_r = clip_right;
+    int clip_t = clip_top;
+    int clip_b = clip_bot;
     if (clip_l < 0) clip_l = 0;
     if (clip_r >= W) clip_r = W - 1;
     if (clip_t < 0) clip_t = 0;
@@ -740,6 +741,20 @@ static uint32_t sample_poly_palette(uint8_t pal_idx, int shade_level)
     return amiga12_to_argb_local(sample_poly_palette_cw(pal_idx, shade_level));
 }
 
+static inline int poly_pixel_behind_wall(int x, int y, int32_t z_view)
+{
+    if (!g_renderer.clip.top || !g_renderer.clip.bot || !g_renderer.clip.z) return 0;
+    if (x < 0 || x >= g_renderer.width || y < 0 || y >= g_renderer.height) return 1;
+
+    int16_t wall_top = g_renderer.clip.top[x];
+    int16_t wall_bot = g_renderer.clip.bot[x];
+    if (wall_top <= wall_bot && y >= wall_top && y <= wall_bot) {
+        int32_t wall_z = g_renderer.clip.z[x];
+        if (wall_z > 0 && z_view >= wall_z) return 1;
+    }
+    return 0;
+}
+
 static void draw_textured_triangle(const int *sx, const int *sy,
                                    const int32_t *sz, const int32_t *u, const int32_t *v,
                                    const int16_t *shade_values,
@@ -788,6 +803,7 @@ static void draw_textured_triangle(const int *sx, const int *sy,
             if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue;
 
             int32_t zf = (int32_t)(w0 * (double)sz[0] + w1 * (double)sz[1] + w2 * (double)sz[2]);
+            if (poly_pixel_behind_wall(x, y, zf)) continue;
             size_t didx = (size_t)y * (size_t)W + (size_t)x;
             if (depth_buf && depth_gen_buf &&
                 depth_gen_buf[didx] == depth_gen_tag &&
