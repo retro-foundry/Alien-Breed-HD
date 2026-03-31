@@ -11,6 +11,7 @@
 #include "level.h"
 #include "movement.h"
 #include "objects.h"
+#include "visibility.h"
 #include "math_tables.h"
 #include "input.h"
 #include "audio.h"
@@ -127,6 +128,40 @@ static int16_t zone_from_room_or_fallback(LevelState *level, const uint8_t *room
         }
     }
     return fallback;
+}
+
+/* Re-check LOS at shot time so hitscan cannot pick targets hidden by walls. */
+static bool hitscan_target_has_line_of_sight(GameState *state, const PlayerState *plr,
+                                             const uint8_t *from_room,
+                                             int16_t viewer_x, int16_t viewer_z, int16_t viewer_y,
+                                             const GameObject *target)
+{
+    if (!state || !plr || !from_room || !target) return false;
+    if (!state->level.data || !state->level.object_points) return false;
+
+    int zone_slots = level_zone_slot_count(&state->level);
+    int target_zone = level_connect_to_zone_index(&state->level, OBJ_ZONE(target));
+    if (target_zone < 0 && OBJ_ZONE(target) >= 0 && OBJ_ZONE(target) < zone_slots)
+        target_zone = OBJ_ZONE(target);
+    if (target_zone < 0 || target_zone >= zone_slots) return false;
+
+    const uint8_t *to_room = level_get_zone_data_ptr(&state->level, (int16_t)target_zone);
+    if (!to_room) return false;
+
+    int16_t target_cid = OBJ_CID(target);
+    if (target_cid < 0 || target_cid >= state->level.num_object_points) return false;
+
+    const uint8_t *target_pt = state->level.object_points + (uint32_t)(uint16_t)target_cid * 8u;
+    int16_t target_x = obj_w(target_pt + 0);
+    int16_t target_z = obj_w(target_pt + 4);
+    int16_t target_y = obj_w(target->raw + 4);
+    int16_t target_zone_id = player_room_zone_word(to_room);
+
+    return can_it_be_seen(&state->level,
+                          from_room, to_room, target_zone_id,
+                          viewer_x, viewer_z, viewer_y,
+                          target_x, target_z, target_y,
+                          plr->stood_in_top, target->obj.in_top, 1) != 0u;
 }
 
 /* Matches PlayerShoot.s MISSINSTANT path:
@@ -2367,6 +2402,16 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
      * PLR2: %1111111111010111100001 */
     uint32_t enemy_flags = (plr_num == 1) ? 0x003FFDC1u : 0x003FF5E1u;
     uint8_t player_can_see_bit = (plr_num == 1) ? 0x01u : 0x02u;
+    const uint8_t *hitscan_from_room = NULL;
+    int16_t hitscan_viewer_x = 0;
+    int16_t hitscan_viewer_z = 0;
+    int16_t hitscan_viewer_y = 0;
+    if (gun->fire_bullet != 0) {
+        hitscan_from_room = resolve_player_room_ptr(state, plr);
+        hitscan_viewer_x = (int16_t)(plr->xoff >> 16);
+        hitscan_viewer_z = (int16_t)(plr->zoff >> 16);
+        hitscan_viewer_y = (int16_t)((plr->yoff + 20 * 128) >> 7);
+    }
 
     /* Find closest target in line of fire; barrels win over other types (explosive priority). */
     int closest_idx = -1;
@@ -2385,8 +2430,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
 
             int obj_type = obj->obj.number;
             if (!obs_in_line[i]) continue;
-            if ((((uint8_t)obj->obj.can_see) & player_can_see_bit) == 0u &&
-                obj_type != OBJ_NBR_BARREL) continue;
+            if ((((uint8_t)obj->obj.can_see) & player_can_see_bit) == 0u) continue;
             if (OBJ_ZONE(obj) < 0) continue;
             if ((uint8_t)obj_type > 31u) continue;
             if (!(enemy_flags & (1u << (obj_type & 31)))) continue;
@@ -2407,6 +2451,14 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
             int32_t ydiff = ((int32_t)obj_y << 7) - plr->yoff;
             int32_t abs_ydiff = (ydiff < 0) ? -ydiff : ydiff;
             if ((abs_ydiff / 44) > dist) continue;
+
+            if (hitscan_from_room) {
+                if (!hitscan_target_has_line_of_sight(state, plr,
+                                                      hitscan_from_room,
+                                                      hitscan_viewer_x, hitscan_viewer_z, hitscan_viewer_y,
+                                                      obj))
+                    continue;
+            }
 
             if (obj_type == OBJ_NBR_BARREL) {
                 if (dist <= closest_barrel_dist) {
@@ -2585,4 +2637,3 @@ void player2_shoot(GameState *state)
 {
     player_shoot_internal(state, &state->plr2, 2, default_plr2_guns);
 }
-
