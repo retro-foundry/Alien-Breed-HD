@@ -27,6 +27,7 @@
 #include "objects.h"
 #include "player.h"
 #include "display.h"
+#include "renderer.h"
 #include "input.h"
 #include "audio.h"
 #include "io.h"
@@ -312,6 +313,9 @@ void play_the_game(GameState *state)
         /* Ensure each object has world size in its record (Amiga style), for file and test levels */
         if (state->level.object_data && state->level.num_object_points > 0)
             object_init_world_sizes_from_types(&state->level);
+        if (!state->debug_f9_pending_apply_save) {
+            renderer_build_level_sky_cache(&state->level);
+        }
 
         /* ---- Setup control mode from prefs ---- */
         /* Original checks Prefsfile[0] for 'k','m','n','j','p' */
@@ -347,6 +351,7 @@ void play_the_game(GameState *state)
         if (state->debug_f9_pending_apply_save) {
             state->debug_f9_pending_apply_save = false;
             player_debug_apply_save_payload_after_level_load(state);
+            renderer_build_level_sky_cache(&state->level);
             printf("[PLAYER] debug load: save restored (level %d)\n",
                    (int)state->current_level);
         }

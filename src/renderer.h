@@ -39,7 +39,7 @@
 #endif
 /* 1 = draw sky backdrop (backfile / procedural); 0 = skip sky. */
 #ifndef RENDER_SKY
-#define RENDER_SKY 0
+#define RENDER_SKY 1
 #endif
 /* 1 = clear framebuffer (renderer_clear) and empty-canvas fills when sky is off; 0 = leave buffer. */
 #ifndef RENDER_CLEAR
@@ -193,6 +193,7 @@ typedef struct {
     int16_t flooryoff;        /* Floor Y offset */
     int16_t xoff34, zoff34;   /* 3/4 offsets */
     int32_t xwobble;          /* Head bob X wobble */
+    int16_t sky_frame_angpos; /* sky pan angle for current frame (backdrop ceiling polys) */
 
     /* Rotated geometry */
     RotatedPoint  rotated[MAX_POINTS];
@@ -306,8 +307,7 @@ void renderer_clear(uint8_t color);
  * strict Amiga column-major parity mode. Optional rgb_palette_768 is only for non-standard
  * 8-bit indexed sky assets (tex_w*tex_h == data_bytes). */
 void renderer_set_sky_assets(const uint8_t *chunky_pixels, int tex_w, int tex_h, size_t data_bytes,
-                              const uint8_t *rgb_palette_768);
-void renderer_draw_sky_pass(int16_t angpos);
+                             const uint8_t *rgb_palette_768);
 
 /* Swap front/back buffers */
 void renderer_swap(void);
@@ -316,6 +316,10 @@ void renderer_swap(void);
  * Translated from AB3DI.s DrawDisplay.
  * After this call, g_renderer.buffer contains the rendered frame. */
 void renderer_draw_display(GameState *state);
+/* Build/reset synthesized backdrop sky-hole polygons for the currently loaded level.
+ * Build once after level parse/load, then draw from cache each frame. */
+void renderer_build_level_sky_cache(const LevelState *level);
+void renderer_reset_level_sky_cache(void);
 
 /* Optional water assets from Amiga helper files.
  * Pass NULL/0 to disable and use fallback water shading. */

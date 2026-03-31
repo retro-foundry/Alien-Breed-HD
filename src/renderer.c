@@ -12,18 +12,20 @@
  * The rendering pipeline:
  *   1. Clear framebuffer
  *   2. Compute view transform (sin/cos from angpos)
- *   3. RotateLevelPts: transform level vertices to view space
- *   4. RotateObjectPts: transform object positions to view space
- *   5. For each zone (back-to-front from OrderZones):
+ *   3. Sky on open ceilings is drawn during zone rendering
+ *      (backdrop zones + synthesized hole fill), not as a full-screen pre-pass
+ *   4. RotateLevelPts: transform level vertices to view space
+ *   5. RotateObjectPts: transform object positions to view space
+ *   6. For each zone (back-to-front from OrderZones):
  *      a. Set left/right clip from LEVELCLIPS
  *      b. Determine split (upper/lower room)
  *      c. DoThisRoom: iterate zone graph data, dispatch:
  *         - Walls  -> column-by-column textured drawing
  *         - Floors -> span-based textured drawing
  *         - Objects -> scaled sprite drawing
- *   6. Resolve underwater tint post-pass
- *   7. Draw gun overlay
- *   8. Swap buffers
+ *   7. Resolve underwater tint post-pass
+ *   8. Draw gun overlay
+ *   9. Swap buffers
  */
 
 #include "renderer.h"
@@ -148,8 +150,6 @@ static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
                                                   uint32_t *dst_rgb, uint16_t *dst_cw);
 static void renderer_build_world_zone_prepass(GameState *state, uint32_t frame_idx,
                                               int trace_clip, RendererWorldZonePrepass *out);
-static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16_t row_end,
-                                        int16_t col_start, int16_t col_end);
 
 #ifndef AB3D_NO_THREADS
 #define RENDERER_MAX_THREADS 64
@@ -190,7 +190,6 @@ typedef struct {
     RendererThreadJobType job_type;
     GameState *job_state;
     const RendererWorldZonePrepass *world_zone_prepass;
-    int16_t sky_angpos;
     uint32_t frame_idx;
     int trace_clip;
     int8_t tint_fill_screen_water;
@@ -242,6 +241,35 @@ static uint8_t  g_automap_key_bit_valid_mask = 0;
 
 /* Workers run renderer_draw_world_slice in parallel; automap updates must be serialized. */
 static SDL_mutex *g_automap_mutex;
+
+/* Synthesized backdrop sky-hole polygons, built once per level load. */
+typedef struct {
+    int16_t sides;
+    int16_t pt_indices[100];
+} RendererSkyCachePoly;
+
+typedef struct {
+    uint32_t start;
+    uint32_t count;
+} RendererSkyCacheBucket;
+
+typedef struct {
+    int floor_polys_seen;
+    int floor_polys_sky_added;
+    int sky_added_missing_matching_roof;
+    int floor_polys_with_matching_roof;
+    int sky_push_failed;
+} RendererSkyBuildDebug;
+
+static RendererSkyCachePoly *g_level_sky_cache_polys;
+static uint32_t g_level_sky_cache_poly_count;
+static uint32_t g_level_sky_cache_poly_cap;
+static RendererSkyCacheBucket *g_level_sky_cache_buckets;
+static int g_level_sky_cache_zone_slots;
+static int16_t g_sky_debug_last_viewer_zone = -1;
+static int8_t g_sky_debug_last_viewer_top = -1;
+
+static void renderer_reset_level_sky_cache_internal(void);
 
 static void automap_lock(void)
 {
@@ -905,7 +933,6 @@ static int renderer_thread_worker_main(void *userdata)
         const RendererThreadJobType job_type = pool->job_type;
         GameState *state = pool->job_state;
         const RendererWorldZonePrepass *world_zone_prepass = pool->world_zone_prepass;
-        int16_t sky_angpos = pool->sky_angpos;
         uint32_t frame_idx = pool->frame_idx;
         int trace_clip = pool->trace_clip;
         int8_t tint_fill_screen_water = pool->tint_fill_screen_water;
@@ -917,8 +944,6 @@ static int renderer_thread_worker_main(void *userdata)
         int8_t fill_screen_water = 0;
         if (active && col_start < col_end) {
             if (job_type == RENDERER_THREAD_JOB_WORLD && state) {
-                renderer_draw_sky_pass_rows(sky_angpos, 0, (int16_t)g_renderer.height,
-                                            col_start, col_end);
                 renderer_draw_world_slice(state, world_zone_prepass,
                                           col_start, col_end,
                                           frame_idx, trace_clip, &fill_screen_water);
@@ -1089,7 +1114,6 @@ static int renderer_prepare_worker_columns(RendererThreadPool *pool, int width,
 
 static int renderer_dispatch_threaded_world(GameState *state,
                                             const RendererWorldZonePrepass *zone_prepass,
-                                            int16_t sky_angpos,
                                             uint32_t frame_idx,
                                             int trace_clip, int8_t *out_fill_screen_water)
 {
@@ -1109,7 +1133,6 @@ static int renderer_dispatch_threaded_world(GameState *state,
 
     pool->job_state = state;
     pool->world_zone_prepass = zone_prepass;
-    pool->sky_angpos = sky_angpos;
     pool->frame_idx = frame_idx;
     pool->trace_clip = trace_clip;
     pool->job_type = RENDERER_THREAD_JOB_WORLD;
@@ -1159,7 +1182,6 @@ static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
 
     pool->job_state = NULL;
     pool->world_zone_prepass = NULL;
-    pool->sky_angpos = 0;
     pool->frame_idx = 0;
     pool->trace_clip = 0;
     pool->job_type = RENDERER_THREAD_JOB_WATER_TINT;
@@ -1187,13 +1209,11 @@ static void renderer_threads_shutdown(void) { }
 static void renderer_threads_init(void) { }
 static int renderer_dispatch_threaded_world(GameState *state,
                                             const RendererWorldZonePrepass *zone_prepass,
-                                            int16_t sky_angpos,
                                             uint32_t frame_idx,
                                             int trace_clip, int8_t *out_fill_screen_water)
 {
     (void)state;
     (void)zone_prepass;
-    (void)sky_angpos;
     (void)frame_idx;
     (void)trace_clip;
     if (out_fill_screen_water) *out_fill_screen_water = 0;
@@ -1742,6 +1762,7 @@ void renderer_resize(int w, int h)
 void renderer_shutdown(void)
 {
     renderer_threads_shutdown();
+    renderer_reset_level_sky_cache_internal();
     if (g_automap_mutex) {
         SDL_DestroyMutex(g_automap_mutex);
         g_automap_mutex = NULL;
@@ -2998,6 +3019,158 @@ void renderer_draw_wall(int32_t x1, int32_t z1, int32_t x2, int32_t z2,
     renderer_draw_wall_ctx(&ctx, x1, z1, x2, z2, top, bot, texture, tex_start, tex_end,
                            left_brightness, right_brightness, valand, valshift, horand,
                            totalyoff, fromtile, tex_id, wall_height_for_tex, d6_max);
+}
+
+/* -----------------------------------------------------------------------
+ * Sky ceiling span (screen-space)
+ *
+ * Used for synthesized backdrop hole-fill spans. Explicit roof polygons
+ * are still rendered by the normal floor/roof span path.
+ * ----------------------------------------------------------------------- */
+static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
+                                               int16_t y, int16_t x_left, int16_t x_right)
+{
+    RendererState *rs = &g_renderer;
+    uint8_t *buf = renderer_active_buf();
+    uint32_t *rgb = renderer_active_rgb();
+    uint16_t *cwbuf = renderer_active_cw();
+    if (!buf || !rgb || !cwbuf) return;
+    if (y < 0 || y >= rs->height) return;
+    if (y < (int)ctx->top_clip || y > (int)ctx->bot_clip) return;
+
+    int xl = (x_left < ctx->left_clip) ? ctx->left_clip : x_left;
+    int xr = (x_right >= ctx->right_clip) ? ctx->right_clip - 1 : x_right;
+    if (xl > xr) return;
+
+#if !RENDER_SKY
+    {
+        const uint32_t sky_px = RENDER_RGB_CLEAR_SKY_PIXEL;
+        const uint16_t sky_cw = 0x0EEEu;
+        int w = rs->width;
+        size_t row = (size_t)y * (size_t)w;
+        for (int x = xl; x <= xr; x++) {
+            size_t p = row + (size_t)x;
+            buf[p] = 0;
+            if (g_renderer_rgb_raster_expand)
+                rgb[p] = sky_px;
+            cwbuf[p] = sky_cw;
+        }
+    }
+#else
+    {
+        int w = rs->width;
+        int h = rs->height;
+        int16_t angpos = rs->sky_frame_angpos;
+        const int32_t sky_pan_period_fp = SKY_PAN_WIDTH << 16;
+        int32_t u0_fp = (int32_t)(((int64_t)(angpos & 8191) * ((int64_t)SKY_PAN_WIDTH << 16)) / 8192);
+        int sky_h = h;
+        int sky_view_cols;
+        if (w != s_cached_sky_view_cols_w) {
+            int center_x = (w * 47) / 96;
+            int left_px = center_x;
+            int right_px = (w - 1) - center_x;
+            const double focal_px = (double)(64 * renderer_proj_x_scale_px());
+            const double hfov =
+                atan((double)left_px / focal_px) +
+                atan((double)right_px / focal_px);
+            double sky_cols_f = ((double)SKY_PAN_WIDTH * hfov) / (2.0 * 3.14159265358979323846);
+            sky_view_cols = (int)(sky_cols_f + 0.5);
+            if (sky_view_cols < 1) sky_view_cols = 1;
+            if (sky_view_cols > SKY_PAN_WIDTH) sky_view_cols = SKY_PAN_WIDTH;
+            s_cached_sky_view_cols = sky_view_cols;
+            s_cached_sky_view_cols_w = w;
+        } else {
+            sky_view_cols = s_cached_sky_view_cols;
+        }
+
+        const int32_t sx_step_fp = (int32_t)(((int64_t)sky_view_cols << 16) / (int64_t)w);
+        int32_t sx_fp = 0;
+        for (int xi = 0; xi < xl; xi++) sx_fp += sx_step_fp;
+
+        size_t row = (size_t)y * (size_t)w;
+
+        if (s_sky_pixels && s_sky_mode == 0) {
+            int th = s_sky_tex_h;
+            int tw = s_sky_tex_w;
+            const int32_t tw_scale_fp = ((int32_t)tw << 16) / SKY_PAN_WIDTH;
+            const int64_t r_den = (int64_t)(sky_h > 1 ? sky_h - 1 : 1);
+            int bpc = s_sky_bytes_per_col;
+            size_t row_stride = (size_t)tw * 2u;
+            int rpix = (int)((int64_t)y * (th - 1) / r_den);
+            if (rpix < 0) rpix = 0;
+            if (rpix >= th) rpix = th - 1;
+            for (int x = xl; x <= xr; x++) {
+                int32_t pan_fp = u0_fp + sx_fp;
+                if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
+                int c = (int)(pan_fp >> 16);
+                c = (int)(((int64_t)c * (int64_t)tw_scale_fp) >> 16);
+                if (c >= tw) c = tw - 1;
+                size_t off;
+                if (s_sky_row_major) off = (size_t)rpix * row_stride + (size_t)c * 2u;
+                else                 off = (size_t)c * (size_t)bpc + (size_t)rpix * 2u;
+                if (off + 2u > s_sky_data_bytes) {
+                    sx_fp += sx_step_fp;
+                    continue;
+                }
+                uint16_t cw12 = (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1u]);
+                size_t p = row + (size_t)x;
+                buf[p] = 0;
+                if (g_renderer_rgb_raster_expand)
+                    rgb[p] = amiga12_to_argb(cw12);
+                cwbuf[p] = cw12;
+                sx_fp += sx_step_fp;
+            }
+        } else if (s_sky_pixels && s_sky_mode == 1) {
+            int th = s_sky_tex_h;
+            int tw = s_sky_tex_w;
+            const int32_t tw_scale_fp = ((int32_t)tw << 16) / SKY_PAN_WIDTH;
+            const int64_t v_den = (int64_t)(sky_h > 1 ? sky_h - 1 : 1);
+            int v = (int)((int64_t)y * (th - 1) / v_den);
+            if (v < 0) v = 0;
+            if (v >= th) v = th - 1;
+            for (int x = xl; x <= xr; x++) {
+                int32_t pan_fp = u0_fp + sx_fp;
+                if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
+                int tu = (int)(pan_fp >> 16);
+                tu = (int)(((int64_t)tu * (int64_t)tw_scale_fp) >> 16);
+                if (tu >= tw) tu = tw - 1;
+                size_t toff = (size_t)v * (size_t)tw + (size_t)tu;
+                size_t lim = (size_t)tw * (size_t)th;
+                if (toff >= lim) {
+                    sx_fp += sx_step_fp;
+                    continue;
+                }
+                uint8_t idx = s_sky_pixels[toff];
+                size_t p = row + (size_t)x;
+                buf[p] = 0;
+                if (g_renderer_rgb_raster_expand)
+                    rgb[p] = s_sky_argb[idx];
+                cwbuf[p] = s_sky_cw[idx];
+                sx_fp += sx_step_fp;
+            }
+        } else {
+            const int32_t shade_u_scale_fp = ((int32_t)40 << 16) / SKY_PAN_WIDTH;
+            int t = (y * 255) / (sky_h > 1 ? sky_h - 1 : 1);
+            for (int x = xl; x <= xr; x++) {
+                int32_t pan_fp = u0_fp + sx_fp;
+                if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
+                int u = (int)(pan_fp >> 16);
+                int shade = t + (int)(((int64_t)u * (int64_t)shade_u_scale_fp) >> 16);
+                if (shade > 255) shade = 255;
+                int r = (shade * 40) / 255;
+                int g = (shade * 90) / 255;
+                int b = 30 + (shade * 200) / 255;
+                uint32_t px = RENDER_RGB_RASTER_PIXEL(((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b);
+                size_t p = row + (size_t)x;
+                buf[p] = 0;
+                if (g_renderer_rgb_raster_expand)
+                    rgb[p] = px;
+                cwbuf[p] = argb_to_amiga12(px);
+                sx_fp += sx_step_fp;
+            }
+        }
+    }
+#endif
 }
 
 /* -----------------------------------------------------------------------
@@ -4638,6 +4811,607 @@ static int zone_has_lift(const uint8_t *lift_data, int16_t zone_id)
     return 0;
 }
 
+static void renderer_reset_level_sky_cache_internal(void)
+{
+    free(g_level_sky_cache_polys);
+    g_level_sky_cache_polys = NULL;
+    g_level_sky_cache_poly_count = 0;
+    g_level_sky_cache_poly_cap = 0;
+
+    free(g_level_sky_cache_buckets);
+    g_level_sky_cache_buckets = NULL;
+    g_level_sky_cache_zone_slots = 0;
+    g_sky_debug_last_viewer_zone = -1;
+    g_sky_debug_last_viewer_top = -1;
+}
+
+void renderer_reset_level_sky_cache(void)
+{
+    renderer_reset_level_sky_cache_internal();
+}
+
+static int renderer_level_sky_cache_ensure_poly_cap(uint32_t want)
+{
+    if (want <= g_level_sky_cache_poly_cap) return 1;
+
+    uint32_t new_cap = (g_level_sky_cache_poly_cap > 0) ? g_level_sky_cache_poly_cap : 256u;
+    while (new_cap < want) {
+        if (new_cap > UINT32_MAX / 2u) {
+            new_cap = want;
+            break;
+        }
+        new_cap *= 2u;
+    }
+
+    RendererSkyCachePoly *np =
+        (RendererSkyCachePoly *)realloc(g_level_sky_cache_polys, (size_t)new_cap * sizeof(RendererSkyCachePoly));
+    if (!np) return 0;
+    g_level_sky_cache_polys = np;
+    g_level_sky_cache_poly_cap = new_cap;
+    return 1;
+}
+
+static int renderer_level_sky_cache_push_poly(const int16_t *pt_indices, int sides)
+{
+    if (!pt_indices) return 0;
+    if (sides < 3 || sides > 100) return 0;
+    if (!renderer_level_sky_cache_ensure_poly_cap(g_level_sky_cache_poly_count + 1u)) return 0;
+
+    RendererSkyCachePoly *dst = &g_level_sky_cache_polys[g_level_sky_cache_poly_count++];
+    dst->sides = (int16_t)sides;
+    memcpy(dst->pt_indices, pt_indices, (size_t)sides * sizeof(int16_t));
+    return 1;
+}
+
+/* Bytes of payload after the type word (for forward-scanning the zone graphics stream). */
+static size_t zone_gfx_entry_data_skip(int16_t entry_type, const uint8_t *data)
+{
+    switch (entry_type) {
+    case 0:
+    case 13: return 28;
+    case 3:
+    case 12: return 0;
+    case 4: return 2;
+    case 5: return 28;
+    case 6: return 4;
+    case 1:
+    case 2:
+    case 7:
+    case 8:
+    case 9:
+    case 10:
+    case 11:
+    {
+        int16_t num_sides_m1 = rd16(data + 2);
+        int sides = (int)num_sides_m1 + 1;
+        if (sides < 0) sides = 0;
+        if (sides > 100) sides = 100;
+        /* Payload layout after type:
+         *   ypos(2) + sides_m1(2) + point_indices(2*sides) + extra(8) */
+        return (size_t)(4 + 2 * sides + 8);
+    }
+    default:
+        return 0;
+    }
+}
+
+static void zone_poly_sort_indices(int16_t *vals, int count)
+{
+    for (int i = 1; i < count; i++) {
+        int16_t key = vals[i];
+        int j = i - 1;
+        while (j >= 0 && vals[j] > key) {
+            vals[j + 1] = vals[j];
+            j--;
+        }
+        vals[j + 1] = key;
+    }
+}
+
+static int zone_poly_contains_vertex(const int16_t *vals, int count, int16_t v)
+{
+    for (int i = 0; i < count; i++) {
+        if (vals[i] == v) return 1;
+    }
+    return 0;
+}
+
+/* Canonicalize polygon vertex ids for matching:
+ * - remove consecutive duplicate ids
+ * - remove closing duplicate (last == first)
+ * - unique + sort (winding/start independent) */
+static int zone_poly_canonicalize_vertices(const int16_t *in, int in_count, int16_t *out_vals)
+{
+    if (!in || !out_vals) return 0;
+    if (in_count <= 0) return 0;
+    if (in_count > 100) in_count = 100;
+
+    int tmp_n = 0;
+    for (int i = 0; i < in_count; i++) {
+        int16_t v = in[i];
+        if (tmp_n > 0 && v == out_vals[tmp_n - 1]) continue;
+        out_vals[tmp_n++] = v;
+    }
+    if (tmp_n >= 2 && out_vals[0] == out_vals[tmp_n - 1]) tmp_n--;
+
+    int uniq_n = 0;
+    for (int i = 0; i < tmp_n; i++) {
+        int16_t v = out_vals[i];
+        if (!zone_poly_contains_vertex(out_vals, uniq_n, v)) {
+            out_vals[uniq_n++] = v;
+        }
+    }
+    if (uniq_n < 3) return 0;
+
+    zone_poly_sort_indices(out_vals, uniq_n);
+    return uniq_n;
+}
+
+/* Roof/floor polygons can be authored with:
+ * - different winding/start vertex
+ * - redundant points in one stream and not the other
+ * Treat exact set and strict subset/superset as a match to avoid false hole detection. */
+static int zone_poly_roof_floor_match(const int16_t *a, int a_count,
+                                      const int16_t *b, int b_count)
+{
+    int16_t ca[100];
+    int16_t cb[100];
+    int na = zone_poly_canonicalize_vertices(a, a_count, ca);
+    int nb = zone_poly_canonicalize_vertices(b, b_count, cb);
+    if (na <= 0 || nb <= 0) return 0;
+
+    if (na == nb) {
+        int same = 1;
+        for (int i = 0; i < na; i++) {
+            if (ca[i] != cb[i]) { same = 0; break; }
+        }
+        if (same) return 1;
+    }
+
+    int a_in_b = 1;
+    for (int i = 0; i < na; i++) {
+        if (!zone_poly_contains_vertex(cb, nb, ca[i])) { a_in_b = 0; break; }
+    }
+    if (a_in_b) return 1;
+
+    int b_in_a = 1;
+    for (int i = 0; i < nb; i++) {
+        if (!zone_poly_contains_vertex(ca, na, cb[i])) { b_in_a = 0; break; }
+    }
+    return b_in_a;
+}
+
+/* Returns 1 if this stream has a type-2 roof polygon matching floor footprint. */
+static int zone_stream_has_matching_roof_polygon(const uint8_t *gfx_data,
+                                                 const int16_t *floor_pts, int floor_sides)
+{
+    if (!gfx_data || !floor_pts) return 0;
+    if (floor_sides <= 0 || floor_sides > 100) return 0;
+
+    const uint8_t *scan = gfx_data + 2; /* skip gfx zone id word */
+    int scan_iter = 500;
+    while (scan_iter-- > 0) {
+        int16_t t = rd16(scan);
+        scan += 2;
+        if (t < 0) break;
+
+        if (t == 2) {
+            int poly_sides = (int)rd16(scan + 2) + 1;
+            if (poly_sides < 0) poly_sides = 0;
+            if (poly_sides > 100) poly_sides = 100;
+            if (poly_sides >= 3) {
+                int16_t roof_pts[100];
+                const uint8_t *pp = scan + 4;
+                for (int i = 0; i < poly_sides; i++) {
+                    roof_pts[i] = rd16(pp);
+                    pp += 2;
+                }
+                if (zone_poly_roof_floor_match(floor_pts, floor_sides, roof_pts, poly_sides)) {
+                    return 1;
+                }
+            }
+        }
+
+        {
+            size_t skip = zone_gfx_entry_data_skip(t, scan);
+            if (skip == 0) {
+                if (t != 3 && t != 12) break;
+                continue;
+            }
+            scan += skip;
+        }
+    }
+    return 0;
+}
+
+/* Returns 1 if this stream has at least one authored type-2 roof polygon. */
+static int zone_stream_has_explicit_roof_polygon(const uint8_t *gfx_data)
+{
+    if (!gfx_data) return 0;
+
+    const uint8_t *scan = gfx_data + 2; /* skip gfx zone id word */
+    int scan_iter = 500;
+    while (scan_iter-- > 0) {
+        int16_t t = rd16(scan);
+        scan += 2;
+        if (t < 0) break;
+        if (t == 2) return 1;
+
+        {
+            size_t skip = zone_gfx_entry_data_skip(t, scan);
+            if (skip == 0) {
+                if (t != 3 && t != 12) break;
+                continue;
+            }
+            scan += skip;
+        }
+    }
+    return 0;
+}
+
+/* Rasterize a floor-outline polygon at zone_roof height as a sky ceiling.
+ * pt_indices/sides come directly from the type-1 (floor) polygon already read. */
+static void renderer_tessellate_sky_ceiling_ctx(RenderSliceContext *ctx,
+                                                const int16_t *pt_indices, int sides,
+                                                int32_t zone_roof, int32_t y_off)
+{
+    RendererState *r = &g_renderer;
+    int h = r->height;
+    int half_h = h / 2;
+    int center = half_h;
+
+    int32_t rel_h = zone_roof - y_off;
+    if (rel_h >= 0) return; /* ceiling must be above camera eye */
+
+    int16_t *left_edge  = (int16_t*)malloc((size_t)h * sizeof(int16_t));
+    int16_t *right_edge = (int16_t*)malloc((size_t)h * sizeof(int16_t));
+    if (!left_edge || !right_edge) { free(left_edge); free(right_edge); return; }
+
+    for (int i = 0; i < h; i++) {
+        left_edge[i]  = (int16_t)r->width;
+        right_edge[i] = -1;
+    }
+    int poly_top = h;
+    int poly_bot = -1;
+
+    /* Ceiling: rows 0 .. half_h-1, further clamped to ctx clip band */
+    int y_min = ctx->top_clip;
+    int y_max = half_h - 1;
+    if (y_max > ctx->bot_clip) y_max = ctx->bot_clip;
+
+    const int32_t NEAR = 1;
+    int32_t rel_h_8 = rel_h >> WORLD_Y_FRAC_BITS;
+
+    for (int s = 0; s < sides; s++) {
+        int i1 = pt_indices[s];
+        int i2 = pt_indices[(s + 1) % sides];
+        if (i1 < 0 || i1 >= MAX_POINTS || i2 < 0 || i2 >= MAX_POINTS) continue;
+
+        int32_t z1 = r->rotated[i1].z, z2 = r->rotated[i2].z;
+        int32_t x1 = r->rotated[i1].x, x2 = r->rotated[i2].x;
+
+        if (z1 < NEAR && z2 < NEAR) continue;
+
+        int32_t ez1 = z1, ez2 = z2, ex1 = x1, ex2 = x2;
+        if (ez1 < NEAR) {
+            int32_t dz = ez2 - ez1;
+            ex1 = dz ? (x1 + (int32_t)((int64_t)(x2-x1)*((NEAR-ez1)<<16)/dz/65536)) : (x1+x2)/2;
+            ez1 = NEAR;
+        }
+        if (ez2 < NEAR) {
+            int32_t dz = ez1 - ez2;
+            ex2 = dz ? (x2 + (int32_t)((int64_t)(x1-x2)*((NEAR-ez2)<<16)/dz/65536)) : (x1+x2)/2;
+            ez2 = NEAR;
+        }
+
+        int sx1 = project_x_to_pixels(ex1, ez1);
+        int sx2 = project_x_to_pixels(ex2, ez2);
+        int sy1_raw = project_y_to_pixels_round(rel_h_8, ez1, r->proj_y_scale, center);
+        int sy2_raw = project_y_to_pixels_round(rel_h_8, ez2, r->proj_y_scale, center);
+
+        int dy_raw = sy2_raw - sy1_raw;
+        if (dy_raw == 0) {
+            int row = sy1_raw;
+            if (row < y_min || row > y_max) continue;
+            int lo = sx1 < sx2 ? sx1 : sx2;
+            int hi = sx1 > sx2 ? sx1 : sx2;
+            if (lo < left_edge[row])  left_edge[row]  = (int16_t)lo;
+            if (hi > right_edge[row]) right_edge[row] = (int16_t)hi;
+            if (row < poly_top) poly_top = row;
+            if (row > poly_bot) poly_bot = row;
+            continue;
+        }
+
+        int row_start = sy1_raw < sy2_raw ? sy1_raw : sy2_raw;
+        int row_end   = sy1_raw > sy2_raw ? sy1_raw : sy2_raw;
+        if (row_start < y_min) row_start = y_min;
+        if (row_end   > y_max) row_end   = y_max;
+
+        int64_t x_fp = (int64_t)sx1 << 16;
+        int64_t dx_fp = ((int64_t)(sx2 - sx1) << 16) / dy_raw;
+        if (sy1_raw < sy2_raw) {
+            x_fp += dx_fp * (row_start - sy1_raw);
+        } else {
+            x_fp = (int64_t)sx2 << 16;
+            dx_fp = ((int64_t)(sx1 - sx2) << 16) / (-dy_raw);
+            x_fp += dx_fp * (row_start - sy2_raw);
+        }
+
+        for (int row = row_start; row <= row_end; row++) {
+            if (row < 0 || row >= h) { x_fp += dx_fp; continue; }
+            int lx = renderer_fp16_x_floor_px(x_fp);
+            int rx = renderer_fp16_x_ceil_px(x_fp);
+            if (lx < left_edge[row])  left_edge[row]  = (int16_t)lx;
+            if (rx > right_edge[row]) right_edge[row] = (int16_t)rx;
+            if (row < poly_top) poly_top = row;
+            if (row > poly_bot) poly_bot = row;
+            x_fp += dx_fp;
+        }
+    }
+
+    if (poly_top < y_min) poly_top = y_min;
+    if (poly_bot > y_max) poly_bot = y_max;
+
+    for (int row = poly_top; row <= poly_bot; row++) {
+        if (row < 0 || row >= h) continue;
+        int16_t le = left_edge[row];
+        int16_t re = right_edge[row];
+        if (le >= r->width || re < 0) continue;
+        {
+            int16_t cle = le < (int16_t)ctx->left_clip ? (int16_t)ctx->left_clip : le;
+            int16_t cre = re >= (int16_t)ctx->right_clip ? (int16_t)(ctx->right_clip-1) : re;
+            if (cle > cre) continue;
+        }
+        renderer_draw_sky_ceiling_span_ctx(ctx, (int16_t)row, le, re);
+    }
+
+    free(left_edge);
+    free(right_edge);
+}
+
+static void renderer_build_zone_stream_backdrop_sky_cache(const uint8_t *floor_stream_gfx_data,
+                                                          const uint8_t *lower_stream_gfx_data,
+                                                          const uint8_t *upper_stream_gfx_data,
+                                                          RendererSkyBuildDebug *dbg)
+{
+    if (!floor_stream_gfx_data) return;
+
+    const uint8_t *scan = floor_stream_gfx_data + 2; /* skip gfx zone id word */
+    int scan_iter = 500;
+    while (scan_iter-- > 0) {
+        int16_t t = rd16(scan);
+        scan += 2;
+        if (t < 0) break;
+
+        if (t == 1) { /* floor */
+            int16_t num_sides_m1 = rd16(scan + 2);
+            int sides = (int)num_sides_m1 + 1;
+            if (sides < 0) sides = 0;
+            if (sides > 100) sides = 100;
+            if (sides >= 3) {
+                int16_t pt_indices[100];
+                const uint8_t *pp = scan + 4;
+                for (int i = 0; i < sides; i++) {
+                    pt_indices[i] = rd16(pp);
+                    pp += 2;
+                }
+                if (dbg) dbg->floor_polys_seen++;
+
+                int has_matching_roof =
+                    zone_stream_has_matching_roof_polygon(lower_stream_gfx_data, pt_indices, sides) ||
+                    zone_stream_has_matching_roof_polygon(upper_stream_gfx_data, pt_indices, sides);
+                if (has_matching_roof) {
+                    if (dbg) dbg->floor_polys_with_matching_roof++;
+                } else {
+                    if (renderer_level_sky_cache_push_poly(pt_indices, sides)) {
+                        if (dbg) {
+                            dbg->floor_polys_sky_added++;
+                            dbg->sky_added_missing_matching_roof++;
+                        }
+                    } else if (dbg) {
+                        dbg->sky_push_failed++;
+                    }
+                }
+            }
+        }
+
+        {
+            size_t skip = zone_gfx_entry_data_skip(t, scan);
+            if (skip == 0) {
+                if (t != 3 && t != 12) break;
+                continue;
+            }
+            scan += skip;
+        }
+    }
+}
+
+void renderer_build_level_sky_cache(const LevelState *level)
+{
+    renderer_reset_level_sky_cache_internal();
+    if (!level || !level->data || !level->graphics || !level->zone_adds || !level->zone_graph_adds) return;
+
+    int zone_slots = level_zone_slot_count(level);
+    if (zone_slots <= 0) return;
+
+    g_level_sky_cache_buckets = (RendererSkyCacheBucket *)calloc((size_t)zone_slots * 2u,
+                                                                  sizeof(RendererSkyCacheBucket));
+    if (!g_level_sky_cache_buckets) return;
+    g_level_sky_cache_zone_slots = zone_slots;
+
+    int zone_limit = zone_slots;
+    if (level->num_zone_graph_entries > 0 && level->num_zone_graph_entries < zone_limit)
+        zone_limit = level->num_zone_graph_entries;
+    if (level->num_zones > 0 && level->num_zones < zone_limit)
+        zone_limit = level->num_zones;
+
+    for (int zone_id = 0; zone_id < zone_limit; zone_id++) {
+        int32_t zone_off = rd32(level->zone_adds + (size_t)zone_id * 4u);
+        if (zone_off < 0) continue;
+        if (level->data_byte_count > 0 && (size_t)zone_off + 20u > level->data_byte_count) continue;
+        const uint8_t *zone_data = level->data + zone_off;
+
+        const uint8_t *zgraph = level->zone_graph_adds + (size_t)zone_id * 8u;
+        int32_t lower_gfx_off = rd32(zgraph);
+        int32_t upper_gfx_off = rd32(zgraph + 4);
+        int32_t lower_roof_y = rd32(zone_data + ZONE_OFF_ROOF);
+        int32_t upper_roof_raw = rd32(zone_data + ZONE_OFF_UPPER_ROOF);
+        const uint8_t *lower_gfx_data = NULL;
+        const uint8_t *upper_gfx_data = NULL;
+        int zone_backdrop_flag = (rd16(zone_data + ZONE_OFF_BACK) != 0);
+
+        if (lower_gfx_off > 0 &&
+            (level->graphics_byte_count == 0 || ((size_t)lower_gfx_off + 2u) <= level->graphics_byte_count)) {
+            lower_gfx_data = level->graphics + lower_gfx_off;
+        }
+        if (upper_gfx_off > 0 &&
+            (level->graphics_byte_count == 0 || ((size_t)upper_gfx_off + 2u) <= level->graphics_byte_count)) {
+            upper_gfx_data = level->graphics + upper_gfx_off;
+        }
+
+        int has_upper_stream = (upper_gfx_data != NULL);
+        int zone_has_explicit_roof =
+            zone_stream_has_explicit_roof_polygon(lower_gfx_data) ||
+            zone_stream_has_explicit_roof_polygon(upper_gfx_data);
+
+        for (int use_upper = 0; use_upper <= 1; use_upper++) {
+            int bucket_idx = zone_id * 2 + use_upper;
+            uint32_t start = g_level_sky_cache_poly_count;
+            g_level_sky_cache_buckets[bucket_idx].start = start;
+            g_level_sky_cache_buckets[bucket_idx].count = 0;
+
+            int32_t gfx_off = use_upper ? upper_gfx_off : lower_gfx_off;
+            const uint8_t *gfx_data = use_upper ? upper_gfx_data : lower_gfx_data;
+            if (!gfx_data) continue;
+
+            int stream_has_backdrop_marker = 0;
+            {
+                const uint8_t *scan = gfx_data + 2;
+                int scan_iter = 500;
+                while (scan_iter-- > 0) {
+                    int16_t t = rd16(scan);
+                    scan += 2;
+                    if (t < 0) break;
+                    if (t == 12) stream_has_backdrop_marker = 1;
+
+                    {
+                        size_t skip = zone_gfx_entry_data_skip(t, scan);
+                        if (skip == 0) {
+                            if (t != 3 && t != 12) break;
+                            continue;
+                        }
+                        scan += skip;
+                    }
+                }
+            }
+
+            int stream_is_top = has_upper_stream ? (use_upper != 0) : (use_upper == 0);
+            int32_t stream_roof_y = use_upper ? upper_roof_raw : lower_roof_y;
+            if (use_upper && stream_roof_y == 0) {
+                stream_roof_y = lower_roof_y;
+            }
+            int roof_open_to_sky = (stream_roof_y < 0) ? 1 : 0;
+            int synth_enabled =
+                ((zone_backdrop_flag || stream_has_backdrop_marker) && roof_open_to_sky) ? 1 : 0;
+            RendererSkyBuildDebug dbg = {0};
+
+            if (synth_enabled) {
+                renderer_build_zone_stream_backdrop_sky_cache(gfx_data,
+                                                              lower_gfx_data,
+                                                              upper_gfx_data,
+                                                              &dbg);
+            }
+            uint32_t added = g_level_sky_cache_poly_count - start;
+            g_level_sky_cache_buckets[bucket_idx].count = added;
+
+            if (added > 0u || dbg.floor_polys_seen > 0 ||
+                zone_backdrop_flag || stream_has_backdrop_marker) {
+                printf("[SKYDBG] zone=%d stream=%s gfx_off=%ld top_stream=%d"
+                       " backdrop(zone=%d marker=%d enabled=%d)"
+                       " roof_y=%ld open=%d"
+                       " roof(explicit=%d match=%d)"
+                       " floor_polys=%d sky_added=%u tracked=%d"
+                       " reasons(no_match=%d push_fail=%d)\n",
+                       zone_id, use_upper ? "upper" : "lower", (long)gfx_off, stream_is_top,
+                       zone_backdrop_flag, stream_has_backdrop_marker, synth_enabled,
+                       (long)stream_roof_y, roof_open_to_sky,
+                       zone_has_explicit_roof, dbg.floor_polys_with_matching_roof,
+                       dbg.floor_polys_seen, (unsigned)added, dbg.floor_polys_sky_added,
+                       dbg.sky_added_missing_matching_roof, dbg.sky_push_failed);
+            }
+        }
+    }
+
+    if (g_level_sky_cache_poly_count > 0) {
+        printf("[RENDERER] Sky cache: %u synthesized polygons\n",
+               (unsigned)g_level_sky_cache_poly_count);
+    }
+}
+
+static void renderer_draw_zone_backdrop_sky_ctx(RenderSliceContext *ctx,
+                                                int16_t zone_id, int use_upper,
+                                                int32_t zone_roof, int32_t y_off)
+{
+    /* Backdrop sky is only valid for open roofs (same rule for lower and upper). */
+    if (zone_roof >= 0) return;
+    if (!ctx || !g_level_sky_cache_buckets || !g_level_sky_cache_polys) return;
+    if (zone_id < 0 || zone_id >= g_level_sky_cache_zone_slots) return;
+
+    int bucket_idx = zone_id * 2 + (use_upper ? 1 : 0);
+    RendererSkyCacheBucket b = g_level_sky_cache_buckets[bucket_idx];
+    uint32_t end = b.start + b.count;
+    if (end > g_level_sky_cache_poly_count) end = g_level_sky_cache_poly_count;
+
+    for (uint32_t i = b.start; i < end; i++) {
+        const RendererSkyCachePoly *poly = &g_level_sky_cache_polys[i];
+        renderer_tessellate_sky_ceiling_ctx(ctx, poly->pt_indices, poly->sides, zone_roof, y_off);
+    }
+}
+
+static void renderer_log_viewer_zone_sky_ctx(GameState *state, const PlayerState *viewer)
+{
+    if (!state || !viewer) return;
+
+    int16_t viewer_zone = viewer->zone;
+    int viewer_top = viewer->stood_in_top ? 1 : 0;
+    if (viewer_zone == g_sky_debug_last_viewer_zone &&
+        viewer_top == g_sky_debug_last_viewer_top) {
+        return;
+    }
+
+    uint32_t lower_count = 0;
+    uint32_t upper_count = 0;
+    int zone_backdrop_flag = 0;
+
+    LevelState *level = &state->level;
+    int zone_slots = level_zone_slot_count(level);
+    if (level->data && level->zone_adds &&
+        viewer_zone >= 0 && viewer_zone < zone_slots) {
+        int32_t zone_off = rd32(level->zone_adds + (size_t)viewer_zone * 4u);
+        if (zone_off >= 0 &&
+            (level->data_byte_count == 0 || ((size_t)zone_off + 20u) <= level->data_byte_count)) {
+            const uint8_t *zone_data = level->data + zone_off;
+            zone_backdrop_flag = (rd16(zone_data + ZONE_OFF_BACK) != 0);
+        }
+    }
+
+    if (g_level_sky_cache_buckets &&
+        viewer_zone >= 0 && viewer_zone < g_level_sky_cache_zone_slots) {
+        int base = viewer_zone * 2;
+        lower_count = g_level_sky_cache_buckets[base].count;
+        upper_count = g_level_sky_cache_buckets[base + 1].count;
+    }
+
+    printf("[SKYDBG] viewer zone=%d stood_in_top=%d zone_back=%d"
+           " entered_on_stream=%s sky_cache(lower=%u upper=%u)\n",
+           (int)viewer_zone, viewer_top, zone_backdrop_flag,
+           viewer_top ? "upper" : "lower",
+           (unsigned)lower_count, (unsigned)upper_count);
+
+    g_sky_debug_last_viewer_zone = viewer_zone;
+    g_sky_debug_last_viewer_top = (int8_t)viewer_top;
+}
+
 static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, int16_t zone_id, int use_upper)
 {
     RendererState *r = &g_renderer;
@@ -4719,6 +5493,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
     if (zone_id >= 0 && zone_id < level_zone_slot_count(level))
         zone_bright = level_get_zone_brightness(level, zone_id, use_upper ? 1 : 0);
 
+    renderer_draw_zone_backdrop_sky_ctx(ctx, zone_id, use_upper, zone_roof, y_off);
 
     /* Amiga: draw walls and arcs in stream order (no deferral). */
 
@@ -5419,8 +6194,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
 
         case 12: /* Backdrop */
         {
-            /* putinbackdrop - no extra stream data. PC port draws sky once per frame
-             * in renderer_draw_display (after clear), so this entry is a no-op here. */
+            /* putinbackdrop - no extra stream data.
+             * Sky synthesis is geometry-driven: add only where floor polygons have no matching roof. */
             break;
         }
 
@@ -5887,6 +6662,7 @@ void renderer_draw_display(GameState *state)
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
     PlayerState *plr_sky = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
     int16_t sky_angpos = (int16_t)plr_sky->angpos;
+    r->sky_frame_angpos = sky_angpos;
 
     int16_t ang = (int16_t)(plr->angpos & 0x3FFF); /* 14-bit angle */
     r->sinval = sin_lookup(ang);
@@ -5911,6 +6687,8 @@ void renderer_draw_display(GameState *state)
     /* xwobble from head bob */
     r->xwobble = 0; /* Would be set from plr->bob_frame */
 
+    renderer_log_viewer_zone_sky_ctx(state, plr);
+
     /* 3. Initialize column clipping (per-column top/bot/z for floor and sprite clipping) */
     {
         memset(r->clip.top, 0, (size_t)w * sizeof(int16_t));
@@ -5932,7 +6710,6 @@ void renderer_draw_display(GameState *state)
 #ifndef AB3D_NO_THREADS
     if (state->cfg_render_threads) {
         used_threaded_world = renderer_dispatch_threaded_world(state, &world_zone_prepass,
-                                                               sky_angpos,
                                                                frame_idx, trace_clip,
                                                                &fill_screen_water);
         if (!used_threaded_world) {
@@ -5952,7 +6729,6 @@ void renderer_draw_display(GameState *state)
     }
     if (!used_threaded_world) {
         renderer_clear(0);
-        renderer_draw_sky_pass(sky_angpos);
         renderer_draw_world_slice(state, &world_zone_prepass,
                                   0, (int16_t)g_renderer.width,
                                   frame_idx, trace_clip, &fill_screen_water);

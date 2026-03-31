@@ -753,6 +753,8 @@ int io_load_level_clips(LevelState *level, int level_num)
 
 void io_release_level_memory(LevelState *level)
 {
+    renderer_reset_level_sky_cache();
+
     /* Automap runtime state */
     renderer_automap_lock();
     free(level->automap_seen_walls);
