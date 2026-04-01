@@ -76,7 +76,7 @@
  * Scale to current render resolution. */
 #define CHUNKY_TOPCLIP_BIAS  (12 * RENDER_SCALE)
 /* Minimum z in view space; vertices behind this are clipped. Used for walls and floor polygons. */
-#define RENDERER_NEAR_PLANE 4
+#define RENDERER_NEAR_PLANE 3
 /* Amiga ObjDraw3 BitMapObj/PolygonObj: cmp.w #50,d1 ; ble objbehind.
  * Keep the same near cutoff for billboards so close sprites don't over-scale. */
 #define SPRITE_NEAR_CLIP_Z 50
@@ -849,6 +849,8 @@ typedef struct {
     int16_t right_clip;
     int16_t top_clip;
     int16_t bot_clip;
+    int16_t strip_left;
+    int16_t strip_right;
     int16_t wall_top_clip;
     int16_t wall_bot_clip;
     int16_t slice_left;
@@ -890,6 +892,8 @@ static void render_slice_context_init(RenderSliceContext *ctx,
                                       int16_t top, int16_t bot)
 {
     memset(ctx, 0, sizeof(*ctx));
+    ctx->strip_left = left;
+    ctx->strip_right = right;
     render_slice_context_reset(ctx, left, right, top, bot);
     ctx->wall_cache_block_off = 0xFFFFu;
     ctx->update_column_clip = 1;
@@ -3918,8 +3922,10 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     sx = screen_x - width / 2;
     sy = screen_y - height / 2;
 
-    int clip_left = ctx->left_clip;
-    int clip_right = ctx->right_clip;
+    /* Keep sprites inside this worker's strip, but do not hard-clip to
+     * per-zone portal bounds so billboards can straddle zone edges. */
+    int clip_left = ctx->strip_left;
+    int clip_right = ctx->strip_right;
     if (clip_left < 0) clip_left = 0;
     if (clip_right > rw) clip_right = rw;
     int dx_start = 0;

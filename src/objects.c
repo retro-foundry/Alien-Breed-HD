@@ -2953,7 +2953,54 @@ void object_handle_bullet(GameObject *obj, GameState *state)
 #define DOOR_FLINE_Z         2
 #define DOOR_FLINE_XLEN      4
 #define DOOR_FLINE_ZLEN      6
-#define DOOR_NEAR_THRESH     4   /* player within this distance of a door fline counts as "at door" */
+#define DOOR_NEAR_THRESH     24  /* forgiving door press distance from the controlling floor line */
+#define LIFT_NEAR_THRESH     32  /* give lifts a little extra interaction room near their trigger lines */
+
+static bool player_near_floor_line(GameState *state, int16_t fline_idx, int plr_num, int16_t near_thresh)
+{
+    if (!state || !state->level.floor_lines || near_thresh < 0) return false;
+    if (fline_idx < 0 || (int32_t)fline_idx >= state->level.num_floor_lines) return false;
+
+    const PlayerState *plr = (plr_num == 0) ? &state->plr1 : &state->plr2;
+    int32_t px = plr->p_xoff;
+    int32_t pz = plr->p_zoff;
+
+    const uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fline_idx * DOOR_FLINE_SIZE;
+    int32_t ax = (int32_t)be16(fl + DOOR_FLINE_X);
+    int32_t az = (int32_t)be16(fl + DOOR_FLINE_Z);
+    int32_t bx = ax + (int32_t)be16(fl + DOOR_FLINE_XLEN);
+    int32_t bz = az + (int32_t)be16(fl + DOOR_FLINE_ZLEN);
+
+    int64_t vx = (int64_t)bx - (int64_t)ax;
+    int64_t vz = (int64_t)bz - (int64_t)az;
+    int64_t wx = (int64_t)px - (int64_t)ax;
+    int64_t wz = (int64_t)pz - (int64_t)az;
+    int64_t max_dist_sq = (int64_t)near_thresh * (int64_t)near_thresh;
+    int64_t line_len_sq = vx * vx + vz * vz;
+
+    if (line_len_sq <= 0) {
+        int64_t point_dist_sq = wx * wx + wz * wz;
+        return point_dist_sq <= max_dist_sq;
+    }
+
+    int64_t dot = wx * vx + wz * vz;
+    if (dot <= 0) {
+        int64_t start_dist_sq = wx * wx + wz * wz;
+        return start_dist_sq <= max_dist_sq;
+    }
+    if (dot >= line_len_sq) {
+        int64_t ex = (int64_t)px - (int64_t)bx;
+        int64_t ez = (int64_t)pz - (int64_t)bz;
+        int64_t end_dist_sq = ex * ex + ez * ez;
+        return end_dist_sq <= max_dist_sq;
+    }
+
+    /* For projections that land on the segment: compare perpendicular distance
+     * without dividing to keep this fast and stable in integer math. */
+    int64_t cross = wx * vz - wz * vx;
+    if (cross < 0) cross = -cross;
+    return (cross * cross) <= (max_dist_sq * line_len_sq);
+}
 
 /* Amiga DoorRoutine consumes floorline word +14 wall-touch bits set by MoveObject:
  * PLR1 uses 0x0100, PLR2 uses 0x0800.  We mirror that behavior here. */
@@ -2975,6 +3022,7 @@ static bool player_at_door_zone(GameState *state, int16_t door_zone_id, int16_t 
         const uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fi * DOOR_FLINE_SIZE;
         uint16_t touched = (uint16_t)be16(fl + 14);
         if ((touched & player_touch_flag) != 0u) return true;
+        if (player_near_floor_line(state, fi, plr_num, DOOR_NEAR_THRESH)) return true;
     }
     return false;
 }
@@ -2984,10 +3032,21 @@ static bool player_at_door_zone(GameState *state, int16_t door_zone_id, int16_t 
  * There is no geometric "near lift wall" test in this step. */
 static bool player_at_lift_zone(GameState *state, int16_t lift_zone_id, int16_t player_zone, int lift_idx, int plr_num)
 {
-    (void)state;
-    (void)lift_idx;
-    (void)plr_num;
-    return (player_zone >= 0) && (player_zone == lift_zone_id);
+    if ((player_zone >= 0) && (player_zone == lift_zone_id)) return true;
+
+    if (!state || !state->level.lift_wall_list || !state->level.lift_wall_list_offsets ||
+        !state->level.floor_lines)
+        return false;
+    if (lift_idx < 0 || lift_idx >= state->level.num_lifts) return false;
+
+    uint32_t start = state->level.lift_wall_list_offsets[lift_idx];
+    uint32_t end   = state->level.lift_wall_list_offsets[lift_idx + 1];
+    for (uint32_t j = start; j < end; j++) {
+        const uint8_t *ent = state->level.lift_wall_list + j * DOOR_WALL_ENT_SIZE;
+        int16_t fi = be16(ent);
+        if (player_near_floor_line(state, fi, plr_num, LIFT_NEAR_THRESH)) return true;
+    }
+    return false;
 }
 
 /* -----------------------------------------------------------------------
@@ -3051,6 +3110,8 @@ void door_routine(GameState *state)
         int16_t trigger_vel = door_vel;
         uint16_t trigger_mask = 0;
         bool clear_touch_flags = false; /* Amiga simplecheck writes 0 to floorline+14 when conditions not met. */
+        bool plr1_door_press_near = false;
+        bool plr2_door_press_near = false;
 
         /* Amiga NotGoBackUp (Anims.s DoorRoutine ~707–718): if player 1 is in the door zone,
          * door not fully open, and velocity >= 0, jump to backfromtst and skip the Conditions
@@ -3073,8 +3134,22 @@ void door_routine(GameState *state)
                 switch (door_open_mode) {
                     case 0: {
                         uint16_t m = 0;
-                        if (state->plr1.p_spctap) m |= (uint16_t)0x0100;
-                        if (state->plr2.p_spctap) m |= (uint16_t)0x0800;
+                        if (state->plr1.p_spctap) {
+                            if (player_at_door_zone(state, zone_id, state->plr1.zone, door_idx, 0)) {
+                                plr1_door_press_near = true;
+                                m = (uint16_t)0x8000;
+                            } else {
+                                m |= (uint16_t)0x0100;
+                            }
+                        }
+                        if (m != (uint16_t)0x8000 && state->plr2.p_spctap) {
+                            if (player_at_door_zone(state, zone_id, state->plr2.zone, door_idx, 1)) {
+                                plr2_door_press_near = true;
+                                m = (uint16_t)0x8000;
+                            } else {
+                                m |= (uint16_t)0x0800;
+                            }
+                        }
                         trigger_mask = m;
                         break;
                     }
@@ -3131,6 +3206,8 @@ void door_routine(GameState *state)
                     wbe32(wall_rec + 10, (int32_t)tex_ptr);  /* Amiga: move.l a2,10(a1) */
                 }
             }
+            if (!triggered && (plr1_door_press_near || plr2_door_press_near))
+                triggered = true;
             if (triggered)
                 door_vel = trigger_vel;
         }
@@ -3372,8 +3449,8 @@ void switch_routine(GameState *state)
     /* Keep prior gameplay tweak: 50% slower auto-reset than original (2 units per 50Hz tick). */
     int8_t auto_dec = (int8_t)(auto_vblanks * 2);
 
-    /* Distance threshold from Anims.s: cmp.l #60*60,d4 */
-    const int32_t switch_dist_sq = 60 * 60;
+    /* Make switch pressing a little less strict than original 60-unit radius. */
+    const int32_t switch_dist_sq = 80 * 80;
     uint8_t *sw = state->level.switch_data;
     int switch_index = 0;
 
