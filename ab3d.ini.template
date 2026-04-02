@@ -28,6 +28,11 @@ volume=100
 # Allowed range: 25..1000 (percent of engine default vertical scale).
 y_proj_scale=100
 
+# Billboard sprite rendering enhancement:
+# 1 = improved cross-zone spill gating using lateral (screen-horizontal) overlap checks.
+# 0 = legacy spill behavior.
+billboard_sprite_rendering_enhancement=1
+
 # Internal software render resolution (game draws at this size). The window is
 # scaled to fit, centered, preserving aspect ratio (letterboxing as needed).
 render_width=1280

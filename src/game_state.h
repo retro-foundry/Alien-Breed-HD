@@ -246,6 +246,7 @@ typedef struct {
     int16_t         cfg_render_threads_max; /* 0 = max available worker strips, otherwise cap to (1..64) */
     int16_t         cfg_volume;           /* ab3d.ini: master SFX volume 0..100 (percent) */
     int16_t         cfg_y_proj_scale;     /* ab3d.ini: vertical projection scale 25..1000 (100 = default proj_y_scale) */
+    bool            cfg_billboard_sprite_rendering_enhancement; /* 1 = enhanced cross-zone billboard spill gating */
 
     /* Frame timing */
     int16_t         frames_to_draw;     /* FramesToDraw */
