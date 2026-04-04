@@ -220,7 +220,7 @@ typedef struct {
     int worker_count;
     SDL_atomic_t stop;
     SDL_atomic_t job_generation;
-    _Alignas(64) SDL_atomic_t pending_workers;
+    SDL_atomic_t pending_workers;
     int active_workers;
     RendererThreadJobType job_type;
     GameState *job_state;

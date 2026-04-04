@@ -156,9 +156,11 @@ static void audio_callback(void *userdata, Uint8 *stream, int len)
 
         SDL_MixAudioFormat(stream, ch->sample_data + ch->position,
                            g_spec.format, to_mix, mix_vol);
-        if (PLAYBACK_SPEED_DIV > 1 && to_mix * 2 <= (Uint32)len)
+#if PLAYBACK_SPEED_DIV > 1
+        if (to_mix * 2 <= (Uint32)len)
             SDL_MixAudioFormat(stream + to_mix, ch->sample_data + ch->position,
-                              g_spec.format, to_mix, mix_vol);
+                               g_spec.format, to_mix, mix_vol);
+#endif
         ch->position += to_mix;
 
         if (ch->position >= ch->sample_len) {

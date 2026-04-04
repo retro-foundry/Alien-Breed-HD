@@ -383,7 +383,7 @@ static void build_test_level_data(LevelState *level)
     level->object_points = buf + off_obj_points;
     level->plr1_obj = buf + off_obj_data;
     level->plr2_obj = buf + off_obj_data + OBJECT_SIZE;
-    level->num_object_points = num_obj_pts;
+    level->num_object_points = (int16_t)num_obj_pts;
     level->num_zones = NUM_ZONES;
     level->num_zone_slots = (int16_t)NUM_ZONES;
     level->num_floor_lines = NUM_FLINES;

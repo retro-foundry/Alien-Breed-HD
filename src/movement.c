@@ -1329,7 +1329,6 @@ void move_object(MoveContext* ctx, LevelState* level)
         gobackanddoitallagain:
             if (total_iterations >= max_total) return;
 
-        restart_walls:
             if (total_iterations >= max_total) goto phase3;
 
             {
@@ -1357,7 +1356,6 @@ void move_object(MoveContext* ctx, LevelState* level)
             }
 
             if (ctx->extlen != 0) {
-            restart_other_walls:
                 if (total_iterations >= max_total) goto phase3;
 
                 {
@@ -1399,7 +1397,6 @@ void move_object(MoveContext* ctx, LevelState* level)
             int32_t num_lines = (int32_t)level->num_floor_lines;
             if (num_lines <= 0) return;
 
-        restart_brute:
             if (total_iterations >= max_total) return;
 
             for (int32_t i = 0; i < num_lines; i++, total_iterations++) {

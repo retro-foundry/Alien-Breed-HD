@@ -785,7 +785,6 @@ int level_parse(LevelState *level)
             int16_t zone = read_word(obj + 12);
             int8_t number = (int8_t)obj[16];  /* object type */
             int8_t can_see = (int8_t)obj[17];
-            const uint8_t *type_data = obj + 18;  /* 44 bytes */
             {
                 const char *otype =
                     number == OBJ_NBR_KEY ? "key" :
