@@ -1726,6 +1726,12 @@ static void free_buffers(void)
     g_renderer.clip.bot = NULL;
     ab3d_aligned_free(g_renderer.clip.z);
     g_renderer.clip.z = NULL;
+    ab3d_aligned_free(g_renderer.clip.top2);
+    g_renderer.clip.top2 = NULL;
+    ab3d_aligned_free(g_renderer.clip.bot2);
+    g_renderer.clip.bot2 = NULL;
+    ab3d_aligned_free(g_renderer.clip.z2);
+    g_renderer.clip.z2 = NULL;
 }
 
 static void allocate_buffers(int w, int h)
@@ -1753,6 +1759,9 @@ static void allocate_buffers(int w, int h)
     g_renderer.clip.top = (int16_t *)ab3d_aligned_calloc(32, 1, clip_size);
     g_renderer.clip.bot = (int16_t *)ab3d_aligned_calloc(32, 1, clip_size);
     g_renderer.clip.z = (int32_t *)ab3d_aligned_calloc(32, (size_t)w, sizeof(int32_t));
+    g_renderer.clip.top2 = (int16_t *)ab3d_aligned_calloc(32, 1, clip_size);
+    g_renderer.clip.bot2 = (int16_t *)ab3d_aligned_calloc(32, 1, clip_size);
+    g_renderer.clip.z2 = (int32_t *)ab3d_aligned_calloc(32, (size_t)w, sizeof(int32_t));
 
     g_renderer.top_clip = 0;
     g_renderer.bot_clip = (int16_t)(h - 1);
@@ -2571,6 +2580,102 @@ void renderer_rotate_object_pts(GameState *state)
 /* Wall texture index for switches (io.c wall_texture_table). Must be before draw_wall_column. */
 #define SWITCHES_WALL_TEX_ID  11
 
+static void renderer_column_clip_add_span(int col, int top, int bot, int32_t z)
+{
+    ColumnClip *clip = &g_renderer.clip;
+    if (col < 0 || col >= g_renderer.width) return;
+    if (!clip->top || !clip->bot || !clip->z ||
+        !clip->top2 || !clip->bot2 || !clip->z2) {
+        return;
+    }
+    if (z <= 0) return;
+    if (top > bot) {
+        int t = top;
+        top = bot;
+        bot = t;
+    }
+
+    int16_t tops[2] = { clip->top[col], clip->top2[col] };
+    int16_t bots[2] = { clip->bot[col], clip->bot2[col] };
+    int32_t zs[2] = { clip->z[col], clip->z2[col] };
+
+    for (int i = 0; i < 2; i++) {
+        int valid = (zs[i] > 0 && tops[i] <= bots[i]);
+        if (!valid) continue;
+        /* Touching spans are merged to keep compact upper/lower coverage. */
+        if (!(bot < (int)tops[i] - 1 || top > (int)bots[i] + 1)) {
+            if (top < tops[i]) tops[i] = (int16_t)top;
+            if (bot > bots[i]) bots[i] = (int16_t)bot;
+            if (z < zs[i]) zs[i] = z;
+            goto write_back;
+        }
+    }
+
+    for (int i = 0; i < 2; i++) {
+        int valid = (zs[i] > 0 && tops[i] <= bots[i]);
+        if (!valid) {
+            tops[i] = (int16_t)top;
+            bots[i] = (int16_t)bot;
+            zs[i] = z;
+            goto write_back;
+        }
+    }
+
+    /* Two spans already present: keep the two nearest spans by depth. */
+    {
+        int replace = (zs[0] >= zs[1]) ? 0 : 1;
+        if (z < zs[replace]) {
+            tops[replace] = (int16_t)top;
+            bots[replace] = (int16_t)bot;
+            zs[replace] = z;
+        } else {
+            return;
+        }
+    }
+
+write_back:
+    if (zs[0] > 0 && zs[1] > 0 && tops[0] > tops[1]) {
+        int16_t tt = tops[0];
+        int16_t tb = bots[0];
+        int32_t tz = zs[0];
+        tops[0] = tops[1];
+        bots[0] = bots[1];
+        zs[0] = zs[1];
+        tops[1] = tt;
+        bots[1] = tb;
+        zs[1] = tz;
+    }
+    clip->top[col] = tops[0];
+    clip->bot[col] = bots[0];
+    clip->z[col] = zs[0];
+    clip->top2[col] = tops[1];
+    clip->bot2[col] = bots[1];
+    clip->z2[col] = zs[1];
+}
+
+static inline int32_t renderer_column_clip_nearest_z(int col, int row)
+{
+    const ColumnClip *clip = &g_renderer.clip;
+    int32_t nearest_z = 0;
+    if (col < 0 || col >= g_renderer.width) return 0;
+    if (!clip->top || !clip->bot || !clip->z ||
+        !clip->top2 || !clip->bot2 || !clip->z2) {
+        return 0;
+    }
+
+    if (clip->z[col] > 0 && clip->top[col] <= clip->bot[col] &&
+        row >= clip->top[col] && row <= clip->bot[col]) {
+        nearest_z = clip->z[col];
+    }
+    if (clip->z2[col] > 0 && clip->top2[col] <= clip->bot2[col] &&
+        row >= clip->top2[col] && row <= clip->bot2[col]) {
+        if (nearest_z <= 0 || clip->z2[col] < nearest_z) {
+            nearest_z = clip->z2[col];
+        }
+    }
+    return nearest_z;
+}
+
 /* -----------------------------------------------------------------------
  * Wall rendering (column-by-column)
  *
@@ -2873,48 +2978,20 @@ static void draw_wall_column(RenderSliceContext *ctx,
 
     /* Update column clip (walls occlude sprites behind them).
      * Edge-expanded rows/columns also write clip coverage so sprites don't overdraw those pixels. */
-    if (ctx->update_column_clip && g_renderer.clip.top && g_renderer.clip.bot) {
+    if (ctx->update_column_clip) {
         int occ_top = ct;
         int occ_bot = cb;
         if (ct > ctx->top_clip) occ_top = ct - 1;
         if (cb + 1 <= ctx->bot_clip) occ_bot = cb + 1;
-
-        if (occ_top > g_renderer.clip.top[x]) {
-            g_renderer.clip.top[x] = (int16_t)occ_top;
-        }
-        if (occ_bot < g_renderer.clip.bot[x]) {
-            g_renderer.clip.bot[x] = (int16_t)occ_bot;
-        }
-        if (g_renderer.clip.z) {
-            int32_t prev_z = g_renderer.clip.z[x];
-            if (prev_z <= 0 || col_z < prev_z) g_renderer.clip.z[x] = col_z;
-        }
+        renderer_column_clip_add_span(x, occ_top, occ_bot, col_z);
 
         if (x > ctx->slice_left) {
             int nx = x - 1;
-            if (ct > g_renderer.clip.top[nx]) {
-                g_renderer.clip.top[nx] = (int16_t)ct;
-            }
-            if (cb < g_renderer.clip.bot[nx]) {
-                g_renderer.clip.bot[nx] = (int16_t)cb;
-            }
-            if (g_renderer.clip.z) {
-                int32_t prev_z = g_renderer.clip.z[nx];
-                if (prev_z <= 0 || col_z < prev_z) g_renderer.clip.z[nx] = col_z;
-            }
+            renderer_column_clip_add_span(nx, ct, cb, col_z);
         }
         if (x + 1 < ctx->slice_right) {
             int nx = x + 1;
-            if (ct > g_renderer.clip.top[nx]) {
-                g_renderer.clip.top[nx] = (int16_t)ct;
-            }
-            if (cb < g_renderer.clip.bot[nx]) {
-                g_renderer.clip.bot[nx] = (int16_t)cb;
-            }
-            if (g_renderer.clip.z) {
-                int32_t prev_z = g_renderer.clip.z[nx];
-                if (prev_z <= 0 || col_z < prev_z) g_renderer.clip.z[nx] = col_z;
-            }
+            renderer_column_clip_add_span(nx, ct, cb, col_z);
         }
     }
 }
@@ -3978,15 +4055,11 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
             /* Room band clip: do not draw above ceiling or below floor (floor covers feet). */
             if (clip_top_sy < clip_bot_sy && (screen_row < clip_top_sy || screen_row > clip_bot_sy)) continue;
 
-            /* Wall clip test: only skip sprite pixels that are both inside a wall span in this
-             * column and behind that wall depth. */
-            if (g_renderer.clip.top && g_renderer.clip.bot && g_renderer.clip.z) {
-                int16_t wall_top = g_renderer.clip.top[screen_col];
-                int16_t wall_bot = g_renderer.clip.bot[screen_col];
-                if (wall_top <= wall_bot && screen_row >= wall_top && screen_row <= wall_bot) {
-                    int32_t wall_z = g_renderer.clip.z[screen_col];
-                    if (wall_z > 0 && (int32_t)z >= wall_z) continue;
-                }
+            /* Wall clip test: only skip sprite pixels that are inside any stored wall span
+             * in this column and behind the nearest wall depth for that row. */
+            {
+                int32_t wall_z = renderer_column_clip_nearest_z(screen_col, screen_row);
+                if (wall_z > 0 && (int32_t)z >= wall_z) continue;
             }
 
             /* Map screen row to source row 0..eff_rows-1 */
@@ -7150,11 +7223,18 @@ void renderer_draw_display(GameState *state)
 
     /* 3. Initialize column clipping (per-column top/bot/z for floor and sprite clipping) */
     {
-        memset(r->clip.top, 0, (size_t)w * sizeof(int16_t));
-        int16_t bot_val = (int16_t)(h - 1);
-        int16_t *bot = r->clip.bot;
-        for (int i = 0; i < w; i++) bot[i] = bot_val;
+        int16_t invalid_top = (int16_t)h;
+        int16_t invalid_bot = -1;
+        if (r->clip.top && r->clip.bot && r->clip.top2 && r->clip.bot2) {
+            for (int i = 0; i < w; i++) {
+                r->clip.top[i] = invalid_top;
+                r->clip.bot[i] = invalid_bot;
+                r->clip.top2[i] = invalid_top;
+                r->clip.bot2[i] = invalid_bot;
+            }
+        }
         if (r->clip.z) memset(r->clip.z, 0, (size_t)w * sizeof(int32_t));
+        if (r->clip.z2) memset(r->clip.z2, 0, (size_t)w * sizeof(int32_t));
     }
 
     /* 4. Rotate geometry */

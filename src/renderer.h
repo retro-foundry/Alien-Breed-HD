@@ -122,15 +122,18 @@ typedef struct {
 /* -----------------------------------------------------------------------
  * Per-column clipping table
  *
- * top/bot: vertical span of drawn wall in that column.
- * z: depth of that wall (view-space Z). When drawing sprites we only skip
- *    pixels in [top,bot] if sprite Z >= clip.z (sprite behind wall).
+ * Each column stores up to two wall spans (top/bot + depth). This keeps
+ * sprite-vs-wall occlusion lightweight while handling split upper/lower
+ * coverage better than a single collapsed span.
  * Allocated with width elements (renderer width).
  * ----------------------------------------------------------------------- */
 typedef struct {
     int16_t *top;
     int16_t *bot;
-    int32_t *z;   /* depth of wall in column; 0 = no wall */
+    int32_t *z;    /* span 0 depth; 0 = invalid span */
+    int16_t *top2;
+    int16_t *bot2;
+    int32_t *z2;   /* span 1 depth; 0 = invalid span */
 } ColumnClip;
 
 /* -----------------------------------------------------------------------
