@@ -493,6 +493,21 @@ static void control_game_over_fade_tick(float progress_0_to_1, void *userdata)
     display_present_last_frame(NULL);
 }
 
+static void control_level_complete_fade_tick(float progress_0_to_1, void *userdata)
+{
+    (void)userdata;
+
+    if (progress_0_to_1 < 0.0f) progress_0_to_1 = 0.0f;
+    if (progress_0_to_1 > 1.0f) progress_0_to_1 = 1.0f;
+
+    /* Fade into bright white while level-complete music plays. */
+    int alpha = (int)(progress_0_to_1 * 220.0f + 0.5f);
+    if (alpha < 0) alpha = 0;
+    if (alpha > 255) alpha = 255;
+    display_set_screen_tint(255, 255, 255, alpha);
+    display_present_last_frame(NULL);
+}
+
 static void control_setup_new_game_state(GameState *state)
 {
     display_clear_screen_tint();
@@ -572,12 +587,18 @@ void play_game(GameState *state)
         }
 
         if (state->current_level >= MAX_LEVELS - 1) {
-            audio_play_module_blocking_once("sounds/mt/EndGame.mt");
+            audio_play_module_blocking_once_with_tick("sounds/mt/EndGame.mt",
+                                                      control_level_complete_fade_tick,
+                                                      state);
+            display_clear_screen_tint();
             printf("[MUSIC] outcome: end game\n");
             break;
         }
 
-        audio_play_module_blocking_once("sounds/mt/WellDone.mt");
+        audio_play_module_blocking_once_with_tick("sounds/mt/WellDone.mt",
+                                                  control_level_complete_fade_tick,
+                                                  state);
+        display_clear_screen_tint();
         printf("[MUSIC] outcome: well done\n");
 
         state->current_level++;
