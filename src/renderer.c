@@ -77,8 +77,8 @@
 #define CHUNKY_TOPCLIP_BIAS  (12 * RENDER_SCALE)
 /* Minimum z in view space; vertices behind this are clipped. Used for walls and floor polygons. */
 #define RENDERER_NEAR_PLANE 3
-/* Amiga ObjDraw3 BitMapObj/PolygonObj: cmp.w #50,d1 ; ble objbehind.
- * Keep the same near cutoff for billboards so close sprites don't over-scale. */
+/* Amiga BitMapObj path uses cmp.w #50,d1 ; ble objbehind.
+ * Keep this near cutoff for billboards so close sprites don't over-scale. */
 #define SPRITE_NEAR_CLIP_Z 50
 
 /* Raise view height for rendering only (gameplay uses plr->yoff unchanged).
@@ -4748,7 +4748,14 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         }
 
         ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
-        if (orp->z <= SPRITE_NEAR_CLIP_Z) continue; /* Amiga ObjDraw near clip */
+        {
+            int is_poly_object = ((uint8_t)obj[6] == (uint8_t)OBJ_3D_SPRITE);
+            /* Amiga parity:
+             * - BitMapObj: near reject at z <= 50
+             * - PolygonObj: near reject at z <= 0 (see PolygonObj ble polybehind) */
+            int near_clip_z = is_poly_object ? 0 : SPRITE_NEAR_CLIP_Z;
+            if (orp->z <= near_clip_z) continue;
+        }
 
         /* Skip early when this object cannot affect this column strip. */
         {
