@@ -31,6 +31,7 @@
 #define RED_ALIEN_MIN_PLAYER_DIST      112
 #define HUGE_RED_MIN_PLAYER_DIST       224
 #define SMALL_RED_THING_MIN_PLAYER_DIST 160
+#define PLAYER_PAIN_NOISEVOL           800
 
 /* Big-endian read/write helpers (Amiga data is big-endian) */
 static inline int16_t be16(const uint8_t *p) {
@@ -333,6 +334,9 @@ static void player_add_damage(GameState *state, int player_num, int damage)
     if (!plr_obj) {
         PlayerState *plr = (player_num == 1) ? &state->plr1 : &state->plr2;
         plr->energy -= (int16_t)damage;
+        if (player_num == 1) state->hitcol = 0xF00;
+        else state->hitcol2 = 0xF00;
+        audio_play_sample(19, amiga_noisevol_to_pc(PLAYER_PAIN_NOISEVOL));
         return;
     }
 
@@ -4070,6 +4074,99 @@ static inline uint8_t damage_accumulate_u8(uint8_t current, int32_t add)
     }
 }
 
+static void compute_blast_apply_target(GameState *state,
+                                       const uint8_t *from_room,
+                                       int zone_slots,
+                                       int16_t viewer_x, int16_t viewer_z, int16_t viewer_y,
+                                       int8_t in_top,
+                                       int16_t max_damage,
+                                       int16_t target_x, int16_t target_z, int16_t target_y,
+                                       int16_t target_zone, int8_t target_in_top,
+                                       int16_t target_radius,
+                                       GameObject *target_obj,
+                                       int target_obj_index,
+                                       int target_player_num)
+{
+    int tgt_zone = level_connect_to_zone_index(&state->level, target_zone);
+    if (tgt_zone < 0 && target_zone >= 0 && target_zone < zone_slots)
+        tgt_zone = target_zone;
+    if (tgt_zone < 0 || tgt_zone >= zone_slots) return;
+
+    int32_t tgt_off = (int32_t)be32(state->level.zone_adds + (uint32_t)tgt_zone * 4u);
+    if (tgt_off < 0) return;
+    const uint8_t *to_room = state->level.data + tgt_off;
+
+    int16_t dx = (int16_t)(target_x - viewer_x);
+    int16_t dz = (int16_t)(target_z - viewer_z);
+    int16_t dist = compute_blast_dist_sqrt(dx, dz);
+
+    if (target_radius < 0) target_radius = 0;
+
+    /* Treat the target as a cylinder: blast reaches the collision edge, not just center point. */
+    int16_t effective_dist = (int16_t)(dist - target_radius);
+    if (effective_dist < 0) effective_dist = 0;
+
+    int16_t to_zone_id = (int16_t)((to_room[0] << 8) | to_room[1]);
+    /* Very close overlaps are allowed even when LOS is flaky at portal seams/edge cases. */
+    if (effective_dist > BLAST_LOS_BYPASS_DIST) {
+        uint8_t vis = can_it_be_seen(&state->level,
+                                     from_room, to_room, to_zone_id,
+                                     viewer_x, viewer_z, viewer_y,
+                                     target_x, target_z, target_y,
+                                     in_top, target_in_top, 1);
+        if (!vis) return;
+    }
+
+    int16_t dist_bucket = (int16_t)(effective_dist >> 3);
+    dist_bucket = (int16_t)(dist_bucket - 4);
+    if (dist_bucket < 0) dist_bucket = 0;
+    if (dist_bucket > 31) return;
+
+    int16_t atten = (int16_t)(32 - dist_bucket);
+    int32_t damage = ((int32_t)max_damage * (int32_t)atten) >> 5;
+    if (damage > max_damage) damage = max_damage;
+    if (damage < 1) damage = 1;
+
+    if (target_player_num == 1 || target_player_num == 2) {
+        player_add_damage(state, target_player_num, (int)damage);
+        if (target_player_num == 1) state->hitcol = 0xF00;
+        else state->hitcol2 = 0xF00;
+        audio_play_sample(19, amiga_noisevol_to_pc(PLAYER_PAIN_NOISEVOL));
+    } else if (target_obj) {
+        target_obj->raw[19] = damage_accumulate_u8(target_obj->raw[19], damage);
+        if (target_obj_index >= 0 && target_obj_index < MAX_OBJECTS) {
+            explosion_damage_flag[target_obj_index] = 1;
+        }
+    }
+
+    /* Keep blast knockback in a sane range:
+     * directional unit vector scaled by attenuated magnitude.
+     * This keeps explosion gib force around "gunshot + 150%" territory
+     * instead of huge distance-driven spikes. */
+    int32_t push_mag = ((int32_t)atten * BLAST_IMPACT_BASE_MAG + 16) >> 5;
+    if (push_mag < 1) push_mag = 1;
+    int32_t impact_x = 0;
+    int32_t impact_z = 0;
+    if (dist > 0) {
+        impact_x = ((int32_t)dx * push_mag) / (int32_t)dist;
+        impact_z = ((int32_t)dz * push_mag) / (int32_t)dist;
+    }
+    int16_t impact_x_clamped = clamp_blast_impact_component(impact_x);
+    int16_t impact_z_clamped = clamp_blast_impact_component(impact_z);
+    if ((int32_t)impact_x_clamped != impact_x || (int32_t)impact_z_clamped != impact_z) {
+        printf("[BLAST-IMPACT] clamp obj=%d type=%d raw=(%ld,%ld) clamped=(%d,%d) dist=%d atten=%d\n",
+               target_obj_index,
+               target_obj ? (int)target_obj->obj.number : -1,
+               (long)impact_x, (long)impact_z,
+               (int)impact_x_clamped, (int)impact_z_clamped,
+               (int)dist, (int)atten);
+    }
+    if (target_obj) {
+        NASTY_SET_IMPACTX(target_obj, impact_x_clamped);
+        NASTY_SET_IMPACTZ(target_obj, impact_z_clamped);
+    }
+}
+
 /* -----------------------------------------------------------------------
  * Utility: compute blast damage + visual blast particles
  *
@@ -4099,6 +4196,10 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         return;
     }
     const uint8_t *from_room = state->level.data + src_off;
+    GameObject *plr1_obj = (GameObject *)state->level.plr1_obj;
+    GameObject *plr2_obj = (GameObject *)state->level.plr2_obj;
+    bool plr1_in_list = false;
+    bool plr2_in_list = false;
 
     for (int obj_index = 0;; obj_index++) {
         GameObject *obj = get_object(&state->level, obj_index);
@@ -4106,81 +4207,64 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         if (OBJ_ZONE(obj) < 0) continue;
         if (!compute_blast_can_hit_obj_type(obj->obj.number)) continue;
 
-        int tgt_zone = level_connect_to_zone_index(&state->level, OBJ_ZONE(obj));
-        if (tgt_zone < 0 && OBJ_ZONE(obj) >= 0 && OBJ_ZONE(obj) < zone_slots)
-            tgt_zone = OBJ_ZONE(obj);
-        if (tgt_zone < 0 || tgt_zone >= zone_slots) continue;
-
-        int32_t tgt_off = (int32_t)be32(state->level.zone_adds + (uint32_t)tgt_zone * 4u);
-        if (tgt_off < 0) continue;
-        const uint8_t *to_room = state->level.data + tgt_off;
+        if (obj == plr1_obj) plr1_in_list = true;
+        if (obj == plr2_obj) plr2_in_list = true;
 
         int16_t target_x, target_z;
         get_object_pos(&state->level, (int)OBJ_CID(obj), &target_x, &target_z);
         int16_t target_y = obj_w(obj->raw + 4);
 
-        int16_t dx = (int16_t)(target_x - viewer_x);
-        int16_t dz = (int16_t)(target_z - viewer_z);
-        int16_t dist = compute_blast_dist_sqrt(dx, dz);
-
         int16_t target_radius = 40;
         if (obj->obj.number >= 0 && obj->obj.number < 21)
             target_radius = col_box_table[(int)obj->obj.number].width;
-        if (target_radius < 0) target_radius = 0;
+        int target_player_num = 0;
+        if (obj->obj.number == OBJ_NBR_PLR1) target_player_num = 1;
+        else if (obj->obj.number == OBJ_NBR_PLR2) target_player_num = 2;
 
-        /* Treat the target as a cylinder: blast reaches the collision edge, not just center point. */
-        int16_t effective_dist = (int16_t)(dist - target_radius);
-        if (effective_dist < 0) effective_dist = 0;
+        compute_blast_apply_target(state,
+                                   from_room, zone_slots,
+                                   viewer_x, viewer_z, viewer_y, in_top,
+                                   max_damage,
+                                   target_x, target_z, target_y,
+                                   OBJ_ZONE(obj), obj->obj.in_top,
+                                   target_radius,
+                                   obj, obj_index, target_player_num);
+    }
 
-        int16_t to_zone_id = (int16_t)((to_room[0] << 8) | to_room[1]);
-        /* Very close overlaps are allowed even when LOS is flaky at portal seams/edge cases. */
-        if (effective_dist > BLAST_LOS_BYPASS_DIST) {
-            uint8_t vis = can_it_be_seen(&state->level,
-                                         from_room, to_room, to_zone_id,
-                                         viewer_x, viewer_z, viewer_y,
-                                         target_x, target_z, target_y,
-                                         in_top, obj->obj.in_top, 1);
-            if (!vis) continue;
-        }
+    /* Some level builds keep player objects outside the contiguous object list
+     * that compute_blast scans (terminated by cid < 0). Ensure players still
+     * participate in splash filtering/damage even in that layout. */
+    if (!plr1_in_list && state->plr1.zone >= 0) {
+        int16_t py = (int16_t)((state->plr1.p_yoff + state->plr1.s_height / 2) >> 7);
+        int16_t pr = col_box_table[OBJ_NBR_PLR1].width;
+        compute_blast_apply_target(state,
+                                   from_room, zone_slots,
+                                   viewer_x, viewer_z, viewer_y, in_top,
+                                   max_damage,
+                                   (int16_t)(state->plr1.xoff >> 16),
+                                   (int16_t)(state->plr1.zoff >> 16),
+                                   py,
+                                   state->plr1.zone,
+                                   state->plr1.stood_in_top ? 1 : 0,
+                                   pr,
+                                   plr1_obj, -1, 1);
+    }
 
-        int16_t dist_bucket = (int16_t)(effective_dist >> 3);
-        dist_bucket = (int16_t)(dist_bucket - 4);
-        if (dist_bucket < 0) dist_bucket = 0;
-        if (dist_bucket > 31) continue;
-
-        int16_t atten = (int16_t)(32 - dist_bucket);
-        int32_t damage = ((int32_t)max_damage * (int32_t)atten) >> 5;
-        if (damage > max_damage) damage = max_damage;
-        if (damage < 1) damage = 1;
-
-        obj->raw[19] = damage_accumulate_u8(obj->raw[19], damage);
-        if (obj_index >= 0 && obj_index < MAX_OBJECTS) {
-            explosion_damage_flag[obj_index] = 1;
-        }
-
-        /* Keep blast knockback in a sane range:
-         * directional unit vector scaled by attenuated magnitude.
-         * This keeps explosion gib force around "gunshot + 150%" territory
-         * instead of huge distance-driven spikes. */
-        int32_t push_mag = ((int32_t)atten * BLAST_IMPACT_BASE_MAG + 16) >> 5;
-        if (push_mag < 1) push_mag = 1;
-        int32_t impact_x = 0;
-        int32_t impact_z = 0;
-        if (dist > 0) {
-            impact_x = ((int32_t)dx * push_mag) / (int32_t)dist;
-            impact_z = ((int32_t)dz * push_mag) / (int32_t)dist;
-        }
-        int16_t impact_x_clamped = clamp_blast_impact_component(impact_x);
-        int16_t impact_z_clamped = clamp_blast_impact_component(impact_z);
-        if ((int32_t)impact_x_clamped != impact_x || (int32_t)impact_z_clamped != impact_z) {
-            printf("[BLAST-IMPACT] clamp obj=%d type=%d raw=(%ld,%ld) clamped=(%d,%d) dist=%d atten=%d\n",
-                   obj_index, (int)obj->obj.number,
-                   (long)impact_x, (long)impact_z,
-                   (int)impact_x_clamped, (int)impact_z_clamped,
-                   (int)dist, (int)atten);
-        }
-        NASTY_SET_IMPACTX(obj, impact_x_clamped);
-        NASTY_SET_IMPACTZ(obj, impact_z_clamped);
+    if (state->mode != MODE_SINGLE &&
+        !plr2_in_list && state->plr2.zone >= 0) {
+        int16_t py = (int16_t)((state->plr2.p_yoff + state->plr2.s_height / 2) >> 7);
+        int16_t pr = col_box_table[OBJ_NBR_PLR2].width;
+        compute_blast_apply_target(state,
+                                   from_room, zone_slots,
+                                   viewer_x, viewer_z, viewer_y, in_top,
+                                   max_damage,
+                                   (int16_t)(state->plr2.xoff >> 16),
+                                   (int16_t)(state->plr2.zoff >> 16),
+                                   py,
+                                   state->plr2.zone,
+                                   state->plr2.stood_in_top ? 1 : 0,
+                                   pr,
+                                   plr2_obj, -1, 2);
     }
 
     spawn_blast_particles(state, viewer_x, viewer_z, ((int32_t)viewer_y) << 7, zone, in_top);
@@ -4336,12 +4420,12 @@ void use_player1(GameState *state)
     plr_obj->obj.in_top = state->plr1.stood_in_top;
 
     /* Damage flash + pain sound (AB3DI.s lines 2323-2348) */
-    int8_t damage = NASTY_DAMAGE(*plr_obj);
-    if (damage > 0) {
-        state->plr1.energy -= damage;
+    uint8_t damage = (uint8_t)plr_obj->raw[19];
+    if (damage != 0u) {
+        state->plr1.energy -= (int16_t)damage;
         NASTY_DAMAGE(*plr_obj) = 0;
         state->hitcol = 0xF00; /* Red flash */
-        audio_play_sample(19, amiga_noisevol_to_pc(100)); /* AB3DI.s: pant @ Noisevol 100 */
+        audio_play_sample(19, amiga_noisevol_to_pc(PLAYER_PAIN_NOISEVOL));
     }
 
     /* Update numlives from energy */
@@ -4398,12 +4482,12 @@ void use_player2(GameState *state)
     OBJ_SET_ZONE(plr_obj, state->plr2.zone);
     plr_obj->obj.in_top = state->plr2.stood_in_top;
 
-    int8_t damage = NASTY_DAMAGE(*plr_obj);
-    if (damage > 0) {
-        state->plr2.energy -= damage;
+    uint8_t damage = (uint8_t)plr_obj->raw[19];
+    if (damage != 0u) {
+        state->plr2.energy -= (int16_t)damage;
         NASTY_DAMAGE(*plr_obj) = 0;
         state->hitcol2 = 0xF00;
-        audio_play_sample(19, amiga_noisevol_to_pc(100));
+        audio_play_sample(19, amiga_noisevol_to_pc(PLAYER_PAIN_NOISEVOL));
     }
 
     NASTY_LIVES(*plr_obj) = (int8_t)(state->plr2.energy + 1);
