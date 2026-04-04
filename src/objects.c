@@ -2442,15 +2442,16 @@ void object_handle_ammo(GameObject *obj, GameState *state)
 {
     /* Amiga ItsAnAmmoClip: set vect=PICKUPS(1) and frame from AMGR table every tick */
     int16_t ammo_gun_type = OBJ_TD_W(obj, 0);  /* AmmoType EQU 18 */
-    if (ammo_gun_type >= 0 && ammo_gun_type < 8) {
+    bool ammo_type_valid = (ammo_gun_type >= 0 && ammo_gun_type < MAX_GUNS);
+    if (ammo_type_valid) {
         obj_sw(obj->raw + 8,  1);  /* objVectNumber  = PICKUPS vect */
         obj_sw(obj->raw + 10, (int16_t)ammo_graphic_table[(int)ammo_gun_type]);
     }
 
     if (pickup_distance_check(obj, state, 1)) {
-        PlayerState *plr = &state->plr1;
-        int gun_idx = plr->gun_selected;
-        if (gun_idx >= 0 && gun_idx < MAX_GUNS) {
+        if (ammo_type_valid) {
+            PlayerState *plr = &state->plr1;
+            int gun_idx = ammo_gun_type;
             int16_t ammo = plr->gun_data[gun_idx].ammo;
             ammo += AMMO_PER_CLIP * 8;
             if (ammo > MAX_AMMO_DISPLAY) ammo = (int16_t)MAX_AMMO_DISPLAY;
@@ -2461,9 +2462,9 @@ void object_handle_ammo(GameObject *obj, GameState *state)
         }
     }
     if (state->mode != MODE_SINGLE && pickup_distance_check(obj, state, 2)) {
-        PlayerState *plr = &state->plr2;
-        int gun_idx = plr->gun_selected;
-        if (gun_idx >= 0 && gun_idx < MAX_GUNS) {
+        if (ammo_type_valid) {
+            PlayerState *plr = &state->plr2;
+            int gun_idx = ammo_gun_type;
             int16_t ammo = plr->gun_data[gun_idx].ammo;
             ammo += AMMO_PER_CLIP * 8;
             if (ammo > MAX_AMMO_DISPLAY) ammo = (int16_t)MAX_AMMO_DISPLAY;
