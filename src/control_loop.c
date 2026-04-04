@@ -478,8 +478,24 @@ void play_the_game(GameState *state)
     state->do_anything = false;
 }
 
+static void control_game_over_fade_tick(float progress_0_to_1, void *userdata)
+{
+    (void)userdata;
+
+    if (progress_0_to_1 < 0.0f) progress_0_to_1 = 0.0f;
+    if (progress_0_to_1 > 1.0f) progress_0_to_1 = 1.0f;
+
+    /* Fade into a strong red tint while Game Over music plays. */
+    int alpha = (int)(progress_0_to_1 * 220.0f + 0.5f);
+    if (alpha < 0) alpha = 0;
+    if (alpha > 255) alpha = 255;
+    display_set_screen_tint(255, 0, 0, alpha);
+    display_present_last_frame(NULL);
+}
+
 static void control_setup_new_game_state(GameState *state)
 {
+    display_clear_screen_tint();
     game_state_setup_default(state);
 
     state->plr1.gun_selected = 0;
@@ -543,7 +559,10 @@ void play_game(GameState *state)
 
         if (!state->finished_level) {
             if (state->energy <= 0) {
-                audio_play_module_blocking_once("sounds/mt/GameOver.mt");
+                audio_play_module_blocking_once_with_tick("sounds/mt/GameOver.mt",
+                                                          control_game_over_fade_tick,
+                                                          state);
+                display_clear_screen_tint();
                 printf("[MUSIC] outcome: game over\n");
                 control_setup_new_game_state(state);
                 printf("[CONTROL] Restarting new game after death\n");

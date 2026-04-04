@@ -79,6 +79,11 @@ static int g_internal_w = RENDER_WIDTH;
 static int g_internal_h = RENDER_HEIGHT;
 static int g_use_fixed_renderer_size = 1;
 static int g_release_borderless_desktop = 0;
+static int g_screen_tint_enabled = 0;
+static Uint8 g_screen_tint_r = 0;
+static Uint8 g_screen_tint_g = 0;
+static Uint8 g_screen_tint_b = 0;
+static Uint8 g_screen_tint_a = 0;
 
 #if SDL_VERSION_ATLEAST(2, 0, 12)
 static DisplayGlGenMipmapFn     g_gl_generate_mipmap;
@@ -1074,11 +1079,8 @@ static void display_automap_sdl_overlay(GameState *state)
 /* -----------------------------------------------------------------------
  * Main rendering
  * ----------------------------------------------------------------------- */
-void display_draw_display(GameState *state)
+static void display_present_cw_frame(GameState *state)
 {
-    /* 1. Software-render the 3D scene into the rgb buffer */
-    renderer_draw_display(state);
-
     if (!g_sdl_ren) return;
 
     const uint16_t *src = renderer_get_cw_buffer();
@@ -1105,6 +1107,16 @@ void display_draw_display(GameState *state)
             display_automap_sdl_overlay(state);
     }
 
+    if (g_screen_tint_enabled && g_screen_tint_a > 0) {
+        SDL_SetRenderDrawBlendMode(g_sdl_ren, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(g_sdl_ren,
+                               g_screen_tint_r,
+                               g_screen_tint_g,
+                               g_screen_tint_b,
+                               g_screen_tint_a);
+        SDL_RenderFillRect(g_sdl_ren, &g_present_dst_rect);
+    }
+
     SDL_RenderPresent(g_sdl_ren);
 
     /* Debug: show player position in window title (throttled) */
@@ -1121,6 +1133,18 @@ void display_draw_display(GameState *state)
     }
 }
 
+void display_draw_display(GameState *state)
+{
+    /* 1. Software-render the 3D scene into the rgb buffer */
+    renderer_draw_display(state);
+    display_present_cw_frame(state);
+}
+
+void display_present_last_frame(GameState *state)
+{
+    display_present_cw_frame(state);
+}
+
 void display_swap_buffers(void)
 {
     /* Handled in display_draw_display */
@@ -1129,6 +1153,29 @@ void display_swap_buffers(void)
 void display_wait_vblank(void)
 {
     /* VSync is handled by SDL_RENDERER_PRESENTVSYNC */
+}
+
+void display_set_screen_tint(int r, int g, int b, int alpha)
+{
+    if (r < 0) r = 0; else if (r > 255) r = 255;
+    if (g < 0) g = 0; else if (g > 255) g = 255;
+    if (b < 0) b = 0; else if (b > 255) b = 255;
+    if (alpha < 0) alpha = 0; else if (alpha > 255) alpha = 255;
+
+    g_screen_tint_r = (Uint8)r;
+    g_screen_tint_g = (Uint8)g;
+    g_screen_tint_b = (Uint8)b;
+    g_screen_tint_a = (Uint8)alpha;
+    g_screen_tint_enabled = (alpha > 0) ? 1 : 0;
+}
+
+void display_clear_screen_tint(void)
+{
+    g_screen_tint_enabled = 0;
+    g_screen_tint_r = 0;
+    g_screen_tint_g = 0;
+    g_screen_tint_b = 0;
+    g_screen_tint_a = 0;
 }
 
 /* -----------------------------------------------------------------------

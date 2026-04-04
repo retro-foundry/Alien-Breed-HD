@@ -655,7 +655,9 @@ void audio_play_module(void)
     SDL_UnlockAudioDevice(g_device);
 }
 
-void audio_play_module_blocking_once(const char *filename)
+void audio_play_module_blocking_once_with_tick(const char *filename,
+                                               audio_blocking_tick_fn tick,
+                                               void *userdata)
 {
     if (!g_audio_ready || g_device == 0) return;
     if (!filename || !*filename) return;
@@ -674,15 +676,37 @@ void audio_play_module_blocking_once(const char *filename)
 
     if (!started) return;
 
+    if (tick) tick(0.0f, userdata);
+
     printf("[MUSIC] playing once: %s\n", filename);
     for (;;) {
         int playing;
+        Uint32 pos = 0;
+        Uint32 len = 0;
         SDL_LockAudioDevice(g_device);
         playing = g_music.playing;
+        pos = g_music.position;
+        len = g_music.length;
         SDL_UnlockAudioDevice(g_device);
+        if (tick) {
+            float progress = 0.0f;
+            if (len > 0) {
+                progress = (float)pos / (float)len;
+                if (progress < 0.0f) progress = 0.0f;
+                if (progress > 1.0f) progress = 1.0f;
+            }
+            tick(progress, userdata);
+        }
         if (!playing) break;
         SDL_Delay(10);
     }
+
+    if (tick) tick(1.0f, userdata);
+}
+
+void audio_play_module_blocking_once(const char *filename)
+{
+    audio_play_module_blocking_once_with_tick(filename, NULL, NULL);
 }
 
 void audio_unload_module(void)

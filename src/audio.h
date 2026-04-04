@@ -15,6 +15,8 @@ void audio_shutdown(void);
 void audio_set_master_volume(int volume_0_to_100);
 
 /* Music (ProTracker module) */
+typedef void (*audio_blocking_tick_fn)(float progress_0_to_1, void *userdata);
+
 void audio_init_player(void);
 void audio_stop_player(void);
 void audio_rem_player(void);
@@ -22,6 +24,9 @@ void audio_load_module(const char *filename);
 void audio_init_module(void);
 void audio_play_module(void);
 void audio_play_module_blocking_once(const char *filename);
+void audio_play_module_blocking_once_with_tick(const char *filename,
+                                               audio_blocking_tick_fn tick,
+                                               void *userdata);
 void audio_unload_module(void);
 
 /* Sound effects */

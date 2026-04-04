@@ -41,8 +41,11 @@ void display_clear_title_palette(void);
 /* In-game rendering */
 void display_init_copper_screen(void);
 void display_draw_display(GameState *state);  /* Renders 3D scene; presents 12-bit cw framebuffer */
+void display_present_last_frame(GameState *state); /* Presents the last rendered frame without re-rendering/swap */
 void display_swap_buffers(void);
 void display_wait_vblank(void);
+void display_set_screen_tint(int r, int g, int b, int alpha);
+void display_clear_screen_tint(void);
 
 /* HUD */
 void display_energy_bar(int16_t energy);
