@@ -66,9 +66,32 @@ static int player_weapon_slot_from_gun(int16_t gun_idx)
     return 0;
 }
 
+static bool player_weapon_is_selectable(const PlayerState *plr, int gun_idx)
+{
+    if (!plr) return false;
+    if (gun_idx < 0 || gun_idx >= MAX_GUNS) return false;
+    return plr->gun_data[gun_idx].visible != 0;
+}
+
+static void player_ensure_valid_weapon_selection(PlayerState *plr)
+{
+    if (!plr) return;
+    if (player_weapon_is_selectable(plr, plr->gun_selected)) return;
+
+    for (int i = 0; i < GUN_KEY_COUNT; i++) {
+        int gun_idx = gun_key_map[i];
+        if (player_weapon_is_selectable(plr, gun_idx)) {
+            plr->gun_selected = (int16_t)gun_idx;
+            return;
+        }
+    }
+}
+
 static void player_cycle_weapon(PlayerState *plr, int direction)
 {
     if (!plr || GUN_KEY_COUNT <= 0) return;
+
+    player_ensure_valid_weapon_selection(plr);
 
     int slot = player_weapon_slot_from_gun(plr->gun_selected);
     int step_dir = (direction >= 0) ? 1 : -1;
@@ -76,7 +99,7 @@ static void player_cycle_weapon(PlayerState *plr, int direction)
     for (int tries = 0; tries < GUN_KEY_COUNT; tries++) {
         slot = (slot + step_dir + GUN_KEY_COUNT) % GUN_KEY_COUNT;
         int gun_idx = gun_key_map[slot];
-        if (gun_idx >= 0 && gun_idx < MAX_GUNS) {
+        if (player_weapon_is_selectable(plr, gun_idx)) {
             plr->gun_selected = (int16_t)gun_idx;
             return;
         }
@@ -424,6 +447,8 @@ static void player_always_keys(PlayerState *plr, uint8_t *key_map,
                                 const KeyBindings *keys, uint8_t *old_space,
                                 const GameState *state)
 {
+    player_ensure_valid_weapon_selection(plr);
+
     /* Operate/Space - tap detection */
     uint8_t space_state = key_map[keys->operate];
     if (space_state && !(*old_space)) {
@@ -483,10 +508,9 @@ static void player_always_keys(PlayerState *plr, uint8_t *key_map,
     for (int i = 0; i < GUN_KEY_COUNT; i++) {
         if (key_map[i + 1]) {
             int gun_idx = gun_key_map[i];
-            /* Check if weapon is available (visible flag in gun_data); skip placeholder */
-            //if (plr->gun_data[gun_idx].visible) {
+            if (player_weapon_is_selectable(plr, gun_idx)) {
                 plr->gun_selected = (int16_t)gun_idx;
-            //}
+            }
         }
     }
 
@@ -2335,6 +2359,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
 {
     int gun_idx = plr->gun_selected;
     if (gun_idx < 0 || gun_idx >= MAX_GUNS) return;
+    if (!player_weapon_is_selectable(plr, gun_idx)) return;
 
     const GunDataEntry *gun = &guns[gun_idx];
 

@@ -74,6 +74,14 @@ static uint8_t sdl_to_amiga(SDL_Scancode sc)
     case SDL_SCANCODE_6:        return AMIGA_KEY_6;
     case SDL_SCANCODE_7:        return AMIGA_KEY_7;
     case SDL_SCANCODE_8:        return AMIGA_KEY_8;
+    case SDL_SCANCODE_KP_1:     return AMIGA_KEY_1;
+    case SDL_SCANCODE_KP_2:     return AMIGA_KEY_2;
+    case SDL_SCANCODE_KP_3:     return AMIGA_KEY_3;
+    case SDL_SCANCODE_KP_4:     return AMIGA_KEY_4;
+    case SDL_SCANCODE_KP_5:     return AMIGA_KEY_5;
+    case SDL_SCANCODE_KP_6:     return AMIGA_KEY_6;
+    case SDL_SCANCODE_KP_7:     return AMIGA_KEY_7;
+    case SDL_SCANCODE_KP_8:     return AMIGA_KEY_8;
     default:                    return 0xFF; /* unmapped */
     }
 }

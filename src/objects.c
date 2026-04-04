@@ -2507,26 +2507,48 @@ void object_handle_key(GameObject *obj, GameState *state)
 void object_handle_big_gun(GameObject *obj, GameState *state)
 {
     if (pickup_distance_check(obj, state, 1)) {
-        int gun_idx = obj->obj.type_data[0]; /* which gun */
-        if (gun_idx >= 0 && gun_idx < MAX_GUNS) {
+        int pickup_idx = (int)(uint8_t)obj->obj.can_see; /* Amiga ItsABigGun byte 17 */
+        int gun_idx = -1;
+        int ammo_idx = -1;
+        /* Amiga: a1 = PLR1_GunData+32 then index by pickup id (0..6) => gun slot 1..7.
+         * Keep pickup id 7 as compatibility fallback to gun slot 7. */
+        if (pickup_idx >= 0 && pickup_idx < (MAX_GUNS - 1)) {
+            gun_idx = pickup_idx + 1;
+            ammo_idx = pickup_idx;
+        } else if (pickup_idx == (MAX_GUNS - 1)) {
+            gun_idx = pickup_idx;
+            ammo_idx = pickup_idx;
+        }
+        if (gun_idx >= 0 && gun_idx < MAX_GUNS && ammo_idx >= 0 && ammo_idx < MAX_GUNS) {
             PlayerState *plr = &state->plr1;
             plr->gun_data[gun_idx].visible = -1; /* Mark as acquired */
             /* Add some ammo */
-            int16_t ammo_add = ammo_in_guns[gun_idx] * 8;
+            int16_t ammo_add = ammo_in_guns[ammo_idx] * 8;
             plr->gun_data[gun_idx].ammo += ammo_add;
-            printf("[PICKUP] player 1 picked up big gun (gun %d)\n", gun_idx);
+            printf("[PICKUP] player 1 picked up big gun (pickup %d -> gun %d)\n",
+                   pickup_idx, gun_idx);
             OBJ_SET_ZONE(obj, -1);
             audio_play_sample(4, 50);
         }
     }
     if (state->mode != MODE_SINGLE && pickup_distance_check(obj, state, 2)) {
-        int gun_idx = obj->obj.type_data[0];
-        if (gun_idx >= 0 && gun_idx < MAX_GUNS) {
+        int pickup_idx = (int)(uint8_t)obj->obj.can_see;
+        int gun_idx = -1;
+        int ammo_idx = -1;
+        if (pickup_idx >= 0 && pickup_idx < (MAX_GUNS - 1)) {
+            gun_idx = pickup_idx + 1;
+            ammo_idx = pickup_idx;
+        } else if (pickup_idx == (MAX_GUNS - 1)) {
+            gun_idx = pickup_idx;
+            ammo_idx = pickup_idx;
+        }
+        if (gun_idx >= 0 && gun_idx < MAX_GUNS && ammo_idx >= 0 && ammo_idx < MAX_GUNS) {
             PlayerState *plr = &state->plr2;
             plr->gun_data[gun_idx].visible = -1;
-            int16_t ammo_add = ammo_in_guns[gun_idx] * 8;
+            int16_t ammo_add = ammo_in_guns[ammo_idx] * 8;
             plr->gun_data[gun_idx].ammo += ammo_add;
-            printf("[PICKUP] player 2 picked up big gun (gun %d)\n", gun_idx);
+            printf("[PICKUP] player 2 picked up big gun (pickup %d -> gun %d)\n",
+                   pickup_idx, gun_idx);
             OBJ_SET_ZONE(obj, -1);
             audio_play_sample(4, 50);
         }
