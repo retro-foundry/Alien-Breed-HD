@@ -71,6 +71,7 @@ set(SOURCES
     src/audio.c
     src/io.c
     src/settings.c
+    src/logging.c
     src/sb_decompress.c
     src/sprite_palettes.c
 )
@@ -115,7 +116,7 @@ if(NOT EXISTS "${PAL_HEADER}")
   message(FATAL_ERROR "sprite_palettes_data.h not found. Put .pal files in amiga/pal or amiga/data/pal and run: python tools/pal_to_header.py --pal-dir \"${PAL_DIR}\" --output \"${PAL_HEADER}\"")
 endif()
 
-# Link SDL2 (no SDL2main - we use CONSOLE subsystem for printf output)
+# Link SDL2 (no SDL2main)
 target_link_libraries(ab3d1 PRIVATE SDL2-static)
 
 # Incremental build: copy ab3d.ini.template (repo root) -> ab3d.ini beside the exe only if ab3d.ini is missing
@@ -212,11 +213,11 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-# Force CONSOLE subsystem on Windows (override SDL2's WINDOWS subsystem)
+# Force WINDOWS subsystem on Windows (no DOS console; logs go to ab3d.log)
 if(MSVC)
     set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT ab3d1)
     set_property(TARGET ab3d1 PROPERTY VS_DPI_AWARE OFF)
-    target_link_options(ab3d1 PRIVATE /SUBSYSTEM:CONSOLE)
+    target_link_options(ab3d1 PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
 endif()
 
 # Warnings

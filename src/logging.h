@@ -1,30 +1,25 @@
 #ifndef LOGGING_H
 #define LOGGING_H
 
-#include <stdarg.h>
-#include <stdio.h>
-#include <string.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-static inline int ab3d_log_is_suppressed(const char *fmt)
-{
-    if (!fmt) return 0;
-    if (strncmp(fmt, "[AUDIO]", 7) == 0) return 1;
-    if (strncmp(fmt, "[IO]", 4) == 0) return 1;
-    if (strncmp(fmt, "[SB]", 4) == 0) return 1;
-    if (strncmp(fmt, "[LEVEL]", 7) == 0) return 1;
-    if (strncmp(fmt, "[3DOBJ]", 7) == 0) return 1;
-    if (strncmp(fmt, "SetupGame complete", 18) == 0) return 1;
-    return 0;
-}
+/* Initialize log redirection to ab3d.log next to the executable.
+ * Returns non-zero on success, 0 on failure. */
+int ab3d_log_init_file(void);
 
-static inline int ab3d_log_printf(const char *fmt, ...)
-{
-    if (ab3d_log_is_suppressed(fmt)) return 0;
-    va_list ap;
-    va_start(ap, fmt);
-    int out = vprintf(fmt, ap);
-    va_end(ap);
-    return out;
+/* Flush and close log file handles. Safe to call multiple times. */
+void ab3d_log_shutdown(void);
+
+/* Returns absolute path of active log file, or "ab3d.log" fallback. */
+const char *ab3d_log_path(void);
+
+/* printf-compatible logger used by #define printf ab3d_log_printf in source files. */
+int ab3d_log_printf(const char *fmt, ...);
+
+#ifdef __cplusplus
 }
+#endif
 
 #endif /* LOGGING_H */

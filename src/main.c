@@ -28,8 +28,7 @@
 #include "logging.h"
 #define printf ab3d_log_printf
 
-/* Define SDL_MAIN_HANDLED before including SDL.h so SDL doesn't
- * hijack main() - we want CONSOLE subsystem for printf output */
+/* Define SDL_MAIN_HANDLED before including SDL.h so SDL doesn't hijack main(). */
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "game_types.h"
@@ -123,7 +122,18 @@ static void tear_down_game(GameState *state)
  */
 int main(int argc, char *argv[])
 {
+    int log_init_ok;
     int enable_3dobj_anim = 1;
+
+    /* OSFriendlyStartup is a no-op on PC
+     * (no Amiga system state to save/restore) */
+    SDL_SetMainReady();
+
+    log_init_ok = ab3d_log_init_file();
+    if (!log_init_ok) {
+        fprintf(stderr, "[LOG] Failed to open log file (expected: %s)\n", ab3d_log_path());
+    }
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--3dobj-anim") == 0) {
             enable_3dobj_anim = 1;
@@ -138,14 +148,6 @@ int main(int argc, char *argv[])
         printf("[3DOBJ] Animation mode: Amiga static frame 0 (--amiga-3dobj-static)\n");
     }
 
-    /* OSFriendlyStartup is a no-op on PC
-     * (no Amiga system state to save/restore) */
-    SDL_SetMainReady();
-
-    /* Disable stdout/stderr buffering so we see output before crashes */
-    setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stderr, NULL, _IONBF, 0);
-
     setup_game(&g_state);
     play_game(&g_state);
     tear_down_game(&g_state);
@@ -153,5 +155,6 @@ int main(int argc, char *argv[])
     /* OSFriendlyExit is a no-op on PC */
 
     printf("\n=== Exit (code 0) ===\n");
+    ab3d_log_shutdown();
     return 0;
 }
