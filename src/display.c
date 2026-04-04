@@ -691,13 +691,16 @@ void display_init(GameState *state)
         }
     }
     window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS;
-    if (driver_override && strcmp(driver_override, "opengl") == 0) {
-        /* OpenGL path keeps desktop-sized borderless mode but requests GL-capable window. */
-        window_flags |= SDL_WINDOW_OPENGL;
-        printf("[DISPLAY] Release OpenGL path: borderless desktop window + SDL_WINDOW_OPENGL\n");
-    }
     g_release_borderless_desktop = 1;
 #endif
+    if (driver_override && strcmp(driver_override, "opengl") == 0) {
+        window_flags |= SDL_WINDOW_OPENGL;
+#ifdef AB3D_RELEASE
+        printf("[DISPLAY] Release OpenGL path: borderless desktop window + SDL_WINDOW_OPENGL\n");
+#else
+        printf("[DISPLAY] OpenGL override: windowed SDL_WINDOW_OPENGL enabled\n");
+#endif
+    }
 
     g_window = SDL_CreateWindow(
         "Alien Breed 3D I",
@@ -725,8 +728,7 @@ void display_init(GameState *state)
             driver_try[driver_try_count++] = "direct3d";
             driver_try[driver_try_count++] = "";
 #else
-            /* Dev/debug: keep OpenGL preference for mip-based minification quality testing. */
-            driver_try[driver_try_count++] = "opengl";
+            /* Dev/debug: prefer D3D first to match release stability; OpenGL remains opt-in via AB3D_RENDER_DRIVER. */
             driver_try[driver_try_count++] = "direct3d11";
             driver_try[driver_try_count++] = "direct3d";
             driver_try[driver_try_count++] = "";
