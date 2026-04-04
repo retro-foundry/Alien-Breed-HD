@@ -209,6 +209,33 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/gfx")
     COMMENT "Copy amiga/data/gfx -> build data/gfx"
   )
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/pal")
+  add_custom_command(TARGET ab3d1 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ab3d1>/data/pal"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/pal"
+            "$<TARGET_FILE_DIR:ab3d1>/data/pal"
+    COMMENT "Copy amiga/data/pal -> build data/pal"
+  )
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/helper")
+  add_custom_command(TARGET ab3d1 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ab3d1>/data/helper"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/helper"
+            "$<TARGET_FILE_DIR:ab3d1>/data/helper"
+    COMMENT "Copy amiga/data/helper -> build data/helper"
+  )
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/amiga/texturemaps")
+  add_custom_command(TARGET ab3d1 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ab3d1>/data/texturemaps"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/amiga/texturemaps"
+            "$<TARGET_FILE_DIR:ab3d1>/data/texturemaps"
+    COMMENT "Copy amiga/texturemaps -> build data/texturemaps"
+  )
+endif()
 set_target_properties(ab3d1 PROPERTIES
   ADDITIONAL_CLEAN_FILES "$<TARGET_FILE_DIR:ab3d1>/ab3d.ini"
 )

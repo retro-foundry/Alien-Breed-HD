@@ -2,8 +2,7 @@
  * Alien Breed 3D I - PC Port
  * io.c - File I/O + level loading helpers
  *
- * Attempts to load original Amiga level data from disk or falls back to
- * the procedural test level for development/testing.
+ * Loads game data from executable-local data/ paths.
  */
 
 #include "io.h"
@@ -12,6 +11,7 @@
 #include "renderer_3dobj.h"
 #include "game_types.h"
 #include "sprite_palettes.h"
+#include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,8 +29,7 @@
 /* -----------------------------------------------------------------------
  * Data path resolution
  *
- * Game data lives in data/ at the project root.
- * We try several paths to find it.
+ * Game data must be present beside the executable under data/.
  * ----------------------------------------------------------------------- */
 static char g_data_base[512] = "";
 
@@ -38,34 +37,20 @@ static const char *data_base_path(void)
 {
     if (g_data_base[0]) return g_data_base;
 
-    /* Try paths relative to the working directory */
-    static const char *candidates[] = {
-        "",                          /* if CWD has includes/ directly */
-        "data/",                     /* if CWD = project root */
-        "../",                       /* if CWD = build/, data is at ../includes/ */
-        "../data/",                  /* if CWD = build/ */
-        "../../",                    /* if CWD = build/Release/ */
-        "../../data/",              /* if CWD = build/Release/ */
-        "../../../",                /* nested builds */
-        "../../../data/",           /* if CWD = build/Debug/ (nested) */
-        NULL
-    };
-
-    for (int i = 0; candidates[i]; i++) {
-        char test[512];
-        /* Check for a file that exists in the data directory */
-        snprintf(test, sizeof(test), "%sincludes/floortile", candidates[i]);
-        FILE *f = fopen(test, "rb");
-        if (f) {
-            fclose(f);
-            snprintf(g_data_base, sizeof(g_data_base), "%s", candidates[i]);
-            printf("[IO] Found data at: %s\n", g_data_base);
-            return g_data_base;
-        }
+    char *base = SDL_GetBasePath();
+    if (!base) {
+        fprintf(stderr, "[IO] FATAL: SDL_GetBasePath failed; cannot resolve executable-local data/\n");
+        exit(1);
     }
 
-    printf("[IO] WARNING: Could not locate data/ directory\n");
-    return "";
+    if (snprintf(g_data_base, sizeof(g_data_base), "%sdata/", base) >= (int)sizeof(g_data_base)) {
+        SDL_free(base);
+        fprintf(stderr, "[IO] FATAL: executable base path too long\n");
+        exit(1);
+    }
+    SDL_free(base);
+
+    return g_data_base;
 }
 
 static void make_data_path(char *buf, size_t bufsize, const char *subpath)
@@ -76,6 +61,16 @@ static void make_data_path(char *buf, size_t bufsize, const char *subpath)
 void io_make_data_path(char *buf, size_t bufsize, const char *subpath)
 {
     snprintf(buf, bufsize, "%s%s", data_base_path(), subpath);
+}
+
+_Noreturn static void io_fatal_missing(const char *what, const char *path)
+{
+    if (path && path[0]) {
+        fprintf(stderr, "[IO] FATAL: missing required %s: %s\n", what, path);
+    } else {
+        fprintf(stderr, "[IO] FATAL: missing required %s\n", what);
+    }
+    exit(1);
 }
 
 /* -----------------------------------------------------------------------
@@ -688,7 +683,6 @@ void io_shutdown(void)
 
 int io_load_level_data(LevelState *level, int level_num)
 {
-    /* Try to load real level data */
     char subpath[256], path[512];
     snprintf(subpath, sizeof(subpath),
              "levels/level_%c/twolev.bin", 'a' + level_num);
@@ -703,10 +697,7 @@ int io_load_level_data(LevelState *level, int level_num)
         return 0;
     }
 
-    /* Fallback: generate procedural test level */
-    printf("[IO] Generating test level (level %d)\n", level_num);
-    build_test_level_data(level);
-    return 0;
+    io_fatal_missing("level data", path);
 }
 
 int io_load_level_graphics(LevelState *level, int level_num)
@@ -725,9 +716,7 @@ int io_load_level_graphics(LevelState *level, int level_num)
         return 0;
     }
 
-    /* Fallback */
-    build_test_level_graphics(level);
-    return 0;
+    io_fatal_missing("level graphics", path);
 }
 
 int io_load_level_clips(LevelState *level, int level_num)
@@ -746,9 +735,7 @@ int io_load_level_clips(LevelState *level, int level_num)
         return 0;
     }
 
-    /* Fallback */
-    build_test_level_clips(level);
-    return 0;
+    io_fatal_missing("level clips", path);
 }
 
 void io_release_level_memory(LevelState *level)
@@ -935,9 +922,7 @@ void io_load_walls(void)
             printf("[IO] Wall %2d: %s (%zu bytes)\n", i,
                    wall_texture_table[i].name, size);
         } else {
-            g_wall_loaded_size[i] = 0;
-            printf("[IO] Wall %2d: %s (not found)\n", i,
-                   wall_texture_table[i].name);
+            io_fatal_missing("wall texture", path);
         }
     }
 }
@@ -983,7 +968,7 @@ void io_load_floor(void)
         }
         fclose(f);
     } else {
-        printf("[IO] Floor tile not found: %s\n", path);
+        io_fatal_missing("floor tile", path);
     }
 
     /* Load floor brightness palette (FloorPalScaled)
@@ -992,24 +977,8 @@ void io_load_floor(void)
     printf("[IO] Trying palette path: %s\n", path);
     f = fopen(path, "rb");
     if (!f) {
-        /* Try the .s assembly source file in data/ */
+        /* Try assembly source inside data/pal. */
         make_data_path(path, sizeof(path), "pal/FloorPalScaled.s");
-        printf("[IO] Trying palette path: %s\n", path);
-        f = fopen(path, "rb");
-    }
-    if (!f) {
-        /* Try relative to project root */
-        snprintf(path, sizeof(path), "data/pal/FloorPalScaled.s");
-        printf("[IO] Trying palette path: %s\n", path);
-        f = fopen(path, "rb");
-    }
-    if (!f) {
-        snprintf(path, sizeof(path), "../data/pal/FloorPalScaled.s");
-        printf("[IO] Trying palette path: %s\n", path);
-        f = fopen(path, "rb");
-    }
-    if (!f) {
-        snprintf(path, sizeof(path), "../../data/pal/FloorPalScaled.s");
         printf("[IO] Trying palette path: %s\n", path);
         f = fopen(path, "rb");
     }
@@ -1057,25 +1026,13 @@ void io_load_floor(void)
         }
         fclose(f);
     } else {
-        printf("[IO] FloorPalScaled not found\n");
+        io_fatal_missing("floor palette (FloorPalScaled)", path);
     }
 
     /* BumpTile (types 8/9) */
     {
-        static const char *bump_rel_candidates[] = {
-            "amiga/data/gfx/BumpTile",
-            "../amiga/data/gfx/BumpTile",
-            "../../amiga/data/gfx/BumpTile",
-            NULL
-        };
         make_data_path(path, sizeof(path), "gfx/BumpTile");
         f = fopen(path, "rb");
-        if (!f) {
-            for (int i = 0; bump_rel_candidates[i] && !f; i++) {
-                snprintf(path, sizeof(path), "%s", bump_rel_candidates[i]);
-                f = fopen(path, "rb");
-            }
-        }
         if (f) {
             fseek(f, 0, SEEK_END);
             long len = ftell(f);
@@ -1092,26 +1049,14 @@ void io_load_floor(void)
             }
             fclose(f);
         } else {
-            printf("[IO] BumpTile not found\n");
+            io_fatal_missing("BumpTile", path);
         }
     }
 
     /* SmoothBumpTile (types 10/11) */
     {
-        static const char *smooth_rel_candidates[] = {
-            "amiga/data/gfx/SmoothBumpTile",
-            "../amiga/data/gfx/SmoothBumpTile",
-            "../../amiga/data/gfx/SmoothBumpTile",
-            NULL
-        };
         make_data_path(path, sizeof(path), "gfx/SmoothBumpTile");
         f = fopen(path, "rb");
-        if (!f) {
-            for (int i = 0; smooth_rel_candidates[i] && !f; i++) {
-                snprintf(path, sizeof(path), "%s", smooth_rel_candidates[i]);
-                f = fopen(path, "rb");
-            }
-        }
         if (f) {
             fseek(f, 0, SEEK_END);
             long len = ftell(f);
@@ -1129,26 +1074,14 @@ void io_load_floor(void)
             }
             fclose(f);
         } else {
-            printf("[IO] SmoothBumpTile not found\n");
+            io_fatal_missing("SmoothBumpTile", path);
         }
     }
 
     /* BumpPalScaled */
     {
-        static const char *bump_pal_rel_candidates[] = {
-            "data/pal/BumpPalScaled",
-            "../data/pal/BumpPalScaled",
-            "../../data/pal/BumpPalScaled",
-            NULL
-        };
         make_data_path(path, sizeof(path), "pal/BumpPalScaled");
         f = fopen(path, "rb");
-        if (!f) {
-            for (int i = 0; bump_pal_rel_candidates[i] && !f; i++) {
-                snprintf(path, sizeof(path), "%s", bump_pal_rel_candidates[i]);
-                f = fopen(path, "rb");
-            }
-        }
         if (f) {
             fseek(f, 0, SEEK_END);
             long len = ftell(f);
@@ -1165,26 +1098,14 @@ void io_load_floor(void)
             }
             fclose(f);
         } else {
-            printf("[IO] BumpPalScaled not found\n");
+            io_fatal_missing("BumpPalScaled", path);
         }
     }
 
     /* SmoothBumpPalScaled */
     {
-        static const char *smooth_pal_rel_candidates[] = {
-            "data/pal/SmoothBumpPalScaled",
-            "../data/pal/SmoothBumpPalScaled",
-            "../../data/pal/SmoothBumpPalScaled",
-            NULL
-        };
         make_data_path(path, sizeof(path), "pal/SmoothBumpPalScaled");
         f = fopen(path, "rb");
-        if (!f) {
-            for (int i = 0; smooth_pal_rel_candidates[i] && !f; i++) {
-                snprintf(path, sizeof(path), "%s", smooth_pal_rel_candidates[i]);
-                f = fopen(path, "rb");
-            }
-        }
         if (f) {
             fseek(f, 0, SEEK_END);
             long len = ftell(f);
@@ -1202,7 +1123,7 @@ void io_load_floor(void)
             }
             fclose(f);
         } else {
-            printf("[IO] SmoothBumpPalScaled not found\n");
+            io_fatal_missing("SmoothBumpPalScaled", path);
         }
     }
 
@@ -1215,23 +1136,11 @@ void io_load_floor(void)
     g_water_brighten_size = 0;
 
     {
-        static const char *water_rel_candidates[] = {
-            "amiga/data/helper/WaterFile",
-            "../amiga/data/helper/WaterFile",
-            "../../amiga/data/helper/WaterFile",
-            NULL
-        };
         make_data_path(path, sizeof(path), "includes/WaterFile");
         f = fopen(path, "rb");
         if (!f) {
             make_data_path(path, sizeof(path), "helper/WaterFile");
             f = fopen(path, "rb");
-        }
-        if (!f) {
-            for (int i = 0; water_rel_candidates[i] && !f; i++) {
-                snprintf(path, sizeof(path), "%s", water_rel_candidates[i]);
-                f = fopen(path, "rb");
-            }
         }
         if (f) {
             fseek(f, 0, SEEK_END);
@@ -1250,28 +1159,16 @@ void io_load_floor(void)
             }
             fclose(f);
         } else {
-            printf("[IO] WaterFile not found\n");
+            io_fatal_missing("WaterFile", path);
         }
     }
 
     {
-        static const char *bright_rel_candidates[] = {
-            "amiga/data/helper/OldBrightenFile",
-            "../amiga/data/helper/OldBrightenFile",
-            "../../amiga/data/helper/OldBrightenFile",
-            NULL
-        };
         make_data_path(path, sizeof(path), "helper/OldBrightenFile");
         f = fopen(path, "rb");
         if (!f) {
             make_data_path(path, sizeof(path), "includes/OldBrightenFile");
             f = fopen(path, "rb");
-        }
-        if (!f) {
-            for (int i = 0; bright_rel_candidates[i] && !f; i++) {
-                snprintf(path, sizeof(path), "%s", bright_rel_candidates[i]);
-                f = fopen(path, "rb");
-            }
         }
         if (f) {
             fseek(f, 0, SEEK_END);
@@ -1291,9 +1188,18 @@ void io_load_floor(void)
             }
             fclose(f);
         } else {
-            printf("[IO] OldBrightenFile not found\n");
+            io_fatal_missing("OldBrightenFile", path);
         }
     }
+
+    if (!g_floor_tile_data)         io_fatal_missing("floor tile", "");
+    if (!g_floor_pal_data)          io_fatal_missing("FloorPalScaled", "");
+    if (!g_bump_tile_data)          io_fatal_missing("BumpTile", "");
+    if (!g_smooth_bump_tile_data)   io_fatal_missing("SmoothBumpTile", "");
+    if (!g_bump_pal_data)           io_fatal_missing("BumpPalScaled", "");
+    if (!g_smooth_bump_pal_data)    io_fatal_missing("SmoothBumpPalScaled", "");
+    if (!g_water_file_data)         io_fatal_missing("WaterFile", "");
+    if (!g_water_brighten_data)     io_fatal_missing("OldBrightenFile", "");
 
     renderer_set_water_assets(g_water_file_data, g_water_file_size,
                               g_water_brighten_data, g_water_brighten_size);
@@ -1309,12 +1215,6 @@ void io_load_sky(void)
 
     char path[512];
     FILE *f = NULL;
-    static const char *sky_rel[] = {
-        "amiga/data/gfx/backfile",
-        "../amiga/data/gfx/backfile",
-        "../../amiga/data/gfx/backfile",
-        NULL
-    };
     static const char *sky_data[] = {
         "includes/backfile",
         "gfx/backfile",
@@ -1323,9 +1223,6 @@ void io_load_sky(void)
     for (int i = 0; sky_data[i] && !f; i++) {
         make_data_path(path, sizeof(path), sky_data[i]);
         f = fopen(path, "rb");
-    }
-    for (int i = 0; !f && sky_rel[i]; i++) {
-        f = fopen(sky_rel[i], "rb");
     }
 
     static uint8_t sky_pal[768];
@@ -1337,13 +1234,6 @@ void io_load_sky(void)
             make_data_path(path, sizeof(path), pal_data[i]);
             pf = fopen(path, "rb");
         }
-        static const char *pal_rel[] = {
-            "amiga/data/gfx/backpal",
-            "../amiga/data/gfx/backpal",
-            NULL
-        };
-        for (int i = 0; !pf && pal_rel[i]; i++)
-            pf = fopen(pal_rel[i], "rb");
         if (pf) {
             if (fread(sky_pal, 1, 768, pf) == 768)
                 pal_ptr = sky_pal;
@@ -1352,9 +1242,7 @@ void io_load_sky(void)
     }
 
     if (!f) {
-        printf("[IO] Sky: backfile not found (procedural cylindrical sky)\n");
-        renderer_set_sky_assets(NULL, 0, 0, 0, pal_ptr);
-        return;
+        io_fatal_missing("sky backfile", path);
     }
 
     fseek(f, 0, SEEK_END);
@@ -1362,8 +1250,7 @@ void io_load_sky(void)
     fseek(f, 0, SEEK_SET);
     if (len <= 0) {
         fclose(f);
-        renderer_set_sky_assets(NULL, 0, 0, 0, pal_ptr);
-        return;
+        io_fatal_missing("sky backfile (invalid length)", path);
     }
 
     g_sky_file_data = (uint8_t *)malloc((size_t)len);
@@ -1371,9 +1258,7 @@ void io_load_sky(void)
         free(g_sky_file_data);
         g_sky_file_data = NULL;
         fclose(f);
-        renderer_set_sky_assets(NULL, 0, 0, 0, pal_ptr);
-        printf("[IO] Sky: failed to read backfile\n");
-        return;
+        io_fatal_missing("sky backfile (read failed)", path);
     }
     fclose(f);
 
@@ -1402,21 +1287,13 @@ void io_load_sky(void)
     renderer_set_sky_assets(g_sky_file_data, tw, th, (size_t)len, pal_ptr);
 }
 
-/* Try opening a file; tries subpath then Amiga-style "disk/includes/<name>". */
+/* Try opening a file from executable-local data/ via subpath. */
 static FILE *open_gun_file(const char *subpath, const char *filename, char *path_out, size_t path_size)
 {
+    (void)filename;
     make_data_path(path_out, path_size, subpath);
     FILE *f = fopen(path_out, "rb");
-    if (f) return f;
-    make_data_path(path_out, path_size, "disk/includes/");
-    size_t base_len = strlen(path_out);
-    if (base_len + strlen(filename) + 1 < path_size) {
-        snprintf(path_out + base_len, path_size - base_len, "%s", filename);
-        f = fopen(path_out, "rb");
-        if (f) return f;
-    }
-    make_data_path(path_out, path_size, subpath);
-    return NULL;
+    return f;
 }
 
 /* -----------------------------------------------------------------------
@@ -1456,7 +1333,7 @@ void io_load_gun_graphics(void)
         }
         fclose(f);
     } else {
-        printf("[IO] Gun WAD not found (tried %s and disk/includes/)\n", path);
+        io_fatal_missing("gun WAD", path);
     }
 
     f = open_gun_file("includes/newgunsinhand.ptr", "newgunsinhand.ptr", path, sizeof(path));
@@ -1473,21 +1350,17 @@ void io_load_gun_graphics(void)
                 free(data);
             }
         } else {
-            printf("[IO] Gun PTR too small: %ld bytes (need %u)\n", len, (unsigned)GUN_PTR_MIN_SIZE);
+            io_fatal_missing("gun PTR (too small)", path);
         }
         fclose(f);
     } else {
-        printf("[IO] Gun PTR not found (tried %s and disk/includes/)\n", path);
+        io_fatal_missing("gun PTR", path);
     }
 
     make_data_path(path, sizeof(path), "pal/newgunsinhand.pal");
     f = fopen(path, "rb");
     if (!f) {
         make_data_path(path, sizeof(path), "includes/newgunsinhand.pal");
-        f = fopen(path, "rb");
-    }
-    if (!f) {
-        make_data_path(path, sizeof(path), "disk/includes/newgunsinhand.pal");
         f = fopen(path, "rb");
     }
     if (f) {
@@ -1500,17 +1373,15 @@ void io_load_gun_graphics(void)
         }
         fclose(f);
     } else {
-        printf("[IO] Gun PAL not found (tried pal/, includes/, disk/includes/)\n");
-        /* Do not load a default palette; placeholder gun is not used. */
+        io_fatal_missing("gun PAL", path);
     }
 
     if (g_renderer.gun_wad && g_renderer.gun_ptr && g_renderer.gun_pal) {
         printf("[IO] Gun graphics loaded successfully\n");
     } else {
-        printf("[IO] Gun graphics incomplete - in-hand gun will not be drawn (wad=%s ptr=%s pal=%s)\n",
-               g_renderer.gun_wad ? "ok" : "missing",
-               g_renderer.gun_ptr ? "ok" : "missing",
-               g_renderer.gun_pal ? "ok" : "missing");
+        if (!g_renderer.gun_wad) io_fatal_missing("gun WAD", "data/includes/newgunsinhand.wad");
+        if (!g_renderer.gun_ptr) io_fatal_missing("gun PTR", "data/includes/newgunsinhand.ptr");
+        if (!g_renderer.gun_pal) io_fatal_missing("gun PAL", "data/pal/newgunsinhand.pal");
     }
 }
 
@@ -1797,6 +1668,13 @@ static uint8_t *g_sprite_data[MAX_SPRITE_TYPES];
 static uint8_t *g_sprite_ptr_data[MAX_SPRITE_TYPES];
 static uint8_t *g_sprite_pal_store[MAX_SPRITE_TYPES];
 
+/* Some legacy sprite slots are referenced by code paths but have no standalone
+ * WAD/PTR assets in this data set. Keep them non-fatal in strict mode. */
+static int sprite_slot_required(int slot)
+{
+    return (slot != 11); /* BIGSCARYALIEN */
+}
+
 /* Try loading a file from includes/ or pal/ directories. */
 static int load_sprite_file(const char *name, const char *prefix,
                             uint8_t **out_data, size_t *out_size)
@@ -1818,12 +1696,6 @@ static int load_sprite_file(const char *name, const char *prefix,
         if (sb_load_file(path, out_data, out_size) == 0 && *out_data && *out_size > 0)
             return 1;
     }
-
-    /* Try disk/includes/<name> */
-    snprintf(subpath, sizeof(subpath), "disk/includes/%s", name);
-    make_data_path(path, sizeof(path), subpath);
-    if (sb_load_file(path, out_data, out_size) == 0 && *out_data && *out_size > 0)
-        return 1;
 
     return 0;
 }
@@ -1852,7 +1724,11 @@ void io_load_objects(void)
                 g_renderer.sprite_wad_size[i] = sz;
                 printf("[IO] Sprite %2d WAD: %s (%zu bytes)\n", i, sprite_wad_names[i], sz);
             } else {
-                printf("[IO] Sprite %2d WAD: %s (not found)\n", i, sprite_wad_names[i]);
+                if (sprite_slot_required(i)) {
+                    char path[512];
+                    snprintf(path, sizeof(path), "includes/%s", sprite_wad_names[i]);
+                    io_fatal_missing("sprite WAD", path);
+                }
             }
         }
 
@@ -1864,14 +1740,24 @@ void io_load_objects(void)
                 g_renderer.sprite_ptr[i] = data;
                 g_renderer.sprite_ptr_size[i] = sz;
                 printf("[IO] Sprite %2d PTR: %s (%zu bytes)\n", i, sprite_ptr_names[i], sz);
+            } else {
+                if (sprite_slot_required(i)) {
+                    char path[512];
+                    snprintf(path, sizeof(path), "includes/%s", sprite_ptr_names[i]);
+                    io_fatal_missing("sprite PTR", path);
+                }
             }
         }
 
         /* .pal: embedded tables only (from data/pal via sprite_palettes_data.h). No runtime load. */
-        if (sprite_pal_embedded_size[i] > 0 && sprite_pal_embedded[i] != NULL) {
-            g_renderer.sprite_pal_data[i] = sprite_pal_embedded[i];
-            g_renderer.sprite_pal_size[i] = sprite_pal_embedded_size[i];
-            printf("[IO] Sprite %2d PAL: table (%zu bytes)\n", i, sprite_pal_embedded_size[i]);
+        if (sprite_pal_names[i]) {
+            if (sprite_pal_embedded_size[i] > 0 && sprite_pal_embedded[i] != NULL) {
+                g_renderer.sprite_pal_data[i] = sprite_pal_embedded[i];
+                g_renderer.sprite_pal_size[i] = sprite_pal_embedded_size[i];
+                printf("[IO] Sprite %2d PAL: table (%zu bytes)\n", i, sprite_pal_embedded_size[i]);
+            } else {
+                io_fatal_missing("sprite PAL table", sprite_pal_names[i]);
+            }
         }
     }
 }
@@ -1920,16 +1806,10 @@ static void io_load_poly_texture_assets(void)
 
     const char *maps_candidates[] = {
         d_texmaps, d_texmaps_inc, d_texmaps_disk,
-        "amiga/texturemaps/TextureMaps",
-        "../amiga/texturemaps/TextureMaps",
-        "../../amiga/texturemaps/TextureMaps",
         NULL
     };
     const char *pal_candidates[] = {
         d_texpal, d_texpal_inc, d_texpal_disk,
-        "amiga/texturemaps/OldTexturePalScaled",
-        "../amiga/texturemaps/OldTexturePalScaled",
-        "../../amiga/texturemaps/OldTexturePalScaled",
         NULL
     };
 
@@ -1946,8 +1826,7 @@ static void io_load_poly_texture_assets(void)
         if (g_poly_tex_pal_data)  { free(g_poly_tex_pal_data);  g_poly_tex_pal_data = NULL; }
         g_poly_tex_maps_size = 0;
         g_poly_tex_pal_size = 0;
-        printf("[IO] 3D poly textures: missing TextureMaps/OldTexturePalScaled (falling back to flat tint)\n");
-        return;
+        io_fatal_missing("3D poly textures (TextureMaps/OldTexturePalScaled)", "");
     }
 
     printf("[IO] 3D poly TextureMaps: %zu bytes from %s\n", g_poly_tex_maps_size, picked_maps);
@@ -1973,16 +1852,16 @@ static void io_load_poly_texture_assets(void)
  *   9 = gaspipe    (gaspipe.vec)
  * ----------------------------------------------------------------------- */
 static const char *g_vec_names[POLY_OBJECTS_COUNT] = {
-    "vectorobjects/Robot.vec",
-    "vectorobjects/MediPac.vec",
-    "vectorobjects/ExitSign.vec",
-    "vectorobjects/Crate.vec",
-    "vectorobjects/Terminal.vec",
-    "vectorobjects/BlueInd.vec",
-    "vectorobjects/GreenInd.vec",
-    "vectorobjects/RedInd.vec",
-    "vectorobjects/YellowInd.vec",
-    "vectorobjects/GasPipe.vec",
+    "Robot.vec",
+    "MediPac.vec",
+    "ExitSign.vec",
+    "Crate.vec",
+    "Terminal.vec",
+    "BlueInd.vec",
+    "GreenInd.vec",
+    "RedInd.vec",
+    "YellowInd.vec",
+    "GasPipe.vec",
 };
 
 void io_load_vec_objects(void)
@@ -1994,32 +1873,38 @@ void io_load_vec_objects(void)
         free(g_vec_data[i]);
         g_vec_data[i] = NULL;
 
-        char path[512];
-        make_data_path(path, sizeof(path), g_vec_names[i]);
-
+        char subpath[256], path[512];
+        snprintf(subpath, sizeof(subpath), "vectorobjects/%s", g_vec_names[i]);
+        make_data_path(path, sizeof(path), subpath);
         FILE *f = fopen(path, "rb");
         if (!f) {
-            printf("[IO] VecObj %d: %s (not found)\n", i, g_vec_names[i]);
-            continue;
+            io_fatal_missing("vector object", path);
         }
         fseek(f, 0, SEEK_END);
         long sz = ftell(f);
         fseek(f, 0, SEEK_SET);
-        if (sz <= 0 || sz > 65536) { fclose(f); continue; }
+        if (sz <= 0 || sz > 65536) {
+            fclose(f);
+            io_fatal_missing("vector object (invalid size)", path);
+        }
 
         g_vec_data[i] = (uint8_t *)malloc((size_t)sz);
-        if (!g_vec_data[i]) { fclose(f); continue; }
+        if (!g_vec_data[i]) {
+            fclose(f);
+            io_fatal_missing("vector object (out of memory)", path);
+        }
 
         if (fread(g_vec_data[i], 1, (size_t)sz, f) != (size_t)sz) {
-            free(g_vec_data[i]); g_vec_data[i] = NULL; fclose(f); continue;
+            free(g_vec_data[i]); g_vec_data[i] = NULL; fclose(f);
+            io_fatal_missing("vector object (read failed)", path);
         }
         fclose(f);
 
         if (poly_obj_load(i, g_vec_data[i], (size_t)sz)) {
-            printf("[IO] VecObj %d: %s (%ld bytes)\n", i, g_vec_names[i], sz);
+            printf("[IO] VecObj %d: %s (%ld bytes)\n", i, path, sz);
         } else {
-            printf("[IO] VecObj %d: %s (parse failed)\n", i, g_vec_names[i]);
             free(g_vec_data[i]); g_vec_data[i] = NULL;
+            io_fatal_missing("vector object (parse failed)", path);
         }
     }
 }

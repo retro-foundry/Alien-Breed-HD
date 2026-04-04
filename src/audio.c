@@ -394,8 +394,11 @@ void audio_init(void)
             }
         }
         printf("\n");
-    } else {
-        printf("[AUDIO] No sounds found in data/sounds (add Amiga originals: scream, shotgun, ... or .wav)\n");
+    }
+    if (loaded_count < NUM_NAMED_SFX) {
+        fprintf(stderr, "[AUDIO] FATAL: required sounds missing (loaded %d of %d)\n",
+                loaded_count, NUM_NAMED_SFX);
+        exit(1);
     }
 }
 
