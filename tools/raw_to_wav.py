@@ -9,7 +9,9 @@ directory can be passed with --sounds-dir.
 import argparse
 import io
 from pathlib import Path
+import shutil
 import struct
+import subprocess
 import sys
 
 # Amiga AB3DI.s sets AUDxPER = 443 for all SFX channels.
@@ -61,6 +63,59 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def convert_mt_to_wav(mt_path: Path, out_path: Path) -> bool:
+    """
+    Convert a tracker module (.mt) to WAV via ffmpeg/libopenmpt.
+    Returns True when output was created/updated, False when unchanged.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        print(f"[raw_to_wav] ffmpeg not found; skipping {mt_path.name}", file=sys.stderr)
+        return False
+
+    if out_path.exists() and out_path.stat().st_mtime >= mt_path.stat().st_mtime:
+        return False
+
+    tmp = out_path.with_suffix(out_path.suffix + ".tmp")
+    cmd = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(mt_path),
+        "-ac",
+        "2",
+        "-ar",
+        "44100",
+        "-c:a",
+        "pcm_s16le",
+        "-f",
+        "wav",
+        str(tmp),
+    ]
+    proc = subprocess.run(cmd, check=False)
+    if proc.returncode != 0:
+        print(f"[raw_to_wav] ffmpeg failed for {mt_path}", file=sys.stderr)
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        return False
+
+    try:
+        if out_path.exists() and out_path.read_bytes() == tmp.read_bytes():
+            tmp.unlink()
+            return False
+    except OSError:
+        pass
+
+    tmp.replace(out_path)
+    return True
+
+
 def main() -> int:
     args = parse_args()
     sounds_dir = args.sounds_dir
@@ -85,6 +140,20 @@ def main() -> int:
     converted = 0
     for p in sorted(sounds_dir.rglob("*")):
         if not is_convertible(p):
+            continue
+
+        if p.suffix.lower() == ".mt":
+            out = p.parent / (p.stem.lower() + ".wav")
+            legacy = p.parent / (p.name.lower() + ".wav")
+            if convert_mt_to_wav(p, out):
+                converted += 1
+                print(f"  {p.name} -> {out.name}")
+            if legacy != out and legacy.exists():
+                try:
+                    legacy.unlink()
+                    print(f"  removed legacy {legacy.name}")
+                except OSError:
+                    pass
             continue
 
         raw = p.read_bytes()
