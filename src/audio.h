@@ -24,6 +24,7 @@ void audio_play_module(void);
 void audio_unload_module(void);
 
 /* Sound effects */
+void audio_begin_frame(void); /* Reset per-frame SFX dedupe state (call once per game logic tick). */
 void audio_play_sfx(int sfx_id, int volume, int channel);
 void audio_play_sample(int sample_id, int volume); /* MakeSomeNoise simplified */
 void audio_stop_all(void);

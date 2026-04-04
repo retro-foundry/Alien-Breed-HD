@@ -89,6 +89,11 @@ static LoadedSample      g_samples[MAX_SAMPLES];
 static Channel           g_channels[MAX_CHANNELS];
 static int               g_audio_ready = 0;
 static int               g_master_volume = 100; /* 0..100, scales per-sample volume in audio_play_sample */
+/* Per-game-frame SFX dedupe:
+ * g_sfx_frame_id is advanced by audio_begin_frame() once per logic tick.
+ * A sample can be queued at most once for each frame id. */
+static Uint32            g_sfx_frame_id = 0;
+static Uint32            g_sample_last_played_frame[MAX_SAMPLES];
 
 static int channel_is_free(const Channel *ch)
 {
@@ -340,10 +345,12 @@ void audio_init(void)
     printf("[AUDIO] init\n");
     memset(g_samples, 0, sizeof(g_samples));
     memset(g_channels, 0, sizeof(g_channels));
+    memset(g_sample_last_played_frame, 0, sizeof(g_sample_last_played_frame));
     for (int i = 0; i < MAX_CHANNELS; i++) {
         g_channels[i].sample_id = -1;
     }
     g_audio_ready = 0;
+    g_sfx_frame_id = 0;
     g_device = 0;
 
     if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
@@ -421,6 +428,17 @@ void audio_init_module(void)       { /* stub */ }
 void audio_play_module(void)       { /* stub */ }
 void audio_unload_module(void)     { /* stub */ }
 
+void audio_begin_frame(void)
+{
+    /* 0 means "dedupe disabled" before first frame marker. */
+    g_sfx_frame_id++;
+    if (g_sfx_frame_id == 0) {
+        /* Wrapped after ~4 billion frames: clear table and keep 0 reserved. */
+        memset(g_sample_last_played_frame, 0, sizeof(g_sample_last_played_frame));
+        g_sfx_frame_id = 1;
+    }
+}
+
 void audio_play_sfx(int sfx_id, int volume, int channel)
 {
     (void)channel;
@@ -455,6 +473,11 @@ void audio_play_sample(int sample_id, int volume)
     volume = (volume * g_master_volume + 50) / 100;
     if (volume <= 0)
         return;
+    if (g_sfx_frame_id != 0) {
+        if (g_sample_last_played_frame[sample_id] == g_sfx_frame_id)
+            return;
+        g_sample_last_played_frame[sample_id] = g_sfx_frame_id;
+    }
 
     SDL_LockAudioDevice(g_device);
 

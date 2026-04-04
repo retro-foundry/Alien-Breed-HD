@@ -176,6 +176,7 @@ void game_loop(GameState *state)
 
             state->frames_to_draw = (int16_t)ticks;
             state->temp_frames = (int16_t)ticks;
+            audio_begin_frame();
 
             /* ---- Phase 1: Pause handling ---- */
             if (state->mode == MODE_SINGLE) {
