@@ -213,6 +213,7 @@ endif()
 
 # Force CONSOLE subsystem on Windows (override SDL2's WINDOWS subsystem)
 if(MSVC)
+    set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT ab3d1)
     set_property(TARGET ab3d1 PROPERTY VS_DPI_AWARE OFF)
     target_link_options(ab3d1 PRIVATE /SUBSYSTEM:CONSOLE)
 endif()
