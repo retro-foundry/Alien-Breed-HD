@@ -48,7 +48,7 @@ static const char *const sfx_names[NUM_NAMED_SFX] = {
     "lowscream",   /* 8 */
     "baddiegun",   /* 9 */
     "switch",      /* 10 */
-    "switch1.sfx", /* 11 ReloadName */
+    "switch1",     /* 11 ReloadName */
     "noammo",      /* 12 */
     "splotch",     /* 13 */
     "splatpop",    /* 14 */
