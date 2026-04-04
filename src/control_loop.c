@@ -478,30 +478,8 @@ void play_the_game(GameState *state)
     state->do_anything = false;
 }
 
-/*
- * play_game - The outermost game loop
- *
- * Translated from ControlLoop.s PlayGame (~line 142).
- */
-void play_game(GameState *state)
+static void control_setup_new_game_state(GameState *state)
 {
-    state->mode = MODE_SINGLE;
-
-    printf("[CONTROL] PlayGame starting\n");
-    /* Re-read ab3d.ini so prefs match the file on disk (exe dir / fallbacks). */
-    settings_load(state);
-    settings_log_recap(state);
-
-    /* ---- Load shared assets ---- */
-    io_load_walls();
-    io_load_floor();
-    io_load_sky();
-    io_load_gun_graphics();
-    io_load_objects();
-    io_load_vec_objects();
-    io_load_sfx();
-
-    /* ---- Setup default game ---- */
     game_state_setup_default(state);
 
     state->plr1.gun_selected = 0;
@@ -531,6 +509,32 @@ void play_game(GameState *state)
     } else {
         printf("[CONTROL] Bypassing menu - default start level %d\n", (int)state->current_level);
     }
+}
+
+/*
+ * play_game - The outermost game loop
+ *
+ * Translated from ControlLoop.s PlayGame (~line 142).
+ */
+void play_game(GameState *state)
+{
+    state->mode = MODE_SINGLE;
+
+    printf("[CONTROL] PlayGame starting\n");
+    /* Re-read ab3d.ini so prefs match the file on disk (exe dir / fallbacks). */
+    settings_load(state);
+    settings_log_recap(state);
+
+    /* ---- Load shared assets ---- */
+    io_load_walls();
+    io_load_floor();
+    io_load_sky();
+    io_load_gun_graphics();
+    io_load_objects();
+    io_load_vec_objects();
+    io_load_sfx();
+
+    control_setup_new_game_state(state);
 
     io_load_panel();
 
@@ -541,6 +545,9 @@ void play_game(GameState *state)
             if (state->energy <= 0) {
                 audio_play_module_blocking_once("sounds/mt/GameOver.mt");
                 printf("[MUSIC] outcome: game over\n");
+                control_setup_new_game_state(state);
+                printf("[CONTROL] Restarting new game after death\n");
+                continue;
             }
             break;
         }
