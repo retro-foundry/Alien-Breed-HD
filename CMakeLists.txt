@@ -182,31 +182,31 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/amiga/sounds")
     COMMENT "Copy data/sounds -> build data/sounds"
   )
 endif()
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/includes")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/includes")
   add_custom_command(TARGET ab3d1 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ab3d1>/data/includes"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/data/includes"
+            "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/includes"
             "$<TARGET_FILE_DIR:ab3d1>/data/includes"
-    COMMENT "Copy data/includes -> build data/includes"
+    COMMENT "Copy amiga/data/includes -> build data/includes"
   )
 endif()
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/levels")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/levels")
   add_custom_command(TARGET ab3d1 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ab3d1>/data/levels"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/data/levels"
+            "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/levels"
             "$<TARGET_FILE_DIR:ab3d1>/data/levels"
-    COMMENT "Copy data/levels -> build data/levels"
+    COMMENT "Copy amiga/data/levels -> build data/levels"
   )
 endif()
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/gfx")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/gfx")
   add_custom_command(TARGET ab3d1 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ab3d1>/data/gfx"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/data/gfx"
+            "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data/gfx"
             "$<TARGET_FILE_DIR:ab3d1>/data/gfx"
-    COMMENT "Copy data/gfx -> build data/gfx"
+    COMMENT "Copy amiga/data/gfx -> build data/gfx"
   )
 endif()
 set_target_properties(ab3d1 PROPERTIES
