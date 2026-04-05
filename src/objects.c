@@ -1694,7 +1694,12 @@ void object_handle_robot(GameObject *obj, GameState *state)
         enemy_wander_with_timer(obj, params, state, 100, 63);
     }
 
-    enemy_update_anim(obj, state, 5);
+    {
+        /* 3D robot enemies use POLYOBJECTS slot 0 (Robot.vec). The old
+         * billboard path uses slot 5. */
+        int16_t anim_vect = ((uint8_t)obj->raw[6] == (uint8_t)OBJ_3D_SPRITE) ? 0 : 5;
+        enemy_update_anim(obj, state, anim_vect);
+    }
 }
 
 void object_handle_huge_red(GameObject *obj, GameState *state)
