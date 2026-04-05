@@ -94,6 +94,59 @@ static int16_t control_read_be16(const uint8_t *p)
     return (int16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
 }
 
+static void control_write_be16(uint8_t *p, int16_t v)
+{
+    p[0] = (uint8_t)((uint16_t)v >> 8);
+    p[1] = (uint8_t)((uint16_t)v);
+}
+
+/* Level 7 contains a 3D boss-mech prop authored as a decorative DEAD object.
+ * Promote that specific slot to a live robot so movement/collision/AI paths
+ * run and the correct 3D model slot is used. */
+static void control_apply_level7_mech_fixup(GameState *state)
+{
+    if (!state || !state->level.object_data) return;
+
+    /* Runtime level index is zero-based: 6 == level 7. */
+    if (state->current_level != 6) return;
+
+    for (int i = 0; i < MAX_OBJECTS; i++) {
+        uint8_t *obj = state->level.object_data + i * OBJECT_SIZE;
+        int16_t cid = control_read_be16(obj + 0);
+        if (cid < 0) break;
+
+        if ((uint8_t)obj[6] != (uint8_t)OBJ_3D_SPRITE) continue;
+        if ((int8_t)obj[16] != OBJ_NBR_DEAD) continue;
+        if (control_read_be16(obj + 8) != 2) continue;   /* ExitSign slot in level data */
+        if (control_read_be16(obj + 12) != 200) continue;/* Boss arena zone */
+
+        {
+            int16_t zone = control_read_be16(obj + 12);
+
+            obj[16] = (uint8_t)OBJ_NBR_ROBOT;
+            obj[17] = 0;                    /* can_see */
+            obj[62] = 1;                    /* worry gate: active */
+
+            if ((int8_t)obj[18] <= 0) obj[18] = 4;  /* numlives */
+            obj[19] = 0;                    /* damagetaken */
+
+            control_write_be16(obj + 8, 0); /* objVectNumber: Robot.vec */
+            control_write_be16(obj + 10, 0);/* objVectFrameNumber */
+            control_write_be16(obj + 20, 10);/* maxspd */
+            control_write_be16(obj + 22, 0); /* currspd */
+            control_write_be16(obj + 26, zone); /* GraphicRoom */
+            control_write_be16(obj + 34, 100);/* ObjTimer */
+            control_write_be16(obj + 36, 100);/* SecTimer */
+            control_write_be16(obj + 52, 0); /* ThirdTimer */
+            control_write_be16(obj + 54, 30);/* FourthTimer */
+
+            printf("[LEVEL] L7 mech fixup: obj[%d] promoted to robot (cid=%d zone=%d)\n",
+                   i, (int)cid, (int)zone);
+        }
+        break;
+    }
+}
+
 /* Rebuild per-level condition bits from loaded level state.
  * Prevents switch/key conditions from leaking between levels (e.g. level 2 exit switch puzzle). */
 static void game_rebuild_level_conditions(GameState *state)
@@ -366,6 +419,7 @@ void play_the_game(GameState *state)
         /* Ensure each object has world size in its record (Amiga style), for file and test levels */
         if (state->level.object_data && state->level.num_object_points > 0)
             object_init_world_sizes_from_types(&state->level);
+        control_apply_level7_mech_fixup(state);
         if (!state->f9_pending_apply_save) {
             renderer_build_level_sky_cache(&state->level);
         }
@@ -404,6 +458,7 @@ void play_the_game(GameState *state)
         if (state->f9_pending_apply_save) {
             state->f9_pending_apply_save = false;
             player_apply_save_payload_after_level_load(state);
+            control_apply_level7_mech_fixup(state);
             renderer_build_level_sky_cache(&state->level);
             printf("[PLAYER] load: save restored (level %d)\n",
                    (int)state->current_level);

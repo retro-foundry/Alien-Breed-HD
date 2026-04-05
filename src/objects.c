@@ -70,6 +70,8 @@ static int16_t anim_timer = 2;
  * Range 0-31 (wraps at 32). Each frame step spans 8 ticks → step = counter >> 3, range 0-3.
  * Amiga: alan[] has 8 copies of each value 0-3 → 32 entries, cycles at game tick rate. */
 static uint8_t walk_cycle = 0;
+/* Robot.s ROBFRAME global animation cursor (shared across robot updates). */
+static int16_t robot_frame_counter = 0;
 
 /* Gib floor/wall splat (sample 13): only one per objects_update — many gibs can time out together. */
 static bool gib_impact_splat_sound_this_update;
@@ -182,6 +184,9 @@ static void enemy_update_display_facing_frame(GameObject *obj, const GameState *
 static void enemy_update_anim_with_step(GameObject *obj, GameState *state,
                                         int16_t vect_num, int walk_step);
 static int marine_pick_target_player(GameObject *obj, GameState *state);
+static int32_t enemy_track_target_with_turn(GameObject *obj, const EnemyParams *params,
+                                            GameState *state, int player_num,
+                                            bool apply_translation, int16_t turn_speed);
 static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
                                    GameState *state, int player_num,
                                    bool apply_translation);
@@ -693,9 +698,15 @@ static void enemy_wander_with_timer(GameObject *obj, const EnemyParams *params,
     int16_t facing = NASTY_FACING(*obj);
     int16_t speed = NASTY_MAXSPD(*obj);
     if (speed == 0) speed = 4;
-
-    int16_t s = sin_lookup(facing);
-    int16_t c = cos_lookup(facing);
+    /* Shared enemy movement helpers use -sin/-cos translation. Robot.s uses
+     * GoInDirection (+sin/+cos), so use a 180-degree phase shift here to
+     * preserve Amiga-facing semantics for the robot. */
+    int16_t move_facing = facing;
+    if (obj->obj.number == OBJ_NBR_ROBOT) {
+        move_facing = (int16_t)((move_facing + ANGLE_180) & ANGLE_MASK);
+    }
+    int16_t s = sin_lookup(move_facing);
+    int16_t c = cos_lookup(move_facing);
 
     int16_t obj_x, obj_z;
     int cid = (int)OBJ_CID(obj);
@@ -1452,6 +1463,10 @@ void objects_update(GameState *state)
             case OBJ_NBR_WORM: case OBJ_NBR_HUGE_RED_THING: case OBJ_NBR_SMALL_RED_THING:
             case OBJ_NBR_TREE:
                 {
+                    if (obj_type == OBJ_NBR_ROBOT &&
+                        (uint8_t)obj->raw[6] == (uint8_t)OBJ_3D_SPRITE) {
+                        break; /* keep Robot.s ROBFRAME frame in raw+10 */
+                    }
                     const PlayerState *view_plr = (state->mode == MODE_SLAVE)
                         ? &state->plr2 : &state->plr1;
                     int16_t view_x = (int16_t)(view_plr->xoff >> 16);
@@ -1534,6 +1549,10 @@ void objects_update_sprite_frames(GameState *state)
         case OBJ_NBR_WORM: case OBJ_NBR_HUGE_RED_THING: case OBJ_NBR_SMALL_RED_THING:
         case OBJ_NBR_TREE:
             {
+                if (obj_type == OBJ_NBR_ROBOT &&
+                    (uint8_t)obj->raw[6] == (uint8_t)OBJ_3D_SPRITE) {
+                    break; /* keep Robot.s ROBFRAME frame in raw+10 */
+                }
                 enemy_update_display_facing_frame(obj, state, view_x, view_z);
             }
             break;
@@ -1658,6 +1677,29 @@ void object_handle_robot(GameObject *obj, GameState *state)
     if (enemy_check_damage(obj, params, state)) return;
     if (NASTY_LIVES(*obj) <= 0) return;
 
+    /* Robot.s parity:
+     *   entry: Facing -= 2048 ; Facing &= 8190
+     *   exit:  Facing += 2048 ; Facing &= 8190
+     * The robot AI/movement code runs in this internal facing space. */
+    {
+        int16_t facing = NASTY_FACING(*obj);
+        facing = (int16_t)((facing - ANGLE_90) & ANGLE_EVEN_MASK);
+        NASTY_SET_FACING(*obj, facing);
+    }
+
+    /* Robot.s writes maxspd=10 every tick (both prowl and attack paths). */
+    NASTY_SET_MAXSPD(*obj, 10);
+
+    /* Robot.s ROBFRAME:
+     *   ROBFRAME += TempFrames; if >=43 then 0; frame = ROBFRAME>>1 (0..21). */
+    int16_t robot_frame;
+    {
+        int16_t d0 = (int16_t)(robot_frame_counter + state->temp_frames);
+        if (d0 >= 43) d0 = 0;
+        robot_frame_counter = d0;
+        robot_frame = (int16_t)(d0 >> 1);
+    }
+
     enemy_update_can_see(obj, state);
     int can_see = obj->obj.can_see & 0x03;
     int16_t third_timer = OBJ_TD_W(obj, ENEMY_THIRD_TIMER_OFF);
@@ -1670,7 +1712,7 @@ void object_handle_robot(GameObject *obj, GameState *state)
     }
 
     if (attacking) {
-        (void)marine_track_target(obj, params, state, target_player, true);
+        (void)enemy_track_target_with_turn(obj, params, state, target_player, true, 240);
 
         int16_t fourth_timer = OBJ_TD_W(obj, ENEMY_FOURTH_TIMER_OFF);
         fourth_timer -= state->temp_frames;
@@ -1694,11 +1736,31 @@ void object_handle_robot(GameObject *obj, GameState *state)
         enemy_wander_with_timer(obj, params, state, 100, 63);
     }
 
+    /* Robot.s updates objVectBright from zone brightness each tick:
+     * d0 = zone bright (upper/lower); sub.w #5,d0; move.w d0,2(a0). */
     {
-        /* 3D robot enemies use POLYOBJECTS slot 0 (Robot.vec). The old
-         * billboard path uses slot 5. */
+        int zone_slots = level_zone_slot_count(&state->level);
+        int src_zone = level_connect_to_zone_index(&state->level, OBJ_ZONE(obj));
+        if (src_zone < 0 && OBJ_ZONE(obj) >= 0 && OBJ_ZONE(obj) < zone_slots)
+            src_zone = OBJ_ZONE(obj);
+        if (src_zone >= 0 && src_zone < zone_slots) {
+            int16_t zb = level_get_zone_brightness(&state->level,
+                                                   (int16_t)src_zone,
+                                                   obj->obj.in_top ? 1 : 0);
+            obj_sw(obj->raw + 2, (int16_t)(zb - 5));
+        }
+    }
+
+    {
         int16_t anim_vect = ((uint8_t)obj->raw[6] == (uint8_t)OBJ_3D_SPRITE) ? 0 : 5;
-        enemy_update_anim(obj, state, anim_vect);
+        wbe16(obj->raw + 8, anim_vect);
+        wbe16(obj->raw + 10, robot_frame);
+    }
+
+    {
+        int16_t facing = NASTY_FACING(*obj);
+        facing = (int16_t)((facing + ANGLE_90) & ANGLE_EVEN_MASK);
+        NASTY_SET_FACING(*obj, facing);
     }
 }
 
@@ -1776,9 +1838,9 @@ static int marine_pick_target_player(GameObject *obj, GameState *state)
     return (d1 <= d2) ? 1 : 2;
 }
 
-static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
-                                   GameState *state, int player_num,
-                                   bool apply_translation)
+static int32_t enemy_track_target_with_turn(GameObject *obj, const EnemyParams *params,
+                                            GameState *state, int player_num,
+                                            bool apply_translation, int16_t turn_speed)
 {
     PlayerState *plr = (player_num == 1) ? &state->plr1 : &state->plr2;
 
@@ -1867,8 +1929,18 @@ static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
     }
 
     int16_t facing = NASTY_FACING(*obj);
-    head_towards_angle(&ctx, &facing, target_x, target_z,
-                       speed * state->temp_frames, 120);
+    if (turn_speed <= 0) turn_speed = 120;
+    if (obj->obj.number == OBJ_NBR_ROBOT) {
+        /* head_towards_angle uses the shared reversed-facing convention.
+         * Convert robot facing in/out so gameplay-facing remains Amiga-parity. */
+        int16_t work_facing = (int16_t)((facing + ANGLE_180) & ANGLE_MASK);
+        head_towards_angle(&ctx, &work_facing, target_x, target_z,
+                           speed * state->temp_frames, turn_speed);
+        facing = (int16_t)((work_facing - ANGLE_180) & ANGLE_MASK);
+    } else {
+        head_towards_angle(&ctx, &facing, target_x, target_z,
+                           speed * state->temp_frames, turn_speed);
+    }
     NASTY_SET_FACING(*obj, facing);
 
     if (use_pre_collision) {
@@ -1915,6 +1987,14 @@ static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
     }
 
     return dist;
+}
+
+static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
+                                   GameState *state, int player_num,
+                                   bool apply_translation)
+{
+    return enemy_track_target_with_turn(obj, params, state, player_num,
+                                        apply_translation, 120);
 }
 
 /* True when the enemy is facing within a cone toward the target player.
