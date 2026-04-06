@@ -1304,10 +1304,15 @@ void io_load_sky(void)
 /* Try opening a file from executable-local data/ via subpath. */
 static FILE *open_gun_file(const char *subpath, const char *filename, char *path_out, size_t path_size)
 {
-    (void)filename;
+    if (filename && filename[0]) {
+        char replacement_subpath[256];
+        snprintf(replacement_subpath, sizeof(replacement_subpath), "replacements/weapons/%s", filename);
+        make_data_path(path_out, path_size, replacement_subpath);
+        FILE *f = fopen(path_out, "rb");
+        if (f) return f;
+    }
     make_data_path(path_out, path_size, subpath);
-    FILE *f = fopen(path_out, "rb");
-    return f;
+    return fopen(path_out, "rb");
 }
 
 /* -----------------------------------------------------------------------
@@ -1371,11 +1376,9 @@ void io_load_gun_graphics(void)
         io_fatal_missing("gun PTR", path);
     }
 
-    make_data_path(path, sizeof(path), "pal/newgunsinhand.pal");
-    f = fopen(path, "rb");
+    f = open_gun_file("pal/newgunsinhand.pal", "newgunsinhand.pal", path, sizeof(path));
     if (!f) {
-        make_data_path(path, sizeof(path), "includes/newgunsinhand.pal");
-        f = fopen(path, "rb");
+        f = open_gun_file("includes/newgunsinhand.pal", "newgunsinhand.pal", path, sizeof(path));
     }
     if (f) {
         uint8_t *data = (uint8_t *)malloc(64);

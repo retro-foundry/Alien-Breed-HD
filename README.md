@@ -101,6 +101,56 @@ build/Release/ab3d1.exe
 
 ---
 
+## Weapon redraw workflow (PNG round-trip)
+
+Use `tools/gun_frames_png.py` to export every in-hand weapon animation frame to PNG,
+edit them, then build a replacement set the game can load without replacing original data files.
+
+### 1) Export frames to PNG
+
+```bash
+python tools/gun_frames_png.py export \
+  --data-dir build/Release/data \
+  --out-dir build/Release/weapon_frames_png
+```
+
+Output files include:
+
+- `gun0_frame0.png` .. `gun7_frame3.png` (32 files total)
+- `manifest.json`
+- `newgunsinhand.pal` (palette used for import quantization)
+- `newgunsinhand_palette_preview.png`
+
+Notes:
+
+- Frame size is fixed at `96x58`.
+- Guns 5 and 6 are unused in this build and export as transparent placeholders.
+
+### 2) Rebuild a replacement set from edited PNGs
+
+```bash
+python tools/gun_frames_png.py import \
+  --in-dir build/Release/weapon_frames_png \
+  --out-dir build/Release/data/replacements/weapons
+```
+
+This writes:
+
+- `newgunsinhand.wad`
+- `newgunsinhand.ptr`
+- `newgunsinhand.pal`
+
+### 3) Run game with replacement set
+
+At runtime, gun graphics are loaded from:
+
+1. `data/replacements/weapons/newgunsinhand.*` (if present)
+2. fallback original assets under `data/includes` / `data/pal`
+
+So placing the replacement files in `data/replacements/weapons/` activates the custom weapon set.
+
+---
+
 ## References
 
 - Original Team17 source archive: [alienbreed3dii](https://github.com/videogamepreservation/alienbreed3dii.git)
