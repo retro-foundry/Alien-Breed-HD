@@ -5282,6 +5282,14 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         if (src_cols < 1) src_cols = 32;
         if (src_rows < 1) src_rows = 32;
 
+        /* BIGSCARYALIEN (vect 11) uses 128-column frames in the PTR table.
+         * With the renderer's eff_cols = src_cols*2 mapping, src_cols/src_rows
+         * below 64 decode only a quarter/half of the sprite. */
+        if (vect_num == 11) {
+            if (src_cols < 64) src_cols = 64;
+            if (src_rows < 64) src_rows = 64;
+        }
+
 
         /* Look up frame info from FRAMES table (Amiga: 2(a0) indexes frame; frame gives DOWN_STRIP for strip offset). */
         uint32_t ptr_off = 0;
