@@ -129,6 +129,12 @@ add_custom_command(TARGET ab3d1 POST_BUILD
     -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_ab3d_ini_if_missing.cmake
   COMMENT "Ensure ab3d.ini beside ab3d1 (from template if missing)"
 )
+add_custom_command(TARGET ab3d1 POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_CURRENT_SOURCE_DIR}/README.txt"
+          "$<TARGET_FILE_DIR:ab3d1>/README.txt"
+  COMMENT "Copy README.txt beside ab3d1"
+)
 function(ab3d_stage_dir source_dir subdir)
   if(EXISTS "${source_dir}")
     add_custom_command(TARGET ab3d1 POST_BUILD

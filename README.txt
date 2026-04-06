@@ -1,0 +1,38 @@
+ALIEN BREED 3D I (PC PORT)
+CONTROLS
+
+MOVEMENT
+- W or Up Arrow: Move forward
+- S or Down Arrow: Move backward
+- A or . : Strafe left
+- D or / : Strafe right
+- Left Arrow / Right Arrow: Turn left/right
+- Mouse X: Turn left/right (when mouse is captured)
+- Shift (Left or Right): Run
+- C: Duck (toggle)
+- L: Look behind
+
+ACTIONS
+- Left Mouse Button: Fire
+- Right Alt / Left Alt / Left Ctrl / Right Ctrl: Fire
+- Space: Operate / Use
+- Right Mouse Button: Operate / Use (when mouse is captured)
+
+WEAPONS
+- 1-6 (or Numpad 1-6): Select weapon
+- Mouse Wheel: Cycle weapons
+
+GAME / UI
+- P: Pause
+- Tab: Toggle automap
+- Page Up / Page Down: Automap zoom in/out
+- F5: Quick save
+- F9: Quick load
+- F6: Toggle Gouraud visualize mode
+- Esc:
+  - If mouse is captured, releases mouse capture
+  - Otherwise, exits the game
+
+MOUSE CAPTURE
+- Fullscreen starts with mouse capture enabled.
+- In windowed mode, double-click inside the game window to capture the mouse.
