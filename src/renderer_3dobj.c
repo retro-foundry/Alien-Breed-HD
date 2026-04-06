@@ -405,6 +405,52 @@ static uint32_t make_poly_color(int slot, uint16_t tex_map_word, int shade_level
     return RENDER_RGB_RASTER_PIXEL((br << 16) | (bg << 8) | bb);
 }
 
+int32_t poly_object_front_z_for_sort(const uint8_t *obj, const ObjRotatedPoint *orp,
+                                     const GameState *state)
+{
+    if (!obj || !orp || !state) {
+        return orp ? orp->z : 0;
+    }
+
+    int16_t vect_num = vec_rd16(obj + 8);
+    if (vect_num < 0 || vect_num >= POLY_OBJECTS_COUNT) return orp->z;
+
+    VecObject *vo = &g_poly_objects[vect_num];
+    if (!vo->data || vo->num_points <= 0 || vo->num_frames <= 0) return orp->z;
+
+    int frame_num = 0;
+    if (g_poly_use_object_frame) {
+        frame_num = (int)vec_rd16(obj + 10);
+        if (frame_num < 0 || frame_num >= vo->num_frames) frame_num = 0;
+    }
+
+    int frame_byte_off = (int)vo->frame_off[frame_num];
+    int np = vo->num_points;
+    if (np > MAX_POLY_POINTS) np = MAX_POLY_POINTS;
+    if (frame_byte_off < 0 || frame_byte_off + np * 6 > (int)vo->size) return orp->z;
+
+    int16_t facing = vec_rd16(obj + 30);
+    const PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
+    int viewer_ang = (int)(plr->angpos & ANGLE_MASK);
+    int rel_ang = (int)facing - ANGLE_90 - viewer_ang;
+    rel_ang &= ANGLE_MASK;
+
+    int16_t sin_v = sin_lookup(rel_ang);
+    int16_t cos_v = cos_lookup(rel_ang);
+
+    const uint8_t *pts = vo->data + frame_byte_off;
+    int32_t min_world_z = INT32_MAX;
+    for (int i = 0; i < np; i++) {
+        int16_t lx = vec_rd16(pts + i * 6 + 0);
+        int16_t lz = vec_rd16(pts + i * 6 + 4);
+        int16_t rz = (int16_t)(((int32_t)lx * cos_v + (int32_t)lz * sin_v) >> 14);
+        int32_t world_z = orp->z + (int32_t)rz;
+        if (world_z < min_world_z) min_world_z = world_z;
+    }
+
+    return (min_world_z == INT32_MAX) ? orp->z : min_world_z;
+}
+
 /* -----------------------------------------------------------------------
  * draw_3d_vector_object
  *

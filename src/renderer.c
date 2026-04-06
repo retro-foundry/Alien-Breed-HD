@@ -4821,8 +4821,8 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         }
 
         ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
+        int is_poly_object = ((uint8_t)obj[6] == (uint8_t)OBJ_3D_SPRITE);
         {
-            int is_poly_object = ((uint8_t)obj[6] == (uint8_t)OBJ_3D_SPRITE);
             /* Amiga parity:
              * - BitMapObj: near reject at z <= 50
              * - PolygonObj: near reject at z <= 0 (see PolygonObj ble polybehind) */
@@ -4871,7 +4871,9 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
 
         objs[obj_count].src = DRAW_SRC_OBJECT;
         objs[obj_count].idx = obj_idx;
-        objs[obj_count].z = orp->z;
+        objs[obj_count].z = is_poly_object
+            ? poly_object_front_z_for_sort(obj, orp, state)
+            : orp->z;
         obj_count++;
     }
 

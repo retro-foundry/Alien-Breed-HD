@@ -102,4 +102,12 @@ void poly_obj_set_use_object_frame(int enabled);
 void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameState *state,
                            int clip_left, int clip_right, int clip_top, int clip_bot);
 
+/*
+ * Compute the nearest (front-most) view-space Z of a polygon object mesh for
+ * current orientation/frame. Useful as a painter sort key when interleaving
+ * 3D objects with billboard sprites.
+ */
+int32_t poly_object_front_z_for_sort(const uint8_t *obj, const ObjRotatedPoint *orp,
+                                     const GameState *state);
+
 #endif /* RENDERER_3DOBJ_H */
