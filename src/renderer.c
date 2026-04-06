@@ -5252,6 +5252,14 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         if (world_w <= 0) world_w = 32;
         if (world_h <= 0) world_h = 32;
 
+        /* Safety net: HalfWorm uses 90x100 in the original handler each tick.
+         * Force those authored dimensions here so the first visible frame
+         * cannot render at stale/generic level-authored sizes. */
+        if ((ObjNumber)obj_number == OBJ_NBR_WORM) {
+            world_w = 90;
+            world_h = 100;
+        }
+
         /* Screen size: width from Amiga (byte*128/z)*RENDER_SCALE; height uses proj_y_scale so billboard Y matches floor projection scale. */
         int explosion_billboard = 0;
         if (vect_num == 8) {
@@ -5283,6 +5291,27 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int src_rows = (int)obj[15];
         if (src_cols < 1) src_cols = 32;
         if (src_rows < 1) src_rows = 32;
+
+        /* Some enemy classes use non-32 source decode dimensions in the
+         * original code path (writes to object bytes 14/15). Enforce those
+         * here as a safety net so first-frame or stale-object states don't
+         * decode wide sheets as 32x32 strips. */
+        switch ((ObjNumber)obj_number) {
+        case OBJ_NBR_WORM:
+            src_cols = 45; src_rows = 50;
+            break;
+        case OBJ_NBR_HUGE_RED_THING:
+            src_cols = 63; src_rows = 63;
+            break;
+        case OBJ_NBR_SMALL_RED_THING:
+            src_cols = 64; src_rows = 64;
+            break;
+        case OBJ_NBR_EYEBALL:
+            src_cols = 15; src_rows = 31;
+            break;
+        default:
+            break;
+        }
 
         /* BIGSCARYALIEN (vect 11) uses 128-column frames in the PTR table.
          * With the renderer's eff_cols = src_cols*2 mapping, src_cols/src_rows

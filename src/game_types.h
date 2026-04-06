@@ -109,10 +109,11 @@ typedef union {
         /* offset 8 */  int16_t  dead_frame_h;      /* .w - USE OBJ_DEADH() */
         /* offset 10 */ int16_t  dead_frame_l;      /* .w - USE OBJ_DEADL() */
         /* offset 12 */ int16_t  zone;              /* .w - USE OBJ_ZONE() */
-        /* offset 14 */ int16_t  graphic_room;     /* .w - USE OBJ_GROOM() */
+        /* offset 14 */ uint8_t  src_cols;          /* .b - sprite source columns (ObjDraw3 BitMapObj) */
+        /* offset 15 */ uint8_t  src_rows;          /* .b - sprite source rows (ObjDraw3 BitMapObj) */
         /* offset 16 */ int8_t   number;            /* .b - direct access OK */
         /* offset 17 */ int8_t   can_see;           /* .b - direct access OK - visibility or keys */
-        /* offset 18 */ uint8_t  type_data[44];     /* type-dependent fields */
+        /* offset 18 */ uint8_t  type_data[44];     /* type-dependent fields; GraphicRoom at raw+26 */
         /* offset 62 */ int8_t   worry;             /* .b - direct access OK */
         /* offset 63 */ int8_t   in_top;            /* .b - direct access OK */
     } obj;
@@ -149,14 +150,14 @@ static inline void obj_sl(uint8_t *p, int32_t v) {
 /* Common header fields - READ (p = GameObject*) */
 #define OBJ_CID(p)       obj_w((p)->raw + 0)   /* collision_id */
 #define OBJ_ZONE(p)      obj_w((p)->raw + 12)   /* zone */
-#define OBJ_GROOM(p)     obj_w((p)->raw + 14)   /* graphic_room */
+#define OBJ_GROOM(p)     obj_w((p)->raw + 26)   /* graphic_room */
 #define OBJ_DEADH(p)     obj_w((p)->raw + 8)    /* dead_frame_h */
 #define OBJ_DEADL(p)     obj_w((p)->raw + 10)   /* dead_frame_l */
 
 /* Common header fields - WRITE (p = GameObject*, v = value) */
 #define OBJ_SET_CID(p, v)    obj_sw((p)->raw + 0, (int16_t)(v))
 #define OBJ_SET_ZONE(p, v)   obj_sw((p)->raw + 12, (int16_t)(v))
-#define OBJ_SET_GROOM(p, v)  obj_sw((p)->raw + 14, (int16_t)(v))
+#define OBJ_SET_GROOM(p, v)  obj_sw((p)->raw + 26, (int16_t)(v))
 #define OBJ_SET_DEADH(p, v)  obj_sw((p)->raw + 8, (int16_t)(v))
 #define OBJ_SET_DEADL(p, v)  obj_sw((p)->raw + 10, (int16_t)(v))
 

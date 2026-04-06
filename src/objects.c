@@ -216,6 +216,45 @@ static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
 static bool enemy_is_facing_player_cone(GameObject *obj, GameState *state,
                                         int player_num, int16_t min_cos_q14);
 
+/* Keep sprite source decode dimensions in sync with the original per-enemy
+ * setup writes to 14(a0). Without this, wide/tall enemy sheets (e.g. worm)
+ * can decode as 32x32 and appear as sliced/cropped frames. */
+static void enemy_apply_sprite_source_dims(GameObject *obj)
+{
+    if (!obj) return;
+
+    switch (obj->obj.number) {
+    case OBJ_NBR_WORM:
+        obj->raw[14] = 45;
+        obj->raw[15] = 50;
+        break;
+    case OBJ_NBR_HUGE_RED_THING:
+        obj->raw[14] = 63;
+        obj->raw[15] = 63;
+        break;
+    case OBJ_NBR_SMALL_RED_THING:
+        obj->raw[14] = 64;
+        obj->raw[15] = 64;
+        break;
+    case OBJ_NBR_EYEBALL:
+        obj->raw[14] = 15;
+        obj->raw[15] = 31;
+        break;
+    case OBJ_NBR_ALIEN:
+    case OBJ_NBR_MARINE:
+    case OBJ_NBR_TOUGH_MARINE:
+        obj->raw[14] = 31;
+        obj->raw[15] = 31;
+        break;
+    case OBJ_NBR_TREE:
+        obj->raw[14] = 32;
+        obj->raw[15] = 32;
+        break;
+    default:
+        break;
+    }
+}
+
 static void enemy_update_anim(GameObject *obj, GameState *state, int16_t vect_num)
 {
     enemy_update_anim_with_step(obj, state, vect_num, (walk_cycle >> 3) & 3);
@@ -226,6 +265,8 @@ static void enemy_update_anim(GameObject *obj, GameState *state, int16_t vect_nu
 static void enemy_update_anim_with_step(GameObject *obj, GameState *state,
                                         int16_t vect_num, int walk_step)
 {
+    enemy_apply_sprite_source_dims(obj);
+
     if (walk_step < 0) walk_step = 0;
     if (walk_step > 3) walk_step = 3;
 
@@ -1888,6 +1929,12 @@ void object_handle_worm(GameObject *obj, GameState *state)
 {
     if (!state->nasty) return;
     enemy_decay_worry_latched(obj);
+
+    /* HalfWorm.s writes #90*256+100 to 6(a0) every tick.
+     * Keeping this in sync prevents under-scaled/floating worm sprites when
+     * level-authored object sizes are stale or generic (e.g. 64x64). */
+    obj->raw[6] = 90;
+    obj->raw[7] = 100;
 
     const EnemyParams *params = &enemy_params[3];
     if (enemy_check_damage(obj, params, state)) return;
