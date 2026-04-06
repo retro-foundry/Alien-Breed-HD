@@ -610,6 +610,32 @@ static int16_t enemy_min_player_separation_for_type(int8_t obj_type)
     }
 }
 
+static int16_t enemy_base_player_collision_separation(int8_t enemy_type, int8_t player_type)
+{
+    if (enemy_type < 0 || enemy_type > 20) return 0;
+    if (player_type < 0 || player_type > 20) return 0;
+    return (int16_t)(col_box_table[enemy_type].width + col_box_table[player_type].width);
+}
+
+static bool enemy_player_vertical_overlap(const GameObject *obj,
+                                          const PlayerState *plr,
+                                          int8_t player_type)
+{
+    if (!obj || !plr) return false;
+    if (obj->obj.number < 0 || obj->obj.number > 20) return false;
+    if (player_type < 0 || player_type > 20) return false;
+
+    {
+        int16_t enemy_y = obj_w(obj->raw + 4);
+        int16_t plr_y = (int16_t)((plr->yoff + plr->s_height / 2) >> 7);
+        int16_t enemy_bot = (int16_t)(enemy_y - col_box_table[obj->obj.number].half_height);
+        int16_t enemy_top = (int16_t)(enemy_y + col_box_table[obj->obj.number].half_height);
+        int16_t plr_bot = (int16_t)(plr_y - col_box_table[player_type].half_height);
+        int16_t plr_top = (int16_t)(plr_y + col_box_table[player_type].half_height);
+        return !(enemy_top < plr_bot || enemy_bot > plr_top);
+    }
+}
+
 static void enemy_enforce_min_distance_from_player(const GameObject *obj,
                                                    const PlayerState *plr,
                                                    int16_t min_dist,
@@ -617,27 +643,37 @@ static void enemy_enforce_min_distance_from_player(const GameObject *obj,
 {
     if (!obj || !plr || !x || !z || min_dist <= 0) return;
 
-    int32_t dx = (int32_t)(*x) - (int32_t)plr->p_xoff;
-    int32_t dz = (int32_t)(*z) - (int32_t)plr->p_zoff;
-    int32_t dist = calc_dist_approx(dx, dz);
-    if (dist >= min_dist) return;
+    int16_t plr_x = (int16_t)(plr->xoff >> 16);
+    int16_t plr_z = (int16_t)(plr->zoff >> 16);
+    int32_t dx = (int32_t)(*x) - (int32_t)plr_x;
+    int32_t dz = (int32_t)(*z) - (int32_t)plr_z;
+    int32_t adx = (dx < 0) ? -dx : dx;
+    int32_t adz = (dz < 0) ? -dz : dz;
 
-    if (dist <= 0) {
-        /* Degenerate overlap: push out along current facing so we still enforce spacing. */
-        int32_t sx = (int32_t)sin_lookup(NASTY_FACING(*obj));
-        int32_t sz = (int32_t)cos_lookup(NASTY_FACING(*obj));
-        dx = (sx == 0) ? 1 : sx;
-        dz = (sz == 0) ? 0 : sz;
-        dist = calc_dist_approx(dx, dz);
-        if (dist <= 0) {
-            dx = 1;
-            dz = 0;
-            dist = 1;
+    /* Amiga Collision does axis-threshold checks, not radial distance.
+     * Keep at least one axis strictly outside width sum to avoid overlap. */
+    if (adx > min_dist || adz > min_dist) return;
+
+    int32_t nx = *x;
+    int32_t nz = *z;
+    if (adx >= adz) {
+        int32_t sx;
+        if (dx > 0) sx = 1;
+        else if (dx < 0) sx = -1;
+        else {
+            sx = ((int32_t)sin_lookup(NASTY_FACING(*obj)) >= 0) ? 1 : -1;
         }
+        nx = (int32_t)plr_x + sx * (int32_t)(min_dist + 1);
+    } else {
+        int32_t sz;
+        if (dz > 0) sz = 1;
+        else if (dz < 0) sz = -1;
+        else {
+            sz = ((int32_t)cos_lookup(NASTY_FACING(*obj)) >= 0) ? 1 : -1;
+        }
+        nz = (int32_t)plr_z + sz * (int32_t)(min_dist + 1);
     }
 
-    int32_t nx = (int32_t)plr->p_xoff + (dx * (int32_t)min_dist) / dist;
-    int32_t nz = (int32_t)plr->p_zoff + (dz * (int32_t)min_dist) / dist;
     if (nx < -32768) nx = -32768;
     if (nx >  32767) nx =  32767;
     if (nz < -32768) nz = -32768;
@@ -647,15 +683,32 @@ static void enemy_enforce_min_distance_from_player(const GameObject *obj,
 }
 
 static void enemy_enforce_player_separation(const GameObject *obj, const GameState *state,
+                                            int8_t mover_in_top,
                                             int16_t *x, int16_t *z)
 {
     if (!obj || !state || !x || !z) return;
-    int16_t min_dist = enemy_min_player_separation_for_type(obj->obj.number);
-    if (min_dist <= 0) return;
+    if (obj->obj.number < 0 || obj->obj.number > 20) return;
+    (void)mover_in_top;
 
-    enemy_enforce_min_distance_from_player(obj, &state->plr1, min_dist, x, z);
-    if (state->mode != MODE_SINGLE) {
-        enemy_enforce_min_distance_from_player(obj, &state->plr2, min_dist, x, z);
+    {
+        int16_t extra_dist = enemy_min_player_separation_for_type(obj->obj.number);
+
+        if (state->plr1.zone >= 0 &&
+            enemy_player_vertical_overlap(obj, &state->plr1, OBJ_NBR_PLR1)) {
+            int16_t min_dist = enemy_base_player_collision_separation(obj->obj.number, OBJ_NBR_PLR1);
+            if (extra_dist > min_dist) min_dist = extra_dist;
+            if (min_dist > 0)
+                enemy_enforce_min_distance_from_player(obj, &state->plr1, min_dist, x, z);
+        }
+
+        if (state->mode != MODE_SINGLE &&
+            state->plr2.zone >= 0 &&
+            enemy_player_vertical_overlap(obj, &state->plr2, OBJ_NBR_PLR2)) {
+            int16_t min_dist = enemy_base_player_collision_separation(obj->obj.number, OBJ_NBR_PLR2);
+            if (extra_dist > min_dist) min_dist = extra_dist;
+            if (min_dist > 0)
+                enemy_enforce_min_distance_from_player(obj, &state->plr2, min_dist, x, z);
+        }
     }
 }
 
@@ -793,7 +846,7 @@ static void enemy_wander_with_timer(GameObject *obj, const EnemyParams *params,
     {
         int16_t sep_x = (int16_t)ctx.newx;
         int16_t sep_z = (int16_t)ctx.newz;
-        enemy_enforce_player_separation(obj, state, &sep_x, &sep_z);
+        enemy_enforce_player_separation(obj, state, ctx.stood_in_top, &sep_x, &sep_z);
         ctx.newx = sep_x;
         ctx.newz = sep_z;
     }
@@ -1971,7 +2024,7 @@ static int32_t enemy_track_target_with_turn(GameObject *obj, const EnemyParams *
     {
         int16_t sep_x = (int16_t)ctx.newx;
         int16_t sep_z = (int16_t)ctx.newz;
-        enemy_enforce_player_separation(obj, state, &sep_x, &sep_z);
+        enemy_enforce_player_separation(obj, state, ctx.stood_in_top, &sep_x, &sep_z);
         ctx.newx = sep_x;
         ctx.newz = sep_z;
     }
@@ -2656,6 +2709,69 @@ void object_handle_big_gun(GameObject *obj, GameState *state)
 }
 
 /* -----------------------------------------------------------------------
+ * Bullet swept-hit helper
+ *
+ * Tests whether a bullet movement segment intersects a 2D target radius and
+ * returns the closest hit point along the segment (t in [0..len_sq]).
+ * ----------------------------------------------------------------------- */
+static bool bullet_segment_hits_target_radius(int32_t sx, int32_t sz,
+                                              int32_t ex, int32_t ez,
+                                              int32_t tx, int32_t tz,
+                                              int32_t radius,
+                                              int64_t *out_t_clamped,
+                                              int32_t *out_hit_x,
+                                              int32_t *out_hit_z)
+{
+    if (radius < 0) radius = 0;
+
+    int64_t vx = (int64_t)ex - (int64_t)sx;
+    int64_t vz = (int64_t)ez - (int64_t)sz;
+    int64_t wx = (int64_t)tx - (int64_t)sx;
+    int64_t wz = (int64_t)tz - (int64_t)sz;
+    int64_t max_dist_sq = (int64_t)radius * (int64_t)radius;
+    int64_t line_len_sq = vx * vx + vz * vz;
+    int64_t t_clamped = 0;
+
+    if (line_len_sq <= 0) {
+        int64_t point_dist_sq = wx * wx + wz * wz;
+        if (point_dist_sq > max_dist_sq) return false;
+        if (out_t_clamped) *out_t_clamped = 0;
+        if (out_hit_x) *out_hit_x = sx;
+        if (out_hit_z) *out_hit_z = sz;
+        return true;
+    }
+
+    {
+        int64_t dot = wx * vx + wz * vz;
+        if (dot <= 0) {
+            int64_t start_dist_sq = wx * wx + wz * wz;
+            if (start_dist_sq > max_dist_sq) return false;
+            t_clamped = 0;
+            if (out_hit_x) *out_hit_x = sx;
+            if (out_hit_z) *out_hit_z = sz;
+        } else if (dot >= line_len_sq) {
+            int64_t exd = (int64_t)tx - (int64_t)ex;
+            int64_t ezd = (int64_t)tz - (int64_t)ez;
+            int64_t end_dist_sq = exd * exd + ezd * ezd;
+            if (end_dist_sq > max_dist_sq) return false;
+            t_clamped = line_len_sq;
+            if (out_hit_x) *out_hit_x = ex;
+            if (out_hit_z) *out_hit_z = ez;
+        } else {
+            int64_t cross = wx * vz - wz * vx;
+            if (cross < 0) cross = -cross;
+            if ((cross * cross) > (max_dist_sq * line_len_sq)) return false;
+            t_clamped = dot;
+            if (out_hit_x) *out_hit_x = sx + (int32_t)((vx * t_clamped) / line_len_sq);
+            if (out_hit_z) *out_hit_z = sz + (int32_t)((vz * t_clamped) / line_len_sq);
+        }
+    }
+
+    if (out_t_clamped) *out_t_clamped = t_clamped;
+    return true;
+}
+
+/* -----------------------------------------------------------------------
  * Bullet processing
  *
  * Translated from Anims.s ItsABullet (line ~2774-3384).
@@ -2802,7 +2918,7 @@ void object_handle_bullet(GameObject *obj, GameState *state)
 
     /* Position is in object_points at OBJ_CID (works for both object_data and nasty_shot_data bullets). */
     int idx = (int)OBJ_CID(obj);
-    if (idx < 0 || (state->level.object_points && idx >= state->level.num_object_points)) {
+    if (!state->level.object_points || idx < 0 || idx >= state->level.num_object_points) {
         OBJ_SET_ZONE(obj, -1);
         return;
     }
@@ -3029,16 +3145,18 @@ void object_handle_bullet(GameObject *obj, GameState *state)
 
     if (!state->level.object_data) return;
 
-    int16_t xdiff = (int16_t)(ctx.newx - bx);
-    int16_t zdiff = (int16_t)(ctx.newz - bz);
-    int32_t diff_sq = (int32_t)xdiff * xdiff + (int32_t)zdiff * zdiff;
-    int16_t range = 1;
-    if (diff_sq > 0) {
-        int32_t r = calc_dist_euclidean((int32_t)xdiff, (int32_t)zdiff);
-        if (r < 1) r = 1;
-        if (r > 32767) r = 32767;
-        range = (int16_t)r;
-    }
+    int32_t seg_start_x = bx;
+    int32_t seg_start_z = bz;
+    int32_t seg_end_x = ctx.newx;
+    int32_t seg_end_z = ctx.newz;
+
+    bool have_hit = false;
+    int64_t best_hit_t = 0;
+    int32_t best_hit_x = seg_end_x;
+    int32_t best_hit_z = seg_end_z;
+    int best_hit_idx = -1;
+    GameObject *best_target = NULL;
+
     int check_idx = 0;
     while (1) {
         GameObject *target = (GameObject*)(state->level.object_data +
@@ -3070,8 +3188,6 @@ void object_handle_bullet(GameObject *obj, GameState *state)
 
         /* Height check (Anims.s: abs(target_y - bullet_y) <= half_height). */
         const CollisionBox *box = &col_box_table[tgt_type];
-        int32_t sqr_edge = (int32_t)range + 40;
-        int64_t sqrnum = (int64_t)sqr_edge * (int64_t)sqr_edge;
         int16_t ydiff = (int16_t)(obj_w(obj->raw + 4) - obj_w(target->raw + 4));
         if (ydiff < 0) ydiff = (int16_t)(-ydiff);
         if (ydiff > box->half_height) {
@@ -3079,77 +3195,92 @@ void object_handle_bullet(GameObject *obj, GameState *state)
             continue;
         }
 
-        /* Position (Amiga: (a1,d0.w*8) = target point index) */
+        /* Position (Amiga: (a1,d0.w*8) = target point index). */
+        int16_t target_cid = OBJ_CID(target);
+        if (target_cid < 0 || target_cid >= state->level.num_object_points) {
+            check_idx++;
+            continue;
+        }
         int16_t tx, tz;
-        get_object_pos(&state->level, OBJ_CID(target), &tx, &tz);
+        get_object_pos(&state->level, target_cid, &tx, &tz);
 
-        int32_t old_dx = (int32_t)tx - (int32_t)bx;
-        int32_t old_dz = (int32_t)tz - (int32_t)bz;
-        int32_t new_dx = (int32_t)tx - (int32_t)ctx.newx;
-        int32_t new_dz = (int32_t)tz - (int32_t)ctx.newz;
-
-        int64_t cross = (int64_t)old_dx * (int64_t)zdiff - (int64_t)old_dz * (int64_t)xdiff;
-        if (cross < 0) cross = -cross;
-        int32_t perp_dist = (int32_t)(cross / range);
-        if (perp_dist > box->width) {
+        /* Swept 2D capsule hit: this fixes tunneling where bullets cross a
+         * target between ticks but endpoint checks miss. Keep the legacy +40
+         * slack so close passes still register similarly to Amiga feel. */
+        int32_t hit_radius = (int32_t)box->width + 40;
+        int64_t cand_t = 0;
+        int32_t cand_hit_x = seg_end_x;
+        int32_t cand_hit_z = seg_end_z;
+        if (!bullet_segment_hits_target_radius(seg_start_x, seg_start_z,
+                                               seg_end_x, seg_end_z,
+                                               tx, tz, hit_radius,
+                                               &cand_t,
+                                               &cand_hit_x, &cand_hit_z)) {
             check_idx++;
             continue;
         }
 
-        int64_t dist_old_sq = (int64_t)old_dx * old_dx + (int64_t)old_dz * old_dz;
-        if (dist_old_sq > sqrnum) {
-            check_idx++;
-            continue;
-        }
-        int64_t dist_new_sq = (int64_t)new_dx * new_dx + (int64_t)new_dz * new_dz;
-        if (dist_new_sq > sqrnum) {
-            check_idx++;
-            continue;
+        if (!have_hit || cand_t < best_hit_t) {
+            have_hit = true;
+            best_hit_t = cand_t;
+            best_hit_x = cand_hit_x;
+            best_hit_z = cand_hit_z;
+            best_hit_idx = check_idx;
+            best_target = target;
         }
 
-        bool explosive_projectile_hit = (shot_size >= 0 && shot_size < 8 &&
-                                         bullet_types[shot_size].explosive_force > 0);
-
-        /* HIT! Apply damage */
-        target->raw[19] = damage_accumulate_u8(target->raw[19], (int32_t)(uint8_t)SHOT_POWER(*obj));
-        NASTY_SET_IMPACTX(target, SHOT_XVEL(*obj) >> 16);
-        NASTY_SET_IMPACTZ(target, SHOT_ZVEL(*obj) >> 16);
-        if (explosive_projectile_hit && check_idx >= 0 && check_idx < MAX_OBJECTS) {
-            /* Direct rocket/grenade impacts should always count as explosion kills
-             * even if the subsequent splash visibility test excludes the target. */
-            explosion_damage_flag[check_idx] = 1;
-        }
-
-        /* Set bullet to popping */
-        SHOT_STATUS(*obj) = 1;
-        SHOT_ANIM(*obj) = 0;
-        SHOT_SET_LIFE(*obj, 0);
-
-        /* Hit sound + explosive splash */
-        if (shot_size >= 0 && shot_size < 8 &&
-            bullet_types[shot_size].hit_noise >= 0) {
-            audio_play_sample(bullet_types[shot_size].hit_noise,
-                              bullet_types[shot_size].hit_volume);
-        }
-        if (explosive_projectile_hit) {
-            int16_t blast_zone = OBJ_ZONE(obj);
-            int8_t blast_top = obj->obj.in_top;
-            if (ctx.objroom && state->level.data) {
-                int zi = level_zone_index_from_room_ptr(&state->level, ctx.objroom);
-                if (zi < 0) {
-                    int16_t room_zone_word = (int16_t)((ctx.objroom[0] << 8) | ctx.objroom[1]);
-                    zi = level_connect_to_zone_index(&state->level, room_zone_word);
-                }
-                if (zi >= 0 && zi < zone_slots)
-                    blast_zone = (int16_t)zi;
-                blast_top = ctx.stood_in_top;
-            }
-            compute_blast(state, ctx.newx, ctx.newz, accypos,
-                          bullet_types[shot_size].explosive_force,
-                          blast_zone, blast_top);
-        }
-        return;
+        check_idx++;
     }
+
+    if (!have_hit || !best_target) return;
+
+    bool explosive_projectile_hit = (shot_size >= 0 && shot_size < 8 &&
+                                     bullet_types[shot_size].explosive_force > 0);
+
+    /* HIT! Apply damage */
+    best_target->raw[19] = damage_accumulate_u8(best_target->raw[19],
+                                                (int32_t)(uint8_t)SHOT_POWER(*obj));
+    NASTY_SET_IMPACTX(best_target, SHOT_XVEL(*obj) >> 16);
+    NASTY_SET_IMPACTZ(best_target, SHOT_ZVEL(*obj) >> 16);
+    if (explosive_projectile_hit && best_hit_idx >= 0 && best_hit_idx < MAX_OBJECTS) {
+        /* Direct rocket/grenade impacts should always count as explosion kills
+         * even if the subsequent splash visibility test excludes the target. */
+        explosion_damage_flag[best_hit_idx] = 1;
+    }
+
+    /* Set bullet to popping */
+    SHOT_STATUS(*obj) = 1;
+    SHOT_ANIM(*obj) = 0;
+    SHOT_SET_LIFE(*obj, 0);
+
+    /* Hit sound + explosive splash */
+    if (shot_size >= 0 && shot_size < 8 &&
+        bullet_types[shot_size].hit_noise >= 0) {
+        audio_play_sample(bullet_types[shot_size].hit_noise,
+                          bullet_types[shot_size].hit_volume);
+    }
+    if (explosive_projectile_hit) {
+        int16_t blast_zone = OBJ_ZONE(obj);
+        int8_t blast_top = obj->obj.in_top;
+        if (ctx.objroom && state->level.data) {
+            int zi = level_zone_index_from_room_ptr(&state->level, ctx.objroom);
+            if (zi < 0) {
+                int16_t room_zone_word = (int16_t)((ctx.objroom[0] << 8) | ctx.objroom[1]);
+                zi = level_connect_to_zone_index(&state->level, room_zone_word);
+            }
+            if (zi >= 0 && zi < zone_slots)
+                blast_zone = (int16_t)zi;
+            blast_top = ctx.stood_in_top;
+        }
+        compute_blast(state, best_hit_x, best_hit_z, accypos,
+                      bullet_types[shot_size].explosive_force,
+                      blast_zone, blast_top);
+    }
+
+    /* Pop at resolved hit point so impact doesn't appear to pass through. */
+    obj_sl(bullet_pts, (int32_t)best_hit_x << 16);
+    obj_sl(bullet_pts + 4, (int32_t)best_hit_z << 16);
+    obj_sw(obj->raw + 4, (int16_t)(accypos >> 7));
 }
 
 /* Door/lift wall list: 10 bytes per entry:
