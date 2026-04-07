@@ -2025,7 +2025,16 @@ void object_handle_worm(GameObject *obj, GameState *state)
 
         if (fourth_timer < 20) {
             fourth_timer = 30;
-            OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, (int16_t)(100 + (rand() & 0xFF)));
+            {
+                /* HalfWorm.s cadence: decrement ThirdTimer per spit, then only
+                 * apply long reset once it drops below -3. This yields the
+                 * short spit run before cooldown seen on Amiga. */
+                int16_t third_after = (int16_t)(OBJ_TD_W(obj, ENEMY_THIRD_TIMER_OFF) - 1);
+                if (third_after < -3) {
+                    third_after = (int16_t)(100 + ((rand() >> 4) & 0xFF));
+                }
+                OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, third_after);
+            }
             audio_play_sample(9, 100);
             enemy_fire_at_player(obj, state, target_player, 5, 10, 16, 3);
         }
