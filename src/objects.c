@@ -4595,7 +4595,12 @@ static void compute_blast_apply_target(GameState *state,
     int16_t atten = (int16_t)(32 - dist_bucket);
     int32_t damage = ((int32_t)max_damage * (int32_t)atten) >> 5;
     if (damage > max_damage) damage = max_damage;
-    if (damage < 1) damage = 1;
+    if (damage < 1) {
+        bool huge_red_center_falloff = (target_obj && target_obj->obj.number == OBJ_NBR_HUGE_RED_THING);
+        if (!huge_red_center_falloff) {
+            damage = 1;
+        }
+    }
 
     if (target_player_num == 1 || target_player_num == 2) {
         player_add_damage(state, target_player_num, (int)damage);
@@ -4603,9 +4608,11 @@ static void compute_blast_apply_target(GameState *state,
         else state->hitcol2 = 0xF00;
         audio_play_sample(19, amiga_noisevol_to_pc(PLAYER_PAIN_NOISEVOL));
     } else if (target_obj) {
-        target_obj->raw[19] = damage_accumulate_u8(target_obj->raw[19], damage);
-        if (target_obj_index >= 0 && target_obj_index < MAX_OBJECTS) {
-            explosion_damage_flag[target_obj_index] = 1;
+        if (damage > 0) {
+            target_obj->raw[19] = damage_accumulate_u8(target_obj->raw[19], damage);
+            if (target_obj_index >= 0 && target_obj_index < MAX_OBJECTS) {
+                explosion_damage_flag[target_obj_index] = 1;
+            }
         }
     }
 
@@ -4687,6 +4694,11 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         int16_t target_radius = 40;
         if (obj->obj.number >= 0 && obj->obj.number < 21)
             target_radius = col_box_table[(int)obj->obj.number].width;
+        if (obj->obj.number == OBJ_NBR_HUGE_RED_THING) {
+            /* BigRedThing.s ComputeBlast falloff uses center-point distance.
+             * Edge-radius splash makes the level-15 boss die much faster than Amiga. */
+            target_radius = 0;
+        }
         int target_player_num = 0;
         if (obj->obj.number == OBJ_NBR_PLR1) target_player_num = 1;
         else if (obj->obj.number == OBJ_NBR_PLR2) target_player_num = 2;
