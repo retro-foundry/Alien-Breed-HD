@@ -81,10 +81,6 @@
  * Keep this near cutoff for billboards so close sprites don't over-scale. */
 #define SPRITE_NEAR_CLIP_Z 50
 
-/* Raise view height for rendering only (gameplay uses plr->yoff unchanged).
- * Makes the camera draw from higher so the floor appears further away, matching Amiga. */
-#define VIEW_HEIGHT_LIFT  (2 * 1024)
-
 /* -----------------------------------------------------------------------
  * Global renderer state
  * ----------------------------------------------------------------------- */
@@ -7388,11 +7384,10 @@ void renderer_draw_display(GameState *state)
     r->cosval = cos_lookup(ang);
 
     /* Extract integer part of 16.16 fixed-point position for rendering.
-     * On Amiga: .w operations on big-endian 32-bit values read the high word.
-     * Raise camera Y for drawing only so floor appears further away (match Amiga). */
+     * On Amiga: .w operations on big-endian 32-bit values read the high word. */
     r->xoff = (int16_t)(plr->xoff >> 16);
     r->zoff = (int16_t)(plr->zoff >> 16);
-    r->yoff = plr->yoff - VIEW_HEIGHT_LIFT;
+    r->yoff = plr->yoff;
 
     /* wallyoff = (yoff >> 8) + 224, masked to 0-255 */
     int32_t y_shifted = r->yoff >> 8;
