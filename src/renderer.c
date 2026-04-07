@@ -1942,8 +1942,6 @@ static void free_buffers(void)
     g_renderer.cw_buffer = NULL;
     ab3d_aligned_free(g_renderer.cw_back_buffer);
     g_renderer.cw_back_buffer = NULL;
-    ab3d_aligned_free(g_renderer.depth_buffer);
-    g_renderer.depth_buffer = NULL;
     ab3d_aligned_free(g_renderer.clip.top);
     g_renderer.clip.top = NULL;
     ab3d_aligned_free(g_renderer.clip.bot);
@@ -1976,8 +1974,6 @@ static void allocate_buffers(int w, int h)
     size_t cw_size = buf_size * sizeof(uint16_t);
     g_renderer.cw_buffer = (uint16_t *)ab3d_aligned_calloc(32, 1, cw_size);
     g_renderer.cw_back_buffer = (uint16_t *)ab3d_aligned_calloc(32, 1, cw_size);
-
-    g_renderer.depth_buffer = NULL;  /* Amiga: no depth buffer; painter's + stream order only */
 
     size_t clip_size = (size_t)w * sizeof(int16_t);
     g_renderer.clip.top = (int16_t *)ab3d_aligned_calloc(32, 1, clip_size);
@@ -2882,6 +2878,8 @@ int32_t renderer_column_clip_nearest_z_at(int col, int row)
     const ColumnClip *clip = &g_renderer.clip;
     int32_t nearest_z = 0;
     if (col < 0 || col >= g_renderer.width) return 0;
+    if (row < 0 || row >= g_renderer.height) return 0;
+
     if (!clip->top || !clip->bot || !clip->z ||
         !clip->top2 || !clip->bot2 || !clip->z2) {
         return 0;
@@ -3200,8 +3198,8 @@ static void draw_wall_column(RenderSliceContext *ctx,
         }
     }
 
-    /* Update column clip (walls occlude sprites behind them).
-     * Edge-expanded rows/columns also write clip coverage so sprites don't overdraw those pixels. */
+    /* Update wall column clip (walls occlude sprites behind them).
+     * Edge-expanded rows/columns also write coverage so sprites don't overdraw those pixels. */
     if (ctx->update_column_clip) {
         int occ_top = ct;
         int occ_bot = cb;
@@ -4245,6 +4243,9 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     dx_end = col_end - sx;
     if (dx_end > width) dx_end = width;
     if (dx_end < 0) dx_end = 0;
+    const ColumnClip *wall_clip = &g_renderer.clip;
+    int have_wall_clip = (wall_clip->top && wall_clip->bot && wall_clip->z &&
+                          wall_clip->top2 && wall_clip->bot2 && wall_clip->z2);
     for (int dx = dx_start; dx < dx_end; dx++) {
         int screen_col = sx + dx;
         if (screen_col < 0 || screen_col >= rw) continue;
@@ -4271,74 +4272,140 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
 
         const uint8_t *src = wad + wad_off;
 
-        for (int dy = 0; dy < height; dy++) {
-            int screen_row = sy + dy;
-            if (screen_row < 0 || screen_row >= rh) continue;
-            /* Clip to active slice vertical band (full height for column-threaded workers). */
-            if (screen_row < (int)ctx->top_clip || screen_row > (int)ctx->bot_clip) continue;
-            /* Room band clip: do not draw above ceiling or below floor (floor covers feet). */
-            if (clip_top_sy < clip_bot_sy && (screen_row < clip_top_sy || screen_row > clip_bot_sy)) continue;
+        /* Compute the exact drawable segments for this sprite column once, then
+         * only rasterize those rows. This avoids per-pixel wall depth tests. */
+        int draw_top = sy;
+        int draw_bot = sy + height - 1;
+        if (draw_top < 0) draw_top = 0;
+        if (draw_bot >= rh) draw_bot = rh - 1;
+        if (draw_top < (int)ctx->top_clip) draw_top = (int)ctx->top_clip;
+        if (draw_bot > (int)ctx->bot_clip) draw_bot = (int)ctx->bot_clip;
+        if (clip_top_sy < clip_bot_sy) {
+            if (draw_top < clip_top_sy) draw_top = clip_top_sy;
+            if (draw_bot > clip_bot_sy) draw_bot = clip_bot_sy;
+        }
+        if (draw_top > draw_bot) continue;
 
-            /* Wall clip test: only skip sprite pixels that are inside any stored wall span
-             * in this column and behind the nearest wall depth for that row. */
-            {
-                int32_t wall_z = renderer_column_clip_nearest_z_at(screen_col, screen_row);
-                if (wall_z > 0 && (int32_t)z >= wall_z) continue;
+        int occ_top[2];
+        int occ_bot[2];
+        int occ_count = 0;
+        if (have_wall_clip) {
+            int16_t top0 = wall_clip->top[screen_col];
+            int16_t bot0 = wall_clip->bot[screen_col];
+            int32_t z0 = wall_clip->z[screen_col];
+            if (z0 > 0 && top0 <= bot0 && (int32_t)z >= z0) {
+                int t = (top0 > draw_top) ? top0 : draw_top;
+                int b = (bot0 < draw_bot) ? bot0 : draw_bot;
+                if (t <= b) {
+                    occ_top[occ_count] = t;
+                    occ_bot[occ_count] = b;
+                    occ_count++;
+                }
             }
-
-            /* Map screen row to source row 0..eff_rows-1 */
-            int src_row = (height > 1) ? (dy * eff_rows) / height : 0;
-            if (src_row >= eff_rows) src_row = eff_rows - 1;
-            int row_idx = (int)down_strip + src_row;
-
-            /* Bounds check: each row is 2 bytes (one 16-bit word) */
-            if (wad_off + (size_t)(row_idx + 1) * 2 > wad_size) continue;
-
-            /* Decode 5-bit pixel from packed word (match gun: build 16-bit word big-endian). */
-            uint16_t w = (uint16_t)((src[row_idx * 2] << 8) | src[row_idx * 2 + 1]);
-            uint8_t texel = 0;
-            if (mode == 0) {
-                texel = (uint8_t)(w & 0x1F);
-            } else if (mode == 1) {
-                texel = (uint8_t)((w >> 5) & 0x1F);
-            } else {
-                texel = (uint8_t)((w >> 10) & 0x1F);
+            int16_t top1 = wall_clip->top2[screen_col];
+            int16_t bot1 = wall_clip->bot2[screen_col];
+            int32_t z1 = wall_clip->z2[screen_col];
+            if (z1 > 0 && top1 <= bot1 && (int32_t)z >= z1) {
+                int t = (top1 > draw_top) ? top1 : draw_top;
+                int b = (bot1 < draw_bot) ? bot1 : draw_bot;
+                if (t <= b) {
+                    occ_top[occ_count] = t;
+                    occ_bot[occ_count] = b;
+                    occ_count++;
+                }
             }
-            if (texel == 0) continue;  /* transparent */
+            if (occ_count == 2) {
+                if (occ_top[1] < occ_top[0]) {
+                    int t = occ_top[0];
+                    int b = occ_bot[0];
+                    occ_top[0] = occ_top[1];
+                    occ_bot[0] = occ_bot[1];
+                    occ_top[1] = t;
+                    occ_bot[1] = b;
+                }
+                if (occ_top[1] <= occ_bot[0] + 1) {
+                    if (occ_bot[1] > occ_bot[0]) occ_bot[0] = occ_bot[1];
+                    occ_count = 1;
+                }
+            }
+        }
 
-            uint8_t *row8 = buf + (size_t)screen_row * rw;
-            uint32_t *row32 = rgb + (size_t)screen_row * rw;
-            uint16_t *row16 = cw + (size_t)screen_row * rw;
+        int seg_top[3];
+        int seg_bot[3];
+        int seg_count = 0;
+        int cursor = draw_top;
+        for (int i = 0; i < occ_count; i++) {
+            if (occ_top[i] > cursor) {
+                seg_top[seg_count] = cursor;
+                seg_bot[seg_count] = occ_top[i] - 1;
+                seg_count++;
+            }
+            if (occ_bot[i] + 1 > cursor) cursor = occ_bot[i] + 1;
+        }
+        if (cursor <= draw_bot) {
+            seg_top[seg_count] = cursor;
+            seg_bot[seg_count] = draw_bot;
+            seg_count++;
+        }
 
-            /* Geometry tag buffer is used by wall-join post-pass:
-             * 1=floor/ceiling, 2=wall. Sprites must use a neutral tag so
-             * they are never treated as wall/floor spans. */
-            row8[screen_col] = 3;
+        for (int seg = 0; seg < seg_count; seg++) {
+            for (int screen_row = seg_top[seg]; screen_row <= seg_bot[seg]; screen_row++) {
+                int dy = screen_row - sy;
 
-            /* Color from .pal brightness palette (15 levels x 64 bytes or single 64-byte block).
-             * Amiga .pal is big-endian 12-bit words. Try little-endian if colors look wrong. */
-            if (pal && pal_size >= 64) {
-                uint32_t level_off = (pal_level_off + 64 <= pal_size) ? pal_level_off : 0;
-                uint32_t ci = level_off + (uint32_t)texel * 2;
-                if (ci + 1 < pal_size) {
-                    uint16_t c12 = (uint16_t)((pal[ci] << 8) | pal[ci + 1]);
-                    if (g_renderer_rgb_raster_expand)
-                        row32[screen_col] = amiga12_to_argb(c12);
-                    row16[screen_col] = c12;
+                /* Map screen row to source row 0..eff_rows-1 */
+                int src_row = (height > 1) ? (dy * eff_rows) / height : 0;
+                if (src_row >= eff_rows) src_row = eff_rows - 1;
+                int row_idx = (int)down_strip + src_row;
+
+                /* Bounds check: each row is 2 bytes (one 16-bit word) */
+                if (wad_off + (size_t)(row_idx + 1) * 2 > wad_size) continue;
+
+                /* Decode 5-bit pixel from packed word (match gun: build 16-bit word big-endian). */
+                uint16_t w = (uint16_t)((src[row_idx * 2] << 8) | src[row_idx * 2 + 1]);
+                uint8_t texel = 0;
+                if (mode == 0) {
+                    texel = (uint8_t)(w & 0x1F);
+                } else if (mode == 1) {
+                    texel = (uint8_t)((w >> 5) & 0x1F);
                 } else {
+                    texel = (uint8_t)((w >> 10) & 0x1F);
+                }
+                if (texel == 0) continue;  /* transparent */
+
+                uint8_t *row8 = buf + (size_t)screen_row * rw;
+                uint32_t *row32 = rgb + (size_t)screen_row * rw;
+                uint16_t *row16 = cw + (size_t)screen_row * rw;
+
+                /* Geometry tag buffer is used by wall-join post-pass:
+                 * 1=floor/ceiling, 2=wall. Sprites must use a neutral tag so
+                 * they are never treated as wall/floor spans. */
+                row8[screen_col] = 3;
+
+                /* Color from .pal brightness palette (15 levels x 64 bytes or single 64-byte block).
+                 * Amiga .pal is big-endian 12-bit words. Try little-endian if colors look wrong. */
+                if (pal && pal_size >= 64) {
+                    uint32_t level_off = (pal_level_off + 64 <= pal_size) ? pal_level_off : 0;
+                    uint32_t ci = level_off + (uint32_t)texel * 2;
+                    if (ci + 1 < pal_size) {
+                        uint16_t c12 = (uint16_t)((pal[ci] << 8) | pal[ci + 1]);
+                        if (g_renderer_rgb_raster_expand)
+                            row32[screen_col] = amiga12_to_argb(c12);
+                        row16[screen_col] = c12;
+                    } else {
+                        int shade = (gray * (int)texel) / 31;
+                        uint32_t c = RENDER_RGB_RASTER_PIXEL(((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade);
+                        if (g_renderer_rgb_raster_expand)
+                            row32[screen_col] = c;
+                        row16[screen_col] = argb_to_amiga12(c);
+                    }
+                } else {
+                    /* No palette: use texel for shading so sprite shape is visible */
                     int shade = (gray * (int)texel) / 31;
                     uint32_t c = RENDER_RGB_RASTER_PIXEL(((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade);
                     if (g_renderer_rgb_raster_expand)
                         row32[screen_col] = c;
                     row16[screen_col] = argb_to_amiga12(c);
                 }
-            } else {
-                /* No palette: use texel for shading so sprite shape is visible */
-                int shade = (gray * (int)texel) / 31;
-                uint32_t c = RENDER_RGB_RASTER_PIXEL(((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade);
-                if (g_renderer_rgb_raster_expand)
-                    row32[screen_col] = c;
-                row16[screen_col] = argb_to_amiga12(c);
             }
         }
     }

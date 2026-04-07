@@ -210,9 +210,6 @@ typedef struct {
     /* Column clipping */
     ColumnClip clip;
 
-    /* Unused (Amiga uses no depth buffer; painter's + stream order only). */
-    int16_t *depth_buffer;
-
     /* Zone rendering state */
     int16_t left_clip;
     int16_t right_clip;
