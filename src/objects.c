@@ -507,6 +507,46 @@ static void enemy_death_marine_like(GameObject *obj, const EnemyParams *params,
     enemy_apply_death_outcome(obj, params, instant_kill);
 }
 
+/* Shared boss/mech outcome: turn the defeated enemy into the blue key pickup. */
+static void enemy_convert_to_blue_key(GameObject *obj, GameState *state)
+{
+    if (!obj) return;
+
+    NASTY_LIVES(*obj) = 0;
+    NASTY_DAMAGE(*obj) = 0;
+    obj->obj.worry = 0;
+
+    obj->obj.number = OBJ_NBR_KEY;
+    obj->obj.can_see = (int8_t)0x08; /* blue key condition bit */
+
+    obj_sw(obj->raw + 8, 5);     /* key vect */
+    obj_sw(obj->raw + 10, 3);    /* key frame */
+    obj->raw[6] = 0x20;          /* world width */
+    obj->raw[7] = 0x20;          /* world height */
+    obj->raw[14] = 0x10;         /* src cols */
+    obj->raw[15] = 0x10;         /* src rows */
+
+    /* Snap key to the local floor immediately so it does not remain at enemy height. */
+    if (state && state->level.zone_adds && state->level.data) {
+        int zone_slots = level_zone_slot_count(&state->level);
+        int src_zone = level_connect_to_zone_index(&state->level, OBJ_ZONE(obj));
+        if (src_zone < 0 && OBJ_ZONE(obj) >= 0 && OBJ_ZONE(obj) < zone_slots)
+            src_zone = OBJ_ZONE(obj);
+
+        if (src_zone >= 0 && src_zone < zone_slots) {
+            int32_t zo = be32(state->level.zone_adds + (uint32_t)src_zone * 4u);
+            if (zo > 0) {
+                const uint8_t *zd = state->level.data + zo;
+                int32_t floor_h = be32(zd + ZONE_OFF_FLOOR);
+                int32_t upper_floor = be32(zd + ZONE_OFF_UPPER_FLOOR);
+                if (upper_floor != 0 && obj->obj.in_top)
+                    floor_h = upper_floor;
+                obj_sw(obj->raw + 4, (int16_t)((floor_h >> 7) - 32));
+            }
+        }
+    }
+}
+
 /* -----------------------------------------------------------------------
  * Enemy common: check damage and handle death
  *
@@ -606,20 +646,7 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
                             ((int32_t)obj_w(obj->raw + 4)) << 7,
                             120, 100);
             audio_play_sample(15, amiga_noisevol_to_pc(400));
-
-            NASTY_LIVES(*obj) = 0;
-            NASTY_DAMAGE(*obj) = 0;
-            obj->obj.worry = 0;
-
-            obj->obj.number = OBJ_NBR_KEY;
-            obj->obj.can_see = (int8_t)0x08; /* blue key condition bit */
-
-            obj_sw(obj->raw + 8, 5);     /* key vect */
-            obj_sw(obj->raw + 10, 3);    /* key frame */
-            obj->raw[6] = 0x20;          /* world width */
-            obj->raw[7] = 0x20;          /* world height */
-            obj->raw[14] = 0x10;         /* src cols */
-            obj->raw[15] = 0x10;         /* src rows */
+            enemy_convert_to_blue_key(obj, state);
         }
         return true;
 
@@ -627,7 +654,12 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
         /* BigRedThing.s / BigClaws.s / Tree.s: #14@400 + gibs, no screamsound on kill */
         audio_play_sample(14, amiga_noisevol_to_pc(400));
         explode_into_bits(obj, state, explosion_damage, 7);
-        enemy_apply_death_outcome(obj, params, instant_kill);
+        if (obj->obj.number == OBJ_NBR_HUGE_RED_THING) {
+            /* Final boss should drop the blue key on death. */
+            enemy_convert_to_blue_key(obj, state);
+        } else {
+            enemy_apply_death_outcome(obj, params, instant_kill);
+        }
         return true;
 
     case ENEMY_DMG_AUDIO_WORM: {
