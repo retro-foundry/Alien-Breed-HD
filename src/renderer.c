@@ -621,17 +621,73 @@ static int automap_entry_fline_matches_segment(const LevelState *level, const ui
     return automap_segments_match_unordered_i16(x1, z1, x2, z2, fx1, fz1, fx2, fz2);
 }
 
+#define AUTOMAP_META_ZONE_MASK      0x3FFFu
+#define AUTOMAP_META_INTERNAL_KNOWN 0x4000u
+#define AUTOMAP_META_INTERNAL       0x8000u
+#define AUTOMAP_META_NOT_INTERNAL   0x7FFFu
+
 static uint16_t automap_pack_zone_hint(int16_t zone_id)
 {
     if (zone_id < 0) return 0u;
-    if (zone_id > 0x7FFEu) zone_id = 0x7FFEu;
+    if (zone_id > (int16_t)(AUTOMAP_META_ZONE_MASK - 1u))
+        zone_id = (int16_t)(AUTOMAP_META_ZONE_MASK - 1u);
     return (uint16_t)((uint16_t)zone_id + 1u);
 }
 
 static int16_t automap_unpack_zone_hint(uint16_t packed)
 {
-    if (packed == 0u) return -1;
-    return (int16_t)(packed - 1u);
+    uint16_t zone = (uint16_t)(packed & AUTOMAP_META_ZONE_MASK);
+    if (zone == 0u) return -1;
+    return (int16_t)(zone - 1u);
+}
+
+static uint16_t automap_meta_set_zone_hint(uint16_t meta, int16_t zone_id)
+{
+    uint16_t flags = (uint16_t)(meta & (AUTOMAP_META_INTERNAL_KNOWN | AUTOMAP_META_INTERNAL));
+    uint16_t zone = automap_pack_zone_hint(zone_id);
+    return (uint16_t)(flags | zone);
+}
+
+static int automap_meta_internal_known(uint16_t meta)
+{
+    return (meta & AUTOMAP_META_INTERNAL_KNOWN) != 0u;
+}
+
+static int automap_meta_internal(uint16_t meta)
+{
+    return (meta & AUTOMAP_META_INTERNAL) != 0u;
+}
+
+static uint16_t automap_meta_set_internal(uint16_t meta, int is_internal)
+{
+    meta |= AUTOMAP_META_INTERNAL_KNOWN;
+    if (is_internal)
+        meta |= AUTOMAP_META_INTERNAL;
+    else
+        meta = (uint16_t)(meta & AUTOMAP_META_NOT_INTERNAL);
+    return meta;
+}
+
+/* Internal lines are floor lines that connect to another zone (connect >= 0). */
+static int automap_segment_is_internal_connected(const LevelState *level,
+                                                 int16_t x1, int16_t z1,
+                                                 int16_t x2, int16_t z2)
+{
+    if (!level || !level->floor_lines || level->num_floor_lines <= 0) return 0;
+
+    for (int32_t i = 0; i < level->num_floor_lines; i++) {
+        const uint8_t *fl = level->floor_lines + (size_t)i * 16u;
+        int16_t fx1 = rd16(fl + 0);
+        int16_t fz1 = rd16(fl + 2);
+        int16_t fx2 = (int16_t)(fx1 + rd16(fl + 4));
+        int16_t fz2 = (int16_t)(fz1 + rd16(fl + 6));
+
+        if (!automap_segments_match_unordered_i16(x1, z1, x2, z2, fx1, fz1, fx2, fz2))
+            continue;
+
+        if (rd16(fl + 8) >= 0) return 1;
+    }
+    return 0;
 }
 
 static uint8_t automap_door_key_for_wall_gfx_off(const LevelState *level, uint32_t gfx_off,
@@ -730,7 +786,17 @@ static void automap_mark_seen(LevelState *level,
                     ew->is_door = 1;
                     ew->door_key_id = door_key_id;
                 }
-                if (zone_id >= 0) ew->reserved = automap_pack_zone_hint(zone_id);
+                {
+                    uint16_t meta = ew->reserved;
+                    if (zone_id >= 0) meta = automap_meta_set_zone_hint(meta, zone_id);
+                    if (!automap_meta_internal_known(meta)) {
+                        int is_internal = automap_segment_is_internal_connected(level,
+                                                                               ew->x1, ew->z1,
+                                                                               ew->x2, ew->z2);
+                        meta = automap_meta_set_internal(meta, is_internal);
+                    }
+                    ew->reserved = meta;
+                }
                 break;
             }
             automap_unlock();
@@ -750,7 +816,11 @@ static void automap_mark_seen(LevelState *level,
     w->x2 = x2; w->z2 = z2;
     w->is_door = is_door;
     w->door_key_id = door_key_id;
-    w->reserved = automap_pack_zone_hint(zone_id);
+    {
+        uint16_t meta = automap_pack_zone_hint(zone_id);
+        int is_internal = automap_segment_is_internal_connected(level, x1, z1, x2, z2);
+        w->reserved = automap_meta_set_internal(meta, is_internal);
+    }
 
     level->automap_seen_hash[h] = key_plus1;
     automap_unlock();
@@ -947,7 +1017,19 @@ int renderer_automap_collect_line_segments(GameState *state,
         y0[n] = wy0;
         x1[n] = mx - wx1;
         y1[n] = wy1;
-        c12[n] = automap_color_for(is_door, key_id);
+        {
+            uint16_t meta = sw->reserved;
+            if (!automap_meta_internal_known(meta)) {
+                int is_internal_now = automap_segment_is_internal_connected(level,
+                                                                            sw->x1, sw->z1,
+                                                                            sw->x2, sw->z2);
+                meta = automap_meta_set_internal(meta, is_internal_now);
+                sw->reserved = meta;
+            }
+            c12[n] = automap_color_for(is_door, key_id);
+            if (automap_meta_internal(meta))
+                c12[n] = (uint16_t)(c12[n] | RENDERER_AUTOMAP_SEGFLAG_INTERNAL);
+        }
         n++;
     }
     automap_unlock();
