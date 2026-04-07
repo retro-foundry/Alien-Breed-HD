@@ -204,7 +204,7 @@ typedef struct {
     AutomapSeenWall *automap_seen_walls;
     uint32_t         automap_seen_count;
     uint32_t         automap_seen_cap;
-    uint32_t        *automap_seen_hash;     /* open-addressing table storing gfx_off+1, 0 = empty */
+    uint32_t        *automap_seen_hash;     /* open-addressing table storing seen-wall key+1, 0 = empty */
     uint32_t         automap_seen_hash_cap; /* power-of-two */
 
 } LevelState;

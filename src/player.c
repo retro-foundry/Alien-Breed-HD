@@ -1849,9 +1849,11 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
             }
             state->level.automap_seen_hash_cap = want;
 
-            /* Same hash as renderer.c (inline). */
+            /* Same seen-wall key as renderer.c. */
             for (uint32_t i = 0; i < count; i++) {
-                uint32_t keyp1 = state->level.automap_seen_walls[i].gfx_off + 1u;
+                const AutomapSeenWall *w = &state->level.automap_seen_walls[i];
+                uint32_t keyp1 = renderer_automap_seen_key_plus1(
+                    w->gfx_off, w->x1, w->z1, w->x2, w->z2);
                 uint32_t mask = want - 1u;
                 uint32_t h = keyp1;
                 h ^= h >> 16;

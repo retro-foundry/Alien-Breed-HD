@@ -334,6 +334,10 @@ int renderer_toggle_floor_gouraud_debug_view(void);
 int renderer_get_floor_gouraud_debug_view(void);
 /* Automap: change world-units-per-pixel (PgUp = zoom in, PgDn = zoom out). */
 void renderer_automap_adjust_scale(int delta_steps);
+/* Stable dedupe key for one seen wall segment (stored as key+1; 0 reserved empty). */
+uint32_t renderer_automap_seen_key_plus1(uint32_t gfx_off,
+                                         int16_t x1, int16_t z1,
+                                         int16_t x2, int16_t z2);
 /* Serialize automap hash/wall list (threaded world draw vs overlay / level unload). */
 void renderer_automap_lock(void);
 void renderer_automap_unlock(void);

@@ -273,6 +273,10 @@ static uintptr_t g_automap_key_cache_tag = 0;
 static uint16_t g_automap_key_bit_to_c12[8]; /* bits 0..7 -> color; 0 = unknown */
 static uint8_t  g_automap_key_bit_frame_idx[8]; /* bits 0..7 -> key sprite frame 0..3 */
 static uint8_t  g_automap_key_bit_valid_mask = 0;
+/* Canonical key colors (match HUD fallback palette): yellow, red, green, blue. */
+static const uint16_t k_automap_key_frame_default_c12[4] = {
+    0x0FC2u, 0x0F44u, 0x04D6u, 0x048Fu
+};
 
 /* Workers run renderer_draw_world_slice in parallel; automap updates must be serialized. */
 static SDL_mutex *g_automap_mutex;
@@ -325,6 +329,30 @@ static uint32_t automap_hash_u32(uint32_t x)
     return x;
 }
 
+uint32_t renderer_automap_seen_key_plus1(uint32_t gfx_off,
+                                         int16_t x1, int16_t z1,
+                                         int16_t x2, int16_t z2)
+{
+    /* Canonicalize endpoint order so drawing direction does not affect dedupe. */
+    if (x2 < x1 || (x2 == x1 && z2 < z1)) {
+        int16_t tx = x1, tz = z1;
+        x1 = x2; z1 = z2;
+        x2 = tx; z2 = tz;
+    }
+
+    uint32_t ep0 = (uint32_t)(uint16_t)x1 | ((uint32_t)(uint16_t)z1 << 16);
+    uint32_t ep1 = (uint32_t)(uint16_t)x2 | ((uint32_t)(uint16_t)z2 << 16);
+
+    uint32_t k = automap_hash_u32(gfx_off ^ 0x9E3779B9u);
+    k = automap_hash_u32(k ^ ep0);
+    k = automap_hash_u32(k ^ (ep1 * 0x85EBCA6Bu));
+
+    /* Hash table stores key+1; 0 means empty slot. */
+    k += 1u;
+    if (k == 0u) k = 1u;
+    return k;
+}
+
 static void automap_reset(LevelState *level)
 {
     if (!level) return;
@@ -351,7 +379,7 @@ static int automap_ensure_hash(LevelState *level, uint32_t want_cap_pow2)
     uint32_t *new_tab = (uint32_t *)calloc((size_t)want_cap_pow2, sizeof(uint32_t));
     if (!new_tab) return 0;
 
-    /* Rehash existing entries if any. Table stores (gfx_off+1), 0 = empty. */
+    /* Rehash existing entries if any. Table stores seen-wall key+1, 0 = empty. */
     if (level->automap_seen_hash && level->automap_seen_hash_cap) {
         for (uint32_t i = 0; i < level->automap_seen_hash_cap; i++) {
             uint32_t v = level->automap_seen_hash[i];
@@ -394,9 +422,8 @@ static uint8_t automap_level_key_mask(const LevelState *level)
     uint8_t mask = 0;
     for (int i = 0; i < 250; i++) {
         const GameObject *obj = (const GameObject *)(level->object_data + (size_t)i * OBJECT_SIZE);
+        if (OBJ_CID(obj) < 0) break;
         if ((int8_t)obj->obj.number != (int8_t)OBJ_NBR_KEY) continue;
-        /* Ignore inactive slots (zone < 0). */
-        if (OBJ_ZONE(obj) < 0) continue;
         mask |= (uint8_t)obj->obj.can_see;
     }
     return mask;
@@ -483,12 +510,36 @@ static uint16_t automap_key_frame_representative_c12(const RendererState *r, int
     return best_c12;
 }
 
+static uintptr_t automap_key_cache_tag_for_level(const LevelState *level)
+{
+    uintptr_t tag = ((uintptr_t)g_renderer.sprite_wad[5] << 1) ^
+                    ((uintptr_t)g_renderer.sprite_ptr[5] << 3) ^
+                    ((uintptr_t)g_renderer.sprite_pal_data[5] << 5);
+    if (!level || !level->object_data) return tag;
+
+    uint32_t h = 0xA3612B29u;
+    for (int i = 0; i < 250; i++) {
+        const GameObject *obj = (const GameObject *)(level->object_data + (size_t)i * OBJECT_SIZE);
+        if (OBJ_CID(obj) < 0) break;
+        if ((int8_t)obj->obj.number != (int8_t)OBJ_NBR_KEY) continue;
+
+        uint32_t v = (uint32_t)(uint8_t)obj->obj.can_see;
+        v |= (uint32_t)(uint16_t)rd16(obj->raw + 10) << 8;
+        v ^= (uint32_t)i * 0x9E3779B9u;
+        h = automap_hash_u32(h ^ v);
+    }
+
+    tag ^= (uintptr_t)h;
+#if UINTPTR_MAX > 0xFFFFFFFFu
+    tag ^= (uintptr_t)automap_hash_u32(h ^ 0xD2511F53u) << 32;
+#endif
+    return tag;
+}
+
 static void automap_refresh_key_bit_colors(const LevelState *level)
 {
     /* Recompute when level or key sprite assets change. */
-    uintptr_t tag = 0;
-    if (level && level->object_data)
-        tag = (uintptr_t)level->object_data ^ ((uintptr_t)g_renderer.sprite_wad[5] << 1);
+    uintptr_t tag = automap_key_cache_tag_for_level(level);
     if (tag == g_automap_key_cache_tag) return;
     g_automap_key_cache_tag = tag;
     memset(g_automap_key_bit_to_c12, 0, sizeof(g_automap_key_bit_to_c12));
@@ -496,16 +547,17 @@ static void automap_refresh_key_bit_colors(const LevelState *level)
     g_automap_key_bit_valid_mask = 0;
     if (!level || !level->object_data) return;
 
-    /* Per-frame key color (sprite type 5), saturated texel at mid palette level. */
+    /* Per-frame key color: use canonical stable colors to avoid palette-sampling
+     * highlights tinting blue/green keys toward yellow on the automap. */
     uint16_t frame_c12[4];
     for (int fi = 0; fi < 4; fi++)
-        frame_c12[fi] = automap_key_frame_representative_c12(&g_renderer, fi);
+        frame_c12[fi] = k_automap_key_frame_default_c12[fi];
 
     /* Map condition bits -> key art: each key object ties can_see bits to objVectFrameNumber. */
     for (int i = 0; i < 250; i++) {
         const GameObject *obj = (const GameObject *)(level->object_data + (size_t)i * OBJECT_SIZE);
+        if (OBJ_CID(obj) < 0) break;
         if ((int8_t)obj->obj.number != (int8_t)OBJ_NBR_KEY) continue;
-        if (OBJ_ZONE(obj) < 0) continue;
         uint8_t bitmask = (uint8_t)obj->obj.can_see;
         int16_t frame_num = rd16(obj->raw + 10);
         int fi = (int)((frame_num % 4 + 4) % 4);
@@ -535,10 +587,12 @@ static uint8_t automap_key_id_from_door_flags_masked(uint16_t door_flags, uint8_
 {
     /* Return:
      * - 0x00: no key requirement
-     * - power-of-two bit present in key_mask: keyed door
+     * - one key bit (low nibble always treated as key; plus discovered key_mask bits): keyed door
      * - 0x80: switch/condition door (non-zero flags but no key bits) */
     uint8_t f = (uint8_t)(door_flags & 0x00FFu);
-    uint8_t keys = (uint8_t)(f & key_mask);
+    /* Original levels use key bits in low nibble; keep that as baseline even if
+     * key objects are currently inactive, then expand with any discovered key bits. */
+    uint8_t keys = (uint8_t)(f & (uint8_t)(key_mask | 0x0Fu));
     if (keys != 0) {
         /* Prefer single bit if present, else pick lowest set key bit. */
         if ((keys & (uint8_t)(keys - 1u)) == 0u) return keys;
@@ -548,35 +602,98 @@ static uint8_t automap_key_id_from_door_flags_masked(uint16_t door_flags, uint8_
     return 0u;
 }
 
-static uint8_t automap_door_key_for_wall_gfx_off(const LevelState *level, uint32_t gfx_off, int *out_is_door)
+static int automap_segments_match_unordered_i16(int16_t ax1, int16_t az1, int16_t ax2, int16_t az2,
+                                                int16_t bx1, int16_t bz1, int16_t bx2, int16_t bz2)
+{
+    if (ax1 == bx1 && az1 == bz1 && ax2 == bx2 && az2 == bz2) return 1;
+    if (ax1 == bx2 && az1 == bz2 && ax2 == bx1 && az2 == bz1) return 1;
+    return 0;
+}
+
+static int automap_entry_fline_matches_segment(const LevelState *level, const uint8_t *ent,
+                                               int16_t x1, int16_t z1, int16_t x2, int16_t z2)
+{
+    if (!level || !level->floor_lines || !ent) return 0;
+    int16_t fline = rd16(ent + 0);
+    if (fline < 0 || (int32_t)fline >= level->num_floor_lines) return 0;
+
+    const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)fline * 16u;
+    int16_t fx1 = rd16(fl + 0);
+    int16_t fz1 = rd16(fl + 2);
+    int16_t fx2 = (int16_t)(fx1 + rd16(fl + 4));
+    int16_t fz2 = (int16_t)(fz1 + rd16(fl + 6));
+    return automap_segments_match_unordered_i16(x1, z1, x2, z2, fx1, fz1, fx2, fz2);
+}
+
+static uint16_t automap_pack_zone_hint(int16_t zone_id)
+{
+    if (zone_id < 0) return 0u;
+    if (zone_id > 0x7FFEu) zone_id = 0x7FFEu;
+    return (uint16_t)((uint16_t)zone_id + 1u);
+}
+
+static int16_t automap_unpack_zone_hint(uint16_t packed)
+{
+    if (packed == 0u) return -1;
+    return (int16_t)(packed - 1u);
+}
+
+static uint8_t automap_door_key_for_wall_gfx_off(const LevelState *level, uint32_t gfx_off,
+                                                  int16_t x1, int16_t z1, int16_t x2, int16_t z2,
+                                                  int16_t zone_hint,
+                                                  int *out_is_door)
 {
     if (out_is_door) *out_is_door = 0;
     if (!level || !level->door_wall_list || !level->door_wall_list_offsets || level->num_doors <= 0)
         return 0;
 
     uint8_t key_mask = automap_level_key_mask(level);
+    int matched_door = -1;
+    int matched_score = -1;
 
     /* door_wall_list entries are 10 bytes: fline(be16) + gfx_off(be32) + gfx_base(be32) */
     const uint8_t *lst = level->door_wall_list;
     for (int di = 0; di < level->num_doors; di++) {
         uint32_t start = level->door_wall_list_offsets[di];
         uint32_t end = level->door_wall_list_offsets[di + 1];
+        int door_zone = -1;
+        if (level->door_data)
+            door_zone = (int)rd16(level->door_data + (size_t)di * 22u + 0u);
         for (uint32_t j = start; j < end; j++) {
             const uint8_t *ent = lst + (size_t)j * 10u;
             uint32_t ent_gfx = (uint32_t)rd32(ent + 2);
-            if (ent_gfx != gfx_off) continue;
-            if (out_is_door) *out_is_door = 1;
-            if (!level->door_data) return 0;
-            const uint8_t *door = level->door_data + (size_t)di * 22u;
-            uint16_t door_flags = (uint16_t)rd16(door + 20);
-            return automap_key_id_from_door_flags_masked(door_flags, key_mask);
+            int seg_match = automap_entry_fline_matches_segment(level, ent, x1, z1, x2, z2);
+            int gfx_match = (ent_gfx == gfx_off);
+            int zone_match = (zone_hint >= 0 && door_zone >= 0 && door_zone == zone_hint);
+            int score;
+
+            if (!gfx_match && !seg_match) continue;
+
+            /* Prefer zone+segment+gfx, then zone+segment, then segment+gfx, then segment, then gfx. */
+            score = (zone_match ? 4 : 0) + (seg_match ? 2 : 0) + (gfx_match ? 1 : 0);
+            if (score > matched_score) {
+                matched_score = score;
+                matched_door = di;
+                if (score >= 7) break; /* best possible */
+            }
         }
+        if (matched_score >= 7) break;
     }
-    return 0;
+
+    {
+        if (matched_door < 0) return 0;
+
+        if (out_is_door) *out_is_door = 1;
+        if (!level->door_data) return 0;
+        const uint8_t *door = level->door_data + (size_t)matched_door * 22u;
+        uint16_t door_flags = (uint16_t)rd16(door + 20);
+        return automap_key_id_from_door_flags_masked(door_flags, key_mask);
+    }
 }
 
 static void automap_mark_seen(LevelState *level,
                               uint32_t gfx_off,
+                              int16_t zone_id,
                               int16_t x1, int16_t z1, int16_t x2, int16_t z2,
                               uint8_t is_door, uint8_t door_key_id)
 {
@@ -600,7 +717,7 @@ static void automap_mark_seen(LevelState *level,
         }
     }
 
-    uint32_t key_plus1 = gfx_off + 1u;
+    uint32_t key_plus1 = renderer_automap_seen_key_plus1(gfx_off, x1, z1, x2, z2);
     uint32_t cap = level->automap_seen_hash_cap;
     uint32_t mask = cap - 1u;
     uint32_t h = automap_hash_u32(key_plus1) & mask;
@@ -608,6 +725,18 @@ static void automap_mark_seen(LevelState *level,
         uint32_t v = level->automap_seen_hash[h];
         if (v == AUTOMAP_HASH_EMPTY) break;
         if (v == key_plus1) {
+            /* Existing entry: refresh metadata so stale color assignments self-heal. */
+            for (uint32_t i = 0; i < level->automap_seen_count; i++) {
+                AutomapSeenWall *ew = &level->automap_seen_walls[i];
+                uint32_t ek = renderer_automap_seen_key_plus1(ew->gfx_off, ew->x1, ew->z1, ew->x2, ew->z2);
+                if (ek != key_plus1) continue;
+                if (is_door) {
+                    ew->is_door = 1;
+                    ew->door_key_id = door_key_id;
+                }
+                if (zone_id >= 0) ew->reserved = automap_pack_zone_hint(zone_id);
+                break;
+            }
             automap_unlock();
             return; /* already seen */
         }
@@ -625,26 +754,18 @@ static void automap_mark_seen(LevelState *level,
     w->x2 = x2; w->z2 = z2;
     w->is_door = is_door;
     w->door_key_id = door_key_id;
-    w->reserved = 0;
+    w->reserved = automap_pack_zone_hint(zone_id);
 
     level->automap_seen_hash[h] = key_plus1;
     automap_unlock();
 }
 
-static inline uint16_t automap_color_for(const LevelState *level, uint8_t is_door, uint8_t key_id)
+static inline uint16_t automap_color_for(uint8_t is_door, uint8_t key_id)
 {
     if (!is_door) return 0x0FFFu; /* white */
     if (key_id == 0) return 0x0888u; /* grey: door without key */
     if (key_id == 0x80u) return 0x0444u; /* dark grey: switch/condition door */
-
-    automap_refresh_key_bit_colors(level);
-    for (int b = 0; b < 8; b++) {
-        uint8_t bit = (uint8_t)(1u << b);
-        if ((key_id & bit) == 0) continue;
-        uint16_t c12 = g_automap_key_bit_to_c12[b];
-        if (c12 != 0) return c12;
-    }
-    return 0x0FFFu; /* unknown key: white */
+    return 0x0F0Fu; /* hot pink: any key-locked door */
 }
 
 uint16_t renderer_key_condition_bit_color_c12(const GameState *state, int bit_index)
@@ -663,8 +784,8 @@ int renderer_key_sprite_frame_for_condition_bit(const GameState *state, int bit_
 
 uintptr_t renderer_key_sprite_hud_cache_tag(const GameState *state)
 {
-    if (!state || !state->level.object_data) return 0;
-    return (uintptr_t)state->level.object_data ^ ((uintptr_t)g_renderer.sprite_wad[5] << 1);
+    if (!state) return 0;
+    return automap_key_cache_tag_for_level(&state->level);
 }
 
 /* Rasterize key sprite type 5 frame (0..3) to ARGB8888; texel 0 = transparent. Matches automap sampling. */
@@ -800,8 +921,24 @@ int renderer_automap_collect_line_segments(GameState *state,
         return n;
     }
 
+    automap_refresh_key_bit_colors(level);
+
     for (uint32_t i = 0; i < level->automap_seen_count && n < max_lines; i++) {
-        const AutomapSeenWall *sw = &level->automap_seen_walls[i];
+        AutomapSeenWall *sw = &level->automap_seen_walls[i];
+        uint8_t is_door = sw->is_door;
+        uint8_t key_id = sw->door_key_id;
+        if (is_door) {
+            int now_is_door = 0;
+            int16_t zone_hint = automap_unpack_zone_hint(sw->reserved);
+            uint8_t now_key_id = automap_door_key_for_wall_gfx_off(level, sw->gfx_off,
+                                                                    sw->x1, sw->z1, sw->x2, sw->z2,
+                                                                    zone_hint,
+                                                                    &now_is_door);
+            if (now_is_door && now_key_id != key_id) {
+                key_id = now_key_id;
+                sw->door_key_id = now_key_id;
+            }
+        }
         int32_t ax0 = (int32_t)sw->x1 - (int32_t)px;
         int32_t az0 = (int32_t)sw->z1 - (int32_t)pz;
         int32_t ax1 = (int32_t)sw->x2 - (int32_t)px;
@@ -814,7 +951,7 @@ int renderer_automap_collect_line_segments(GameState *state,
         y0[n] = wy0;
         x1[n] = mx - wx1;
         y1[n] = wy1;
-        c12[n] = automap_color_for(level, sw->is_door, sw->door_key_id);
+        c12[n] = automap_color_for(is_door, key_id);
         n++;
     }
     automap_unlock();
@@ -6205,13 +6342,14 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     if (level->points && level->graphics) {
                         /* door_wall_list gfx_off points to the wall record starting at the type word. */
                         uint32_t wall_gfx_off = (uint32_t)((ptr - 2) - level->graphics);
-                        int is_door = 0;
-                        uint8_t key_id = automap_door_key_for_wall_gfx_off(level, wall_gfx_off, &is_door);
                         int16_t wx1 = rd16(level->points + (size_t)p1 * 4u + 0u);
                         int16_t wz1 = rd16(level->points + (size_t)p1 * 4u + 2u);
                         int16_t wx2 = rd16(level->points + (size_t)p2 * 4u + 0u);
                         int16_t wz2 = rd16(level->points + (size_t)p2 * 4u + 2u);
-                        automap_mark_seen(level, wall_gfx_off, wx1, wz1, wx2, wz2,
+                        int is_door = 0;
+                        uint8_t key_id = automap_door_key_for_wall_gfx_off(level, wall_gfx_off,
+                                                                            wx1, wz1, wx2, wz2, zone_id, &is_door);
+                        automap_mark_seen(level, wall_gfx_off, zone_id, wx1, wz1, wx2, wz2,
                                           (uint8_t)(is_door ? 1 : 0), key_id);
                     }
                     renderer_draw_wall_ctx(ctx, rx1, rz1, rx2, rz2,
