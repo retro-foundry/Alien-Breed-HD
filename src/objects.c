@@ -430,9 +430,10 @@ static void enemy_apply_death_outcome(GameObject *obj, const EnemyParams *params
     }
 }
 
-/* Floating enemy soft death (FlyingScalyBall/EyeBall):
+/* FlyingScalyBall soft death:
  * keep the corpse in-world and settle it toward floor height, advancing
- * frame 18->19 while falling, then resting at frame 20. */
+ * frame 18->19 while falling, then resting at frame 20.
+ * EyeBall.s does not use this dead-state settle path. */
 static void enemy_update_flying_soft_dead(GameObject *obj,
                                           const EnemyParams *params,
                                           GameState *state)
@@ -630,7 +631,15 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
         }
 
         case ENEMY_DMG_AUDIO_FLYING:
-            /* FlyingScalyBall.s / EyeBall.s: killing blow >40 → #14@400+gib; else #8@200 */
+            /* EyeBall.s: kill path always gibs/removes (sample #14 @ 400). */
+            if (obj->obj.number == OBJ_NBR_EYEBALL) {
+                audio_play_sample(14, amiga_noisevol_to_pc(400));
+                explode_into_bits(obj, state, explosion_damage, 9);
+                OBJ_SET_ZONE(obj, -1);
+                return true;
+            }
+
+            /* FlyingScalyBall.s: killing blow >40 -> #14@400+gib; else #8@200 + soft death. */
             if (instant_kill) {
                 audio_play_sample(14, amiga_noisevol_to_pc(400));
                 explode_into_bits(obj, state, explosion_damage, 9);
@@ -640,16 +649,10 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
             } else {
                 if (params->scream_sound >= 0)
                     audio_play_sample(params->scream_sound, amiga_noisevol_to_pc(200));
-                if (obj->obj.number == OBJ_NBR_EYEBALL ||
-                    obj->obj.number == OBJ_NBR_FLYING_NASTY) {
-                    /* Flying/Eyeball soft kill: keep corpse and hand over to dead-state update. */
-                    NASTY_LIVES(*obj) = 0;
-                    OBJ_SET_DEADL(obj, 18);
-                    OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, 30);
-                    OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, 0);
-                } else {
-                    enemy_apply_death_outcome(obj, params, false);
-                }
+                NASTY_LIVES(*obj) = 0;
+                OBJ_SET_DEADL(obj, 18);
+                OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, 30);
+                OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, 0);
             }
             return true;
 
@@ -1261,7 +1264,7 @@ static int16_t enemy_anim_vect_for_type(int8_t obj_type)
     case OBJ_NBR_ROBOT:           return 5;
     case OBJ_NBR_BIG_NASTY:       return 3;
     case OBJ_NBR_FLYING_NASTY:    return 4;
-    case OBJ_NBR_EYEBALL:         return 0;
+    case OBJ_NBR_EYEBALL:         return 15;
     case OBJ_NBR_MARINE:          return 10;
     case OBJ_NBR_WORM:            return 13;
     case OBJ_NBR_HUGE_RED_THING:
@@ -2363,9 +2366,11 @@ void object_handle_flying_nasty(GameObject *obj, GameState *state)
 
     int8_t lives = NASTY_LIVES(*obj);
     if (lives <= 0) {
-        if (obj->obj.number == OBJ_NBR_EYEBALL ||
-            obj->obj.number == OBJ_NBR_FLYING_NASTY) {
+        if (obj->obj.number == OBJ_NBR_FLYING_NASTY) {
             enemy_update_flying_soft_dead(obj, params, state);
+        } else if (obj->obj.number == OBJ_NBR_EYEBALL) {
+            /* EyeBall.s kill path removes object (GraphicRoom=-1 equivalent). */
+            OBJ_SET_ZONE(obj, -1);
         }
         return;
     }
@@ -2415,10 +2420,21 @@ void object_handle_flying_nasty(GameObject *obj, GameState *state)
 
     enemy_tick_sec_timer_vocal(obj, state, params, attacking);
 
-    int16_t vn_fly = (obj->obj.number == OBJ_NBR_EYEBALL) ? 0 : 4;
-    int walk_step = (attacking && obj->obj.number != OBJ_NBR_FLYING_NASTY)
-        ? 0 : ((walk_cycle >> 3) & 3);
-    enemy_update_anim_with_step(obj, state, vn_fly, walk_step);
+    {
+        int walk_step = (attacking && obj->obj.number != OBJ_NBR_FLYING_NASTY)
+            ? 0 : ((walk_cycle >> 3) & 3);
+
+        if (obj->obj.number == OBJ_NBR_EYEBALL) {
+            /* EyeBall.s does not use directional 0..15 rotations.
+             * It renders from Tree sheet (vect 15) using frames 18..21
+             * while prowling, and frame 18 while attacking/firing. */
+            enemy_apply_sprite_source_dims(obj);
+            wbe16(obj->raw + 8, 15);
+            wbe16(obj->raw + 10, (int16_t)(18 + walk_step));
+        } else {
+            enemy_update_anim_with_step(obj, state, 4, walk_step);
+        }
+    }
 
     if (obj->obj.number == OBJ_NBR_FLYING_NASTY && attacking) {
         int16_t plr_x, plr_z;
