@@ -63,12 +63,6 @@
 #define AB3D_PREFETCH_WRITE(p) ((void)0)
 #endif
 
-/* display.c: when 1, skip software underwater tint and gun into cw buffer; composited in GL instead. */
-static int s_weapon_post_gl_active;
-static uint32_t *s_gun_gl_rgba_scratch;
-static size_t s_gun_gl_rgba_cap_pixels;
-#define GUN_GL_RGBA_MAX_PIXELS ((size_t)4u * 1024u * 1024u)
-
 /* Floor/ceiling UV step per pixel: d1>>FLOOR_STEP_SHIFT (same at any width so texture scale is correct). */
 #define FLOOR_STEP_SHIFT  (6 + RENDER_SCALE_LOG2)  /* d1>>9 at RENDER_SCALE=8 */
 /* Camera UV scale in fixed-point, matching Amiga sxoff/szoff setup in pastsides:
@@ -1205,7 +1199,7 @@ static int renderer_thread_worker_main(void *userdata)
                 renderer_draw_world_slice(state, world_zone_prepass,
                                           col_start, col_end,
                                           frame_idx, trace_clip, &fill_screen_water);
-                if (state->cfg_weapon_draw && !s_weapon_post_gl_active)
+                if (state->cfg_weapon_draw)
                     renderer_draw_gun_columns(state, col_start, col_end);
             } else if (job_type == RENDERER_THREAD_JOB_WATER_TINT) {
                 renderer_apply_underwater_tint_slice(tint_fill_screen_water,
@@ -2063,9 +2057,6 @@ void renderer_shutdown(void)
         g_automap_mutex = NULL;
     }
     free_buffers();
-    free(s_gun_gl_rgba_scratch);
-    s_gun_gl_rgba_scratch = NULL;
-    s_gun_gl_rgba_cap_pixels = 0;
     free(argb24_to_amiga12_lut);
     argb24_to_amiga12_lut = NULL;
     argb24_to_amiga12_lut_ready = 0;
@@ -4628,148 +4619,6 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
 void renderer_draw_gun(GameState *state)
 {
     renderer_draw_gun_columns(state, 0, g_renderer.width);
-}
-
-void renderer_set_weapon_post_gl_active(int active)
-{
-    s_weapon_post_gl_active = active ? 1 : 0;
-}
-
-int8_t renderer_get_last_water_tint_gl(void)
-{
-    return g_renderer.last_water_tint_gl;
-}
-
-int renderer_rasterize_gun_rgba_for_gl(GameState *state, const uint32_t **out_pixels,
-                                     int *out_gw, int *out_gh, int *out_ix, int *out_iy)
-{
-    if (out_pixels) *out_pixels = NULL;
-    if (out_gw) *out_gw = 0;
-    if (out_gh) *out_gh = 0;
-    if (out_ix) *out_ix = 0;
-    if (out_iy) *out_iy = 0;
-    if (!state || !state->cfg_weapon_draw) return 0;
-
-    PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
-    if (plr->gun_selected < 0) return 0;
-
-    int gun_type = plr->gun_selected;
-    if (gun_type < 0 || gun_type >= 8) gun_type = 0;
-
-    const int gun_w_src = GUN_COLS;
-    const int gun_h_src = GUN_LINES;
-    int rw = g_renderer.width, rh = g_renderer.height;
-    if (rw < 1 || rh < 1) return 0;
-
-    int64_t scale_fp = (((int64_t)RENDER_SCALE * (int64_t)rh) << 16) / RENDER_DEFAULT_HEIGHT;
-    int64_t fit_fp_w = ((int64_t)rw << 16) / gun_w_src;
-    int64_t fit_fp_h = ((int64_t)rh << 16) / gun_h_src;
-    if (scale_fp > fit_fp_w) scale_fp = fit_fp_w;
-    if (scale_fp > fit_fp_h) scale_fp = fit_fp_h;
-    if (scale_fp < 1) scale_fp = 1;
-
-    int gun_w_draw = (int)(((int64_t)gun_w_src * scale_fp + 0x7FFF) >> 16);
-    int gun_h_draw = (int)(((int64_t)gun_h_src * scale_fp + 0x7FFF) >> 16);
-
-    int present_w = (g_renderer.present_width > 0) ? g_renderer.present_width : rw;
-    int present_h = (g_renderer.present_height > 0) ? g_renderer.present_height : rh;
-    int64_t post_aspect_fp = ((int64_t)present_h * (int64_t)rw << 16)
-                           / ((int64_t)present_w * (int64_t)rh);
-    if (post_aspect_fp > 0)
-        gun_w_draw = (int)(((int64_t)gun_w_draw * post_aspect_fp + 0x7FFF) >> 16);
-
-    if (gun_w_draw < 1) gun_w_draw = 1;
-    if (gun_h_draw < 1) gun_h_draw = 1;
-    if (gun_w_draw > rw) gun_w_draw = rw;
-    if (gun_h_draw > rh) gun_h_draw = rh;
-
-    int gy = rh - gun_h_draw;
-    if (gy < 0) gy = 0;
-    int gx = (rw - gun_w_draw) / 2;
-    if (gun_type == ROCKET_LAUNCHER_GUN_IDX)
-        gx = rw - gun_w_draw;
-
-    int gun_x1 = gx + gun_w_draw;
-    int draw_x0 = gx;
-    int draw_x1 = gun_x1;
-    if (draw_x0 < 0) draw_x0 = 0;
-    if (draw_x1 > rw) draw_x1 = rw;
-    if (draw_x0 >= draw_x1) return 0;
-
-    const uint8_t *gun_wad = g_renderer.gun_wad;
-    const uint8_t *gun_ptr = g_renderer.gun_ptr;
-    const uint8_t *gun_pal = g_renderer.gun_pal;
-    size_t gun_wad_size = g_renderer.gun_wad_size;
-    if (!gun_wad || !gun_ptr || !gun_pal || gun_wad_size == 0) return 0;
-
-    const GunAnim *anim = &gun_anims[gun_type];
-    int anim_frame = plr->gun_frame;
-    if (anim_frame > anim->num_frames) anim_frame = 0;
-    int graphic_frame = anim->frames[anim_frame];
-    if (graphic_frame > 3) graphic_frame = 0;
-    uint32_t frame_slot = (uint32_t)(gun_type * 4 + graphic_frame);
-    if (frame_slot >= 32) frame_slot = 0;
-    uint32_t ptr_off = gun_ptr_frame_offsets[frame_slot];
-    if (ptr_off == 0 && (gun_type == 5 || gun_type == 6)) return 0;
-
-    size_t need_pixels = (size_t)gun_w_draw * (size_t)gun_h_draw;
-    if (need_pixels == 0 || need_pixels > GUN_GL_RGBA_MAX_PIXELS) return 0;
-    if (need_pixels > s_gun_gl_rgba_cap_pixels) {
-        uint32_t *nb = (uint32_t *)realloc(s_gun_gl_rgba_scratch, need_pixels * sizeof(uint32_t));
-        if (!nb) return 0;
-        s_gun_gl_rgba_scratch = nb;
-        s_gun_gl_rgba_cap_pixels = need_pixels;
-    }
-    uint32_t *scratch = s_gun_gl_rgba_scratch;
-    memset(scratch, 0, need_pixels * sizeof(uint32_t));
-
-    int draw_sy0 = gy;
-    int draw_sy1 = gy + gun_h_draw;
-    if (draw_sy0 < 0) draw_sy0 = 0;
-    if (draw_sy1 > rh) draw_sy1 = rh;
-
-    for (int sy = draw_sy0; sy < draw_sy1; sy++) {
-        int src_row = (int)((int64_t)(sy - gy) * (int64_t)gun_h_src / gun_h_draw);
-        if (src_row >= gun_h_src) continue;
-        for (int sx = draw_x0; sx < draw_x1 && sx < rw; sx++) {
-            int src_col = (int)((int64_t)(sx - gx) * (int64_t)gun_w_src / gun_w_draw);
-            if (src_col >= gun_w_src) continue;
-            const uint8_t *col_ptr = gun_ptr + ptr_off + (uint32_t)src_col * 4;
-            uint8_t mode = col_ptr[0];
-            uint32_t wad_off = ((uint32_t)col_ptr[1] << 16)
-                             | ((uint32_t)col_ptr[2] << 8)
-                             | (uint32_t)col_ptr[3];
-            if (mode == 0 && wad_off == 0) continue;
-            if (wad_off >= gun_wad_size) continue;
-            const uint8_t *src = gun_wad + wad_off;
-            if (wad_off + (size_t)(src_row + 1) * 2 > gun_wad_size) continue;
-            uint16_t w = (uint16_t)((src[src_row * 2u] << 8) | src[src_row * 2u + 1]);
-            uint32_t idx;
-            if (mode == 0) idx = (uint32_t)(w & 31u);
-            else if (mode == 1) idx = (uint32_t)((w >> 5) & 31u);
-            else idx = (uint32_t)((w >> 10) & 31u);
-            if (idx == 0) continue;
-
-            uint16_t c12 = (uint16_t)((gun_pal[idx * 2u] << 8) | gun_pal[idx * 2u + 1]);
-            uint32_t argb = amiga12_to_argb(c12);
-            uint32_t oa = (argb >> 24) & 0xFFu;
-            uint32_t rr = (argb >> 16) & 0xFFu;
-            uint32_t gg = (argb >> 8) & 0xFFu;
-            uint32_t bb = argb & 0xFFu;
-            if (oa == 0) oa = 255u;
-            uint32_t rgba = rr | (gg << 8) | (bb << 16) | (oa << 24);
-            int lx = sx - gx;
-            int ly = sy - gy;
-            scratch[ly * gun_w_draw + lx] = rgba;
-        }
-    }
-
-    if (out_pixels) *out_pixels = scratch;
-    if (out_gw) *out_gw = gun_w_draw;
-    if (out_gh) *out_gh = gun_h_draw;
-    if (out_ix) *out_ix = gx;
-    if (out_iy) *out_iy = gy;
-    return 1;
 }
 
 /* -----------------------------------------------------------------------
@@ -7693,11 +7542,6 @@ static void renderer_apply_underwater_tint(int8_t fill_screen_water)
                                          g_renderer.rgb_buffer, g_renderer.cw_buffer);
 }
 
-void renderer_apply_underwater_tint_frame(int8_t fill_screen_water)
-{
-    renderer_apply_underwater_tint(fill_screen_water);
-}
-
 /* -----------------------------------------------------------------------
  * DrawDisplay - Main rendering entry point
  *
@@ -7855,23 +7699,16 @@ void renderer_draw_display(GameState *state)
     if (state && !state->cfg_post_tint)
         tint_water = 0;
 
-    g_renderer.last_water_tint_gl = 0;
-    int8_t tint_for_software = tint_water;
-    if (s_weapon_post_gl_active && state && state->cfg_post_tint) {
-        g_renderer.last_water_tint_gl = tint_water;
-        tint_for_software = 0;
-    }
-
     /* 6. Underwater fillscrnwater post-pass (optional). */
     int used_threaded_tint = 0;
 #ifndef AB3D_NO_THREADS
     if (state->cfg_render_threads) {
-        used_threaded_tint = renderer_dispatch_threaded_underwater_tint(tint_for_software);
+        used_threaded_tint = renderer_dispatch_threaded_underwater_tint(tint_water);
     }
 #endif
     if (!used_threaded_tint) {
-        renderer_apply_underwater_tint(tint_for_software);
-        tint_workers = (tint_for_software != 0) ? 1 : 0;
+        renderer_apply_underwater_tint(tint_water);
+        tint_workers = (tint_water != 0) ? 1 : 0;
     } else {
 #ifndef AB3D_NO_THREADS
         tint_workers = (g_prof_last_tint_workers > 0) ? g_prof_last_tint_workers : 0;
@@ -7881,7 +7718,7 @@ void renderer_draw_display(GameState *state)
 
     /* 7. Draw gun overlay.
      * In threaded-world mode the gun is already drawn per worker column strip. */
-    if (!used_threaded_world && state->cfg_weapon_draw && !s_weapon_post_gl_active) {
+    if (!used_threaded_world && state->cfg_weapon_draw) {
         renderer_draw_gun(state);
     }
     if (prof_on) t_after_gun = SDL_GetPerformanceCounter();

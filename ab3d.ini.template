@@ -48,11 +48,6 @@ weapon_draw=1
 # 1 = underwater fillscrnwater software post-pass (blue/green screen cue when submerged).
 post_tint=1
 
-# 1 = when OpenGL 12-bit present + HUD overlay are active, draw weapon and underwater tint
-# in GL over the letterboxed game area (skips those passes in the software buffer). If GL
-# overlay is unavailable, falls back to the same CPU tint + gun as without this option.
-weapon_post_gl=1
-
 # Internal software render resolution (game draws at this size). The window is
 # scaled to fit, centered, preserving aspect ratio (letterboxing as needed).
 render_width=1920

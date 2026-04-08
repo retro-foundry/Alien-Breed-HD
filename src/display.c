@@ -40,12 +40,6 @@
 #ifndef GL_TRIANGLE_STRIP
 #define GL_TRIANGLE_STRIP 0x0005
 #endif
-#ifndef GL_DST_COLOR
-#define GL_DST_COLOR 0x0306
-#endif
-#ifndef GL_ZERO
-#define GL_ZERO 0
-#endif
 #ifndef GL_VERTEX_SHADER
 #define GL_VERTEX_SHADER 0x8B31
 #endif
@@ -282,10 +276,6 @@ static GLint g_gl_hud_loc_color_tex;
 static GLint g_gl_hud_loc_color_solid;
 static int g_gl_overlay_win_w;
 static int g_gl_overlay_win_h;
-/* First-person gun: streaming RGBA texture for weapon_post_gl overlay path. */
-static SDL_Texture *g_gun_gl_tex;
-static int g_gun_gl_tex_w;
-static int g_gun_gl_tex_h;
 static DisplayGlEnableFn                   g_gl_enable;
 static DisplayGlDisableFn                  g_gl_disable;
 static DisplayGlBlendFuncFn                g_gl_blend_func;
@@ -708,85 +698,6 @@ static void display_gl_solid_rect_fill(const SDL_Rect *dst, Uint8 r, Uint8 g, Ui
     g_gl_bind_buffer(0x8892, g_gl_hud_vbo);
     g_gl_buffer_data(0x8892, (ptrdiff_t)sizeof(buf), buf, GL_STREAM_DRAW);
     g_gl_draw_arrays(GL_TRIANGLES, 0, 6);
-}
-
-/* Multiply destination RGB by (mr,mg,mb) — approximates Amiga fillscrnwater AND #$00FF colour crush. */
-static void display_gl_underwater_multiply_rect(const SDL_Rect *dst, float mr, float mg, float mb)
-{
-    if (!dst || g_gl_overlay_win_w < 1 || !g_gl_blend_func) return;
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-    SDL_RenderFlush(g_sdl_ren);
-#endif
-    int wx = g_gl_overlay_win_w, wy = g_gl_overlay_win_h;
-    float nx0, ny0, nx1, ny1, nx2, ny2, nx3, ny3;
-    display_gl_wnd_ndc((float)dst->x, (float)dst->y, wx, wy, &nx0, &ny0);
-    display_gl_wnd_ndc((float)(dst->x + dst->w), (float)dst->y, wx, wy, &nx1, &ny1);
-    display_gl_wnd_ndc((float)(dst->x + dst->w), (float)(dst->y + dst->h), wx, wy, &nx2, &ny2);
-    display_gl_wnd_ndc((float)dst->x, (float)(dst->y + dst->h), wx, wy, &nx3, &ny3);
-    float buf[12] = {
-        nx0, ny0, nx1, ny1, nx3, ny3,
-        nx1, ny1, nx2, ny2, nx3, ny3,
-    };
-    g_gl_blend_func(GL_DST_COLOR, GL_ZERO);
-    g_gl_use_program(g_gl_prog_hud_solid);
-    if (g_gl_hud_loc_color_solid >= 0) g_gl_uniform4f(g_gl_hud_loc_color_solid, mr, mg, mb, 1.0f);
-    g_gl_bind_vertex_array(g_gl_hud_vao_solid);
-    g_gl_bind_buffer(0x8892, g_gl_hud_vbo);
-    g_gl_buffer_data(0x8892, (ptrdiff_t)sizeof(buf), buf, GL_STREAM_DRAW);
-    g_gl_draw_arrays(GL_TRIANGLES, 0, 6);
-    g_gl_blend_func(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-}
-
-static void display_gl_gun_overlay(GameState *state)
-{
-    const uint32_t *pix;
-    int gw, gh, ix, iy, iw, ih;
-    if (!state || !g_sdl_ren) return;
-    iw = renderer_get_width();
-    ih = renderer_get_height();
-    if (iw < 1 || ih < 1) return;
-    if (!renderer_rasterize_gun_rgba_for_gl(state, &pix, &gw, &gh, &ix, &iy)) return;
-    if (gw < 1 || gh < 1) return;
-    if (!g_gun_gl_tex || g_gun_gl_tex_w != gw || g_gun_gl_tex_h != gh) {
-        if (g_gun_gl_tex) {
-            SDL_DestroyTexture(g_gun_gl_tex);
-            g_gun_gl_tex = NULL;
-        }
-        g_gun_gl_tex = SDL_CreateTexture(g_sdl_ren, SDL_PIXELFORMAT_RGBA32,
-                                         SDL_TEXTUREACCESS_STREAMING, gw, gh);
-        g_gun_gl_tex_w = gw;
-        g_gun_gl_tex_h = gh;
-        if (!g_gun_gl_tex) return;
-        SDL_SetTextureBlendMode(g_gun_gl_tex, SDL_BLENDMODE_BLEND);
-    }
-    SDL_UpdateTexture(g_gun_gl_tex, NULL, pix, gw * (int)sizeof(uint32_t));
-    SDL_Rect dst;
-    dst.w = (gw * g_present_dst_rect.w + iw / 2) / iw;
-    dst.h = (gh * g_present_dst_rect.h + ih / 2) / ih;
-    dst.x = g_present_dst_rect.x + (ix * g_present_dst_rect.w) / iw;
-    dst.y = g_present_dst_rect.y + (iy * g_present_dst_rect.h) / ih;
-    display_gl_texture_blit(g_gun_gl_tex, NULL, &dst);
-}
-
-static void display_gl_weapon_post_effects(GameState *state)
-{
-    if (!state || !state->cfg_weapon_post_gl) return;
-    int8_t tw = renderer_get_last_water_tint_gl();
-    if (state->cfg_post_tint && tw != 0) {
-        SDL_Rect full = g_present_dst_rect;
-        if (tw > 0) {
-            display_gl_underwater_multiply_rect(&full, 0.52f, 0.78f, 0.90f);
-        } else {
-            SDL_Rect bot = full;
-            int hh = full.h / 2;
-            if (hh < 1) hh = 1;
-            bot.y = full.y + full.h - hh;
-            bot.h = hh;
-            display_gl_underwater_multiply_rect(&bot, 0.70f, 0.88f, 0.96f);
-        }
-    }
-    if (state->cfg_weapon_draw)
-        display_gl_gun_overlay(state);
 }
 
 static void display_gl_line(int x0, int y0, int x1, int y1, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
@@ -1435,12 +1346,6 @@ void display_shutdown(void)
     display_hud_digits_free();
     display_key_hud_free_textures();
     g_key_hud_tex_tag = 0;
-    if (g_gun_gl_tex) {
-        SDL_DestroyTexture(g_gun_gl_tex);
-        g_gun_gl_tex = NULL;
-        g_gun_gl_tex_w = 0;
-        g_gun_gl_tex_h = 0;
-    }
     renderer_shutdown();
     display_gl_shutdown_unpack();
     if (g_texture)  SDL_DestroyTexture(g_texture);
@@ -2048,21 +1953,11 @@ static void display_present_cw_frame(GameState *state)
 
     int w = renderer_get_width(), h = renderer_get_height();
 
-    /* GL compositing requested but overlay unavailable: patch cw buffer before upload. */
-    if (state && state->cfg_weapon_post_gl && !(g_gl_unpack_ok && g_gl_hud_ok)) {
-        int8_t tw = renderer_get_last_water_tint_gl();
-        if (state->cfg_post_tint && tw != 0)
-            renderer_apply_underwater_tint_frame(tw);
-        if (state->cfg_weapon_draw)
-            renderer_draw_gun(state);
-    }
-
     if (g_gl_unpack_ok) {
         display_gl_present_cw(src, w, h);
-        if (g_gl_hud_ok) {
+        if (g_gl_hud_ok)
             display_gl_overlay_begin();
-            display_gl_weapon_post_effects(state);
-        } else
+        else
             display_sdl_resync_after_raw_gl();
     } else {
         if (!g_texture) return;
@@ -2120,8 +2015,6 @@ static void display_present_cw_frame(GameState *state)
 
 void display_draw_display(GameState *state)
 {
-    renderer_set_weapon_post_gl_active(state && state->cfg_weapon_post_gl &&
-                                       g_gl_unpack_ok && g_gl_hud_ok);
     /* 1. Software-render the 3D scene into the rgb buffer */
     renderer_draw_display(state);
     display_present_cw_frame(state);
@@ -2129,8 +2022,6 @@ void display_draw_display(GameState *state)
 
 void display_present_last_frame(GameState *state)
 {
-    renderer_set_weapon_post_gl_active(state && state->cfg_weapon_post_gl &&
-                                       g_gl_unpack_ok && g_gl_hud_ok);
     display_present_cw_frame(state);
 }
 

@@ -80,7 +80,6 @@ void game_state_init(GameState *state)
     state->fps_display = 0;
     state->cfg_weapon_draw = true;
     state->cfg_post_tint = true;
-    state->cfg_weapon_post_gl = false;
 }
 
 /*

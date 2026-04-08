@@ -287,9 +287,6 @@ typedef struct {
     const uint8_t *gun_pal;   /* 32 × 16-bit 12-bit Amiga color (64 bytes) */
     size_t         gun_wad_size;
 
-    /* When software underwater tint is skipped for GL compositing, holds fillscrnwater value. */
-    int8_t         last_water_tint_gl;
-
     /* Palette (legacy, used as fallback) */
     uint32_t palette[256];
 } RendererState;
@@ -393,16 +390,6 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                           int16_t brightness, int sprite_type,
                           int32_t clip_top_sy, int32_t clip_bot_sy);
 void renderer_draw_gun(GameState *state);
-
-/* display.c: set before renderer_draw_display when weapon+water should be composited in GL HUD path. */
-void renderer_set_weapon_post_gl_active(int active);
-int8_t renderer_get_last_water_tint_gl(void);
-/* Re-run underwater fillscrnwater pass on the active cw/rgb buffers (CPU fallback when GL overlay unavailable). */
-void renderer_apply_underwater_tint_frame(int8_t fill_screen_water);
-/* Rasterize first-person gun to an internal RGBA buffer for GL overlay. Returns 0 if nothing drawn.
- * *out_pixels stays valid until the next call to this function or renderer_shutdown. */
-int renderer_rasterize_gun_rgba_for_gl(GameState *state, const uint32_t **out_pixels,
-                                     int *out_gw, int *out_gh, int *out_ix, int *out_iy);
 
 /* Get pointer to the current rendered frame for display */
 const uint8_t *renderer_get_buffer(void);
