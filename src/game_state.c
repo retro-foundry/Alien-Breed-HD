@@ -78,6 +78,8 @@ void game_state_init(GameState *state)
     state->cfg_billboard_sprite_rendering_enhancement = true;
     state->cfg_show_fps = false;
     state->fps_display = 0;
+    state->cfg_weapon_draw = true;
+    state->cfg_post_tint = true;
 }
 
 /*

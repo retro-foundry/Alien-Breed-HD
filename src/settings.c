@@ -104,10 +104,14 @@ static void apply_line(GameState *state, char *line)
 
     if (strcmp(key, "start_level") == 0) {
         int n = atoi(val);
-        if (n >= 0 && n < MAX_LEVELS) {
-            state->cfg_start_level = (int16_t)n;
+        /* INI is 1-based (1 = first level, MAX_LEVELS = last). Internal cfg_start_level stays 0-based. */
+        if (n >= 1 && n <= MAX_LEVELS) {
+            state->cfg_start_level = (int16_t)(n - 1);
+        } else if (n == 0) {
+            state->cfg_start_level = 0;
+            printf("[SETTINGS] start_level=0 is deprecated; use start_level=1 for the first level\n");
         } else {
-            printf("[SETTINGS] start_level ignored (out of range): %s\n", val);
+            printf("[SETTINGS] start_level ignored (use 1..%d): %s\n", MAX_LEVELS, val);
         }
     } else if (strcmp(key, "infinite_health") == 0) {
         state->infinite_health = parse_bool(val) ? true : false;
@@ -176,6 +180,10 @@ static void apply_line(GameState *state, char *line)
         state->cfg_billboard_sprite_rendering_enhancement = parse_bool(val) ? true : false;
     } else if (strcmp(key, "show_fps") == 0 || strcmp(key, "fps_counter") == 0) {
         state->cfg_show_fps = parse_bool(val) ? true : false;
+    } else if (strcmp(key, "weapon_draw") == 0) {
+        state->cfg_weapon_draw = parse_bool(val) ? true : false;
+    } else if (strcmp(key, "post_tint") == 0) {
+        state->cfg_post_tint = parse_bool(val) ? true : false;
     }
 }
 
@@ -197,9 +205,9 @@ static void apply_runtime_constraints(GameState *state)
 static void log_effective_settings(const GameState *state, const char *source_label)
 {
     if (state->cfg_start_level >= 0) {
-        printf("[SETTINGS] %s: start_level=%d infinite_health=%d infinite_ammo=%d all_weapons=%d all_keys=%d display_mode=%s render=%dx%d supersampling=%d render_threads=%d render_threads_max=%d volume=%d y_proj_scale=%d billboard_sprite_rendering_enhancement=%d show_fps=%d\n",
+        printf("[SETTINGS] %s: start_level=%d infinite_health=%d infinite_ammo=%d all_weapons=%d all_keys=%d display_mode=%s render=%dx%d supersampling=%d render_threads=%d render_threads_max=%d volume=%d y_proj_scale=%d billboard_sprite_rendering_enhancement=%d weapon_draw=%d post_tint=%d show_fps=%d\n",
                source_label,
-               (int)state->cfg_start_level,
+               (int)state->cfg_start_level + 1,
                state->infinite_health ? 1 : 0,
                state->infinite_ammo ? 1 : 0,
                state->cfg_all_weapons ? 1 : 0,
@@ -213,9 +221,11 @@ static void log_effective_settings(const GameState *state, const char *source_la
                (int)state->cfg_volume,
                (int)state->cfg_y_proj_scale,
                state->cfg_billboard_sprite_rendering_enhancement ? 1 : 0,
+               state->cfg_weapon_draw ? 1 : 0,
+               state->cfg_post_tint ? 1 : 0,
                state->cfg_show_fps ? 1 : 0);
     } else {
-        printf("[SETTINGS] %s: start_level=default infinite_health=%d infinite_ammo=%d all_weapons=%d all_keys=%d display_mode=%s render=%dx%d supersampling=%d render_threads=%d render_threads_max=%d volume=%d y_proj_scale=%d billboard_sprite_rendering_enhancement=%d show_fps=%d\n",
+        printf("[SETTINGS] %s: start_level=default infinite_health=%d infinite_ammo=%d all_weapons=%d all_keys=%d display_mode=%s render=%dx%d supersampling=%d render_threads=%d render_threads_max=%d volume=%d y_proj_scale=%d billboard_sprite_rendering_enhancement=%d weapon_draw=%d post_tint=%d show_fps=%d\n",
                source_label,
                state->infinite_health ? 1 : 0,
                state->infinite_ammo ? 1 : 0,
@@ -230,6 +240,8 @@ static void log_effective_settings(const GameState *state, const char *source_la
                (int)state->cfg_volume,
                (int)state->cfg_y_proj_scale,
                state->cfg_billboard_sprite_rendering_enhancement ? 1 : 0,
+               state->cfg_weapon_draw ? 1 : 0,
+               state->cfg_post_tint ? 1 : 0,
                state->cfg_show_fps ? 1 : 0);
     }
 }

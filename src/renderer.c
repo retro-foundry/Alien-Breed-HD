@@ -1199,7 +1199,8 @@ static int renderer_thread_worker_main(void *userdata)
                 renderer_draw_world_slice(state, world_zone_prepass,
                                           col_start, col_end,
                                           frame_idx, trace_clip, &fill_screen_water);
-                renderer_draw_gun_columns(state, col_start, col_end);
+                if (state->cfg_weapon_draw)
+                    renderer_draw_gun_columns(state, col_start, col_end);
             } else if (job_type == RENDERER_THREAD_JOB_WATER_TINT) {
                 renderer_apply_underwater_tint_slice(tint_fill_screen_water,
                                                      0, (int16_t)g_renderer.height,
@@ -4493,6 +4494,8 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
     if (col_end > rw) col_end = rw;
     if (col_start >= col_end) return;
 
+    if (!state->cfg_weapon_draw) return;
+
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
     if (plr->gun_selected < 0) return;
 
@@ -7692,16 +7695,20 @@ void renderer_draw_display(GameState *state)
     }
     if (prof_on) t_after_world = SDL_GetPerformanceCounter();
 
-    /* 6. Keep underwater tint cue enabled. */
+    int8_t tint_water = fill_screen_water;
+    if (state && !state->cfg_post_tint)
+        tint_water = 0;
+
+    /* 6. Underwater fillscrnwater post-pass (optional). */
     int used_threaded_tint = 0;
 #ifndef AB3D_NO_THREADS
     if (state->cfg_render_threads) {
-        used_threaded_tint = renderer_dispatch_threaded_underwater_tint(fill_screen_water);
+        used_threaded_tint = renderer_dispatch_threaded_underwater_tint(tint_water);
     }
 #endif
     if (!used_threaded_tint) {
-        renderer_apply_underwater_tint(fill_screen_water);
-        tint_workers = (fill_screen_water != 0) ? 1 : 0;
+        renderer_apply_underwater_tint(tint_water);
+        tint_workers = (tint_water != 0) ? 1 : 0;
     } else {
 #ifndef AB3D_NO_THREADS
         tint_workers = (g_prof_last_tint_workers > 0) ? g_prof_last_tint_workers : 0;
@@ -7711,7 +7718,7 @@ void renderer_draw_display(GameState *state)
 
     /* 7. Draw gun overlay.
      * In threaded-world mode the gun is already drawn per worker column strip. */
-    if (!used_threaded_world) {
+    if (!used_threaded_world && state->cfg_weapon_draw) {
         renderer_draw_gun(state);
     }
     if (prof_on) t_after_gun = SDL_GetPerformanceCounter();
