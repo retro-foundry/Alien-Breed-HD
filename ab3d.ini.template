@@ -48,6 +48,11 @@ weapon_draw=1
 # 1 = underwater fillscrnwater software post-pass (blue/green screen cue when submerged).
 post_tint=1
 
+# 1 = draw weapon overlay and underwater tint using pre-baked OpenGL textures instead of
+# the software renderer. Requires the OpenGL display path (display_mode=opengl or auto).
+# Gun frames are decoded once at load time and live on the GPU; zero CPU cost per frame.
+weapon_post_gl=1
+
 # Internal software render resolution (game draws at this size). The window is
 # scaled to fit, centered, preserving aspect ratio (letterboxing as needed).
 render_width=1920

@@ -257,11 +257,31 @@ typedef void   (APIENTRY *DisplayGlDisableVertexAttribArrayFn)(GLuint index);
 #ifndef GL_STREAM_DRAW
 #define GL_STREAM_DRAW 0x88E0
 #endif
+#ifndef GL_RGBA
+#define GL_RGBA 0x1908
+#endif
+#ifndef GL_RGBA8
+#define GL_RGBA8 0x8058
+#endif
+#ifndef GL_UNSIGNED_BYTE
+#define GL_UNSIGNED_BYTE 0x1401
+#endif
+#ifndef GL_DST_COLOR
+#define GL_DST_COLOR 0x0306
+#endif
+#ifndef GL_ZERO
+#define GL_ZERO 0
+#endif
 
 static GLuint g_gl_tex_cw;
 static GLuint g_gl_prog;
 static GLuint g_gl_vao;
 static GLuint g_gl_vbo;
+
+/* Pre-baked gun frame GL textures: 8 guns × 4 frames = 32 slots, each 96×58 RGBA.
+ * Uploaded once at asset-load time; zero means not loaded. */
+#define GUN_GL_FRAME_COUNT 32
+static GLuint g_gun_gl_frames[GUN_GL_FRAME_COUNT];
 
 /* HUD overlays: SDL_Renderer GL backend does not reliably mix with raw glUseProgram; draw HUD with
  * SDL_GL_BindTexture + our own GLSL (same context as the 12-bit present shader). */
@@ -595,6 +615,129 @@ static int display_gl_hud_try_init(void)
     return 1;
 }
 
+/* Upload all 32 gun frame slots to pre-baked GL textures.
+ * Must be called after io_load_gun_graphics() and after GL is initialized.
+ * Safe to re-call (deletes old textures first). */
+void display_upload_gun_gl_textures(void)
+{
+    if (!g_gl_unpack_ok) return;  /* GL path not available */
+    if (!g_gl_gen_textures || !g_gl_bind_texture || !g_gl_tex_image_2d ||
+        !g_gl_tex_parameteri2 || !g_gl_delete_textures) return;
+
+    int w = renderer_gun_src_width();
+    int h = renderer_gun_src_height();
+    if (w < 1 || h < 1) return;
+
+    uint32_t *scratch = (uint32_t *)malloc((size_t)w * (size_t)h * sizeof(uint32_t));
+    if (!scratch) return;
+
+    for (int slot = 0; slot < GUN_GL_FRAME_COUNT; slot++) {
+        /* Delete any previously uploaded texture for this slot */
+        if (g_gun_gl_frames[slot]) {
+            g_gl_delete_textures(1, &g_gun_gl_frames[slot]);
+            g_gun_gl_frames[slot] = 0;
+        }
+        if (!renderer_decode_gun_frame_rgba(slot, scratch)) continue;
+
+        g_gl_gen_textures(1, &g_gun_gl_frames[slot]);
+        g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gun_gl_frames[slot]);
+        g_gl_tex_parameteri2(0x0DE1, 0x2800 /* GL_TEXTURE_MAG_FILTER */, 0x2600 /* GL_NEAREST */);
+        g_gl_tex_parameteri2(0x0DE1, 0x2801 /* GL_TEXTURE_MIN_FILTER */, 0x2600 /* GL_NEAREST */);
+        g_gl_tex_parameteri2(0x0DE1, 0x2802 /* GL_TEXTURE_WRAP_S */,     0x812F /* GL_CLAMP_TO_EDGE */);
+        g_gl_tex_parameteri2(0x0DE1, 0x2803 /* GL_TEXTURE_WRAP_T */,     0x812F /* GL_CLAMP_TO_EDGE */);
+        g_gl_tex_image_2d(0x0DE1, 0, (GLint)GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, scratch);
+    }
+    g_gl_bind_texture(0x0DE1, 0);
+    free(scratch);
+    printf("[DISPLAY] Gun GL textures uploaded (%d slots, %dx%d each)\n",
+           GUN_GL_FRAME_COUNT, w, h);
+}
+
+/* Draw a pre-baked gun GL texture as a quad over dst (window pixels). */
+static void display_gl_gun_quad(int frame_slot, const SDL_Rect *dst)
+{
+    if (!g_gl_hud_ok || g_gl_overlay_win_w < 1) return;
+    if (frame_slot < 0 || frame_slot >= GUN_GL_FRAME_COUNT) return;
+    if (!g_gun_gl_frames[frame_slot]) return;
+    if (!dst) return;
+
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+    SDL_RenderFlush(g_sdl_ren);
+#endif
+    int wx = g_gl_overlay_win_w, wy = g_gl_overlay_win_h;
+    float nx0, ny0, nx1, ny1, nx2, ny2, nx3, ny3;
+    display_gl_wnd_ndc((float)dst->x,           (float)dst->y,           wx, wy, &nx0, &ny0);
+    display_gl_wnd_ndc((float)(dst->x + dst->w), (float)dst->y,           wx, wy, &nx1, &ny1);
+    display_gl_wnd_ndc((float)(dst->x + dst->w), (float)(dst->y + dst->h), wx, wy, &nx2, &ny2);
+    display_gl_wnd_ndc((float)dst->x,           (float)(dst->y + dst->h), wx, wy, &nx3, &ny3);
+
+    float buf[24] = {
+        nx0, ny0, 0.0f, 0.0f,
+        nx1, ny1, 1.0f, 0.0f,
+        nx3, ny3, 0.0f, 1.0f,
+        nx1, ny1, 1.0f, 0.0f,
+        nx2, ny2, 1.0f, 1.0f,
+        nx3, ny3, 0.0f, 1.0f,
+    };
+
+    g_gl_use_program(g_gl_prog_hud_tex);
+    if (g_gl_hud_loc_tex >= 0)        g_gl_uniform1i(g_gl_hud_loc_tex, 0);
+    if (g_gl_hud_loc_color_tex >= 0)  g_gl_uniform4f(g_gl_hud_loc_color_tex, 1.0f, 1.0f, 1.0f, 1.0f);
+    g_gl_active_texture(GL_TEXTURE0);
+    g_gl_bind_texture(0x0DE1, g_gun_gl_frames[frame_slot]);
+    g_gl_bind_vertex_array(g_gl_hud_vao_tex);
+    g_gl_bind_buffer(0x8892, g_gl_hud_vbo);
+    g_gl_buffer_data(0x8892, (ptrdiff_t)sizeof(buf), buf, GL_STREAM_DRAW);
+    g_gl_draw_arrays(GL_TRIANGLES, 0, 6);
+    g_gl_bind_texture(0x0DE1, 0);
+}
+
+/* Apply the Amiga underwater tint (AND #$00FF = zero red channel) as a GL
+ * multiply quad.  fill_screen_water > 0 → full viewport; < 0 → bottom half. */
+static void display_gl_multiply_tint_rect(int8_t fill_screen_water)
+{
+    if (!g_gl_hud_ok || g_gl_overlay_win_w < 1) return;
+    if (fill_screen_water == 0) return;
+
+    /* Compute rect in window pixels over the present dst letterbox */
+    SDL_Rect r = g_present_dst_rect;
+    if (fill_screen_water < 0) {
+        /* Weak tint: bottom half only */
+        int half = r.h / 2;
+        r.y += half;
+        r.h -= half;
+    }
+    if (r.w < 1 || r.h < 1) return;
+
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+    SDL_RenderFlush(g_sdl_ren);
+#endif
+    /* Color multiply: dst_out = src_color * dst_color.  Amiga AND #$00FF zeroes
+     * the red channel, so multiply by (R=0, G=1, B=1). */
+    int wx = g_gl_overlay_win_w, wy = g_gl_overlay_win_h;
+    float nx0, ny0, nx1, ny1, nx2, ny2, nx3, ny3;
+    display_gl_wnd_ndc((float)r.x,         (float)r.y,         wx, wy, &nx0, &ny0);
+    display_gl_wnd_ndc((float)(r.x + r.w), (float)r.y,         wx, wy, &nx1, &ny1);
+    display_gl_wnd_ndc((float)(r.x + r.w), (float)(r.y + r.h), wx, wy, &nx2, &ny2);
+    display_gl_wnd_ndc((float)r.x,         (float)(r.y + r.h), wx, wy, &nx3, &ny3);
+
+    float solid_buf[12] = {
+        nx0, ny0, nx1, ny1, nx3, ny3,
+        nx1, ny1, nx2, ny2, nx3, ny3,
+    };
+    g_gl_use_program(g_gl_prog_hud_solid);
+    if (g_gl_hud_loc_color_solid >= 0)
+        g_gl_uniform4f(g_gl_hud_loc_color_solid, 0.0f, 1.0f, 1.0f, 1.0f);
+    g_gl_bind_vertex_array(g_gl_hud_vao_solid);
+    g_gl_bind_buffer(0x8892, g_gl_hud_vbo);
+    g_gl_buffer_data(0x8892, (ptrdiff_t)sizeof(solid_buf), solid_buf, GL_STREAM_DRAW);
+    /* Temporarily switch to multiply blend */
+    g_gl_blend_func(GL_DST_COLOR, GL_ZERO);
+    g_gl_draw_arrays(GL_TRIANGLES, 0, 6);
+    /* Restore normal alpha blend */
+    g_gl_blend_func(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
+
 static void display_gl_overlay_begin(void)
 {
     display_gl_output_size(&g_gl_overlay_win_w, &g_gl_overlay_win_h);
@@ -761,6 +904,12 @@ static void display_automap_line_outlined_gl(int ax0, int ay0, int ax1, int ay1,
 
 static void display_gl_shutdown_unpack(void)
 {
+    if (g_gl_delete_textures) {
+        for (int i = 0; i < GUN_GL_FRAME_COUNT; i++) {
+            if (g_gun_gl_frames[i]) g_gl_delete_textures(1, &g_gun_gl_frames[i]);
+            g_gun_gl_frames[i] = 0;
+        }
+    }
     display_gl_hud_shutdown();
     if (!g_gl_unpack_ok) return;
     if (g_gl_delete_vertex_arrays && g_gl_vao) g_gl_delete_vertex_arrays(1, &g_gl_vao);
@@ -1953,11 +2102,31 @@ static void display_present_cw_frame(GameState *state)
 
     int w = renderer_get_width(), h = renderer_get_height();
 
+    int use_gl_weapon = state && state->cfg_weapon_post_gl && g_gl_unpack_ok && g_gl_hud_ok;
+
     if (g_gl_unpack_ok) {
         display_gl_present_cw(src, w, h);
-        if (g_gl_hud_ok)
+        if (g_gl_hud_ok) {
             display_gl_overlay_begin();
-        else
+            if (use_gl_weapon) {
+                /* Tint first (modifies background), then gun on top */
+                display_gl_multiply_tint_rect(renderer_get_last_fill_screen_water());
+                if (state->cfg_weapon_draw) {
+                    int frame_slot, ix, iy, iw, ih;
+                    if (renderer_get_gun_draw_info(state, &frame_slot, &ix, &iy, &iw, &ih)) {
+                        int rw = renderer_get_width(), rh = renderer_get_height();
+                        SDL_Rect gun_dst;
+                        gun_dst.x = g_present_dst_rect.x
+                                    + (int)((int64_t)ix * g_present_dst_rect.w / rw);
+                        gun_dst.y = g_present_dst_rect.y
+                                    + (int)((int64_t)iy * g_present_dst_rect.h / rh);
+                        gun_dst.w = (int)((int64_t)iw * g_present_dst_rect.w / rw);
+                        gun_dst.h = (int)((int64_t)ih * g_present_dst_rect.h / rh);
+                        display_gl_gun_quad(frame_slot, &gun_dst);
+                    }
+                }
+            }
+        } else
             display_sdl_resync_after_raw_gl();
     } else {
         if (!g_texture) return;
@@ -2015,7 +2184,9 @@ static void display_present_cw_frame(GameState *state)
 
 void display_draw_display(GameState *state)
 {
-    /* 1. Software-render the 3D scene into the rgb buffer */
+    /* Tell renderer to skip CPU gun+tint when the GL overlay path will handle them. */
+    int use_gl_weapon = state && state->cfg_weapon_post_gl && g_gl_unpack_ok && g_gl_hud_ok;
+    renderer_set_weapon_post_gl_active(use_gl_weapon);
     renderer_draw_display(state);
     display_present_cw_frame(state);
 }

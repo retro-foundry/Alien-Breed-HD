@@ -38,6 +38,10 @@ void display_fade_up_title(int amount);
 void display_fade_down_title(int amount);
 void display_clear_title_palette(void);
 
+/* Gun GL textures: decode all 32 gun frame slots and upload to GPU once.
+ * Call after io_load_gun_graphics().  Safe to call multiple times (re-uploads). */
+void display_upload_gun_gl_textures(void);
+
 /* In-game rendering */
 void display_init_copper_screen(void);
 void display_draw_display(GameState *state);  /* Renders 3D scene; presents 12-bit cw framebuffer */

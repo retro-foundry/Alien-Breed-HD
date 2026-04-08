@@ -341,8 +341,9 @@ typedef struct {
     /* ab3d.ini + runtime (appended for save compatibility — older saves fail size check) */
     bool            cfg_show_fps;       /* 1 = draw rounded FPS (ammo digits) top-left; updates ~1/s */
     uint16_t        fps_display;        /* rounded Hz (game_loop updates ~1/s) */
-    bool            cfg_weapon_draw;    /* 1 = first-person weapon overlay after world */
-    bool            cfg_post_tint;      /* 1 = underwater fillscrnwater software post-pass */
+    bool            cfg_weapon_draw;      /* 1 = first-person weapon overlay after world */
+    bool            cfg_post_tint;        /* 1 = underwater fillscrnwater software post-pass */
+    bool            cfg_weapon_post_gl;   /* 1 = draw weapon + underwater tint via pre-baked GL textures */
 
 } GameState;
 

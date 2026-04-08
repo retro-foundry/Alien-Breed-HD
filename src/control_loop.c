@@ -609,6 +609,7 @@ void play_game(GameState *state)
     io_load_floor();
     io_load_sky();
     io_load_gun_graphics();
+    display_upload_gun_gl_textures();
     io_load_objects();
     io_load_vec_objects();
     io_load_sfx();

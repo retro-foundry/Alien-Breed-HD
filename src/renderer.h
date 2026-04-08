@@ -289,6 +289,11 @@ typedef struct {
 
     /* Palette (legacy, used as fallback) */
     uint32_t palette[256];
+
+    /* Saved per-frame water tint value for the GL post-pass.
+     * Set by renderer_draw_display; read by display.c after the frame completes.
+     * 0 = no tint, >0 = full-screen, <0 = bottom-half only. */
+    int8_t last_fill_screen_water;
 } RendererState;
 
 /* Global renderer instance */
@@ -390,6 +395,23 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                           int16_t brightness, int sprite_type,
                           int32_t clip_top_sy, int32_t clip_bot_sy);
 void renderer_draw_gun(GameState *state);
+
+/* GL weapon/tint post-pass support.
+ * When active, renderer_draw_display skips the CPU gun draw and tint pass;
+ * display.c handles them via pre-baked GL textures instead. */
+void renderer_set_weapon_post_gl_active(int active);
+int8_t renderer_get_last_fill_screen_water(void);
+/* Fill *out_frame_slot (0-31), *out_ix/iy/iw/ih (internal render pixel rect,
+ * no aspect pre-correction).  Returns 1 if a gun should be drawn, 0 otherwise. */
+int renderer_get_gun_draw_info(const GameState *state, int *out_frame_slot,
+                               int *out_ix, int *out_iy, int *out_iw, int *out_ih);
+/* Decode gun frame slot (0-31) to RGBA (R,G,B,A bytes, row-major, 96×58 pixels).
+ * Transparent source pixels → alpha 0.  out_rgba must hold at least 96*58 uint32_t.
+ * Returns 1 on success, 0 if the slot is empty or assets are not loaded. */
+int renderer_decode_gun_frame_rgba(int frame_slot, uint32_t *out_rgba);
+/* Gun source frame dimensions (constant). */
+int renderer_gun_src_width(void);
+int renderer_gun_src_height(void);
 
 /* Get pointer to the current rendered frame for display */
 const uint8_t *renderer_get_buffer(void);

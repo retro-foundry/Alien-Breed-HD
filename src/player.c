@@ -1708,6 +1708,7 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     bool    ini_cfg_billboard_sprite_rendering_enhancement = state->cfg_billboard_sprite_rendering_enhancement;
     bool    ini_cfg_weapon_draw = state->cfg_weapon_draw;
     bool    ini_cfg_post_tint = state->cfg_post_tint;
+    bool    ini_cfg_weapon_post_gl = state->cfg_weapon_post_gl;
     bool    ini_cfg_show_fps = state->cfg_show_fps;
 
     *state = g_full_save_pending.game_state;
@@ -1729,6 +1730,7 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     state->cfg_billboard_sprite_rendering_enhancement = ini_cfg_billboard_sprite_rendering_enhancement;
     state->cfg_weapon_draw = ini_cfg_weapon_draw;
     state->cfg_post_tint = ini_cfg_post_tint;
+    state->cfg_weapon_post_gl = ini_cfg_weapon_post_gl;
     state->cfg_show_fps = ini_cfg_show_fps;
 
     door_data_dst = player_save_table_size_with_sentinel(state->level.door_data, 22u);
