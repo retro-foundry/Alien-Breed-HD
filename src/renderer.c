@@ -4231,224 +4231,224 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     if (!buf || !rgb || !cw) return;
     if (z <= SPRITE_NEAR_CLIP_Z) return;
     if (!wad || !ptr_data) return;
-    int rw = g_renderer.width, rh = g_renderer.height;
+    const int rw = g_renderer.width, rh = g_renderer.height;
     if (src_cols < 1) src_cols = 32;
     if (src_rows < 1) src_rows = 32;
 
-    /* ASM: sub.w d3,d0 (left = center_x - half_w) before doubling d3.
-     * ASM: sub.w d4,d2 (top = center_y - half_h) before doubling d4.
-     * width/height passed in are already doubled (full size).
-     * sx/sy are set after we may reduce to draw_w/draw_h for texture aspect. */
-    int sx, sy;
+    const int eff_cols = src_cols * 2;
+    const int eff_rows = src_rows * 2;
+    const uint32_t max_ptr_col = (uint32_t)((ptr_size > ptr_offset) ? (ptr_size - ptr_offset) / 4u : 0);
+    if (max_ptr_col == 0) return;
 
-    /* Brightness -> palette byte offset via objscalecols (ObjDraw3.ChipRam.s line 572).
-     * Use caller-provided d6 brightness (distance + object brightness), clamped to
-     * the valid Amiga table index range. */
-    int bright_idx = brightness;
-    if (bright_idx < 0) bright_idx = 0;
-    if (bright_idx > 61) bright_idx = 61;
-    uint32_t pal_level_off = obj_scale_cols[bright_idx];
-    if (pal && pal_size < 960) pal_level_off = 0;  /* single-level or small palette */
-    int gray = (bright_idx * 255) / 62;
-    if (gray < 90) gray = 90;  /* floor so no-palette / fallback path stays visible */
+    const int sx = screen_x - width / 2;
+    const int sy = screen_y - height / 2;
 
-    /* Draw column-by-column (matching Amiga's column-strip approach).
-     *
-     * The PTR table has src_cols*2 columns per frame (confirmed by frame offset
-     * spacing: e.g. alien frames are 64*4 bytes apart = 64 columns, src_cols=32).
-     * Each column's WAD data has src_rows*2 words.
-     *
-     * Amiga blank-strip logic (line 763): "move.l (a5),d1 / beq blankstrip"
-     * skips only when ALL 4 bytes of the PTR entry are zero (mode==0 AND wad_off==0).
-     * wad_off==0 with mode!=0 is a VALID column (data at start of WAD). */
-    int eff_cols = src_cols * 2;
-    int eff_rows = src_rows * 2;
-    uint32_t max_col = (uint32_t)((ptr_size > ptr_offset) ? (ptr_size - ptr_offset) / 4u : 0);
-
-    sx = screen_x - width / 2;
-    sy = screen_y - height / 2;
-
-    /* Keep sprites inside this worker's strip, but do not hard-clip to
-     * per-zone portal bounds so billboards can straddle zone edges. */
+    /* --- Horizontal clipping (early-out before palette build) --- */
     int clip_left = ctx->strip_left;
     int clip_right = ctx->strip_right;
     if (clip_left < 0) clip_left = 0;
     if (clip_right > rw) clip_right = rw;
-    int dx_start = 0;
-    int dx_end = width;
-    int col_start = sx;
-    if (col_start < clip_left) col_start = clip_left;
+    int col_start = (sx > clip_left) ? sx : clip_left;
     if (col_start < 0) col_start = 0;
-    dx_start = col_start - sx;
-    if (dx_start < 0) dx_start = 0;
+    const int dx_start = col_start - sx;
     int col_end = sx + width;
     if (col_end > clip_right) col_end = clip_right;
     if (col_end > rw) col_end = rw;
-    dx_end = col_end - sx;
+    int dx_end = col_end - sx;
     if (dx_end > width) dx_end = width;
-    if (dx_end < 0) dx_end = 0;
+    if (dx_end <= dx_start) return;
+
+    /* --- Vertical clipping (invariant across columns) --- */
+    int draw_top = sy;
+    int draw_bot = sy + height - 1;
+    if (draw_top < 0) draw_top = 0;
+    if (draw_bot >= rh) draw_bot = rh - 1;
+    if (draw_top < (int)ctx->top_clip) draw_top = (int)ctx->top_clip;
+    if (draw_bot > (int)ctx->bot_clip) draw_bot = (int)ctx->bot_clip;
+    if (clip_top_sy < clip_bot_sy) {
+        if (draw_top < (int)clip_top_sy) draw_top = (int)clip_top_sy;
+        if (draw_bot > (int)clip_bot_sy) draw_bot = (int)clip_bot_sy;
+    }
+    if (draw_top > draw_bot) return;
+
+    /* --- Pre-build 32-entry palette LUT for this brightness level ---
+     * Replaces per-pixel palette byte reads, c12 construction, and
+     * amiga12_to_argb conversion with a single indexed load. */
+    int bright_idx = brightness;
+    if (bright_idx < 0) bright_idx = 0;
+    if (bright_idx > 61) bright_idx = 61;
+    uint32_t pal_level_off = obj_scale_cols[bright_idx];
+    if (pal && pal_size < 960) pal_level_off = 0;
+
+    uint16_t spr_cw[32];
+    uint32_t spr_rgb[32];
+    if (pal && pal_size >= 64) {
+        uint32_t level_off = (pal_level_off + 64 <= pal_size) ? pal_level_off : 0;
+        for (int ti = 1; ti < 32; ti++) {
+            uint32_t ci = level_off + (uint32_t)ti * 2;
+            if (ci + 1 < pal_size) {
+                uint16_t c12 = (uint16_t)((pal[ci] << 8) | pal[ci + 1]);
+                spr_cw[ti] = c12;
+                spr_rgb[ti] = amiga12_to_argb(c12);
+            } else {
+                spr_cw[ti] = 0;
+                spr_rgb[ti] = 0;
+            }
+        }
+    } else {
+        int gray = (bright_idx * 255) / 62;
+        if (gray < 90) gray = 90;
+        for (int ti = 1; ti < 32; ti++) {
+            int shade = (gray * ti) / 31;
+            uint32_t c = RENDER_RGB_RASTER_PIXEL(((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade);
+            spr_rgb[ti] = c;
+            spr_cw[ti] = argb_to_amiga12(c);
+        }
+    }
+
+    /* --- Hoisted constants for the column/row loops --- */
+    const int expand = g_renderer_rgb_raster_expand;
+    const size_t rw_stride = (size_t)rw;
+    const int down_strip_i = (int)down_strip;
+    const int32_t z32 = (int32_t)z;
+
+    /* Fixed-point 16.16 DDA stepping (replaces per-pixel integer division). */
+    const int32_t src_col_step = (width > 1)
+        ? (int32_t)(((uint32_t)eff_cols << 16) / (uint32_t)width) : 0;
+    const int32_t src_row_step = (height > 1)
+        ? (int32_t)(((uint32_t)eff_rows << 16) / (uint32_t)height) : 0;
+    int32_t src_col_fp = (int32_t)dx_start * src_col_step;
+
     const ColumnClip *wall_clip = &g_renderer.clip;
-    int have_wall_clip = (wall_clip->top && wall_clip->bot && wall_clip->z &&
-                          wall_clip->top2 && wall_clip->bot2 && wall_clip->z2);
+    const int have_wall_clip = (wall_clip->top && wall_clip->bot && wall_clip->z &&
+                                wall_clip->top2 && wall_clip->bot2 && wall_clip->z2);
+
+    /* --- Column loop --- */
     for (int dx = dx_start; dx < dx_end; dx++) {
-        int screen_col = sx + dx;
-        if (screen_col < 0 || screen_col >= rw) continue;
+        const int screen_col = sx + dx;
 
-        /* Map screen column to source column 0..eff_cols-1 */
-        int src_col = (width > 1) ? (dx * eff_cols) / width : 0;
+        /* Source column via DDA (replaces per-column division). */
+        int src_col = src_col_fp >> 16;
+        src_col_fp += src_col_step;
         if (src_col >= eff_cols) src_col = eff_cols - 1;
-        /* Clamp to valid PTR range */
-        if (max_col > 0 && (uint32_t)src_col >= max_col) src_col = (int)(max_col - 1);
+        if ((uint32_t)src_col >= max_ptr_col) src_col = (int)(max_ptr_col - 1);
 
-        /* Read PTR entry for this source column */
         uint32_t entry_off = ptr_offset + (uint32_t)src_col * 4;
         if (entry_off + 4 > ptr_size) continue;
-
         const uint8_t *entry = ptr_data + entry_off;
-        uint8_t mode = entry[0];
-        uint32_t wad_off = ((uint32_t)entry[1] << 16)
-                         | ((uint32_t)entry[2] << 8)
-                         | (uint32_t)entry[3];
-
-        /* Amiga: beq blankstrip - skip when entire 4-byte entry is zero */
+        const uint8_t mode = entry[0];
+        const uint32_t wad_off = ((uint32_t)entry[1] << 16)
+                               | ((uint32_t)entry[2] << 8)
+                               | (uint32_t)entry[3];
         if (mode == 0 && wad_off == 0) continue;
         if (wad_off >= wad_size) continue;
 
         const uint8_t *src = wad + wad_off;
 
-        /* Compute the exact drawable segments for this sprite column once, then
-         * only rasterize those rows. This avoids per-pixel wall depth tests. */
-        int draw_top = sy;
-        int draw_bot = sy + height - 1;
-        if (draw_top < 0) draw_top = 0;
-        if (draw_bot >= rh) draw_bot = rh - 1;
-        if (draw_top < (int)ctx->top_clip) draw_top = (int)ctx->top_clip;
-        if (draw_bot > (int)ctx->bot_clip) draw_bot = (int)ctx->bot_clip;
-        if (clip_top_sy < clip_bot_sy) {
-            if (draw_top < clip_top_sy) draw_top = clip_top_sy;
-            if (draw_bot > clip_bot_sy) draw_bot = clip_bot_sy;
-        }
-        if (draw_top > draw_bot) continue;
+        /* Precompute texel shift from PTR mode (replaces per-pixel branch). */
+        const int texel_shift = (mode == 0) ? 0 : (mode == 1) ? 5 : 10;
 
-        int occ_top[2];
-        int occ_bot[2];
-        int occ_count = 0;
-        if (have_wall_clip) {
-            int16_t top0 = wall_clip->top[screen_col];
-            int16_t bot0 = wall_clip->bot[screen_col];
-            int32_t z0 = wall_clip->z[screen_col];
-            if (z0 > 0 && top0 <= bot0 && (int32_t)z >= z0) {
-                int t = (top0 > draw_top) ? top0 : draw_top;
-                int b = (bot0 < draw_bot) ? bot0 : draw_bot;
-                if (t <= b) {
-                    occ_top[occ_count] = t;
-                    occ_bot[occ_count] = b;
-                    occ_count++;
-                }
-            }
-            int16_t top1 = wall_clip->top2[screen_col];
-            int16_t bot1 = wall_clip->bot2[screen_col];
-            int32_t z1 = wall_clip->z2[screen_col];
-            if (z1 > 0 && top1 <= bot1 && (int32_t)z >= z1) {
-                int t = (top1 > draw_top) ? top1 : draw_top;
-                int b = (bot1 < draw_bot) ? bot1 : draw_bot;
-                if (t <= b) {
-                    occ_top[occ_count] = t;
-                    occ_bot[occ_count] = b;
-                    occ_count++;
-                }
-            }
-            if (occ_count == 2) {
-                if (occ_top[1] < occ_top[0]) {
-                    int t = occ_top[0];
-                    int b = occ_bot[0];
-                    occ_top[0] = occ_top[1];
-                    occ_bot[0] = occ_bot[1];
-                    occ_top[1] = t;
-                    occ_bot[1] = b;
-                }
-                if (occ_top[1] <= occ_bot[0] + 1) {
-                    if (occ_bot[1] > occ_bot[0]) occ_bot[0] = occ_bot[1];
-                    occ_count = 1;
-                }
-            }
-        }
+        /* Max valid row_idx for this column (replaces per-pixel bounds check).
+         * Each row is 2 bytes; need (row_idx + 1) * 2 <= remaining WAD. */
+        const int max_row_idx = (int)((wad_size - wad_off) / 2) - 1;
+        if (max_row_idx < 0) continue;
 
-        int seg_top[3];
-        int seg_bot[3];
-        int seg_count = 0;
-        int cursor = draw_top;
-        for (int i = 0; i < occ_count; i++) {
-            if (occ_top[i] > cursor) {
+        /* Build visible segments from wall occlusion (unchanged logic). */
+        int seg_top[3], seg_bot[3], seg_count = 0;
+        {
+            int occ_top[2], occ_bot[2], occ_count = 0;
+            if (have_wall_clip) {
+                int16_t wt0 = wall_clip->top[screen_col];
+                int16_t wb0 = wall_clip->bot[screen_col];
+                int32_t wz0 = wall_clip->z[screen_col];
+                if (wz0 > 0 && wt0 <= wb0 && z32 >= wz0) {
+                    int t = (wt0 > draw_top) ? (int)wt0 : draw_top;
+                    int b = (wb0 < draw_bot) ? (int)wb0 : draw_bot;
+                    if (t <= b) { occ_top[occ_count] = t; occ_bot[occ_count] = b; occ_count++; }
+                }
+                int16_t wt1 = wall_clip->top2[screen_col];
+                int16_t wb1 = wall_clip->bot2[screen_col];
+                int32_t wz1 = wall_clip->z2[screen_col];
+                if (wz1 > 0 && wt1 <= wb1 && z32 >= wz1) {
+                    int t = (wt1 > draw_top) ? (int)wt1 : draw_top;
+                    int b = (wb1 < draw_bot) ? (int)wb1 : draw_bot;
+                    if (t <= b) { occ_top[occ_count] = t; occ_bot[occ_count] = b; occ_count++; }
+                }
+                if (occ_count == 2) {
+                    if (occ_top[1] < occ_top[0]) {
+                        int t = occ_top[0]; int b = occ_bot[0];
+                        occ_top[0] = occ_top[1]; occ_bot[0] = occ_bot[1];
+                        occ_top[1] = t; occ_bot[1] = b;
+                    }
+                    if (occ_top[1] <= occ_bot[0] + 1) {
+                        if (occ_bot[1] > occ_bot[0]) occ_bot[0] = occ_bot[1];
+                        occ_count = 1;
+                    }
+                }
+            }
+            int cursor = draw_top;
+            for (int i = 0; i < occ_count; i++) {
+                if (occ_top[i] > cursor) {
+                    seg_top[seg_count] = cursor;
+                    seg_bot[seg_count] = occ_top[i] - 1;
+                    seg_count++;
+                }
+                if (occ_bot[i] + 1 > cursor) cursor = occ_bot[i] + 1;
+            }
+            if (cursor <= draw_bot) {
                 seg_top[seg_count] = cursor;
-                seg_bot[seg_count] = occ_top[i] - 1;
+                seg_bot[seg_count] = draw_bot;
                 seg_count++;
             }
-            if (occ_bot[i] + 1 > cursor) cursor = occ_bot[i] + 1;
         }
-        if (cursor <= draw_bot) {
-            seg_top[seg_count] = cursor;
-            seg_bot[seg_count] = draw_bot;
-            seg_count++;
-        }
+        if (seg_count == 0) continue;
 
-        for (int seg = 0; seg < seg_count; seg++) {
-            for (int screen_row = seg_top[seg]; screen_row <= seg_bot[seg]; screen_row++) {
-                int dy = screen_row - sy;
-
-                /* Map screen row to source row 0..eff_rows-1 */
-                int src_row = (height > 1) ? (dy * eff_rows) / height : 0;
-                if (src_row >= eff_rows) src_row = eff_rows - 1;
-                int row_idx = (int)down_strip + src_row;
-
-                /* Bounds check: each row is 2 bytes (one 16-bit word) */
-                if (wad_off + (size_t)(row_idx + 1) * 2 > wad_size) continue;
-
-                /* Decode 5-bit pixel from packed word (match gun: build 16-bit word big-endian). */
-                uint16_t w = (uint16_t)((src[row_idx * 2] << 8) | src[row_idx * 2 + 1]);
-                uint8_t texel = 0;
-                if (mode == 0) {
-                    texel = (uint8_t)(w & 0x1F);
-                } else if (mode == 1) {
-                    texel = (uint8_t)((w >> 5) & 0x1F);
-                } else {
-                    texel = (uint8_t)((w >> 10) & 0x1F);
-                }
-                if (texel == 0) continue;  /* transparent */
-
-                uint8_t *row8 = buf + (size_t)screen_row * rw;
-                uint32_t *row32 = rgb + (size_t)screen_row * rw;
-                uint16_t *row16 = cw + (size_t)screen_row * rw;
-
-                /* Geometry tag buffer is used by wall-join post-pass:
-                 * 1=floor/ceiling, 2=wall. Sprites must use a neutral tag so
-                 * they are never treated as wall/floor spans. */
-                row8[screen_col] = 3;
-
-                /* Color from .pal brightness palette (15 levels x 64 bytes or single 64-byte block).
-                 * Amiga .pal is big-endian 12-bit words. Try little-endian if colors look wrong. */
-                if (pal && pal_size >= 64) {
-                    uint32_t level_off = (pal_level_off + 64 <= pal_size) ? pal_level_off : 0;
-                    uint32_t ci = level_off + (uint32_t)texel * 2;
-                    if (ci + 1 < pal_size) {
-                        uint16_t c12 = (uint16_t)((pal[ci] << 8) | pal[ci + 1]);
-                        if (g_renderer_rgb_raster_expand)
-                            row32[screen_col] = amiga12_to_argb(c12);
-                        row16[screen_col] = c12;
-                    } else {
-                        int shade = (gray * (int)texel) / 31;
-                        uint32_t c = RENDER_RGB_RASTER_PIXEL(((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade);
-                        if (g_renderer_rgb_raster_expand)
-                            row32[screen_col] = c;
-                        row16[screen_col] = argb_to_amiga12(c);
+        /* Rasterize visible segments with split expand/non-expand paths.
+         * Uses pixel-offset stepping (pix += rw_stride) instead of
+         * per-row pointer recomputation. */
+        if (expand) {
+            for (int seg = 0; seg < seg_count; seg++) {
+                const int row_start = seg_top[seg];
+                const int row_end = seg_bot[seg];
+                int32_t row_fp = (int32_t)(row_start - sy) * src_row_step;
+                size_t pix = (size_t)row_start * rw_stride + (size_t)screen_col;
+                for (int screen_row = row_start; screen_row <= row_end; screen_row++) {
+                    int src_row = row_fp >> 16;
+                    row_fp += src_row_step;
+                    if (src_row >= eff_rows) src_row = eff_rows - 1;
+                    const int row_idx = down_strip_i + src_row;
+                    if (row_idx <= max_row_idx) {
+                        const uint16_t w = (uint16_t)((src[row_idx * 2] << 8) | src[row_idx * 2 + 1]);
+                        const uint8_t texel = (uint8_t)((w >> texel_shift) & 0x1F);
+                        if (texel != 0) {
+                            buf[pix] = 3;
+                            rgb[pix] = spr_rgb[texel];
+                            cw[pix] = spr_cw[texel];
+                        }
                     }
-                } else {
-                    /* No palette: use texel for shading so sprite shape is visible */
-                    int shade = (gray * (int)texel) / 31;
-                    uint32_t c = RENDER_RGB_RASTER_PIXEL(((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade);
-                    if (g_renderer_rgb_raster_expand)
-                        row32[screen_col] = c;
-                    row16[screen_col] = argb_to_amiga12(c);
+                    pix += rw_stride;
+                }
+            }
+        } else {
+            for (int seg = 0; seg < seg_count; seg++) {
+                const int row_start = seg_top[seg];
+                const int row_end = seg_bot[seg];
+                int32_t row_fp = (int32_t)(row_start - sy) * src_row_step;
+                size_t pix = (size_t)row_start * rw_stride + (size_t)screen_col;
+                for (int screen_row = row_start; screen_row <= row_end; screen_row++) {
+                    int src_row = row_fp >> 16;
+                    row_fp += src_row_step;
+                    if (src_row >= eff_rows) src_row = eff_rows - 1;
+                    const int row_idx = down_strip_i + src_row;
+                    if (row_idx <= max_row_idx) {
+                        const uint16_t w = (uint16_t)((src[row_idx * 2] << 8) | src[row_idx * 2 + 1]);
+                        const uint8_t texel = (uint8_t)((w >> texel_shift) & 0x1F);
+                        if (texel != 0) {
+                            buf[pix] = 3;
+                            cw[pix] = spr_cw[texel];
+                        }
+                    }
+                    pix += rw_stride;
                 }
             }
         }
