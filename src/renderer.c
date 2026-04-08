@@ -3249,7 +3249,7 @@ static void renderer_draw_wall_ctx(RenderSliceContext *ctx,
      * Equivalent signed test in view space: (x1*z2 - z1*x2) < 0. */
     {
         int64_t face = (int64_t)cx1 * (int64_t)cz2 - (int64_t)cz1 * (int64_t)cx2;
-        if (face >= 0) return;
+        if (face > 0) return;
     }
 
     /* Project in fine pixel space for smooth motion. */
