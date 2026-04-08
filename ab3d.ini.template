@@ -6,7 +6,7 @@
 # loads ab3d.ini first, then ab3d.ini.template in the same folder only if ab3d.ini is missing.
 
 # Starting level number: 1 = first level, 16 = last (16 levels total).
-start_level=1
+start_level=0
 
 # 1 = health stays at maximum (no damage from enemies/environment).
 infinite_health=0
@@ -40,7 +40,7 @@ billboard_sprite_rendering_enhancement=1
 
 # 1 = show rounded FPS (same digit font as ammo) at top-left of the letterboxed game area; updates every second.
 # (Alias: fps_counter=1 — same as show_fps=1.)
-show_fps=0
+show_fps=1
 
 # 1 = draw first-person weapon overlay after the 3D world (single-threaded or per strip when render_threads=1).
 weapon_draw=1

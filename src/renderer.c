@@ -63,6 +63,12 @@
 #define AB3D_PREFETCH_WRITE(p) ((void)0)
 #endif
 
+#if defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER)
+#define AB3D_RESTRICT __restrict
+#else
+#define AB3D_RESTRICT
+#endif
+
 /* Floor/ceiling UV step per pixel: d1>>FLOOR_STEP_SHIFT (same at any width so texture scale is correct). */
 #define FLOOR_STEP_SHIFT  (6 + RENDER_SCALE_LOG2)  /* d1>>9 at RENDER_SCALE=8 */
 /* Camera UV scale in fixed-point, matching Amiga sxoff/szoff setup in pastsides:
@@ -2966,9 +2972,9 @@ static void draw_wall_rasterize_segment(
 {
     const int64_t INVZ_ONE = (1LL << 24);
 
-    uint8_t *buf = renderer_active_buf();
-    uint32_t *rgb = renderer_active_rgb();
-    uint16_t *cw = renderer_active_cw();
+    uint8_t * AB3D_RESTRICT buf = renderer_active_buf();
+    uint32_t * AB3D_RESTRICT rgb = renderer_active_rgb();
+    uint16_t * AB3D_RESTRICT cw = renderer_active_cw();
     if (!buf || !rgb || !cw) return;
 
     const int expand = g_renderer_rgb_raster_expand;
@@ -3097,43 +3103,65 @@ static void draw_wall_rasterize_segment(
 
         size_t pix = (size_t)ct * wstride + (size_t)x;
 
-        /* ---- Main vertical raster with merged horizontal edge extension ---- */
+        /* ---- Main vertical raster with merged horizontal edge extension ----
+         * Textured loops are 4-way specialized on the column-constant
+         * (do_ext_l, do_ext_r) pair so the compiler eliminates dead extension
+         * writes instead of branching every pixel.  Write prefetches hide the
+         * vertical-stride cache misses inherent to column-major rasterization. */
+#define WALL_PF_DIST 8
         if (has_tex_pal && strip_offset >= 0) {
             const uint8_t *tex_strip = texture + strip_offset;
             const uint16_t *cache_cw  = ctx->wall_cache_cw;
             const uint32_t *cache_rgb = ctx->wall_cache_rgb;
 
             if (expand) {
-                for (int y = ct; y <= cb; y++) {
-                    int ra = ((int)(tex_y >> 16) & valand) << 1;
-                    uint16_t word = ((uint16_t)tex_strip[ra] << 8) | tex_strip[ra + 1];
-                    uint8_t t = (uint8_t)((word >> pack_shift) & 31u);
-                    uint16_t cv = cache_cw[t];
-                    uint32_t rv = cache_rgb[t];
-                    buf[pix] = 2; cw[pix] = cv; rgb[pix] = rv;
-                    if (do_ext_l) { buf[pix - 1] = 2; cw[pix - 1] = cv; rgb[pix - 1] = rv; }
-                    if (do_ext_r) { buf[pix + 1] = 2; cw[pix + 1] = cv; rgb[pix + 1] = rv; }
-                    pix += wstride;
-                    tex_y += tex_step;
-                }
+#define WALL_TEX_E(EL, ER) \
+    do { for (int y_ = ct; y_ <= cb; y_++) { \
+        AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]); \
+        AB3D_PREFETCH_WRITE(&cw[pix + (size_t)wstride * WALL_PF_DIST]); \
+        AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]); \
+        int ra_ = ((int)(tex_y >> 16) & valand) << 1; \
+        uint16_t w_ = ((uint16_t)tex_strip[ra_] << 8) | tex_strip[ra_ + 1]; \
+        uint8_t t_ = (uint8_t)((w_ >> pack_shift) & 31u); \
+        uint16_t cv_ = cache_cw[t_]; uint32_t rv_ = cache_rgb[t_]; \
+        buf[pix] = 2; cw[pix] = cv_; rgb[pix] = rv_; \
+        if (EL) { buf[pix - 1] = 2; cw[pix - 1] = cv_; rgb[pix - 1] = rv_; } \
+        if (ER) { buf[pix + 1] = 2; cw[pix + 1] = cv_; rgb[pix + 1] = rv_; } \
+        pix += wstride; tex_y += tex_step; \
+    } } while (0)
+                if      ( do_ext_l &&  do_ext_r) WALL_TEX_E(1, 1);
+                else if ( do_ext_l             ) WALL_TEX_E(1, 0);
+                else if (              do_ext_r) WALL_TEX_E(0, 1);
+                else                             WALL_TEX_E(0, 0);
+#undef WALL_TEX_E
             } else {
-                for (int y = ct; y <= cb; y++) {
-                    int ra = ((int)(tex_y >> 16) & valand) << 1;
-                    uint16_t word = ((uint16_t)tex_strip[ra] << 8) | tex_strip[ra + 1];
-                    uint8_t t = (uint8_t)((word >> pack_shift) & 31u);
-                    uint16_t cv = cache_cw[t];
-                    buf[pix] = 2; cw[pix] = cv;
-                    if (do_ext_l) { buf[pix - 1] = 2; cw[pix - 1] = cv; }
-                    if (do_ext_r) { buf[pix + 1] = 2; cw[pix + 1] = cv; }
-                    pix += wstride;
-                    tex_y += tex_step;
-                }
+#define WALL_TEX_C(EL, ER) \
+    do { for (int y_ = ct; y_ <= cb; y_++) { \
+        AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]); \
+        AB3D_PREFETCH_WRITE(&cw[pix + (size_t)wstride * WALL_PF_DIST]); \
+        int ra_ = ((int)(tex_y >> 16) & valand) << 1; \
+        uint16_t w_ = ((uint16_t)tex_strip[ra_] << 8) | tex_strip[ra_ + 1]; \
+        uint8_t t_ = (uint8_t)((w_ >> pack_shift) & 31u); \
+        uint16_t cv_ = cache_cw[t_]; \
+        buf[pix] = 2; cw[pix] = cv_; \
+        if (EL) { buf[pix - 1] = 2; cw[pix - 1] = cv_; } \
+        if (ER) { buf[pix + 1] = 2; cw[pix + 1] = cv_; } \
+        pix += wstride; tex_y += tex_step; \
+    } } while (0)
+                if      ( do_ext_l &&  do_ext_r) WALL_TEX_C(1, 1);
+                else if ( do_ext_l             ) WALL_TEX_C(1, 0);
+                else if (              do_ext_r) WALL_TEX_C(0, 1);
+                else                             WALL_TEX_C(0, 0);
+#undef WALL_TEX_C
             }
         } else if (has_tex_pal) {
             uint16_t cw0 = ctx->wall_cache_cw[0];
             uint32_t rgb0 = ctx->wall_cache_rgb[0];
             if (expand) {
                 for (int y = ct; y <= cb; y++) {
+                    AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
+                    AB3D_PREFETCH_WRITE(&cw[pix + (size_t)wstride * WALL_PF_DIST]);
+                    AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]);
                     buf[pix] = 2; cw[pix] = cw0; rgb[pix] = rgb0;
                     if (do_ext_l) { buf[pix - 1] = 2; cw[pix - 1] = cw0; rgb[pix - 1] = rgb0; }
                     if (do_ext_r) { buf[pix + 1] = 2; cw[pix + 1] = cw0; rgb[pix + 1] = rgb0; }
@@ -3141,6 +3169,8 @@ static void draw_wall_rasterize_segment(
                 }
             } else {
                 for (int y = ct; y <= cb; y++) {
+                    AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
+                    AB3D_PREFETCH_WRITE(&cw[pix + (size_t)wstride * WALL_PF_DIST]);
                     buf[pix] = 2; cw[pix] = cw0;
                     if (do_ext_l) { buf[pix - 1] = 2; cw[pix - 1] = cw0; }
                     if (do_ext_r) { buf[pix + 1] = 2; cw[pix + 1] = cw0; }
@@ -3150,6 +3180,9 @@ static void draw_wall_rasterize_segment(
         } else {
             if (expand) {
                 for (int y = ct; y <= cb; y++) {
+                    AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
+                    AB3D_PREFETCH_WRITE(&cw[pix + (size_t)wstride * WALL_PF_DIST]);
+                    AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]);
                     buf[pix] = 2; rgb[pix] = fallback_rgb; cw[pix] = fallback_cw;
                     if (do_ext_l) { buf[pix - 1] = 2; rgb[pix - 1] = fallback_rgb; cw[pix - 1] = fallback_cw; }
                     if (do_ext_r) { buf[pix + 1] = 2; rgb[pix + 1] = fallback_rgb; cw[pix + 1] = fallback_cw; }
@@ -3157,6 +3190,8 @@ static void draw_wall_rasterize_segment(
                 }
             } else {
                 for (int y = ct; y <= cb; y++) {
+                    AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
+                    AB3D_PREFETCH_WRITE(&cw[pix + (size_t)wstride * WALL_PF_DIST]);
                     buf[pix] = 2; cw[pix] = fallback_cw;
                     if (do_ext_l) { buf[pix - 1] = 2; cw[pix - 1] = fallback_cw; }
                     if (do_ext_r) { buf[pix + 1] = 2; cw[pix + 1] = fallback_cw; }
@@ -3164,6 +3199,7 @@ static void draw_wall_rasterize_segment(
                 }
             }
         }
+#undef WALL_PF_DIST
 
         /* Vertical edge extension (one row above/below) */
         {
@@ -3381,8 +3417,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
         }
 
         const int32_t sx_step_fp = (int32_t)(((int64_t)sky_view_cols << 16) / (int64_t)w);
-        int32_t sx_fp = 0;
-        for (int xi = 0; xi < xl; xi++) sx_fp += sx_step_fp;
+        int32_t sx_fp = (int32_t)((int64_t)xl * (int64_t)sx_step_fp);
 
         size_t row = (size_t)y * (size_t)w;
 
@@ -3396,26 +3431,42 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
             int rpix = (int)((int64_t)y * (th - 1) / r_den);
             if (rpix < 0) rpix = 0;
             if (rpix >= th) rpix = th - 1;
-            for (int x = xl; x <= xr; x++) {
-                int32_t pan_fp = u0_fp + sx_fp;
-                if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
-                int c = (int)(pan_fp >> 16);
-                c = (int)(((int64_t)c * (int64_t)tw_scale_fp) >> 16);
-                if (c >= tw) c = tw - 1;
-                size_t off;
-                if (s_sky_row_major) off = (size_t)rpix * row_stride + (size_t)c * 2u;
-                else                 off = (size_t)c * (size_t)bpc + (size_t)rpix * 2u;
-                if (off + 2u > s_sky_data_bytes) {
+            const size_t sky_lim = s_sky_data_bytes;
+            const uint8_t *sky_px = s_sky_pixels;
+            if (s_sky_row_major) {
+                const size_t rm_base = (size_t)rpix * row_stride;
+                for (int x = xl; x <= xr; x++) {
+                    int32_t pan_fp = u0_fp + sx_fp;
+                    if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
+                    int c = (int)(((int64_t)(pan_fp >> 16) * (int64_t)tw_scale_fp) >> 16);
+                    if (c >= tw) c = tw - 1;
+                    size_t off = rm_base + (size_t)c * 2u;
+                    if (off + 2u > sky_lim) { sx_fp += sx_step_fp; continue; }
+                    uint16_t cw12 = (uint16_t)((sky_px[off] << 8) | sky_px[off + 1u]);
+                    size_t p = row + (size_t)x;
+                    buf[p] = 0;
+                    if (g_renderer_rgb_raster_expand)
+                        rgb[p] = amiga12_to_argb(cw12);
+                    cwbuf[p] = cw12;
                     sx_fp += sx_step_fp;
-                    continue;
                 }
-                uint16_t cw12 = (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1u]);
-                size_t p = row + (size_t)x;
-                buf[p] = 0;
-                if (g_renderer_rgb_raster_expand)
-                    rgb[p] = amiga12_to_argb(cw12);
-                cwbuf[p] = cw12;
-                sx_fp += sx_step_fp;
+            } else {
+                const size_t cm_base = (size_t)rpix * 2u;
+                for (int x = xl; x <= xr; x++) {
+                    int32_t pan_fp = u0_fp + sx_fp;
+                    if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
+                    int c = (int)(((int64_t)(pan_fp >> 16) * (int64_t)tw_scale_fp) >> 16);
+                    if (c >= tw) c = tw - 1;
+                    size_t off = (size_t)c * (size_t)bpc + cm_base;
+                    if (off + 2u > sky_lim) { sx_fp += sx_step_fp; continue; }
+                    uint16_t cw12 = (uint16_t)((sky_px[off] << 8) | sky_px[off + 1u]);
+                    size_t p = row + (size_t)x;
+                    buf[p] = 0;
+                    if (g_renderer_rgb_raster_expand)
+                        rgb[p] = amiga12_to_argb(cw12);
+                    cwbuf[p] = cw12;
+                    sx_fp += sx_step_fp;
+                }
             }
         } else if (s_sky_pixels && s_sky_mode == 1) {
             int th = s_sky_tex_h;
@@ -3425,19 +3476,20 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
             int v = (int)((int64_t)y * (th - 1) / v_den);
             if (v < 0) v = 0;
             if (v >= th) v = th - 1;
+            const size_t v_base = (size_t)v * (size_t)tw;
+            const size_t sky1_lim = (size_t)tw * (size_t)th;
+            const uint8_t *sky_px1 = s_sky_pixels;
             for (int x = xl; x <= xr; x++) {
                 int32_t pan_fp = u0_fp + sx_fp;
                 if (pan_fp >= sky_pan_period_fp) pan_fp -= sky_pan_period_fp;
-                int tu = (int)(pan_fp >> 16);
-                tu = (int)(((int64_t)tu * (int64_t)tw_scale_fp) >> 16);
+                int tu = (int)(((int64_t)(pan_fp >> 16) * (int64_t)tw_scale_fp) >> 16);
                 if (tu >= tw) tu = tw - 1;
-                size_t toff = (size_t)v * (size_t)tw + (size_t)tu;
-                size_t lim = (size_t)tw * (size_t)th;
-                if (toff >= lim) {
+                size_t toff = v_base + (size_t)tu;
+                if (toff >= sky1_lim) {
                     sx_fp += sx_step_fp;
                     continue;
                 }
-                uint8_t idx = s_sky_pixels[toff];
+                uint8_t idx = sky_px1[toff];
                 size_t p = row + (size_t)x;
                 buf[p] = 0;
                 if (g_renderer_rgb_raster_expand)
