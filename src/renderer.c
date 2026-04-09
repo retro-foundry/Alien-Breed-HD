@@ -6498,9 +6498,6 @@ void renderer_build_level_sky_cache(const LevelState *level)
             }
 
             int32_t stream_roof_y = use_upper ? upper_roof_raw : lower_roof_y;
-            if (use_upper && stream_roof_y == 0) {
-                stream_roof_y = lower_roof_y;
-            }
             int roof_open_to_sky = (stream_roof_y < 0) ? 1 : 0;
             int synth_enabled =
                 ((zone_backdrop_flag || stream_has_backdrop_marker) && roof_open_to_sky) ? 1 : 0;
@@ -6566,11 +6563,9 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
      * lift_routine; re-read them when this zone is tagged as door or lift so we see the sine/lift. */
     int32_t zone_floor, zone_roof;
     if (use_upper) {
-        int32_t uf = rd32(zone_data + 10);  /* ZD_UPPER_FLOOR */
-        int32_t ur = rd32(zone_data + 14);  /* ZD_UPPER_ROOF  */
-        /* Fallback: if upper floor/roof not set, use lower values */
-        zone_floor = (uf != 0) ? uf : rd32(zone_data + 2);
-        zone_roof  = (ur != 0) ? ur : rd32(zone_data + 6);
+        /* Match Amiga DoThisRoom upper pass: use ToUpperFloor/ToUpperRoof directly. */
+        zone_floor = rd32(zone_data + ZONE_OFF_UPPER_FLOOR);
+        zone_roof  = rd32(zone_data + ZONE_OFF_UPPER_ROOF);
     } else {
         zone_floor = rd32(zone_data + 2);   /* ZD_FLOOR (ToZoneFloor) */
         zone_roof  = rd32(zone_data + 6);   /* ZD_ROOF  (ToZoneRoof)  */
@@ -6585,9 +6580,11 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
      * zone_graph_adds: 8 bytes per zone = lower gfx offset (long) + upper gfx offset (long). */
     const uint8_t *zgraph = level->zone_graph_adds + zone_id * 8;
     int32_t gfx_off = use_upper ? rd32(zgraph + 4) : rd32(zgraph);
-    if (gfx_off == 0 || !level->graphics) return;
+    if (gfx_off <= 0 || !level->graphics) return;
+    if (level->graphics_byte_count > 0 &&
+        ((size_t)gfx_off + 2u > level->graphics_byte_count)) return;
 
-    const uint8_t *gfx_data = level->graphics + gfx_off;
+    const uint8_t *gfx_data = level->graphics + (size_t)gfx_off;
     int32_t zone_water = rd32(zone_data + 18);  /* ToZoneWater */
 
     int32_t y_off = r->yoff;
@@ -7220,7 +7217,10 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 obj_top = obj_bot;
                 obj_bot = t;
             }
-            int is_multi_floor = (rd32(level->zone_graph_adds + zone_id * 8 + 4) != 0);
+            int32_t zone_upper_gfx = rd32(level->zone_graph_adds + zone_id * 8 + 4);
+            int is_multi_floor = (zone_upper_gfx > 0) &&
+                                 (level->graphics_byte_count == 0 ||
+                                  ((size_t)zone_upper_gfx + 2u <= level->graphics_byte_count));
             int has_split_water = (zone_water > zone_roof && zone_water < zone_floor);
             int ignore_sky_top_clip = (zone_roof < 0) ? 1 : 0;
             int allow_adjacent_spill = 0;
@@ -7698,7 +7698,14 @@ static void renderer_draw_world_slice(GameState *state,
             int32_t zone_off = rd32(state->level.zone_adds + zone_id * 4);
             const uint8_t *zgraph = state->level.zone_graph_adds + zone_id * 8;
             int32_t upper_gfx = rd32(zgraph + 4);
-            if (upper_gfx != 0 && zone_off >= 0 && state->level.data) {
+            int upper_gfx_valid = (upper_gfx > 0) &&
+                                  (state->level.graphics_byte_count == 0 ||
+                                   ((size_t)upper_gfx + 2u <= state->level.graphics_byte_count));
+            if (upper_gfx_valid &&
+                zone_off >= 0 &&
+                state->level.data &&
+                (state->level.data_byte_count == 0 ||
+                 ((size_t)zone_off + 48u <= state->level.data_byte_count))) {
                 const uint8_t *zd = state->level.data + zone_off;
                 int32_t split_height = rd32(zd + 6);
                 int draw_upper_first = (plr->yoff >= split_height);
