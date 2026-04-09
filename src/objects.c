@@ -2627,32 +2627,34 @@ void object_handle_tree(GameObject *obj, GameState *state)
 void object_handle_gas_pipe(GameObject *obj, GameState *state)
 {
     obj->obj.worry = 0;
+    /* Static hazard emitter: do not treat as a living enemy target. */
+    NASTY_LIVES(*obj) = 0;
 
     int16_t tf = state->temp_frames;
 
     /* ThirdTimer = delay before starting a burst */
-    int16_t third = NASTY_TIMER(*obj);
+    int16_t third = OBJ_TD_W(obj, ENEMY_THIRD_TIMER_OFF);
     if (third > 0) {
-        NASTY_SET_TIMER(*obj, (int16_t)(third - tf));
-        OBJ_SET_TD_W(obj, 6, 5);   /* SecTimer */
-        OBJ_SET_TD_W(obj, 10, 10);  /* FourthTimer */
+        OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, (int16_t)(third - tf));
+        OBJ_SET_TD_W(obj, ENEMY_SEC_TIMER_OFF, 5);
+        OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, 10);
         return;
     }
 
     /* FourthTimer = interval between shots in burst */
-    int16_t fourth = OBJ_TD_W(obj, 10);
+    int16_t fourth = OBJ_TD_W(obj, ENEMY_FOURTH_TIMER_OFF);
     fourth -= tf;
-    if (fourth > 0) {
-        OBJ_SET_TD_W(obj, 10, fourth);
+    if (fourth >= 0) {
+        OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, fourth);
         return;
     }
-    OBJ_SET_TD_W(obj, 10, 10);
+    OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, 10);
 
-    int16_t sec = OBJ_TD_W(obj, 6);
+    int16_t sec = OBJ_TD_W(obj, ENEMY_SEC_TIMER_OFF);
     sec--;
-    OBJ_SET_TD_W(obj, 6, sec);
+    OBJ_SET_TD_W(obj, ENEMY_SEC_TIMER_OFF, sec);
     if (sec <= 0) {
-        NASTY_SET_TIMER(*obj, OBJ_TD_W(obj, 14));
+        OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, OBJ_TD_W(obj, ENEMY_OBJ_TIMER_OFF));
     }
     if (sec == 4) audio_play_sample(22, 200);
 
@@ -2703,6 +2705,7 @@ void object_handle_gas_pipe(GameObject *obj, GameState *state)
     SHOT_SET_XVEL(*bullet, xvel << 16);
     SHOT_SET_ZVEL(*bullet, zvel << 16);
     NASTY_SET_EFLAGS(*bullet, (1u << OBJ_NBR_PLR1) | (1u << OBJ_NBR_PLR2));
+    bullet->obj.in_top = obj->obj.in_top;
     bullet->obj.worry = 127;
 }
 

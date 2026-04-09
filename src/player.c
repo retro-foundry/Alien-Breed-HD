@@ -2477,6 +2477,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
             if (!obs_in_line[i]) continue;
             if ((((uint8_t)obj->obj.can_see) & player_can_see_bit) == 0u) continue;
             if (OBJ_ZONE(obj) < 0) continue;
+            if (obj_type == OBJ_NBR_GAS_PIPE) continue; /* hazard emitter: don't auto-lock */
             if ((uint8_t)obj_type > 31u) continue;
             if (!(enemy_flags & (1u << (obj_type & 31)))) continue;
             /* Keep barrels targetable even when numlives is zero in level data. */
