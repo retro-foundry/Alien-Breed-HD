@@ -4999,6 +4999,46 @@ static const struct {
     { NULL, 0 }, { NULL, 0 }
 };
 
+/* Map ObjNumber -> enemy_params index (shared with objects.c death handling). */
+static int renderer_obj_type_to_enemy_index(int8_t obj_type)
+{
+    switch (obj_type) {
+    case OBJ_NBR_ALIEN:           return 0;
+    case OBJ_NBR_ROBOT:           return 1;
+    case OBJ_NBR_HUGE_RED_THING:  return 2;
+    case OBJ_NBR_WORM:            return 3;
+    case OBJ_NBR_FLAME_MARINE:    return 4;
+    case OBJ_NBR_TOUGH_MARINE:    return 5;
+    case OBJ_NBR_MARINE:          return 6;  /* Mutant Marine */
+    case OBJ_NBR_BIG_NASTY:       return 7;
+    case OBJ_NBR_SMALL_RED_THING: return 8;  /* BigClaws */
+    case OBJ_NBR_FLYING_NASTY:    return 9;
+    case OBJ_NBR_EYEBALL:         return 9;  /* same as FlyingNasty */
+    case OBJ_NBR_TREE:            return 10;
+    default:                      return -1;
+    }
+}
+
+/* Distinguish runtime corpses (ported dead-state format) from level-authored
+ * decorative OBJ_NBR_DEAD entries. Decorative props must keep authored
+ * obj[8]/obj[10] vect/frame, matching Amiga ObjDraw3 BitMapObj. */
+static int renderer_dead_object_is_runtime_corpse(const uint8_t *obj)
+{
+    if (!obj) return 0;
+
+    int8_t original_type = (int8_t)obj[19];
+    int param_idx = renderer_obj_type_to_enemy_index(original_type);
+    if (param_idx < 0 || param_idx >= num_enemy_types) return 0;
+
+    int death_index = (int)(uint8_t)obj[18];
+    if (death_index < 0 || death_index >= 30) return 0;
+
+    int16_t expected_frame = enemy_params[param_idx].death_frames[death_index];
+    if (expected_frame < 0) return 0;
+
+    return rd16(obj + 8) == expected_frame;
+}
+
 /* RockPop/Explosion world sizes are authored from Amiga BitMapObj tables where
  * both axes use the same <<7 scale.
  *
@@ -5765,7 +5805,8 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int8_t obj_number = (int8_t)obj[16];
         int16_t vect_num, frame_num;
         int drawing_dead = 0;
-        if (obj_number == OBJ_NBR_DEAD) {
+        if (obj_number == OBJ_NBR_DEAD &&
+            renderer_dead_object_is_runtime_corpse(obj)) {
             /* Death animation: original type in type_data[1]; death frame number in OBJ_DEADH (raw+8) */
             int8_t original_type = (int8_t)obj[19];
             if (original_type < 0 || original_type > 20) continue;
@@ -5802,7 +5843,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 case OBJ_NBR_BARREL:          vect_num = 7;  break;
                 case OBJ_NBR_WORM:            vect_num = 13; break;
                 case OBJ_NBR_HUGE_RED_THING:  vect_num = 14; break;
-                case OBJ_NBR_SMALL_RED_THING: vect_num = 15; break;
+                case OBJ_NBR_SMALL_RED_THING: vect_num = 14; break;
                 case OBJ_NBR_TREE:            vect_num = 15; break;
                 case OBJ_NBR_EYEBALL:         vect_num = 0;  break;
                 case OBJ_NBR_TOUGH_MARINE:    vect_num = 16; break;

@@ -1025,6 +1025,27 @@ static int obj_type_to_enemy_index(int8_t obj_type)
     }
 }
 
+/* Decorative billboard props in level data can use obj.number == -1, same as
+ * runtime enemy corpses. Distinguish true corpses by validating the dead-state
+ * tuple written by enemy_apply_death_outcome: type_data[1]=original type,
+ * type_data[0]=death index, OBJ_DEADH=death frame. */
+static bool dead_object_is_runtime_corpse(const GameObject *obj)
+{
+    if (!obj) return false;
+
+    int8_t original_type = obj->obj.type_data[1];
+    int param_idx = obj_type_to_enemy_index(original_type);
+    if (param_idx < 0 || param_idx >= num_enemy_types) return false;
+
+    int death_index = (int)(uint8_t)obj->obj.type_data[0];
+    if (death_index < 0 || death_index >= 30) return false;
+
+    int16_t expected_frame = enemy_params[param_idx].death_frames[death_index];
+    if (expected_frame < 0) return false;
+
+    return OBJ_DEADH(obj) == expected_frame;
+}
+
 /* -----------------------------------------------------------------------
  * Update obj->obj.can_see via CanItBeSeen for both players.
  * Bit 0 = can see player 1, bit 1 = can see player 2.
@@ -1515,7 +1536,8 @@ void objects_update(GameState *state)
          * while a moving lift changes the floor under them. */
         {
             int corpse_on_floor = (obj_type == OBJ_NBR_DEAD &&
-                                   (uint8_t)obj->raw[6] != (uint8_t)OBJ_3D_SPRITE);
+                                   (uint8_t)obj->raw[6] != (uint8_t)OBJ_3D_SPRITE &&
+                                   dead_object_is_runtime_corpse(obj));
             int flying_hover = (obj_type == OBJ_NBR_FLYING_NASTY ||
                                 obj_type == OBJ_NBR_EYEBALL);
             /* Players: USEPLR* already wrote objY from live physics; floor-based Y is for
@@ -1610,7 +1632,8 @@ void objects_update(GameState *state)
              * Amiga ObjectDataHandler skips all negative objNumber entries; do not run
              * corpse animation logic on 3D vector props (e.g. EXIT sign), or their
              * objVectNumber/frame fields at +8/+10 get clobbered. */
-            if ((uint8_t)obj->raw[6] == (uint8_t)OBJ_3D_SPRITE)
+            if ((uint8_t)obj->raw[6] == (uint8_t)OBJ_3D_SPRITE ||
+                !dead_object_is_runtime_corpse(obj))
                 break;
 
             /* Advance death animation; original type stored in type_data[1] when we died.
