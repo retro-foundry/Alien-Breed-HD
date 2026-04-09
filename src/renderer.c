@@ -5306,7 +5306,8 @@ static int renderer_collect_adjacent_zone_sources(const RenderSliceContext *ctx,
 /* level_filter: -1 = draw all (single-level zone), 0 = lower floor only, 1 = upper floor only (multi-floor). */
 static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int16_t zone_id,
                                   int32_t top_of_room, int32_t bot_of_room,
-                                  int level_filter, int allow_adjacent_spill)
+                                  int level_filter, int allow_adjacent_spill,
+                                  int ignore_sky_top_clip)
 {
     RendererState *r = &g_renderer;
     LevelState *level = &state->level;
@@ -5686,7 +5687,9 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 down_strip = expl_ft[frame_num].down_strip;
             }
 
-            int32_t clip_top_y = (int)(((int64_t)((top_of_room - y_off) >> WORLD_Y_FRAC_BITS) * r->proj_y_scale * RENDER_SCALE << ROT_Z_FRAC_BITS) / orp_z) + center_y;
+            int32_t clip_top_y = ignore_sky_top_clip
+                ? INT32_MIN
+                : (int)(((int64_t)((top_of_room - y_off) >> WORLD_Y_FRAC_BITS) * r->proj_y_scale * RENDER_SCALE << ROT_Z_FRAC_BITS) / orp_z) + center_y;
             int32_t clip_bot_y = (int)(((int64_t)((bot_of_room - y_off) >> WORLD_Y_FRAC_BITS) * r->proj_y_scale * RENDER_SCALE << ROT_Z_FRAC_BITS) / orp_z) + center_y;
             int bright = (ROT_Z_INT(orp_z) >> 7);
             const uint8_t *obj_pal = r->sprite_pal_data[expl_vect];
@@ -5741,7 +5744,9 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
 
         /* Project Y boundaries from room top/bottom (same PROJ_Y_SCALE as walls).
          * orp->z is 24.8 fixed-point; shift numerator to compensate. */
-        int32_t clip_top_y = (int)(((int64_t)((top_of_room - y_off) >> WORLD_Y_FRAC_BITS) * g_renderer.proj_y_scale * RENDER_SCALE << ROT_Z_FRAC_BITS) / orp->z) + (g_renderer.height / 2);
+        int32_t clip_top_y = ignore_sky_top_clip
+            ? INT32_MIN
+            : (int)(((int64_t)((top_of_room - y_off) >> WORLD_Y_FRAC_BITS) * g_renderer.proj_y_scale * RENDER_SCALE << ROT_Z_FRAC_BITS) / orp->z) + (g_renderer.height / 2);
         int32_t clip_bot_y = (int)(((int64_t)((bot_of_room - y_off) >> WORLD_Y_FRAC_BITS) * g_renderer.proj_y_scale * RENDER_SCALE << ROT_Z_FRAC_BITS) / orp->z) + (g_renderer.height / 2);
         if (clip_top_y >= clip_bot_y) continue;
 
@@ -6766,13 +6771,19 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                         automap_mark_seen(level, wall_gfx_off, zone_id, wx1, wz1, wx2, wz2,
                                           (uint8_t)(is_door ? 1 : 0), key_id);
                     }
-                    renderer_draw_wall_ctx(ctx, rx1, rz1, rx2, rz2,
-                                           wall_top, wall_bot,
-                                           wall_tex, leftend, rightend,
-                                           wall_bright_l, wall_bright_r,
-                                           use_valand, use_valshift, horand,
-                                           eff_totalyoff, eff_fromtile, tex_id,
-                                           wall_height_for_tex, wall_d6_max);
+                    {
+                        /* See-through/sky wall polys should not occlude billboards. */
+                        int8_t prev_update_column_clip = ctx->update_column_clip;
+                        if (entry_type == 13) ctx->update_column_clip = 0;
+                        renderer_draw_wall_ctx(ctx, rx1, rz1, rx2, rz2,
+                                               wall_top, wall_bot,
+                                               wall_tex, leftend, rightend,
+                                               wall_bright_l, wall_bright_r,
+                                               use_valand, use_valshift, horand,
+                                               eff_totalyoff, eff_fromtile, tex_id,
+                                               wall_height_for_tex, wall_d6_max);
+                        ctx->update_column_clip = prev_update_column_clip;
+                    }
                 }
             }
             ptr += 28;
@@ -7208,6 +7219,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
             }
             int is_multi_floor = (rd32(level->zone_graph_adds + zone_id * 8 + 4) != 0);
             int has_split_water = (zone_water > zone_roof && zone_water < zone_floor);
+            int ignore_sky_top_clip = (zone_roof < 0) ? 1 : 0;
             int allow_adjacent_spill = 0;
             if (obj_clip_mode == 1) {
                 allow_adjacent_spill = 1; /* after-water pass */
@@ -7216,7 +7228,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
             }
             draw_zone_objects_ctx(ctx, state, zone_id, obj_top, obj_bot,
                                   is_multi_floor ? use_upper : -1,
-                                  allow_adjacent_spill);
+                                  allow_adjacent_spill,
+                                  ignore_sky_top_clip);
             break;
         }
 
