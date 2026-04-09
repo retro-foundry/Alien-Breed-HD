@@ -3384,7 +3384,6 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         y_delta += grav_delta;
         int32_t new_yvel = (int32_t)yvel + grav_delta;
         if (new_yvel > 10 * 256) new_yvel = 10 * 256;
-        if (new_yvel < -10 * 256) new_yvel = -10 * 256;
         yvel = (int16_t)new_yvel;
         SHOT_SET_YVEL(*obj, yvel);
     }
