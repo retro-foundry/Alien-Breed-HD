@@ -5226,16 +5226,12 @@ static void calc_plr_in_line_for(LevelState *level, const PlayerState *plr,
         }
 
         int32_t cross = (int32_t)(((int64_t)dx * cos_val) - ((int64_t)dz * sin_val));
-        /* Runtime sine table uses half the Amiga bigsine amplitude.
-         * CalcPLR*InLine expects full-scale bigsine results, so apply one
-         * extra left shift here (total <<2 instead of <<1). */
-        cross = (int32_t)((uint32_t)cross << 2);
+        cross = (int32_t)((uint32_t)cross << 1);
         if (cross <= 0) cross = -cross;
         int16_t perp = (int16_t)(((uint32_t)cross) >> 16);
 
         int32_t dot = (int32_t)(((int64_t)dx * sin_val) + ((int64_t)dz * cos_val));
-        /* Same compensation for forward distance (total <<3 instead of <<2). */
-        dot = (int32_t)((uint32_t)dot << 3);
+        dot = (int32_t)((uint32_t)dot << 2);
         int16_t fwd = (int16_t)(((uint32_t)dot) >> 16);
 
         int8_t in_line = 0;

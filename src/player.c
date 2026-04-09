@@ -149,6 +149,40 @@ static int16_t zone_from_room_or_fallback(LevelState *level, const uint8_t *room
     return fallback;
 }
 
+/* Re-check LOS at shot time so hitscan cannot pick targets hidden by walls. */
+static bool hitscan_target_has_line_of_sight(GameState *state, const PlayerState *plr,
+                                             const uint8_t *from_room,
+                                             int16_t viewer_x, int16_t viewer_z, int16_t viewer_y,
+                                             const GameObject *target)
+{
+    if (!state || !plr || !from_room || !target) return false;
+    if (!state->level.data || !state->level.object_points) return false;
+
+    int zone_slots = level_zone_slot_count(&state->level);
+    int target_zone = level_connect_to_zone_index(&state->level, OBJ_ZONE(target));
+    if (target_zone < 0 && OBJ_ZONE(target) >= 0 && OBJ_ZONE(target) < zone_slots)
+        target_zone = OBJ_ZONE(target);
+    if (target_zone < 0 || target_zone >= zone_slots) return false;
+
+    const uint8_t *to_room = level_get_zone_data_ptr(&state->level, (int16_t)target_zone);
+    if (!to_room) return false;
+
+    int16_t target_cid = OBJ_CID(target);
+    if (target_cid < 0 || target_cid >= state->level.num_object_points) return false;
+
+    const uint8_t *target_pt = state->level.object_points + (uint32_t)(uint16_t)target_cid * 8u;
+    int16_t target_x = obj_w(target_pt + 0);
+    int16_t target_z = obj_w(target_pt + 4);
+    int16_t target_y = obj_w(target->raw + 4);
+    int16_t target_zone_id = player_room_zone_word(to_room);
+
+    return can_it_be_seen(&state->level,
+                          from_room, to_room, target_zone_id,
+                          viewer_x, viewer_z, viewer_y,
+                          target_x, target_z, target_y,
+                          plr->stood_in_top, target->obj.in_top, 1) != 0u;
+}
+
 /* Matches PlayerShoot.s MISSINSTANT path:
  * repeated MoveObject steps until hitwall, then use impact coords for pop sprite. */
 static bool trace_instant_miss_path(GameState *state, const PlayerState *plr,
@@ -2401,11 +2435,32 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
      * PLR2: %1111111111010111100001 */
     uint32_t enemy_flags = (plr_num == 1) ? 0x003FFDC1u : 0x003FF5E1u;
     uint8_t player_can_see_bit = (plr_num == 1) ? 0x01u : 0x02u;
+    const uint8_t *hitscan_from_room = NULL;
+    int16_t hitscan_viewer_x = 0;
+    int16_t hitscan_viewer_z = 0;
+    int16_t hitscan_viewer_y = 0;
+    if (gun->fire_bullet != 0) {
+        hitscan_from_room = resolve_player_room_ptr(state, plr);
+        hitscan_viewer_x = (int16_t)(plr->xoff >> 16);
+        hitscan_viewer_z = (int16_t)(plr->zoff >> 16);
+        hitscan_viewer_y = (int16_t)((plr->yoff + 20 * 128) >> 7);
+    }
 
-    /* Find closest target in line of fire (PlayerShoot.s findclosestinline). */
+    /* Find closest target in line of fire; barrels win over other types unless
+     * an enemy is at least 30% closer to the player. */
     int closest_idx = -1;
     int32_t closest_dist = 32767;
     int32_t closest_target_ydiff = 0;
+    int closest_barrel_idx = -1;
+    int32_t closest_barrel_dist = 32767;
+    int32_t closest_barrel_ydiff = 0;
+    int closest_enemy_player_idx = -1;
+    int32_t closest_enemy_player_dist = 0;
+    int32_t closest_enemy_player_ydiff = 0;
+    int64_t closest_enemy_player_dist_sq = 0;
+    bool have_enemy_player_dist = false;
+    int64_t closest_barrel_player_dist_sq = 0;
+    bool have_barrel_player_dist = false;
     bool has_target = false;
 
     if (state->level.object_data) {
@@ -2414,16 +2469,24 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
             int16_t obj_cid = OBJ_CID(obj);
             if (obj_cid < 0) break;
 
-            uint8_t obj_type = (uint8_t)obj->obj.number;
+            int obj_type = obj->obj.number;
             if (!obs_in_line[i]) continue;
             if ((((uint8_t)obj->obj.can_see) & player_can_see_bit) == 0u) continue;
             if (OBJ_ZONE(obj) < 0) continue;
-            if (!(enemy_flags & (1u << (obj_type & 31u)))) continue;
-            if (NASTY_LIVES(*obj) == 0) continue;
+            if (obj_type == OBJ_NBR_GAS_PIPE) continue; /* hazard emitter: don't auto-lock */
+            if ((uint8_t)obj_type > 31u) continue;
+            if (!(enemy_flags & (1u << (obj_type & 31)))) continue;
+            /* Keep barrels targetable even when numlives is zero in level data. */
+            if (NASTY_LIVES(*obj) == 0 && obj_type != OBJ_NBR_BARREL) continue;
             if (obj_cid < 0 || obj_cid >= MAX_OBJECTS) continue;
 
             int32_t dist = obj_dists[obj_cid];
             if (dist <= 0) continue;
+            /* Runtime sin/cos table is half-scale (~16384) while Amiga
+             * bigsine math in PlayerShoot uses full-scale (~32767). Scale
+             * forward distance to preserve original auto-aim solve. */
+            dist <<= 1;
+            if (dist > 32767) dist = 32767;
 
             /* PlayerShoot.s vertical gate: abs((objY<<7)-PLR_yoff) / 44 <= forward_dist. */
             int16_t obj_y = obj_w(obj->raw + 4);
@@ -2431,14 +2494,77 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
             int32_t abs_ydiff = (ydiff < 0) ? -ydiff : ydiff;
             if ((abs_ydiff / 44) > dist) continue;
 
-            if (dist <= closest_dist) {
-                closest_dist = dist;
-                closest_idx = i;
-                closest_target_ydiff = ydiff;
+            if (hitscan_from_room) {
+                if (!hitscan_target_has_line_of_sight(state, plr,
+                                                      hitscan_from_room,
+                                                      hitscan_viewer_x, hitscan_viewer_z, hitscan_viewer_y,
+                                                      obj))
+                    continue;
+            }
+
+            int64_t player_dist_sq = 0;
+            bool have_player_dist = false;
+            if (state->level.object_points && obj_cid >= 0 &&
+                obj_cid < state->level.num_object_points) {
+                const uint8_t *pt = state->level.object_points + (uint32_t)(uint16_t)obj_cid * 8u;
+                int32_t pdx = (int32_t)obj_w(pt + 0) - (int32_t)(plr->xoff >> 16);
+                int32_t pdz = (int32_t)obj_w(pt + 4) - (int32_t)(plr->zoff >> 16);
+                player_dist_sq = (int64_t)pdx * (int64_t)pdx + (int64_t)pdz * (int64_t)pdz;
+                have_player_dist = true;
+            }
+
+            if (obj_type == OBJ_NBR_BARREL) {
+                if (dist <= closest_barrel_dist) {
+                    closest_barrel_dist = dist;
+                    closest_barrel_idx = i;
+                    closest_barrel_ydiff = ydiff;
+                }
+                if (have_player_dist &&
+                    (!have_barrel_player_dist || player_dist_sq < closest_barrel_player_dist_sq)) {
+                    closest_barrel_player_dist_sq = player_dist_sq;
+                    have_barrel_player_dist = true;
+                }
+            } else {
+                if (dist <= closest_dist) {
+                    closest_dist = dist;
+                    closest_idx = i;
+                    closest_target_ydiff = ydiff;
+                }
+                if (have_player_dist &&
+                    (!have_enemy_player_dist || player_dist_sq < closest_enemy_player_dist_sq)) {
+                    closest_enemy_player_dist_sq = player_dist_sq;
+                    closest_enemy_player_idx = i;
+                    closest_enemy_player_dist = dist;
+                    closest_enemy_player_ydiff = ydiff;
+                    have_enemy_player_dist = true;
+                }
+            }
+        }
+        if (closest_barrel_idx >= 0) {
+            bool keep_enemy_target = false;
+            if (have_enemy_player_dist && have_barrel_player_dist) {
+                /* Enemy wins if it is >=30% closer than the nearest barrel:
+                 * enemy_dist <= 0.7 * barrel_dist
+                 * Compare squared distances to avoid sqrt:
+                 * enemy_dist_sq <= 0.49 * barrel_dist_sq */
+                keep_enemy_target =
+                    (closest_enemy_player_dist_sq * 100) <= (closest_barrel_player_dist_sq * 49);
+            } else if (closest_idx >= 0 && closest_dist > 0) {
+                /* Fallback when object points are unavailable. */
+                keep_enemy_target = (closest_dist * 10) <= (closest_barrel_dist * 7);
+            }
+            if (keep_enemy_target && closest_enemy_player_idx >= 0) {
+                closest_idx = closest_enemy_player_idx;
+                closest_dist = closest_enemy_player_dist;
+                closest_target_ydiff = closest_enemy_player_ydiff;
+            } else if (!keep_enemy_target) {
+                closest_idx = closest_barrel_idx;
+                closest_dist = closest_barrel_dist;
+                closest_target_ydiff = closest_barrel_ydiff;
             }
         }
     }
-    has_target = (closest_idx >= 0 && state->level.object_data);
+    has_target = (closest_idx >= 0 && closest_dist > 0 && state->level.object_data);
     /* Calculate vertical aim toward target (PlayerShoot.s lines 99-139). */
     {
         if (has_target) {
