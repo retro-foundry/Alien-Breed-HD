@@ -3743,16 +3743,16 @@ void door_routine(GameState *state)
                     uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
                     wbe32(wall_rec + 24, door_pos);   /* Amiga: move.l d3,24(a1) = door height for this wall */
                     /* Amiga DoorRoutine:
-                     *   d0 = -(curr >> 2) & 255  => with curr stored as door_pos/64, this is -(door_pos>>8).
-                     *   a2 = gfx_base + d0 ; move.l a2,10(a1)  (writes fromtile+totalyoff together). */
-                    /* Align scroll relative to this door's closed position.
-                     * Doors whose closed Y is not 0 need this per-door phase offset. */
-                    int16_t door_phase = (int16_t)(door_pos >> 8);
-                    int16_t door_closed_phase = (int16_t)(door_bot >> 8);
-                    int16_t rel_phase = (int16_t)(door_phase - door_closed_phase);
-                    uint32_t tex_scroll = (uint32_t)((-(int16_t)rel_phase) & 0x00FF);
-                    uint32_t tex_ptr = (uint32_t)((int32_t)gfx_base + (int32_t)tex_scroll); /* Amiga: adda.w d0,a2 */
-                    wbe32(wall_rec + 10, (int32_t)tex_ptr);  /* Amiga: move.l a2,10(a1) */
+                     *   d0 = (-(door_pos >> 8)) & 255
+                     *   a2 = graphic + d0
+                     *   move.l a2,10(a1)
+                     * Here wall_rec points at the wall type-word, so +10 writes
+                     * fromtile(word) + totalyoff(word), not tex_id. */
+                    {
+                        uint32_t tex_scroll = (uint32_t)((-(int16_t)(door_pos >> 8)) & 0x00FF);
+                        uint32_t tex_ptr = (uint32_t)((int32_t)gfx_base + (int32_t)tex_scroll);
+                        wbe32(wall_rec + 10, (int32_t)tex_ptr);
+                    }
                 }
             }
             if (!triggered && (plr1_door_press_near || plr2_door_press_near))
