@@ -1578,8 +1578,28 @@ void objects_update(GameState *state)
 
                         int world_h = object_floor_render_offset_units(obj, obj_type);
 
-                        int16_t render_y = (int16_t)((floor_h >> 7) - world_h);
-                        obj_sw(obj->raw + 4, render_y);
+                        /* Target Y in the same coordinate space as player_fall
+                         * (floor_h minus the per-type height offset, identical
+                         * to how the player computes s_tyoff = floor_h - s_height). */
+                        int32_t tyoff = floor_h - (int32_t)world_h * 128;
+
+                        /* Current position in floor-unit space (raw[4] is the >>7
+                         * compressed form of the same coordinate). */
+                        int32_t obj_yoff = (int32_t)obj_w(obj->raw + 4) << 7;
+
+                        /* Vertical velocity: reuse ENEMY_OBJ_YVEL_OFF (raw+48).
+                         * Ground enemies never write this field; flying enemies
+                         * (EyeBall, FlyingScalyBall) are excluded by !flying_hover. */
+                        int32_t obj_yvel = (int32_t)OBJ_TD_W(obj, ENEMY_OBJ_YVEL_OFF);
+
+                        /* Apply the same gravity routine the player uses. */
+                        player_fall(&obj_yoff, &obj_yvel, tyoff, INT32_MAX, false);
+
+                        /* Clamp velocity to int16 range before storing back. */
+                        if (obj_yvel >  32767) obj_yvel =  32767;
+                        if (obj_yvel < -32768) obj_yvel = -32768;
+                        OBJ_SET_TD_W(obj, ENEMY_OBJ_YVEL_OFF, (int16_t)obj_yvel);
+                        obj_sw(obj->raw + 4, (int16_t)(obj_yoff >> 7));
                     }
                 }
             }
