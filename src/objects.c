@@ -117,6 +117,9 @@ static int32_t enemy_move_y_for_context(const GameObject *obj,
                                         const GameState *state,
                                         int zone_slots);
 static void enemy_update_flying_vertical(GameObject *obj, const GameState *state);
+static void enemy_apply_step_limits(const GameObject *obj,
+                                    const EnemyParams *params,
+                                    MoveContext *ctx);
 
 /* -----------------------------------------------------------------------
  * enemy_viewpoint - Amiga AlienControl.s ViewpointToDraw
@@ -839,6 +842,25 @@ static void enemy_prevent_deeper_player_overlap(const GameObject *obj, const Gam
     }
 }
 
+/* Enemy step behavior:
+ * Use authored step values directly.
+ */
+static void enemy_apply_step_limits(const GameObject *obj,
+                                    const EnemyParams *params,
+                                    MoveContext *ctx)
+{
+    int32_t step_up = params ? params->step_up : 0;
+    int32_t step_down = params ? params->step_down : 0;
+
+    (void)obj;
+    if (!ctx) return;
+    if (step_up < 0) step_up = 0;
+    if (step_down < 0) step_down = 0;
+
+    ctx->step_up_val = step_up;
+    ctx->step_down_val = step_down;
+}
+
 /* -----------------------------------------------------------------------
  * Enemy common: wander behavior using Amiga-style ObjTimer ranges.
  * ----------------------------------------------------------------------- */
@@ -939,8 +961,7 @@ static void enemy_wander_with_timer(GameObject *obj, const EnemyParams *params,
         ctx.oldy = move_y;
         ctx.newy = move_y;
     }
-    ctx.step_up_val = params->step_up;
-    ctx.step_down_val = params->step_down;
+    enemy_apply_step_limits(obj, params, &ctx);
     ctx.extlen = params->extlen;
     ctx.awayfromwall = params->awayfromwall;
     ctx.collide_flags = collide_mask;
@@ -2184,8 +2205,7 @@ static int32_t robot_track_target(GameObject *obj, const EnemyParams *params,
                 }
             }
         }
-        ctx.step_up_val = params->step_up;
-        ctx.step_down_val = params->step_down;
+        enemy_apply_step_limits(obj, params, &ctx);
         ctx.extlen = params->extlen;
         ctx.awayfromwall = params->awayfromwall;
         ctx.wall_flags = 0x0200; /* Robot.s uses wallflags #%1000000000 */
@@ -2328,8 +2348,7 @@ static int32_t enemy_track_target_with_turn(GameObject *obj, const EnemyParams *
         ctx.oldy = move_y;
         ctx.newy = move_y;
     }
-    ctx.step_up_val = params->step_up;
-    ctx.step_down_val = params->step_down;
+    enemy_apply_step_limits(obj, params, &ctx);
     ctx.extlen = params->extlen;
     ctx.awayfromwall = params->awayfromwall;
     ctx.collide_flags = collide_mask;

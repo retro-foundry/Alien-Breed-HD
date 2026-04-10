@@ -271,20 +271,12 @@ static int32_t compute_crossing_height_asm(const MoveContext *ctx,
     return (int32_t)hit_y;
 }
 
+/* Pass-1 vertical blocking test.
+ * Return true when the transition is NOT allowed at this crossing height.
+ */
 static bool pass1_vertical_hit_asm(const MoveContext *ctx, const uint8_t *target_zone, int32_t hit_y)
 {
-    int32_t lower_floor = read_be32(target_zone + ZONE_FLOOR_HEIGHT);
-    int32_t lower_roof = read_be32(target_zone + ZONE_ROOF_HEIGHT);
-    int32_t upper_floor = read_be32(target_zone + ZONE_UPPER_FLOOR);
-    int32_t upper_roof = read_be32(target_zone + ZONE_UPPER_ROOF);
-
-    int64_t d6 = (int64_t)hit_y + (int64_t)ctx->thing_height - (int64_t)ctx->step_up_val;
-
-    if (d6 >= (int64_t)lower_floor) return true;
-    if ((int64_t)hit_y > (int64_t)lower_roof) return false;
-    if ((int64_t)hit_y < (int64_t)upper_roof) return true;
-    if (d6 < (int64_t)upper_floor) return false;
-    return true;
+    return !transition_height_ok_zone(ctx, hit_y, target_zone, NULL);
 }
 
 static bool pass1_exit_is_nonblocking(const MoveContext *ctx, const uint8_t *target_zone,
@@ -307,7 +299,7 @@ static bool pass1_exit_is_nonblocking(const MoveContext *ctx, const uint8_t *tar
 
     {
         int32_t hit_y = compute_crossing_height_asm(ctx, cross_new, cross_old, line_len + ctx->extlen);
-        return !pass1_vertical_hit_asm(ctx, target_zone, hit_y);
+        return transition_height_ok_zone(ctx, hit_y, target_zone, NULL);
     }
 }
 
