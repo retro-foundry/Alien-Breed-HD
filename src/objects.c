@@ -848,15 +848,20 @@ static void enemy_prevent_deeper_player_overlap(const GameObject *obj, const Gam
  *   step-up and a bounded step-down so down-steps work without making
  *   enemies walk off high platforms too aggressively.
  */
-#define ENEMY_STEP_UP_MIN      (35 * 256)
-#define ENEMY_STEP_DOWN_MIN    (35 * 256)
+#define ENEMY_STEP_UP_MIN_DEFAULT     (40 * 256)
+#define ENEMY_STEP_DOWN_MIN_DEFAULT   (40 * 256)
+
+#define ENEMY_STEP_UP_MIN_SMALL_RED   (15 * 256)
+#define ENEMY_STEP_DOWN_MIN_SMALL_RED (15 * 256)
 
 static void enemy_apply_step_limits(const GameObject *obj,
                                     const EnemyParams *params,
                                     MoveContext *ctx)
 {
-    int32_t step_up = params ? params->step_up : ENEMY_STEP_UP_MIN;
-    int32_t step_down = params ? params->step_down : ENEMY_STEP_DOWN_MIN;
+    int32_t step_up_min = ENEMY_STEP_UP_MIN_DEFAULT;
+    int32_t step_up = params ? params->step_up : step_up_min;
+    int32_t step_down_min = ENEMY_STEP_DOWN_MIN_DEFAULT;
+    int32_t step_down = params ? params->step_down : step_down_min;
     bool flying = false;
 
     if (!ctx) return;
@@ -864,13 +869,17 @@ static void enemy_apply_step_limits(const GameObject *obj,
     if (step_down < 0) step_down = 0;
 
     if (obj) {
+        if (obj->obj.number == OBJ_NBR_SMALL_RED_THING) {
+            step_up_min = ENEMY_STEP_UP_MIN_SMALL_RED;
+            step_down_min = ENEMY_STEP_DOWN_MIN_SMALL_RED;
+        }
         flying = (obj->obj.number == OBJ_NBR_FLYING_NASTY ||
                   obj->obj.number == OBJ_NBR_EYEBALL);
     }
 
     if (!flying) {
-        if (step_up < ENEMY_STEP_UP_MIN) step_up = ENEMY_STEP_UP_MIN;
-        if (step_down < ENEMY_STEP_DOWN_MIN) step_down = ENEMY_STEP_DOWN_MIN;
+        if (step_up < step_up_min) step_up = step_up_min;
+        if (step_down < step_down_min) step_down = step_down_min;
     }
 
     ctx->step_up_val = step_up;

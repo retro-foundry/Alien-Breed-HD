@@ -273,18 +273,9 @@ static int32_t compute_crossing_height_asm(const MoveContext *ctx,
 
 static bool pass1_vertical_hit_asm(const MoveContext *ctx, const uint8_t *target_zone, int32_t hit_y)
 {
-    int32_t lower_floor = read_be32(target_zone + ZONE_FLOOR_HEIGHT);
-    int32_t lower_roof = read_be32(target_zone + ZONE_ROOF_HEIGHT);
-    int32_t upper_floor = read_be32(target_zone + ZONE_UPPER_FLOOR);
-    int32_t upper_roof = read_be32(target_zone + ZONE_UPPER_ROOF);
-
-    int64_t d6 = (int64_t)hit_y + (int64_t)ctx->thing_height - (int64_t)ctx->step_up_val;
-
-    if (d6 >= (int64_t)lower_floor) return true;
-    if ((int64_t)hit_y > (int64_t)lower_roof) return false;
-    if ((int64_t)hit_y < (int64_t)upper_roof) return true;
-    if (d6 < (int64_t)upper_floor) return false;
-    return true;
+    int8_t in_top = 0;
+    if (!ctx || !target_zone) return true;
+    return !transition_height_ok_zone(ctx, hit_y, target_zone, &in_top);
 }
 
 static bool pass1_exit_is_nonblocking(const MoveContext *ctx, const uint8_t *target_zone,
@@ -1187,6 +1178,10 @@ static void find_room(MoveContext* ctx, LevelState* level,
                         {
                             int32_t target_roof = read_be32(target_zone + ZONE_ROOF_HEIGHT);
                             target_in_top = (cross_y < target_roof) ? 1 : 0;
+                        }
+
+                        if (!transition_height_ok_zone(ctx, cross_y, target_zone, &target_in_top)) {
+                            continue;
                         }
                     }
 
