@@ -185,9 +185,9 @@ static bool transition_height_ok_single(const MoveContext *ctx, int32_t mover_y,
     {
         int64_t d1 = (int64_t)mover_y + (int64_t)ctx->thing_height - (int64_t)target_floor;
         if (d1 > 0) {
-            if (d1 >= (int64_t)ctx->step_up_val) return false;
+            if (d1 > (int64_t)ctx->step_up_val) return false;
         } else {
-            if ((-d1) >= (int64_t)ctx->step_down_val) return false;
+            if ((-d1) > (int64_t)ctx->step_down_val) return false;
         }
     }
 
