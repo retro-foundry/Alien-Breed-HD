@@ -5414,6 +5414,13 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         if (!in_this_zone) {
             adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, obj_zone);
             if (adj_slot < 0) continue;
+            /* Painter's algorithm: an adjacent-zone sprite whose world Y lies outside
+             * [top_of_room, bot_of_room] is above the ceiling or below the floor of the
+             * current room and therefore occluded by that horizontal surface.  The
+             * floor/ceiling polygon was already drawn earlier in the stream, so simply
+             * skip objects that would bleed through it. */
+            int32_t adj_world_y = ((int32_t)rd16(obj + 4)) << 7;
+            if (adj_world_y < top_of_room || adj_world_y > bot_of_room) continue;
         }
 
         /* Multi-floor: only render objects when we are drawing their floor. Use object's in_top
@@ -5500,6 +5507,8 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             if (!in_this_zone) {
                 adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, shot_zone);
                 if (adj_slot < 0) continue;
+                int32_t adj_world_y = ((int32_t)rd16(obj + 4)) << 7;
+                if (adj_world_y < top_of_room || adj_world_y > bot_of_room) continue;
             }
             if (level_filter >= 0) {
                 int shot_on_upper = (obj[obj_off_in_top] != 0);
@@ -5569,6 +5578,8 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             if (!in_this_zone) {
                 adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, expl_zone);
                 if (adj_slot < 0) continue;
+                int32_t adj_world_y = state->explosions[ei].y_floor;
+                if (adj_world_y < top_of_room || adj_world_y > bot_of_room) continue;
             }
             if (state->explosions[ei].start_delay > 0) continue;
             if ((int)state->explosions[ei].frame >= 9) continue;
