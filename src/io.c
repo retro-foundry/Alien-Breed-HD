@@ -800,6 +800,10 @@ void io_release_level_memory(LevelState *level)
     }
     level->object_points = NULL;
 
+    /* prev_object_points is always a separately-allocated snapshot buffer */
+    free(level->prev_object_points);
+    level->prev_object_points = NULL;
+
     free(level->workspace);         level->workspace = NULL;
 
     /* list_of_graph_rooms now points into level->data (zone_data + 48),

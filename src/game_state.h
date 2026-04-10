@@ -156,6 +156,7 @@ typedef struct {
     uint8_t *nasty_shot_data;
     uint8_t *other_nasty_data;
     uint8_t *object_points;
+    uint8_t *prev_object_points;  /* copy of object_points snapshotted before each 50Hz logic tick (for render interpolation) */
     uint8_t *plr1_obj;           /* pointer to player 1 object in object data */
     uint8_t *plr2_obj;           /* pointer to player 2 object in object data */
     uint8_t *connect_table;
@@ -254,6 +255,7 @@ typedef struct {
     /* Frame timing */
     int16_t         frames_to_draw;     /* FramesToDraw */
     int16_t         temp_frames;        /* TempFrames */
+    float           obj_interp_alpha;   /* 0..1: how far into the current 50Hz tick we are (for render interpolation) */
 
     /* Game flags */
     bool            do_anything;        /* doAnything */

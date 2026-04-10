@@ -32,6 +32,7 @@
 #include <SDL.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 /* Amiga key codes used in the original */
 #define KEY_PAUSE   0x19
@@ -108,6 +109,19 @@ void game_loop(GameState *state)
     int pending_vblanks = 0;
     Uint32 vblank_remainder_ms = 0;
 
+    /* Allocate the previous-tick snapshot buffer used for render interpolation.
+     * Initialise it to the current positions so the first frame blends cleanly. */
+    if (state->level.num_object_points > 0 && !state->level.prev_object_points) {
+        state->level.prev_object_points =
+            (uint8_t *)calloc((size_t)state->level.num_object_points, 8u);
+        if (state->level.prev_object_points && state->level.object_points) {
+            memcpy(state->level.prev_object_points,
+                   state->level.object_points,
+                   (size_t)state->level.num_object_points * 8u);
+        }
+    }
+    state->obj_interp_alpha = 0.0f;
+
     Uint32 fps_log_start_ms = SDL_GetTicks();
     int fps_frames_in_period = 0;
 
@@ -161,6 +175,11 @@ void game_loop(GameState *state)
             /* Keep water phase moving every display frame; average speed stays 50Hz. */
             renderer_step_water_anim_ms(elapsed);
         }
+
+        /* Track how far we are into the current 50Hz tick (0=just ticked, 1=about to tick).
+         * Used by the renderer to interpolate enemy positions between logic ticks. */
+        state->obj_interp_alpha = (float)vblank_remainder_ms / 20.0f;
+        if (state->obj_interp_alpha > 1.0f) state->obj_interp_alpha = 1.0f;
 
         /* ================================================================
          * Game logic: Amiga-style cadence.
@@ -330,6 +349,16 @@ void game_loop(GameState *state)
                        (size_t)(zo.count < 256 ? zo.count : 256) * sizeof(int16_t));
                 state->zone_order_count = zo.count;
                 state->view_list_of_graph_rooms = lgr_ptr;
+            }
+
+            /* Snapshot object positions before they are mutated by objects_update.
+             * The renderer uses prev_object_points + obj_interp_alpha to draw smooth
+             * movement at display frame rate even though logic runs at 50 Hz. */
+            if (state->level.prev_object_points && state->level.object_points &&
+                state->level.num_object_points > 0) {
+                memcpy(state->level.prev_object_points,
+                       state->level.object_points,
+                       (size_t)state->level.num_object_points * 8u);
             }
 
             objects_update(state);

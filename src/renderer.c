@@ -2844,14 +2844,31 @@ void renderer_rotate_object_pts(GameState *state)
     if (num_pts <= 0) return;
     if (num_pts > MAX_OBJ_POINTS) num_pts = MAX_OBJ_POINTS;
 
-    const uint8_t *pts = state->level.object_points;
+    const uint8_t *pts      = state->level.object_points;
+    const uint8_t *prev_pts = state->level.prev_object_points;
+    float alpha = state->obj_interp_alpha;
 
     /* Amiga ObjDraw: ObjRotated is indexed by POINT number, not object index.
      * Rotate every point; when drawing, object uses (object_data[0]) as pt num
-     * to look up ObjRotated[pt_num]. So keys (and others) scale correctly. */
+     * to look up ObjRotated[pt_num]. So keys (and others) scale correctly.
+     *
+     * When a prev snapshot is available, linearly interpolate between the
+     * previous tick's positions and the current tick's positions using alpha
+     * (0 = just ticked, 1 = about to tick next).  This produces sub-tick
+     * smooth motion at display frame rate without changing the 50 Hz simulation. */
     for (int pt = 0; pt < num_pts; pt++) {
-        int16_t px = rd16(pts + pt * 8);
-        int16_t pz = rd16(pts + pt * 8 + 4);
+        int16_t px, pz;
+        if (prev_pts && alpha > 0.0f) {
+            int16_t px0 = rd16(prev_pts + pt * 8);
+            int16_t pz0 = rd16(prev_pts + pt * 8 + 4);
+            int16_t px1 = rd16(pts      + pt * 8);
+            int16_t pz1 = rd16(pts      + pt * 8 + 4);
+            px = (int16_t)(px0 + (int16_t)((float)(px1 - px0) * alpha));
+            pz = (int16_t)(pz0 + (int16_t)((float)(pz1 - pz0) * alpha));
+        } else {
+            px = rd16(pts + pt * 8);
+            pz = rd16(pts + pt * 8 + 4);
+        }
 
         int16_t dx = (int16_t)(px - cam_x);
         int16_t dz = (int16_t)(pz - cam_z);
