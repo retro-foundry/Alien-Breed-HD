@@ -5168,8 +5168,8 @@ static inline int explosion_world_h_to_port(const RendererState *r, int world_h_
 #define RENDERER_FLINE_XLEN_OFF     4
 #define RENDERER_FLINE_ZLEN_OFF     6
 #define RENDERER_FLINE_CONNECT_OFF  8
-#define RENDERER_MAX_ADJ_ZONES      32
-#define RENDERER_MAX_ADJ_LINES      128
+#define RENDERER_MAX_ADJ_ZONES      64
+#define RENDERER_MAX_ADJ_LINES      512
 
 typedef struct {
     int16_t zone_id;
@@ -5356,6 +5356,69 @@ static int renderer_lateral_span_hits_adj_lines(const LevelState *level,
     return 0;
 }
 
+static const uint8_t *renderer_zone_exit_list_ptr(const LevelState *level, int16_t zone_id)
+{
+    int zone_slots;
+    int32_t zone_off;
+    int16_t list_off;
+    int64_t list_abs;
+    if (!level || !level->data || !level->zone_adds) return NULL;
+    zone_slots = level_zone_slot_count(level);
+    if (zone_slots <= 0 || zone_id < 0 || zone_id >= zone_slots) return NULL;
+
+    zone_off = rd32(level->zone_adds + (size_t)(uint16_t)zone_id * 4u);
+    if (zone_off < 0) return NULL;
+    if (level->data_byte_count > 0 && (size_t)zone_off + 34u > level->data_byte_count) return NULL;
+
+    list_off = rd16(level->data + zone_off + RENDERER_ZONE_EXIT_LIST_OFF);
+    list_abs = (int64_t)zone_off + (int64_t)list_off;
+    if (list_abs < 0) return NULL;
+    if (level->data_byte_count > 0 && (size_t)list_abs + 2u > level->data_byte_count) return NULL;
+    return level->data + (size_t)list_abs;
+}
+
+static void renderer_append_boundary_lines_between_zones(const LevelState *level,
+                                                         const uint8_t *from_exit_list,
+                                                         int zone_slots,
+                                                         int16_t target_zone,
+                                                         int16_t *out_lines,
+                                                         int max_lines,
+                                                         int line_start,
+                                                         int *io_line_count)
+{
+    if (!level || !from_exit_list || !out_lines || !io_line_count || max_lines <= 0) return;
+    if (target_zone < 0 || target_zone >= zone_slots) return;
+
+    for (int i = 0; i < 128; i++) {
+        int16_t entry = rd16(from_exit_list + (size_t)i * 2u);
+        if (entry < 0) break; /* -1 ends exits, -2 ends list */
+        if (entry < 0 || (int32_t)entry >= level->num_floor_lines) continue;
+
+        {
+            const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)entry * RENDERER_FLINE_SIZE;
+            int16_t connect = rd16(fl + RENDERER_FLINE_CONNECT_OFF);
+            int connect_zone = level_connect_to_zone_index(level, connect);
+            if (connect_zone != target_zone) continue;
+        }
+
+        {
+            int exists = 0;
+            for (int j = line_start; j < *io_line_count; j++) {
+                if (out_lines[j] == entry) {
+                    exists = 1;
+                    break;
+                }
+            }
+            if (exists) continue;
+        }
+
+        if (*io_line_count < max_lines) {
+            out_lines[*io_line_count] = entry;
+            (*io_line_count)++;
+        }
+    }
+}
+
 static int renderer_collect_adjacent_zone_sources(const RenderSliceContext *ctx, GameState *state, int16_t zone_id,
                                                   RendererAdjZone *out_adj, int max_adj,
                                                   int16_t *out_lines, int max_lines)
@@ -5367,23 +5430,28 @@ static int renderer_collect_adjacent_zone_sources(const RenderSliceContext *ctx,
     int zone_slots = level_zone_slot_count(level);
     if (zone_slots <= 0 || zone_id < 0 || zone_id >= zone_slots) return 0;
 
-    int32_t zone_off = rd32(level->zone_adds + (size_t)(uint16_t)zone_id * 4u);
-    if (zone_off < 0) return 0;
-    if (level->data_byte_count > 0 && (size_t)zone_off + 34u > level->data_byte_count) return 0;
-
-    const uint8_t *zone_data = level->data + zone_off;
-    int16_t list_off = rd16(zone_data + RENDERER_ZONE_EXIT_LIST_OFF);
-    int64_t list_abs = (int64_t)zone_off + (int64_t)list_off;
-    if (list_abs < 0) return 0;
-    if (level->data_byte_count > 0 && (size_t)list_abs + 2u > level->data_byte_count) return 0;
-    const uint8_t *list_ptr = level->data + (size_t)list_abs;
-
     int adj_count = 0;
     int line_count = 0;
     int cur_order = renderer_zone_order_index(state, zone_id);
+    const uint8_t *cur_list = renderer_zone_exit_list_ptr(level, zone_id);
+    int visible_count = state->zone_order_count;
+    uint8_t visible_zones[256];
+    uint8_t candidate_zones[256];
 
+    if (!cur_list) return 0;
+
+    memset(visible_zones, 0, sizeof(visible_zones));
+    memset(candidate_zones, 0, sizeof(candidate_zones));
+    if (visible_count < 0) visible_count = 0;
+    if (visible_count > RENDERER_MAX_ZONE_ORDER) visible_count = RENDERER_MAX_ZONE_ORDER;
+    for (int i = 0; i < visible_count; i++) {
+        int16_t zid = state->zone_order_zones[i];
+        if (zid >= 0 && zid < 256) visible_zones[(uint8_t)zid] = 1;
+    }
+
+    /* Forward links: current zone exit list points to adjacent source zone. */
     for (int i = 0; i < 128; i++) {
-        int16_t entry = rd16(list_ptr + (size_t)i * 2u);
+        int16_t entry = rd16(cur_list + (size_t)i * 2u);
         if (entry < 0) break; /* -1 ends exits, -2 ends list */
         if (entry < 0 || (int32_t)entry >= level->num_floor_lines) continue;
 
@@ -5392,28 +5460,57 @@ static int renderer_collect_adjacent_zone_sources(const RenderSliceContext *ctx,
         int connect_zone = level_connect_to_zone_index(level, connect);
         if (connect_zone < 0 || connect_zone >= zone_slots || connect_zone == zone_id) continue;
 
-        /* Pull spill sources from any nearby visible zone so spill billboards
-         * are evaluated during the spilled-into zone draw, regardless of
-         * painter-order direction. */
-        {
-            int src_order = renderer_zone_order_index(state, (int16_t)connect_zone);
-            if (src_order < 0) continue;
+        if (connect_zone < 256 && visible_zones[(uint8_t)connect_zone]) {
+            candidate_zones[(uint8_t)connect_zone] = 1;
+        }
+    }
+
+    /* Reverse links: visible zones that point to current zone (covers one-way/broken links). */
+    for (int i = 0; i < visible_count; i++) {
+        int16_t src_zone = state->zone_order_zones[i];
+        if (src_zone < 0 || src_zone >= zone_slots || src_zone == zone_id) continue;
+        const uint8_t *src_list = renderer_zone_exit_list_ptr(level, src_zone);
+        if (!src_list) continue;
+        for (int e = 0; e < 128; e++) {
+            int16_t entry = rd16(src_list + (size_t)e * 2u);
+            if (entry < 0) break;
+            if (entry < 0 || (int32_t)entry >= level->num_floor_lines) continue;
+            {
+                const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)entry * RENDERER_FLINE_SIZE;
+                int16_t connect = rd16(fl + RENDERER_FLINE_CONNECT_OFF);
+                int connect_zone = level_connect_to_zone_index(level, connect);
+                if (connect_zone == zone_id) {
+                    if (src_zone < 256) candidate_zones[(uint8_t)src_zone] = 1;
+                    break;
+                }
+            }
+        }
+    }
+
+    /* Build contiguous per-zone line spans to avoid mixed-zone line lists. */
+    for (int i = 0; i < visible_count; i++) {
+        int16_t src_zone = state->zone_order_zones[i];
+        int line_start;
+        const uint8_t *src_list;
+        if (src_zone < 0 || src_zone >= zone_slots || src_zone == zone_id) continue;
+        if (src_zone >= 256 || !candidate_zones[(uint8_t)src_zone]) continue;
+        if (adj_count >= max_adj) continue;
+
+        line_start = line_count;
+        src_list = renderer_zone_exit_list_ptr(level, src_zone);
+        renderer_append_boundary_lines_between_zones(level, cur_list, zone_slots, src_zone,
+                                                     out_lines, max_lines, line_start, &line_count);
+        renderer_append_boundary_lines_between_zones(level, src_list, zone_slots, zone_id,
+                                                     out_lines, max_lines, line_start, &line_count);
+        if (line_count <= line_start) {
+            continue;
         }
 
-        int slot = renderer_find_adj_zone_slot(out_adj, adj_count, (int16_t)connect_zone);
-        if (slot < 0) {
-            if (adj_count >= max_adj) continue;
-            slot = adj_count++;
-            out_adj[slot].zone_id = (int16_t)connect_zone;
-            out_adj[slot].line_start = (int16_t)line_count;
-            out_adj[slot].line_count = 0;
-            out_adj[slot].ambiguous = 0;
-        }
-
-        if (line_count < max_lines) {
-            out_lines[line_count++] = entry;
-            out_adj[slot].line_count++;
-        }
+        out_adj[adj_count].zone_id = src_zone;
+        out_adj[adj_count].line_start = (int16_t)line_start;
+        out_adj[adj_count].line_count = (int16_t)(line_count - line_start);
+        out_adj[adj_count].ambiguous = 0;
+        adj_count++;
     }
 
     for (int i = 0; i < adj_count; i++) {
