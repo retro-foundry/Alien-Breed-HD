@@ -4547,12 +4547,21 @@ void enemy_fire_at_player(GameObject *obj, GameState *state,
     int32_t xvel = hctx.newx - obj_x;
     int32_t zvel = hctx.newz - obj_z;
 
-    /* Copy bullet position to ObjectPoints */
+    /* Copy bullet position to ObjectPoints.
+     * Also seed prev snapshot for interpolation so a recycled shot slot does
+     * not render as a one-frame "teleport/fast extra shot" streak. */
     int bul_idx = (int)OBJ_CID(bullet);
-    if (state->level.object_points && bul_idx >= 0) {
+    if (state->level.object_points && bul_idx >= 0 &&
+        bul_idx < state->level.num_object_points) {
         uint8_t *pts = state->level.object_points + bul_idx * 8;
         obj_sl(pts, (int32_t)hctx.newx << 16);
         obj_sl(pts + 4, (int32_t)hctx.newz << 16);
+
+        if (state->level.prev_object_points) {
+            uint8_t *prev_pts = state->level.prev_object_points + bul_idx * 8;
+            obj_sl(prev_pts, (int32_t)hctx.newx << 16);
+            obj_sl(prev_pts + 4, (int32_t)hctx.newz << 16);
+        }
     }
 
     SHOT_SET_XVEL(*bullet, xvel << 16);
@@ -4591,9 +4600,6 @@ void enemy_fire_at_player(GameObject *obj, GameState *state,
     }
 
     bullet->obj.worry = 127;
-
-    /* Play firing sound */
-    audio_play_sample(3, 100);
 }
 
 static int16_t blast_rand_xz_delta(int16_t spread)
