@@ -4432,6 +4432,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                      int respect_scene_tags)
 {
     (void)sprite_type;
+    (void)respect_scene_tags;
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
     uint16_t *cw = renderer_active_cw();
@@ -4532,8 +4533,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
 
     const ColumnClip *wall_clip = &g_renderer.clip;
     const int have_wall_clip =
-        (!respect_scene_tags &&
-         wall_clip->top && wall_clip->bot && wall_clip->z &&
+        (wall_clip->top && wall_clip->bot && wall_clip->z &&
          wall_clip->top2 && wall_clip->bot2 && wall_clip->z2);
 
     /* --- Column loop --- */
