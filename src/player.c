@@ -2471,7 +2471,12 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
 
             int obj_type = obj->obj.number;
             if (!obs_in_line[i]) continue;
-            if ((((uint8_t)obj->obj.can_see) & player_can_see_bit) == 0u) continue;
+            /* For instant weapons, use explicit LOS re-check below instead of
+             * enemy can_see bits (which are floor-section strict and can reject
+             * valid upper/lower split-zone targets). */
+            if (!hitscan_from_room &&
+                ((((uint8_t)obj->obj.can_see) & player_can_see_bit) == 0u))
+                continue;
             if (OBJ_ZONE(obj) < 0) continue;
             if (obj_type == OBJ_NBR_GAS_PIPE) continue; /* hazard emitter: don't auto-lock */
             if ((uint8_t)obj_type > 31u) continue;
