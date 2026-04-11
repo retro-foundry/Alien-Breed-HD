@@ -5387,13 +5387,12 @@ static int renderer_collect_adjacent_zone_sources(const RenderSliceContext *ctx,
         int connect_zone = level_connect_to_zone_index(level, connect);
         if (connect_zone < 0 || connect_zone >= zone_slots || connect_zone == zone_id) continue;
 
-        /* Keep this path cheap and directional:
-         * only pull sources that were already drawn earlier in the painter pass
-         * (farther zones) into the current zone draw. */
+        /* Pull spill sources from any nearby visible zone so spill billboards
+         * are evaluated during the spilled-into zone draw, regardless of
+         * painter-order direction. */
         {
             int src_order = renderer_zone_order_index(state, (int16_t)connect_zone);
             if (src_order < 0) continue;
-            if (cur_order >= 0 && src_order <= cur_order) continue;
         }
 
         int slot = renderer_find_adj_zone_slot(out_adj, adj_count, (int16_t)connect_zone);
@@ -5608,7 +5607,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int obj_on_upper = (obj[obj_off_in_top] != 0);
         /* Multi-floor: only render objects when we are drawing their floor. Use object's in_top
          * so upper/lower is consistent with game logic (objects.c, movement). */
-        if (level_filter >= 0) {
+        if (in_this_zone && level_filter >= 0) {
             if ((level_filter == 1 && !obj_on_upper) || (level_filter == 0 && obj_on_upper))
                 continue;
         }
@@ -5709,7 +5708,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 if (adj_world_y < top_of_room || adj_world_y > bot_of_room) continue;
             }
             int shot_on_upper = (obj[obj_off_in_top] != 0);
-            if (level_filter >= 0) {
+            if (in_this_zone && level_filter >= 0) {
                 if ((level_filter == 1 && !shot_on_upper) || (level_filter == 0 && shot_on_upper))
                     continue;
             }
@@ -5798,7 +5797,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             if (state->explosions[ei].start_delay > 0) continue;
             if ((int)state->explosions[ei].frame >= 9) continue;
             int expl_on_upper = (state->explosions[ei].in_top != 0);
-            if (level_filter >= 0) {
+            if (in_this_zone && level_filter >= 0) {
                 if ((level_filter == 1 && !expl_on_upper) || (level_filter == 0 && expl_on_upper))
                     continue;
             }
