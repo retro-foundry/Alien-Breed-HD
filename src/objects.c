@@ -2847,97 +2847,91 @@ void object_handle_tree(GameObject *obj, GameState *state)
 void object_handle_gas_pipe(GameObject *obj, GameState *state)
 {
     enum {
-        GAS_PIPE_SEC_TIMER_OFF = 6,
-        GAS_PIPE_FOURTH_TIMER_OFF = 10,
-        GAS_PIPE_RELOAD_TIMER_OFF = 14
+        /* Defs.i: SecTimer=40 (td+22), ThirdTimer=52 (td+34), FourthTimer=54 (td+36). */
+        GAS_PIPE_SEC_TIMER_OFF = 22
     };
 
     obj->obj.worry = 0;
     /* Static hazard emitter: do not treat as a living enemy target. */
     NASTY_LIVES(*obj) = 0;
 
-    int ticks = (int)state->temp_frames;
-    if (ticks < 1) ticks = 1;
+    int16_t tf = state->temp_frames;
+    if (tf < 1) tf = 1;
 
-    /* Gas-pipe timers are authored in per-tick script fields.
-     * Step them one fixed update at a time so cadence stays stable. */
-    while (ticks-- > 0) {
-        /* ThirdTimer = delay before starting a burst */
-        int16_t third = NASTY_TIMER(*obj);
-        if (third > 0) {
-            NASTY_SET_TIMER(*obj, (int16_t)(third - 1));
-            OBJ_SET_TD_W(obj, GAS_PIPE_SEC_TIMER_OFF, 5);
-            OBJ_SET_TD_W(obj, GAS_PIPE_FOURTH_TIMER_OFF, 10);
-            continue;
-        }
-
-        /* FourthTimer = interval between shots in burst */
-        int16_t fourth = OBJ_TD_W(obj, GAS_PIPE_FOURTH_TIMER_OFF);
-        fourth = (int16_t)(fourth - 1);
-        if (fourth > 0) {
-            OBJ_SET_TD_W(obj, GAS_PIPE_FOURTH_TIMER_OFF, fourth);
-            continue;
-        }
-        OBJ_SET_TD_W(obj, GAS_PIPE_FOURTH_TIMER_OFF, 10);
-
-        int16_t sec = OBJ_TD_W(obj, GAS_PIPE_SEC_TIMER_OFF);
-        sec = (int16_t)(sec - 1);
-        OBJ_SET_TD_W(obj, GAS_PIPE_SEC_TIMER_OFF, sec);
-        if (sec <= 0) {
-            NASTY_SET_TIMER(*obj, OBJ_TD_W(obj, GAS_PIPE_RELOAD_TIMER_OFF));
-        }
-        if (sec == 4) audio_play_sample(22, 200);
-
-        /* Spawn flame projectile */
-        if (!state->level.nasty_shot_data) continue;
-        uint8_t *shots = state->level.nasty_shot_data;
-        GameObject *bullet = NULL;
-        for (int i = 0; i < NASTY_SHOT_SLOT_COUNT; i++) {
-            GameObject *c = (GameObject*)(shots + i * OBJECT_SIZE);
-            if (OBJ_ZONE(c) < 0) { bullet = c; break; }
-        }
-        if (!bullet) continue;
-
-        SHOT_ANIM(*bullet) = 0;
-        bullet->obj.number = OBJ_NBR_BULLET;
-        OBJ_SET_ZONE(bullet, OBJ_ZONE(obj));
-        int16_t src_y = (int16_t)((obj->raw[4] << 8) | obj->raw[5]);
-        src_y -= 80;
-        bullet->raw[4] = (uint8_t)(src_y >> 8);
-        bullet->raw[5] = (uint8_t)(src_y);
-        SHOT_SET_ACCYPOS(*bullet, (int32_t)src_y << 7);
-        SHOT_STATUS(*bullet) = 0;
-        SHOT_SET_YVEL(*bullet, 0);
-        SHOT_SIZE(*bullet) = 3;
-        SHOT_SET_FLAGS(*bullet, 0);
-        SHOT_SET_GRAV(*bullet, 0);
-        SHOT_POWER(*bullet) = 7;
-        SHOT_SET_LIFE(*bullet, 0);
-
-        /* Copy position from gas pipe to bullet in ObjectPoints */
-        if (state->level.object_points) {
-            int self_idx = (int)OBJ_CID(obj);
-            int bul_idx = (int)OBJ_CID(bullet);
-            if (self_idx >= 0 && bul_idx >= 0 &&
-                self_idx < state->level.num_object_points &&
-                bul_idx < state->level.num_object_points) {
-                uint8_t *sp = state->level.object_points + self_idx * 8;
-                uint8_t *dp = state->level.object_points + bul_idx * 8;
-                memcpy(dp, sp, 8);
-            }
-        }
-
-        int16_t facing = NASTY_FACING(*obj);
-        int16_t s = sin_lookup(facing);
-        int16_t c = cos_lookup(facing);
-        int32_t xvel = (((int32_t)s << 4) >> 16);
-        int32_t zvel = (((int32_t)c << 4) >> 16);
-        SHOT_SET_XVEL(*bullet, xvel << 16);
-        SHOT_SET_ZVEL(*bullet, zvel << 16);
-        NASTY_SET_EFLAGS(*bullet, (1u << OBJ_NBR_PLR1) | (1u << OBJ_NBR_PLR2));
-        bullet->obj.in_top = obj->obj.in_top;
-        bullet->obj.worry = 127;
+    /* ThirdTimer = delay before starting a burst. */
+    int16_t third = OBJ_TD_W(obj, ENEMY_THIRD_TIMER_OFF);
+    if (third > 0) {
+        OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, (int16_t)(third - tf));
+        OBJ_SET_TD_W(obj, GAS_PIPE_SEC_TIMER_OFF, 5);
+        OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, 10);
+        return;
     }
+
+    /* FourthTimer = interval between shots in burst. */
+    int16_t fourth = OBJ_TD_W(obj, ENEMY_FOURTH_TIMER_OFF);
+    fourth = (int16_t)(fourth - tf);
+    OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, fourth);
+    if (fourth >= 0) return;
+
+    OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, 10);
+
+    int16_t sec = OBJ_TD_W(obj, GAS_PIPE_SEC_TIMER_OFF);
+    sec = (int16_t)(sec - 1);
+    OBJ_SET_TD_W(obj, GAS_PIPE_SEC_TIMER_OFF, sec);
+    if (sec <= 0) {
+        OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, OBJ_TD_W(obj, ENEMY_OBJ_TIMER_OFF));
+    }
+    if (sec == 4) audio_play_sample(22, 200);
+
+    /* Spawn one flame projectile (Amiga: at most one per handler call). */
+    if (!state->level.nasty_shot_data) return;
+    uint8_t *shots = state->level.nasty_shot_data;
+    GameObject *bullet = NULL;
+    for (int i = 0; i < NASTY_SHOT_SLOT_COUNT; i++) {
+        GameObject *c = (GameObject*)(shots + i * OBJECT_SIZE);
+        if (OBJ_ZONE(c) < 0) { bullet = c; break; }
+    }
+    if (!bullet) return;
+
+    SHOT_ANIM(*bullet) = 0;
+    bullet->obj.number = OBJ_NBR_BULLET;
+    OBJ_SET_ZONE(bullet, OBJ_ZONE(obj));
+    int16_t src_y = (int16_t)((obj->raw[4] << 8) | obj->raw[5]);
+    src_y -= 80;
+    bullet->raw[4] = (uint8_t)(src_y >> 8);
+    bullet->raw[5] = (uint8_t)(src_y);
+    SHOT_SET_ACCYPOS(*bullet, (int32_t)src_y << 7);
+    SHOT_STATUS(*bullet) = 0;
+    SHOT_SET_YVEL(*bullet, 0);
+    SHOT_SIZE(*bullet) = 3;
+    SHOT_SET_FLAGS(*bullet, 0);
+    SHOT_SET_GRAV(*bullet, 0);
+    SHOT_POWER(*bullet) = 7;
+    SHOT_SET_LIFE(*bullet, 0);
+
+    /* Copy position from gas pipe to bullet in ObjectPoints. */
+    if (state->level.object_points) {
+        int self_idx = (int)OBJ_CID(obj);
+        int bul_idx = (int)OBJ_CID(bullet);
+        if (self_idx >= 0 && bul_idx >= 0 &&
+            self_idx < state->level.num_object_points &&
+            bul_idx < state->level.num_object_points) {
+            uint8_t *sp = state->level.object_points + self_idx * 8;
+            uint8_t *dp = state->level.object_points + bul_idx * 8;
+            memcpy(dp, sp, 8);
+        }
+    }
+
+    int16_t facing = NASTY_FACING(*obj);
+    int16_t s = sin_lookup(facing);
+    int16_t c = cos_lookup(facing);
+    int32_t xvel = (((int32_t)s << 4) >> 16);
+    int32_t zvel = (((int32_t)c << 4) >> 16);
+    SHOT_SET_XVEL(*bullet, xvel << 16);
+    SHOT_SET_ZVEL(*bullet, zvel << 16);
+    NASTY_SET_EFLAGS(*bullet, (1u << OBJ_NBR_PLR1) | (1u << OBJ_NBR_PLR2));
+    bullet->obj.in_top = obj->obj.in_top;
+    bullet->obj.worry = 127;
 }
 
 /* -----------------------------------------------------------------------
@@ -4290,9 +4284,8 @@ void switch_routine(GameState *state)
 {
     if (!state->level.switch_data) return;
 
-    /* Keep switch auto-reset pacing on fixed updates while preserving the
-     * longer hold time used by this port's gameplay tuning. */
-    int8_t auto_dec = (int8_t)(state->temp_frames * 2);
+    int ticks = (int)state->temp_frames;
+    if (ticks < 1) ticks = 1;
 
     const int32_t switch_dist_sq = 60 * 60;
     uint8_t *sw = state->level.switch_data;
@@ -4307,11 +4300,14 @@ void switch_routine(GameState *state)
         uint16_t bit_mask = (uint16_t)(1u << bit_num);
         int32_t gfx_off = (int32_t)be32(sw + 6);
 
-        /* Auto-reset branch (backtoend/nobutt): countdown runs in fixed-tick
-         * units derived from TempFrames, with a tuned per-tick decay. */
-        if ((int8_t)sw[2] != 0 && (int8_t)sw[10] != 0) {
-            sw[3] = (uint8_t)((int8_t)sw[3] - auto_dec);
-            if ((int8_t)sw[3] == 0) {
+        /* Auto-reset branch (backtoend/nobutt): emulate Amiga's byte timer
+         * by applying sub.b #4 once per 50Hz tick. */
+        if (sw[2] != 0 && sw[10] != 0) {
+            for (int t = 0; t < ticks; t++) {
+                /* Amiga: sub.b #4,3(a0) each 50Hz tick, then beq to auto-off. */
+                sw[3] = (uint8_t)(sw[3] - 4u);
+                if (sw[3] != 0) continue;
+
                 sw[10] = 0;
                 if (state->level.graphics && gfx_off >= 0) {
                     uint8_t *wall_ptr = state->level.graphics + (uint32_t)gfx_off;
@@ -4322,6 +4318,7 @@ void switch_routine(GameState *state)
                 }
                 game_conditions = (int16_t)((uint16_t)game_conditions & (uint16_t)~bit_mask);
                 audio_play_sample(10, 50);
+                break;
             }
         }
 
