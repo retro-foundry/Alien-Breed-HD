@@ -103,6 +103,14 @@ RendererState g_renderer;
 static int g_renderer_rgb_raster_expand = 0;
 /* Set by display.c when the GL weapon/tint post-pass will handle gun+tint this frame. */
 static int s_weapon_post_gl_active = 0;
+/* weapon_post_gl indexed present path (8-bit indices + 256-color frame palette). */
+#define RENDERER_INDEXED_PALETTE_SIZE 256
+#define RENDERER_INDEXED_CW_SPACE 4096
+static uint8_t *g_renderer_present_indexed_buffer = NULL;
+static uint16_t g_renderer_present_palette_cw[RENDERER_INDEXED_PALETTE_SIZE];
+static int g_renderer_present_palette_count = 0;
+static uint32_t g_renderer_present_hist[RENDERER_INDEXED_CW_SPACE];
+static uint8_t g_renderer_present_cw_to_idx[RENDERER_INDEXED_CW_SPACE];
 
 void renderer_set_weapon_post_gl_active(int active) { s_weapon_post_gl_active = active; }
 int8_t renderer_get_last_fill_screen_water(void) { return g_renderer.last_fill_screen_water; }
@@ -202,15 +210,25 @@ static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
                                                   uint32_t *dst_rgb, uint16_t *dst_cw);
 static void renderer_build_world_zone_prepass(GameState *state, uint32_t frame_idx,
                                               int trace_clip, RendererWorldZonePrepass *out);
+static void renderer_build_present_histogram_single(const uint16_t *src_cw);
+static void renderer_build_present_palette_from_histogram(const uint16_t *seed_palette,
+                                                          int seed_count);
+static void renderer_pack_present_indices_single(const uint16_t *src_cw);
 
 #ifndef AB3D_NO_THREADS
 #define RENDERER_MAX_THREADS 64
 /* Keep column strips wide enough to reduce overlap/synchronization overhead. */
 #define RENDERER_MIN_COLS_PER_WORKER 32
+/* Indexed present is memory-bandwidth bound; fewer, wider strips are usually faster. */
+#define RENDERER_MIN_COLS_PER_INDEX_WORKER 192
+#define RENDERER_MAX_INDEX_WORKERS 8
+#define RENDERER_MIN_INDEX_PIXELS_FOR_THREADS (640 * 360)
 
 typedef enum {
     RENDERER_THREAD_JOB_WORLD = 0,
-    RENDERER_THREAD_JOB_WATER_TINT = 1
+    RENDERER_THREAD_JOB_WATER_TINT = 1,
+    RENDERER_THREAD_JOB_INDEX_SCAN = 2,
+    RENDERER_THREAD_JOB_INDEX_PACK = 3
 } RendererThreadJobType;
 
 struct RendererThreadWorker {
@@ -247,6 +265,9 @@ typedef struct {
     const uint16_t *post_src_cw;
     uint32_t *post_dst_rgb;
     uint16_t *post_dst_cw;
+    const uint16_t *index_src_cw;
+    uint8_t *index_dst_idx;
+    const uint8_t *index_cw_to_idx;
     SDL_sem *done_sem;
     SDL_sem *worker_sems[RENDERER_MAX_THREADS];
     RendererThreadWorker workers[RENDERER_MAX_THREADS];
@@ -255,6 +276,10 @@ typedef struct {
 } RendererThreadPool;
 
 static RendererThreadPool g_renderer_thread_pool;
+static uint32_t g_renderer_index_worker_hist[RENDERER_MAX_THREADS][RENDERER_INDEXED_CW_SPACE];
+static uint16_t g_renderer_index_worker_palette[RENDERER_MAX_THREADS][RENDERER_INDEXED_PALETTE_SIZE];
+static uint16_t g_renderer_index_worker_palette_count[RENDERER_MAX_THREADS];
+static uint8_t g_renderer_index_worker_palette_overflow[RENDERER_MAX_THREADS];
 static int g_prof_last_world_workers = 0;
 static int g_prof_last_tint_workers = 0;
 static int g_renderer_thread_max_workers = 0; /* 0 = use max available workers */
@@ -1209,6 +1234,82 @@ static int8_t merge_fill_screen_water(int8_t a, int8_t b)
     return 0;
 }
 
+static void renderer_worker_index_palette_scan(int worker_index,
+                                               int16_t col_start, int16_t col_end,
+                                               const uint16_t *src_cw)
+{
+    if (worker_index < 0 || worker_index >= RENDERER_MAX_THREADS || !src_cw) return;
+
+    uint32_t *hist = g_renderer_index_worker_hist[worker_index];
+    uint16_t *pal = g_renderer_index_worker_palette[worker_index];
+    uint16_t pal_count = 0;
+    uint8_t pal_overflow = 0;
+    const int w = g_renderer.width;
+    const int h = g_renderer.height;
+
+    if (w <= 0 || h <= 0) {
+        g_renderer_index_worker_palette_count[worker_index] = 0;
+        g_renderer_index_worker_palette_overflow[worker_index] = 0;
+        return;
+    }
+
+    int x0 = (int)col_start;
+    int x1 = (int)col_end;
+    if (x0 < 0) x0 = 0;
+    if (x1 > w) x1 = w;
+    if (x0 >= x1) {
+        g_renderer_index_worker_palette_count[worker_index] = 0;
+        g_renderer_index_worker_palette_overflow[worker_index] = 0;
+        return;
+    }
+
+    memset(hist, 0, (size_t)RENDERER_INDEXED_CW_SPACE * sizeof(uint32_t));
+
+    for (int y = 0; y < h; y++) {
+        size_t row = (size_t)y * (size_t)w;
+        for (int x = x0; x < x1; x++) {
+            uint16_t cw = (uint16_t)(src_cw[row + (size_t)x] & 0x0FFFu);
+            uint32_t prev = hist[cw];
+            hist[cw] = prev + 1u;
+            if (prev == 0u) {
+                if (pal_count < RENDERER_INDEXED_PALETTE_SIZE)
+                    pal[pal_count++] = cw;
+                else
+                    pal_overflow = 1;
+            }
+        }
+    }
+
+    g_renderer_index_worker_palette_count[worker_index] = pal_count;
+    g_renderer_index_worker_palette_overflow[worker_index] = pal_overflow;
+}
+
+static void renderer_worker_index_pack(int16_t col_start, int16_t col_end,
+                                       const uint16_t *src_cw, uint8_t *dst_idx,
+                                       const uint8_t *cw_to_idx)
+{
+    if (!src_cw || !dst_idx || !cw_to_idx) return;
+
+    const int w = g_renderer.width;
+    const int h = g_renderer.height;
+    if (w <= 0 || h <= 0) return;
+
+    int x0 = (int)col_start;
+    int x1 = (int)col_end;
+    if (x0 < 0) x0 = 0;
+    if (x1 > w) x1 = w;
+    if (x0 >= x1) return;
+
+    for (int y = 0; y < h; y++) {
+        size_t row = (size_t)y * (size_t)w;
+        const uint16_t *src = src_cw + row + (size_t)x0;
+        uint8_t *dst = dst_idx + row + (size_t)x0;
+        for (int x = x0; x < x1; x++) {
+            *dst++ = cw_to_idx[(*src++) & 0x0FFFu];
+        }
+    }
+}
+
 static int renderer_thread_worker_main(void *userdata)
 {
     RendererThreadWorker *worker = (RendererThreadWorker*)userdata;
@@ -1239,6 +1340,9 @@ static int renderer_thread_worker_main(void *userdata)
         const uint16_t *post_src_cw = pool->post_src_cw;
         uint32_t *post_dst_rgb = pool->post_dst_rgb;
         uint16_t *post_dst_cw = pool->post_dst_cw;
+        const uint16_t *index_src_cw = pool->index_src_cw;
+        uint8_t *index_dst_idx = pool->index_dst_idx;
+        const uint8_t *index_cw_to_idx = pool->index_cw_to_idx;
 
         int8_t fill_screen_water = 0;
         if (active && col_start < col_end) {
@@ -1254,6 +1358,11 @@ static int renderer_thread_worker_main(void *userdata)
                                                      col_start, col_end,
                                                      post_src_rgb, post_src_cw,
                                                      post_dst_rgb, post_dst_cw);
+            } else if (job_type == RENDERER_THREAD_JOB_INDEX_SCAN && index_src_cw) {
+                renderer_worker_index_palette_scan(worker->index, col_start, col_end, index_src_cw);
+            } else if (job_type == RENDERER_THREAD_JOB_INDEX_PACK &&
+                       index_src_cw && index_dst_idx && index_cw_to_idx) {
+                renderer_worker_index_pack(col_start, col_end, index_src_cw, index_dst_idx, index_cw_to_idx);
             }
         }
 
@@ -1302,6 +1411,9 @@ static void renderer_threads_shutdown(void)
     pool->cpu_count = 0;
     SDL_AtomicSet(&pool->pending_workers, 0);
     pool->active_workers = 0;
+    pool->index_src_cw = NULL;
+    pool->index_dst_idx = NULL;
+    pool->index_cw_to_idx = NULL;
     SDL_AtomicSet(&pool->stop, 0);
 }
 
@@ -1412,6 +1524,42 @@ static int renderer_prepare_worker_columns(RendererThreadPool *pool, int width,
     return active_workers;
 }
 
+static int renderer_prepare_worker_columns_index(RendererThreadPool *pool, int width)
+{
+    int active_workers = pool->worker_count;
+    int worker_cap = g_renderer_thread_max_workers;
+    if (worker_cap <= 0) worker_cap = pool->worker_count;
+    if (worker_cap > RENDERER_MAX_THREADS) worker_cap = RENDERER_MAX_THREADS;
+    if (worker_cap > RENDERER_MAX_INDEX_WORKERS) worker_cap = RENDERER_MAX_INDEX_WORKERS;
+
+    if (active_workers > width) active_workers = width;
+    if (active_workers > worker_cap) active_workers = worker_cap;
+    {
+        int max_workers_by_cols = width / RENDERER_MIN_COLS_PER_INDEX_WORKER;
+        if (max_workers_by_cols < 1) max_workers_by_cols = 1;
+        if (active_workers > max_workers_by_cols) active_workers = max_workers_by_cols;
+    }
+    if (active_workers <= 0) return 0;
+
+    int32_t bounds[RENDERER_MAX_THREADS + 1];
+    for (int i = 0; i <= active_workers; i++) {
+        bounds[i] = (int32_t)(((int64_t)i * (int64_t)width) / (int64_t)active_workers);
+    }
+
+    for (int i = 0; i < active_workers; i++) {
+        pool->workers[i].col_start = (int16_t)bounds[i];
+        pool->workers[i].col_end = (int16_t)bounds[i + 1];
+        pool->workers[i].fill_screen_water = 0;
+    }
+    for (int i = active_workers; i < pool->worker_count; i++) {
+        pool->workers[i].col_start = 0;
+        pool->workers[i].col_end = 0;
+        pool->workers[i].fill_screen_water = 0;
+    }
+
+    return active_workers;
+}
+
 static int renderer_dispatch_threaded_world(GameState *state,
                                             const RendererWorldZonePrepass *zone_prepass,
                                             uint32_t frame_idx,
@@ -1441,11 +1589,14 @@ static int renderer_dispatch_threaded_world(GameState *state,
     pool->post_src_cw = NULL;
     pool->post_dst_rgb = NULL;
     pool->post_dst_cw = NULL;
+    pool->index_src_cw = NULL;
+    pool->index_dst_idx = NULL;
+    pool->index_cw_to_idx = NULL;
     pool->active_workers = active_workers;
     SDL_AtomicSet(&pool->pending_workers, active_workers);
     SDL_AtomicAdd(&pool->job_generation, 1);
     SDL_MemoryBarrierRelease();
-    for (int i = 0; i < pool->worker_count; i++) {
+    for (int i = 0; i < active_workers; i++) {
         SDL_SemPost(pool->worker_sems[i]);
     }
 
@@ -1490,11 +1641,14 @@ static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
     pool->post_src_cw = r->cw_buffer;
     pool->post_dst_rgb = r->rgb_buffer;
     pool->post_dst_cw = r->cw_buffer;
+    pool->index_src_cw = NULL;
+    pool->index_dst_idx = NULL;
+    pool->index_cw_to_idx = NULL;
     pool->active_workers = active_workers;
     SDL_AtomicSet(&pool->pending_workers, active_workers);
     SDL_AtomicAdd(&pool->job_generation, 1);
     SDL_MemoryBarrierRelease();
-    for (int i = 0; i < pool->worker_count; i++) {
+    for (int i = 0; i < active_workers; i++) {
         SDL_SemPost(pool->worker_sems[i]);
     }
 
@@ -1502,6 +1656,88 @@ static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
     g_prof_last_tint_workers = active_workers;
 
     return 1;
+}
+
+static int renderer_dispatch_threaded_index_scan(const uint16_t *src_cw)
+{
+    RendererThreadPool *pool = &g_renderer_thread_pool;
+    if (!pool->initialized || pool->worker_count <= 0 || pool->cpu_count <= 1) return 0;
+    if (!src_cw) return 0;
+
+    int width = g_renderer.width;
+    int height = g_renderer.height;
+    if (width <= 0 || height <= 0) return 0;
+    if ((int64_t)width * (int64_t)height < (int64_t)RENDERER_MIN_INDEX_PIXELS_FOR_THREADS)
+        return 0;
+
+    int active_workers = renderer_prepare_worker_columns_index(pool, width);
+    if (active_workers <= 0) return 0;
+
+    pool->job_state = NULL;
+    pool->world_zone_prepass = NULL;
+    pool->frame_idx = 0;
+    pool->trace_clip = 0;
+    pool->job_type = RENDERER_THREAD_JOB_INDEX_SCAN;
+    pool->tint_fill_screen_water = 0;
+    pool->post_src_rgb = NULL;
+    pool->post_src_cw = NULL;
+    pool->post_dst_rgb = NULL;
+    pool->post_dst_cw = NULL;
+    pool->index_src_cw = src_cw;
+    pool->index_dst_idx = NULL;
+    pool->index_cw_to_idx = NULL;
+    pool->active_workers = active_workers;
+    SDL_AtomicSet(&pool->pending_workers, active_workers);
+    SDL_AtomicAdd(&pool->job_generation, 1);
+    SDL_MemoryBarrierRelease();
+    for (int i = 0; i < active_workers; i++) {
+        SDL_SemPost(pool->worker_sems[i]);
+    }
+
+    SDL_SemWait(pool->done_sem);
+    return active_workers;
+}
+
+static int renderer_dispatch_threaded_index_pack(const uint16_t *src_cw,
+                                                 uint8_t *dst_idx,
+                                                 const uint8_t *cw_to_idx)
+{
+    RendererThreadPool *pool = &g_renderer_thread_pool;
+    if (!pool->initialized || pool->worker_count <= 0 || pool->cpu_count <= 1) return 0;
+    if (!src_cw || !dst_idx || !cw_to_idx) return 0;
+
+    int width = g_renderer.width;
+    int height = g_renderer.height;
+    if (width <= 0 || height <= 0) return 0;
+    if ((int64_t)width * (int64_t)height < (int64_t)RENDERER_MIN_INDEX_PIXELS_FOR_THREADS)
+        return 0;
+
+    int active_workers = renderer_prepare_worker_columns_index(pool, width);
+    if (active_workers <= 0) return 0;
+
+    pool->job_state = NULL;
+    pool->world_zone_prepass = NULL;
+    pool->frame_idx = 0;
+    pool->trace_clip = 0;
+    pool->job_type = RENDERER_THREAD_JOB_INDEX_PACK;
+    pool->tint_fill_screen_water = 0;
+    pool->post_src_rgb = NULL;
+    pool->post_src_cw = NULL;
+    pool->post_dst_rgb = NULL;
+    pool->post_dst_cw = NULL;
+    pool->index_src_cw = src_cw;
+    pool->index_dst_idx = dst_idx;
+    pool->index_cw_to_idx = cw_to_idx;
+    pool->active_workers = active_workers;
+    SDL_AtomicSet(&pool->pending_workers, active_workers);
+    SDL_AtomicAdd(&pool->job_generation, 1);
+    SDL_MemoryBarrierRelease();
+    for (int i = 0; i < active_workers; i++) {
+        SDL_SemPost(pool->worker_sems[i]);
+    }
+
+    SDL_SemWait(pool->done_sem);
+    return active_workers;
 }
 
 #else
@@ -1522,6 +1758,20 @@ static int renderer_dispatch_threaded_world(GameState *state,
 static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
 {
     (void)fill_screen_water;
+    return 0;
+}
+static int renderer_dispatch_threaded_index_scan(const uint16_t *src_cw)
+{
+    (void)src_cw;
+    return 0;
+}
+static int renderer_dispatch_threaded_index_pack(const uint16_t *src_cw,
+                                                 uint8_t *dst_idx,
+                                                 const uint8_t *cw_to_idx)
+{
+    (void)src_cw;
+    (void)dst_idx;
+    (void)cw_to_idx;
     return 0;
 }
 #endif
@@ -2034,6 +2284,10 @@ static void free_buffers(void)
     g_renderer.cw_buffer = NULL;
     ab3d_aligned_free(g_renderer.cw_back_buffer);
     g_renderer.cw_back_buffer = NULL;
+    ab3d_aligned_free(g_renderer_present_indexed_buffer);
+    g_renderer_present_indexed_buffer = NULL;
+    g_renderer_present_palette_count = 0;
+    memset(g_renderer_present_palette_cw, 0, sizeof(g_renderer_present_palette_cw));
     ab3d_aligned_free(g_renderer.clip.top);
     g_renderer.clip.top = NULL;
     ab3d_aligned_free(g_renderer.clip.bot);
@@ -2066,6 +2320,9 @@ static void allocate_buffers(int w, int h)
     size_t cw_size = buf_size * sizeof(uint16_t);
     g_renderer.cw_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
     g_renderer.cw_back_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
+    g_renderer_present_indexed_buffer = (uint8_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, buf_size, 1);
+    g_renderer_present_palette_count = 0;
+    memset(g_renderer_present_palette_cw, 0, sizeof(g_renderer_present_palette_cw));
 
     size_t clip_size = (size_t)w * sizeof(int16_t);
     g_renderer.clip.top = (int16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, clip_size);
@@ -2671,6 +2928,259 @@ const uint32_t *renderer_get_rgb_buffer(void)
 const uint16_t *renderer_get_cw_buffer(void)
 {
     return g_renderer.cw_back_buffer; /* The just-drawn 12-bit color-word frame */
+}
+
+static inline int renderer_cw12_distance_sq(uint16_t a, uint16_t b)
+{
+    int ar = (int)((a >> 8) & 0xFu);
+    int ag = (int)((a >> 4) & 0xFu);
+    int ab = (int)(a & 0xFu);
+    int br = (int)((b >> 8) & 0xFu);
+    int bg = (int)((b >> 4) & 0xFu);
+    int bb = (int)(b & 0xFu);
+    int dr = ar - br;
+    int dg = ag - bg;
+    int db = ab - bb;
+    return dr * dr + dg * dg + db * db;
+}
+
+static void renderer_build_present_histogram_single(const uint16_t *src_cw)
+{
+    if (!src_cw) return;
+
+    const int w = g_renderer.width;
+    const int h = g_renderer.height;
+    if (w <= 0 || h <= 0) return;
+
+    memset(g_renderer_present_hist, 0, sizeof(g_renderer_present_hist));
+
+    for (int y = 0; y < h; y++) {
+        size_t row = (size_t)y * (size_t)w;
+        for (int x = 0; x < w; x++) {
+            uint16_t cw = (uint16_t)(src_cw[row + (size_t)x] & 0x0FFFu);
+            g_renderer_present_hist[cw]++;
+        }
+    }
+}
+
+static void renderer_build_present_palette_from_histogram(const uint16_t *seed_palette,
+                                                          int seed_count)
+{
+    int unique_count = 0;
+    int palette_count = 0;
+
+    memset(g_renderer_present_cw_to_idx, 0, sizeof(g_renderer_present_cw_to_idx));
+    memset(g_renderer_present_palette_cw, 0, sizeof(g_renderer_present_palette_cw));
+
+    for (int cw = 0; cw < RENDERER_INDEXED_CW_SPACE; cw++) {
+        if (g_renderer_present_hist[cw] != 0u) unique_count++;
+    }
+
+    if (unique_count <= 0) {
+        g_renderer_present_palette_cw[0] = 0;
+        g_renderer_present_palette_count = 1;
+        return;
+    }
+
+    if (unique_count <= RENDERER_INDEXED_PALETTE_SIZE) {
+        uint8_t added[RENDERER_INDEXED_CW_SPACE];
+        memset(added, 0, sizeof(added));
+
+        if (seed_palette && seed_count > 0) {
+            for (int i = 0; i < seed_count && palette_count < RENDERER_INDEXED_PALETTE_SIZE; i++) {
+                uint16_t cw = (uint16_t)(seed_palette[i] & 0x0FFFu);
+                if (g_renderer_present_hist[cw] == 0u || added[cw]) continue;
+                g_renderer_present_palette_cw[palette_count] = cw;
+                g_renderer_present_cw_to_idx[cw] = (uint8_t)palette_count;
+                added[cw] = 1;
+                palette_count++;
+            }
+        }
+
+        for (int cw = 0; cw < RENDERER_INDEXED_CW_SPACE &&
+                         palette_count < RENDERER_INDEXED_PALETTE_SIZE; cw++) {
+            if (g_renderer_present_hist[cw] == 0u || added[cw]) continue;
+            g_renderer_present_palette_cw[palette_count] = (uint16_t)cw;
+            g_renderer_present_cw_to_idx[cw] = (uint8_t)palette_count;
+            palette_count++;
+        }
+
+        if (palette_count == 0) {
+            g_renderer_present_palette_cw[0] = 0;
+            palette_count = 1;
+        }
+
+        g_renderer_present_palette_count = palette_count;
+        return;
+    }
+
+    {
+        uint16_t colors[RENDERER_INDEXED_CW_SPACE];
+        uint32_t counts[RENDERER_INDEXED_CW_SPACE];
+        int n = 0;
+        for (int cw = 0; cw < RENDERER_INDEXED_CW_SPACE; cw++) {
+            uint32_t cnt = g_renderer_present_hist[cw];
+            if (cnt == 0u) continue;
+            colors[n] = (uint16_t)cw;
+            counts[n] = cnt;
+            n++;
+        }
+
+        if (n > 0) {
+            int select_n = (n < RENDERER_INDEXED_PALETTE_SIZE) ? n : RENDERER_INDEXED_PALETTE_SIZE;
+            for (int i = 0; i < select_n; i++) {
+                int best = i;
+                for (int j = i + 1; j < n; j++) {
+                    if (counts[j] > counts[best] ||
+                        (counts[j] == counts[best] && colors[j] < colors[best])) {
+                        best = j;
+                    }
+                }
+                if (best != i) {
+                    uint32_t tc = counts[i];
+                    uint16_t tw = colors[i];
+                    counts[i] = counts[best];
+                    colors[i] = colors[best];
+                    counts[best] = tc;
+                    colors[best] = tw;
+                }
+                g_renderer_present_palette_cw[i] = colors[i];
+            }
+            palette_count = select_n;
+        }
+    }
+
+    if (palette_count <= 0) {
+        g_renderer_present_palette_cw[0] = 0;
+        g_renderer_present_palette_count = 1;
+        return;
+    }
+
+    {
+        int16_t palette_lookup[RENDERER_INDEXED_CW_SPACE];
+        for (int i = 0; i < RENDERER_INDEXED_CW_SPACE; i++) palette_lookup[i] = (int16_t)-1;
+
+        for (int i = 0; i < palette_count; i++) {
+            uint16_t cw = (uint16_t)(g_renderer_present_palette_cw[i] & 0x0FFFu);
+            palette_lookup[cw] = (int16_t)i;
+        }
+
+        for (int cw = 0; cw < RENDERER_INDEXED_CW_SPACE; cw++) {
+            if (g_renderer_present_hist[cw] == 0u) continue;
+            int idx = palette_lookup[cw];
+            if (idx >= 0) {
+                g_renderer_present_cw_to_idx[cw] = (uint8_t)idx;
+                continue;
+            }
+
+            int best_idx = 0;
+            int best_dist = INT_MAX;
+            uint16_t cw12 = (uint16_t)cw;
+            for (int pi = 0; pi < palette_count; pi++) {
+                int d = renderer_cw12_distance_sq(cw12, g_renderer_present_palette_cw[pi]);
+                if (d < best_dist) {
+                    best_dist = d;
+                    best_idx = pi;
+                }
+            }
+            g_renderer_present_cw_to_idx[cw] = (uint8_t)best_idx;
+        }
+    }
+
+    g_renderer_present_palette_count = palette_count;
+}
+
+static void renderer_pack_present_indices_single(const uint16_t *src_cw)
+{
+    if (!src_cw || !g_renderer_present_indexed_buffer) return;
+
+    const int w = g_renderer.width;
+    const int h = g_renderer.height;
+    if (w <= 0 || h <= 0) return;
+
+    for (int y = 0; y < h; y++) {
+        size_t row = (size_t)y * (size_t)w;
+        const uint16_t *src = src_cw + row;
+        uint8_t *dst = g_renderer_present_indexed_buffer + row;
+        for (int x = 0; x < w; x++) {
+            dst[x] = g_renderer_present_cw_to_idx[src[x] & 0x0FFFu];
+        }
+    }
+}
+
+int renderer_build_present_indexed_frame(int prefer_threaded)
+{
+    const uint16_t *src = renderer_get_cw_buffer();
+    if (!src || !g_renderer_present_indexed_buffer) return 0;
+
+    const int w = g_renderer.width;
+    const int h = g_renderer.height;
+    if (w <= 0 || h <= 0) return 0;
+
+    uint16_t seed_palette[RENDERER_INDEXED_PALETTE_SIZE];
+    int seed_count = 0;
+
+    memset(seed_palette, 0, sizeof(seed_palette));
+    memset(g_renderer_present_hist, 0, sizeof(g_renderer_present_hist));
+
+    if (prefer_threaded) {
+        int active_workers = renderer_dispatch_threaded_index_scan(src);
+        if (active_workers > 0) {
+            uint8_t seen_seed[RENDERER_INDEXED_CW_SPACE];
+            memset(seen_seed, 0, sizeof(seen_seed));
+
+            for (int wi = 0; wi < active_workers; wi++) {
+                int local_count = (int)g_renderer_index_worker_palette_count[wi];
+                if (local_count > RENDERER_INDEXED_PALETTE_SIZE)
+                    local_count = RENDERER_INDEXED_PALETTE_SIZE;
+
+                for (int pi = 0; pi < local_count; pi++) {
+                    uint16_t cw = (uint16_t)(g_renderer_index_worker_palette[wi][pi] & 0x0FFFu);
+                    if (seen_seed[cw]) continue;
+                    seen_seed[cw] = 1;
+                    if (seed_count < RENDERER_INDEXED_PALETTE_SIZE)
+                        seed_palette[seed_count++] = cw;
+                }
+
+                for (int cw = 0; cw < RENDERER_INDEXED_CW_SPACE; cw++) {
+                    g_renderer_present_hist[cw] += g_renderer_index_worker_hist[wi][cw];
+                }
+            }
+        } else {
+            renderer_build_present_histogram_single(src);
+        }
+    } else {
+        renderer_build_present_histogram_single(src);
+    }
+
+    renderer_build_present_palette_from_histogram(seed_palette, seed_count);
+
+    if (prefer_threaded) {
+        int packed_workers = renderer_dispatch_threaded_index_pack(src,
+                                                                   g_renderer_present_indexed_buffer,
+                                                                   g_renderer_present_cw_to_idx);
+        if (packed_workers <= 0)
+            renderer_pack_present_indices_single(src);
+    } else {
+        renderer_pack_present_indices_single(src);
+    }
+
+    return 1;
+}
+
+const uint8_t *renderer_get_present_indexed_buffer(void)
+{
+    return g_renderer_present_indexed_buffer;
+}
+
+const uint16_t *renderer_get_present_palette_cw(void)
+{
+    return g_renderer_present_palette_cw;
+}
+
+int renderer_get_present_palette_count(void)
+{
+    return g_renderer_present_palette_count;
 }
 
 int renderer_get_width(void)  { return g_renderer.width; }

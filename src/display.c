@@ -3,7 +3,8 @@
  * display.c - SDL2 display backend
  *
  * Creates a window and presents the 12-bit Amiga color-word framebuffer.
- * Default: SDL OpenGL render driver + GL_R16UI + fragment shader (raw uint16 upload, no SDL BlitNtoN).
+ * Default: SDL OpenGL render driver + integer textures + fragment shader
+ * (raw uint16 or indexed+palette upload, no SDL BlitNtoN).
  * Fallback: Direct3D + SDL texture (UpdateTexture / RenderCopy may use internal blit). Opt-out: AB3D_DISABLE_GL_UNPACK=1.
  *
  * Base window size comes from ab3d.ini (render_width/render_height).
@@ -29,7 +30,10 @@
 
 /* OpenGL 3.0+ integer texture (not always in SDL's bundled gl.h) */
 #ifndef GL_R16UI
-#define GL_R16UI 0x8232
+#define GL_R16UI 0x8234
+#endif
+#ifndef GL_R8UI
+#define GL_R8UI 0x8232
 #endif
 #ifndef GL_RED_INTEGER
 #define GL_RED_INTEGER 0x8D94
@@ -58,6 +62,12 @@
 #ifndef GL_TEXTURE0
 #define GL_TEXTURE0 0x84C0
 #endif
+#ifndef GL_TEXTURE1
+#define GL_TEXTURE1 0x84C1
+#endif
+#ifndef GL_TEXTURE2
+#define GL_TEXTURE2 0x84C2
+#endif
 
 #if SDL_VERSION_ATLEAST(2, 0, 12)
 typedef void (APIENTRY *DisplayGlGenMipmapFn)(GLenum target);
@@ -84,7 +94,7 @@ static int          g_hud_digit_tex_h[2];
 static int          g_hud_digits_load_attempted;
 static void         display_hud_digits_free(void);
 static void         display_hud_digits_ensure_loaded(void);
-static int g_gl_unpack_ok; /* OpenGL R16UI + shader path active */
+static int g_gl_unpack_ok; /* OpenGL integer-texture + shader path active */
 static int g_present_width = 0;
 static int g_present_height = 0;
 static SDL_Rect g_present_dst_rect;
@@ -274,9 +284,15 @@ typedef void   (APIENTRY *DisplayGlDisableVertexAttribArrayFn)(GLuint index);
 #endif
 
 static GLuint g_gl_tex_cw;
+static GLuint g_gl_tex_idx;
+static GLuint g_gl_tex_palette;
 static GLuint g_gl_prog;
 static GLuint g_gl_vao;
 static GLuint g_gl_vbo;
+static GLint  g_gl_loc_u_cw = -1;
+static GLint  g_gl_loc_u_idx = -1;
+static GLint  g_gl_loc_u_pal = -1;
+static GLint  g_gl_loc_u_use_indexed = -1;
 
 /* Pre-baked gun frame GL textures: 8 guns × 4 frames = 32 slots, each 96×58 RGBA.
  * Uploaded once at asset-load time; zero means not loaded. */
@@ -354,13 +370,21 @@ static const char display_gl_vs_src[] =
 static const char display_gl_fs_src[] =
     "#version 330 core\n"
     "uniform usampler2D u_cw;\n"
+    "uniform usampler2D u_idx;\n"
+    "uniform usampler2D u_pal;\n"
+    "uniform int u_use_indexed;\n"
     "in vec2 v_uv;\n"
     "out vec4 o_col;\n"
     "void main() {\n"
     "  /* Top-down CPU rows match default GL unpack (row 0 -> t=0); do not flip v_uv. */\n"
     "  vec2 uv = v_uv;\n"
-    "  uint w = texture(u_cw, uv).r;\n"
-    "  uint c = w & 0xFFFu;\n"
+    "  uint c = 0u;\n"
+    "  if (u_use_indexed != 0) {\n"
+    "    uint idx = texture(u_idx, uv).r & 0xFFu;\n"
+    "    c = texelFetch(u_pal, ivec2(int(idx), 0), 0).r & 0xFFFu;\n"
+    "  } else {\n"
+    "    c = texture(u_cw, uv).r & 0xFFFu;\n"
+    "  }\n"
     "  uint r4 = (c >> 8) & 0xFu;\n"
     "  uint g4 = (c >> 4) & 0xFu;\n"
     "  uint b4 = c & 0xFu;\n"
@@ -916,10 +940,18 @@ static void display_gl_shutdown_unpack(void)
     if (g_gl_delete_buffers && g_gl_vbo) g_gl_delete_buffers(1, &g_gl_vbo);
     if (g_gl_delete_program && g_gl_prog) g_gl_delete_program(g_gl_prog);
     if (g_gl_delete_textures && g_gl_tex_cw) g_gl_delete_textures(1, &g_gl_tex_cw);
+    if (g_gl_delete_textures && g_gl_tex_idx) g_gl_delete_textures(1, &g_gl_tex_idx);
+    if (g_gl_delete_textures && g_gl_tex_palette) g_gl_delete_textures(1, &g_gl_tex_palette);
     g_gl_vao = 0;
     g_gl_vbo = 0;
     g_gl_prog = 0;
     g_gl_tex_cw = 0;
+    g_gl_tex_idx = 0;
+    g_gl_tex_palette = 0;
+    g_gl_loc_u_cw = -1;
+    g_gl_loc_u_idx = -1;
+    g_gl_loc_u_pal = -1;
+    g_gl_loc_u_use_indexed = -1;
     g_gl_unpack_ok = 0;
 }
 
@@ -966,6 +998,17 @@ static int display_gl_try_init_unpack(void)
         return 0;
     }
 
+    g_gl_loc_u_cw = g_gl_get_uniform_location(g_gl_prog, "u_cw");
+    g_gl_loc_u_idx = g_gl_get_uniform_location(g_gl_prog, "u_idx");
+    g_gl_loc_u_pal = g_gl_get_uniform_location(g_gl_prog, "u_pal");
+    g_gl_loc_u_use_indexed = g_gl_get_uniform_location(g_gl_prog, "u_use_indexed");
+    g_gl_use_program(g_gl_prog);
+    if (g_gl_loc_u_cw >= 0) g_gl_uniform1i(g_gl_loc_u_cw, 0);
+    if (g_gl_loc_u_idx >= 0) g_gl_uniform1i(g_gl_loc_u_idx, 1);
+    if (g_gl_loc_u_pal >= 0) g_gl_uniform1i(g_gl_loc_u_pal, 2);
+    if (g_gl_loc_u_use_indexed >= 0) g_gl_uniform1i(g_gl_loc_u_use_indexed, 0);
+    g_gl_use_program(0);
+
     static const float quad[] = {
         -1.0f,  1.0f,  0.0f, 0.0f,
          1.0f,  1.0f,  1.0f, 0.0f,
@@ -989,6 +1032,21 @@ static int display_gl_try_init_unpack(void)
     g_gl_tex_parameteri2(0x0DE1, 0x2800 /* GL_TEXTURE_MAG_FILTER */, (GLint)GL_NEAREST);
     g_gl_tex_parameteri2(0x0DE1, 0x2802 /* GL_TEXTURE_WRAP_S */, (GLint)0x812F /* GL_CLAMP_TO_EDGE */);
     g_gl_tex_parameteri2(0x0DE1, 0x2803 /* GL_TEXTURE_WRAP_T */, (GLint)0x812F);
+
+    g_gl_gen_textures(1, &g_gl_tex_idx);
+    g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_idx);
+    g_gl_tex_parameteri2(0x0DE1, 0x2801 /* GL_TEXTURE_MIN_FILTER */, (GLint)GL_NEAREST);
+    g_gl_tex_parameteri2(0x0DE1, 0x2800 /* GL_TEXTURE_MAG_FILTER */, (GLint)GL_NEAREST);
+    g_gl_tex_parameteri2(0x0DE1, 0x2802 /* GL_TEXTURE_WRAP_S */, (GLint)0x812F /* GL_CLAMP_TO_EDGE */);
+    g_gl_tex_parameteri2(0x0DE1, 0x2803 /* GL_TEXTURE_WRAP_T */, (GLint)0x812F);
+
+    g_gl_gen_textures(1, &g_gl_tex_palette);
+    g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_palette);
+    g_gl_tex_parameteri2(0x0DE1, 0x2801 /* GL_TEXTURE_MIN_FILTER */, (GLint)GL_NEAREST);
+    g_gl_tex_parameteri2(0x0DE1, 0x2800 /* GL_TEXTURE_MAG_FILTER */, (GLint)GL_NEAREST);
+    g_gl_tex_parameteri2(0x0DE1, 0x2802 /* GL_TEXTURE_WRAP_S */, (GLint)0x812F /* GL_CLAMP_TO_EDGE */);
+    g_gl_tex_parameteri2(0x0DE1, 0x2803 /* GL_TEXTURE_WRAP_T */, (GLint)0x812F);
+
     g_gl_bind_texture(0x0DE1, 0);
 
     g_gl_unpack_ok = 1;
@@ -1007,7 +1065,7 @@ static void display_gl_reset_client_pixel_unpack(void)
     if (g_gl_bind_buffer)
         g_gl_bind_buffer(0x0EC0 /* GL_PIXEL_UNPACK_BUFFER */, 0);
     if (g_gl_pixel_storei) {
-        g_gl_pixel_storei(0x0CF5 /* GL_UNPACK_ALIGNMENT */, 2);
+        g_gl_pixel_storei(0x0CF5 /* GL_UNPACK_ALIGNMENT */, 1);
         g_gl_pixel_storei(0x0CF2 /* GL_UNPACK_ROW_LENGTH */, 0);
         g_gl_pixel_storei(0x0CF3 /* GL_UNPACK_SKIP_ROWS */, 0);
         g_gl_pixel_storei(0x0CF4 /* GL_UNPACK_SKIP_PIXELS */, 0);
@@ -1018,26 +1076,58 @@ static void display_gl_resize_cw_texture(int w, int h)
 {
     if (!g_gl_unpack_ok || w < 1 || h < 1) return;
     display_gl_reset_client_pixel_unpack();
+
     g_gl_active_texture(GL_TEXTURE0);
     g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_cw);
     g_gl_tex_image_2d(0x0DE1, 0, (GLint)GL_R16UI, w, h, 0, GL_RED_INTEGER, 0x1403 /* GL_UNSIGNED_SHORT */, NULL);
+
+    g_gl_active_texture(GL_TEXTURE1);
+    g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_idx);
+    g_gl_tex_image_2d(0x0DE1, 0, (GLint)GL_R8UI, w, h, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, NULL);
+
+    g_gl_active_texture(GL_TEXTURE2);
+    g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_palette);
+    g_gl_tex_image_2d(0x0DE1, 0, (GLint)GL_R16UI, 256, 1, 0,
+                      GL_RED_INTEGER, 0x1403 /* GL_UNSIGNED_SHORT */, NULL);
+
     g_gl_bind_texture(0x0DE1, 0);
     if (g_gl_get_error && g_gl_get_error() != 0)
-        printf("[DISPLAY] GL_R16UI glTexImage2D reported an error (driver may not support integer textures)\n");
+        printf("[DISPLAY] GL integer present glTexImage2D reported an error (driver may not support integer textures)\n");
 }
 
-static void display_gl_present_cw(const uint16_t *src, int w, int h)
+static void display_gl_present_cw(const uint16_t *src_cw,
+                                  const uint8_t *src_idx,
+                                  const uint16_t *pal_cw,
+                                  int w, int h,
+                                  int use_indexed)
 {
-    GLint loc_u;
     int win_w = 1, win_h = 1;
+    int indexed_active = 0;
 
-    if (!g_gl_unpack_ok || !src || w < 1 || h < 1) return;
+    if (!g_gl_unpack_ok || w < 1 || h < 1) return;
+    indexed_active = (use_indexed && src_idx && pal_cw) ? 1 : 0;
+    if (!indexed_active && !src_cw) return;
     display_gl_output_size(&win_w, &win_h);
 
     display_gl_reset_client_pixel_unpack();
-    g_gl_active_texture(GL_TEXTURE0);
-    g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_cw);
-    g_gl_tex_sub_image_2d(0x0DE1, 0, 0, 0, w, h, GL_RED_INTEGER, 0x1403 /* GL_UNSIGNED_SHORT */, src);
+    if (g_gl_pixel_storei)
+        g_gl_pixel_storei(0x0CF5 /* GL_UNPACK_ALIGNMENT */, indexed_active ? 1 : 2);
+    if (indexed_active) {
+        g_gl_active_texture(GL_TEXTURE1);
+        g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_idx);
+        g_gl_tex_sub_image_2d(0x0DE1, 0, 0, 0, w, h,
+                              GL_RED_INTEGER, GL_UNSIGNED_BYTE, src_idx);
+
+        g_gl_active_texture(GL_TEXTURE2);
+        g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_palette);
+        g_gl_tex_sub_image_2d(0x0DE1, 0, 0, 0, 256, 1,
+                              GL_RED_INTEGER, 0x1403 /* GL_UNSIGNED_SHORT */, pal_cw);
+    } else {
+        g_gl_active_texture(GL_TEXTURE0);
+        g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_cw);
+        g_gl_tex_sub_image_2d(0x0DE1, 0, 0, 0, w, h,
+                              GL_RED_INTEGER, 0x1403 /* GL_UNSIGNED_SHORT */, src_cw);
+    }
     g_gl_bind_texture(0x0DE1, 0);
 
     SDL_SetRenderDrawColor(g_sdl_ren, 0, 0, 0, 255);
@@ -1056,12 +1146,25 @@ static void display_gl_present_cw(const uint16_t *src, int w, int h)
     }
 
     g_gl_use_program(g_gl_prog);
-    loc_u = g_gl_get_uniform_location(g_gl_prog, "u_cw");
-    if (loc_u >= 0) {
-        g_gl_active_texture(GL_TEXTURE0);
-        g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_cw);
-        g_gl_uniform1i(loc_u, 0);
+    if (g_gl_loc_u_use_indexed >= 0) {
+        g_gl_uniform1i(g_gl_loc_u_use_indexed, indexed_active ? 1 : 0);
     }
+    if (indexed_active) {
+        if (g_gl_loc_u_idx >= 0) {
+            g_gl_active_texture(GL_TEXTURE1);
+            g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_idx);
+        }
+        if (g_gl_loc_u_pal >= 0) {
+            g_gl_active_texture(GL_TEXTURE2);
+            g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_palette);
+        }
+    } else {
+        if (g_gl_loc_u_cw >= 0) {
+            g_gl_active_texture(GL_TEXTURE0);
+            g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_cw);
+        }
+    }
+
     g_gl_bind_vertex_array(g_gl_vao);
     g_gl_draw_arrays(GL_TRIANGLE_STRIP, 0, 4);
     g_gl_bind_vertex_array(0);
@@ -2103,9 +2206,22 @@ static void display_present_cw_frame(GameState *state)
     int w = renderer_get_width(), h = renderer_get_height();
 
     int use_gl_weapon = state && state->cfg_weapon_post_gl && g_gl_unpack_ok && g_gl_hud_ok;
+    int use_gl_indexed_present = 0;
+    const uint8_t *src_idx = NULL;
+    const uint16_t *pal_cw = NULL;
 
     if (g_gl_unpack_ok) {
-        display_gl_present_cw(src, w, h);
+        if (use_gl_weapon) {
+            int prefer_threaded = state && state->cfg_render_threads;
+            if (renderer_build_present_indexed_frame(prefer_threaded)) {
+                src_idx = renderer_get_present_indexed_buffer();
+                pal_cw = renderer_get_present_palette_cw();
+                if (src_idx && pal_cw && renderer_get_present_palette_count() > 0)
+                    use_gl_indexed_present = 1;
+            }
+        }
+
+        display_gl_present_cw(src, src_idx, pal_cw, w, h, use_gl_indexed_present);
         if (g_gl_hud_ok) {
             display_gl_overlay_begin();
             if (use_gl_weapon) {

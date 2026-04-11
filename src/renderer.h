@@ -420,6 +420,13 @@ const uint8_t *renderer_get_buffer(void);
 const uint32_t *renderer_get_rgb_buffer(void);
 /* Completed frame: 16-bit packed 4444, 0x0RGB (high nibble unused). Matches SDL ARGB4444 with A=0. */
 const uint16_t *renderer_get_cw_buffer(void);
+/* Build an 8-bit indexed present frame from the completed cw backbuffer.
+ * prefer_threaded: non-zero uses renderer worker strips when available. */
+int renderer_build_present_indexed_frame(int prefer_threaded);
+/* Completed indexed present frame + 256-entry palette (Amiga 0x0RGB words). */
+const uint8_t *renderer_get_present_indexed_buffer(void);
+const uint16_t *renderer_get_present_palette_cw(void);
+int renderer_get_present_palette_count(void);
 uint32_t *renderer_get_active_rgb_target(void);
 uint16_t *renderer_get_active_cw_target(void);
 /* When zero (default), raster skips per-pixel ARGB expansion; cw_buffer is authoritative for display. */
