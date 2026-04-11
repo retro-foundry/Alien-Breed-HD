@@ -5496,6 +5496,31 @@ static int renderer_resolve_sprite_zone_draw_clip(const RenderSliceContext *ctx,
     return 1;
 }
 
+static int renderer_world_span_overlaps_room(int32_t center_world_y,
+                                             int32_t half_span_world,
+                                             int32_t room_top_world,
+                                             int32_t room_bot_world)
+{
+    int32_t y0, y1;
+    int32_t t = room_top_world;
+    int32_t b = room_bot_world;
+    if (t > b) {
+        int32_t tmp = t;
+        t = b;
+        b = tmp;
+    }
+    if (half_span_world < 0) half_span_world = 0;
+    y0 = center_world_y - half_span_world;
+    y1 = center_world_y + half_span_world;
+    return !(y1 < t || y0 > b);
+}
+
+static inline int32_t renderer_billboard_half_height_world_fp(int world_h)
+{
+    if (world_h <= 0) world_h = 32;
+    return (int32_t)world_h << (WORLD_Y_FRAC_BITS - 1);
+}
+
 static void renderer_project_zone_world_clip_y(const RendererState *r,
                                                int32_t zone_top_world,
                                                int32_t zone_bot_world,
@@ -5600,13 +5625,13 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         if (!in_this_zone) {
             adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, obj_zone);
             if (adj_slot < 0) continue;
-            /* Painter's algorithm: an adjacent-zone sprite whose world Y lies outside
-             * [top_of_room, bot_of_room] is above the ceiling or below the floor of the
-             * current room and therefore occluded by that horizontal surface.  The
-             * floor/ceiling polygon was already drawn earlier in the stream, so simply
-             * skip objects that would bleed through it. */
-            int32_t adj_world_y = ((int32_t)rd16(obj + 4)) << 7;
-            if (adj_world_y < top_of_room || adj_world_y > bot_of_room) continue;
+            /* Spill on steps: use sprite vertical span overlap against the current
+             * room section instead of center-Y only, so up/down step transitions
+             * can still spill when any visible part overlaps this section. */
+            int32_t adj_world_y = ((int32_t)rd16(obj + 4)) << WORLD_Y_FRAC_BITS;
+            int32_t half_h = renderer_billboard_half_height_world_fp((int)obj[7]);
+            if (!renderer_world_span_overlaps_room(adj_world_y, half_h, top_of_room, bot_of_room))
+                continue;
         }
 
         int obj_on_upper = (obj[obj_off_in_top] != 0);
@@ -5709,8 +5734,10 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             if (!in_this_zone) {
                 adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, shot_zone);
                 if (adj_slot < 0) continue;
-                int32_t adj_world_y = ((int32_t)rd16(obj + 4)) << 7;
-                if (adj_world_y < top_of_room || adj_world_y > bot_of_room) continue;
+                int32_t adj_world_y = ((int32_t)rd16(obj + 4)) << WORLD_Y_FRAC_BITS;
+                int32_t half_h = renderer_billboard_half_height_world_fp((int)obj[7]);
+                if (!renderer_world_span_overlaps_room(adj_world_y, half_h, top_of_room, bot_of_room))
+                    continue;
             }
             int shot_on_upper = (obj[obj_off_in_top] != 0);
             if (in_this_zone && level_filter >= 0) {
@@ -5797,7 +5824,11 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, expl_zone);
                 if (adj_slot < 0) continue;
                 int32_t adj_world_y = state->explosions[ei].y_floor;
-                if (adj_world_y < top_of_room || adj_world_y > bot_of_room) continue;
+                int scale = (int)state->explosions[ei].size_scale;
+                int expl_h_est = (scale > 0) ? scale : 100;
+                int32_t half_h = renderer_billboard_half_height_world_fp(expl_h_est);
+                if (!renderer_world_span_overlaps_room(adj_world_y, half_h, top_of_room, bot_of_room))
+                    continue;
             }
             if (state->explosions[ei].start_delay > 0) continue;
             if ((int)state->explosions[ei].frame >= 9) continue;
