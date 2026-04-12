@@ -171,4 +171,11 @@ int level_parse(LevelState *level);
  */
 void level_assign_clips(LevelState *level, int16_t num_zones);
 
+/*
+ * Apply narrow, level-specific data fixes directly to loaded level buffers.
+ * Intended for one-off compatibility corrections (e.g. authoring quirks) that
+ * should happen once at load time, not every frame in the renderer.
+ */
+void level_apply_level_specific_fixes(LevelState *level, int16_t level_num);
+
 #endif /* LEVEL_H */

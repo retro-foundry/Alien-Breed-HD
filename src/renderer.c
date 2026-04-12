@@ -6952,6 +6952,29 @@ static int zone_has_lift(const uint8_t *lift_data, int16_t zone_id)
     return 0;
 }
 
+static int renderer_edge_match(int16_t a1, int16_t a2, int16_t b1, int16_t b2)
+{
+    return ((a1 == b1 && a2 == b2) || (a1 == b2 && a2 == b1)) ? 1 : 0;
+}
+
+static int renderer_level4_adjacent_door_wall_match(int16_t p1, int16_t p2, int16_t tex_id)
+{
+    if (tex_id == 1) {
+        if (renderer_edge_match(p1, p2, 25, 23)) return 1;
+        if (renderer_edge_match(p1, p2, 24, 26)) return 1;
+        if (renderer_edge_match(p1, p2, 33, 32)) return 1;
+    }
+    if (tex_id == 6) {
+        if (renderer_edge_match(p1, p2, 23, 21)) return 1;
+        if (renderer_edge_match(p1, p2, 22, 24)) return 1;
+        if (renderer_edge_match(p1, p2, 34, 33)) return 1;
+    }
+    if (tex_id == 8) {
+        if (renderer_edge_match(p1, p2, 24, 23)) return 1;
+    }
+    return 0;
+}
+
 static void renderer_reset_level_sky_cache_internal(void)
 {
     free(g_level_sky_cache_polys);
@@ -7703,6 +7726,14 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                         wall_height_for_tex = (int16_t)((zone_floor_rel - zone_roof_rel) >> 8);
                         if (wall_height_for_tex < 1) wall_height_for_tex = 1;
                     }
+                }
+
+                /* Level 4 (1-indexed) doorway: fix panel vertical scale (not y-offset).
+                 * Apply only on the known adjacent-door wall signatures. */
+                if (state->current_level == 3 &&
+                    renderer_level4_adjacent_door_wall_match(p1, p2, tex_id)) {
+                    wall_height_for_tex = (int16_t)(wall_height_for_tex - 16);
+                    if (wall_height_for_tex < 1) wall_height_for_tex = 1;
                 }
 
                 /* Switch walls (tex_id 11): same texture has on/off states.

@@ -352,6 +352,12 @@ void play_the_game(GameState *state)
         } else {
             printf("[GAME] No level data loaded\n");
         }
+
+        /* Apply one-time level-specific data fixes at load time.
+         * Keep this outside the parse-only branch so it still runs when
+         * pointers were already resolved by the loader path. */
+        level_apply_level_specific_fixes(&state->level, state->current_level);
+
         printf("[GAME] Shot pools: player=%d nasty=%d object_points=%d\n",
                PLAYER_SHOT_SLOT_COUNT,
                NASTY_SHOT_SLOT_COUNT,

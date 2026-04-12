@@ -4002,6 +4002,7 @@ void door_routine(GameState *state)
                     int16_t rel_phase = (int16_t)(door_phase - door_closed_phase);
                     uint32_t tex_scroll = (uint32_t)((-(int16_t)rel_phase) & 0x00FF);
                     uint32_t tex_ptr = (uint32_t)((int32_t)gfx_base + (int32_t)tex_scroll); /* Amiga: adda.w d0,a2 */
+
                     wbe32(wall_rec + 10, (int32_t)tex_ptr);  /* Amiga: move.l a2,10(a1) */
                 }
             }

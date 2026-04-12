@@ -1376,6 +1376,264 @@ static size_t zone_gfx_payload_skip(int16_t entry_type, const uint8_t *data)
     }
 }
 
+static int level_find_zone_slot_by_id_word(const LevelState *level, int16_t zone_id_word)
+{
+    if (!level || !level->zone_adds || !level->data) return -1;
+    int slots = level_zone_slot_count(level);
+    size_t data_len = level->data_byte_count;
+    for (int i = 0; i < slots; i++) {
+        int32_t zoff = read_long(level->zone_adds + (size_t)i * 4u);
+        if (zoff < 0) continue;
+        if (data_len > 0 && (size_t)zoff + 2u > data_len) continue;
+        if (read_word(level->data + (size_t)zoff) == zone_id_word) return i;
+    }
+    return -1;
+}
+
+static int level_edge_match(int16_t a1, int16_t a2, int16_t b1, int16_t b2)
+{
+    return ((a1 == b1 && a2 == b2) || (a1 == b2 && a2 == b1)) ? 1 : 0;
+}
+
+static int level_l4_adjacent_door_wall_match(int16_t p1, int16_t p2, int16_t tex_id)
+{
+    /* Level 4 door seam: same physical doorway appears in adjacent zone streams. */
+    if (tex_id == 1) {
+        if (level_edge_match(p1, p2, 25, 23)) return 1;
+        if (level_edge_match(p1, p2, 24, 26)) return 1;
+        if (level_edge_match(p1, p2, 33, 32)) return 1;
+    }
+    if (tex_id == 6) {
+        if (level_edge_match(p1, p2, 23, 21)) return 1;
+        if (level_edge_match(p1, p2, 22, 24)) return 1;
+        if (level_edge_match(p1, p2, 34, 33)) return 1;
+    }
+    if (tex_id == 8) {
+        if (level_edge_match(p1, p2, 24, 23)) return 1;
+    }
+    return 0;
+}
+
+static int level_patch_zone_wall_yoff(LevelState *level,
+                                      int16_t zone_id_word,
+                                      int16_t yoff_delta,
+                                      int (*wall_match)(int16_t p1, int16_t p2, int16_t tex_id),
+                                      const char *log_label)
+{
+    if (!level || !level->graphics || !level->zone_graph_adds || !level->zone_adds || !level->data)
+        return 0;
+    if (level->graphics_byte_count == 0)
+        return 0;
+
+    int zone_slot = level_find_zone_slot_by_id_word(level, zone_id_word);
+    if (zone_slot < 0)
+        return 0;
+    if (level->num_zone_graph_entries > 0 && zone_slot >= level->num_zone_graph_entries)
+        return 0;
+
+    const uint8_t *zgraph = level->zone_graph_adds + (size_t)zone_slot * 8u;
+    int32_t lower_gfx_off = read_long(zgraph + 0);
+    if (lower_gfx_off <= 0)
+        return 0;
+    if ((size_t)lower_gfx_off + 2u > level->graphics_byte_count)
+        return 0;
+
+    uint8_t *ptr = level->graphics + (size_t)lower_gfx_off;
+    uint8_t *gend = level->graphics + level->graphics_byte_count;
+    int patched = 0;
+
+    ptr += 2; /* skip stream zone word */
+    for (int iter = 0; iter < 512 && ptr + 2 <= gend; iter++) {
+        int16_t t = read_word(ptr);
+        ptr += 2;
+        if (t < 0)
+            break;
+
+        size_t skip = zone_gfx_payload_skip(t, ptr);
+        if (ptr + skip > gend)
+            break;
+
+        if ((t == 0 || t == 13) && skip >= 28u) {
+            int16_t p1 = read_word(ptr + 0);
+            int16_t p2 = read_word(ptr + 2);
+            int16_t tex_id = read_word(ptr + 12);
+            if (wall_match && wall_match(p1, p2, tex_id)) {
+                int16_t yoff = read_word(ptr + 10);
+                write_word_be(ptr + 10, (int16_t)(yoff + yoff_delta));
+                patched++;
+            }
+        }
+
+        ptr += skip;
+    }
+
+    if (patched > 0 && log_label && *log_label)
+        printf("[LEVELFIX] %s yoff %+d on %d wall segment(s)\n",
+               log_label, (int)yoff_delta, patched);
+
+    return patched;
+}
+
+static int level_patch_all_lower_zone_walls_yoff(LevelState *level,
+                                                 int16_t yoff_delta,
+                                                 int (*wall_match)(int16_t p1, int16_t p2, int16_t tex_id),
+                                                 const char *log_label,
+                                                 int *out_zone_streams_touched)
+{
+    if (out_zone_streams_touched) *out_zone_streams_touched = 0;
+    if (!level || !level->graphics || !level->zone_graph_adds || !level->zone_adds || !level->data)
+        return 0;
+    if (level->graphics_byte_count == 0)
+        return 0;
+
+    int slots = level_zone_slot_count(level);
+    if (slots <= 0)
+        return 0;
+    if (level->num_zone_graph_entries > 0 && slots > level->num_zone_graph_entries)
+        slots = level->num_zone_graph_entries;
+
+    int patched_total = 0;
+    int streams_touched = 0;
+
+    for (int zone_slot = 0; zone_slot < slots; zone_slot++) {
+        int16_t zone_id_word = -1;
+        {
+            int32_t zoff = read_long(level->zone_adds + (size_t)zone_slot * 4u);
+            if (zoff >= 0 && (size_t)zoff + 2u <= level->data_byte_count)
+                zone_id_word = read_word(level->data + (size_t)zoff);
+        }
+
+        const uint8_t *zgraph = level->zone_graph_adds + (size_t)zone_slot * 8u;
+        int32_t lower_gfx_off = read_long(zgraph + 0);
+        if (lower_gfx_off <= 0)
+            continue;
+        if ((size_t)lower_gfx_off + 2u > level->graphics_byte_count)
+            continue;
+
+        uint8_t *ptr = level->graphics + (size_t)lower_gfx_off;
+        uint8_t *gend = level->graphics + level->graphics_byte_count;
+        int patched_this_zone = 0;
+
+        ptr += 2; /* skip stream zone word */
+        for (int iter = 0; iter < 512 && ptr + 2 <= gend; iter++) {
+            int16_t t = read_word(ptr);
+            ptr += 2;
+            if (t < 0)
+                break;
+
+            size_t skip = zone_gfx_payload_skip(t, ptr);
+            if (ptr + skip > gend)
+                break;
+
+            if ((t == 0 || t == 13) && skip >= 28u) {
+                int16_t p1 = read_word(ptr + 0);
+                int16_t p2 = read_word(ptr + 2);
+                int16_t tex_id = read_word(ptr + 12);
+                if (wall_match && wall_match(p1, p2, tex_id)) {
+                    int16_t yoff = read_word(ptr + 10);
+                    write_word_be(ptr + 10, (int16_t)(yoff + yoff_delta));
+                    patched_this_zone++;
+                }
+            }
+
+            ptr += skip;
+        }
+
+        if (patched_this_zone > 0) {
+            streams_touched++;
+            patched_total += patched_this_zone;
+            printf("[LEVELFIX] %s zone_id=%d slot=%d patched=%d yoff %+d\n",
+                   log_label ? log_label : "wall yoff patch",
+                   (int)zone_id_word, zone_slot, patched_this_zone, (int)yoff_delta);
+        }
+    }
+
+    if (out_zone_streams_touched) *out_zone_streams_touched = streams_touched;
+    return patched_total;
+}
+
+static int level_patch_l4_door_wall_list_scroll_base(LevelState *level, int16_t scroll_delta)
+{
+    if (!level || !level->door_wall_list || !level->door_wall_list_offsets || !level->graphics)
+        return 0;
+    if (level->num_doors <= 0)
+        return 0;
+
+    int patched_entries = 0;
+    int touched_doors = 0;
+
+    for (int di = 0; di < level->num_doors; di++) {
+        uint32_t start = level->door_wall_list_offsets[di];
+        uint32_t end = level->door_wall_list_offsets[di + 1];
+        int patched_this_door = 0;
+
+        for (uint32_t j = start; j < end; j++) {
+            uint8_t *ent = level->door_wall_list + (size_t)j * 10u;
+            int32_t gfx_off = read_long(ent + 2);
+            if (gfx_off < 0 || (size_t)gfx_off + 30u > level->graphics_byte_count)
+                continue;
+
+            uint8_t *wall_rec = level->graphics + (size_t)gfx_off;
+            int16_t t = read_word(wall_rec + 0);
+            if (!(t == 0 || t == 13))
+                continue;
+
+            int16_t p1 = read_word(wall_rec + 2);
+            int16_t p2 = read_word(wall_rec + 4);
+            int16_t tex_id = read_word(wall_rec + 14);
+            if (!level_l4_adjacent_door_wall_match(p1, p2, tex_id))
+                continue;
+
+            int32_t gfx_base = read_long(ent + 6);
+            /* door_routine writes this packed long to wall_rec+10:
+             * high word -> runtime totalyoff, low word -> runtime tex_id.
+             * Adjust only the high-word y-offset and keep low-word tex_id intact. */
+            {
+                int16_t base_yoff = (int16_t)(gfx_base >> 16);
+                uint16_t base_tex = (uint16_t)(gfx_base & 0xFFFF);
+                int16_t patched_yoff = (int16_t)(base_yoff + scroll_delta);
+                uint32_t packed = ((uint32_t)(uint16_t)patched_yoff << 16) | (uint32_t)base_tex;
+                write_long_be(ent + 6, (int32_t)packed);
+            }
+            patched_entries++;
+            patched_this_door++;
+        }
+
+        if (patched_this_door > 0) {
+            touched_doors++;
+            printf("[LEVELFIX] level 4 door_wall_list door=%d patched=%d scroll %+d\n",
+                   di, patched_this_door, (int)scroll_delta);
+        }
+    }
+
+    printf("[LEVELFIX] level 4 door_wall_list summary: patched=%d doors=%d delta=%d\n",
+           patched_entries, touched_doors, (int)scroll_delta);
+    return patched_entries;
+}
+
+static void level_patch_l4_door_texture_alignment(LevelState *level)
+{
+    (void)level;
+    /* Scale-only path now lives in renderer.c for this level-specific doorway.
+     * Keep load-time log so we can verify the hook runs, without mutating yoff. */
+    printf("[LEVELFIX] level 4 adjacent-door summary: patched=0 streams=0 delta=0 (scale-only)\n");
+    printf("[LEVELFIX] level 4 final summary: stream_patch=%d door_list_patch=%d delta=%d\n",
+           0, 0, 0);
+}
+
+void level_apply_level_specific_fixes(LevelState *level, int16_t level_num)
+{
+    if (!level) return;
+
+    printf("[LEVELFIX] probe: level_index=%d level_1indexed=%d\n",
+           (int)level_num, (int)level_num + 1);
+
+    /* Level 4 (1-indexed): door panel seams need per-zone vertical texture offset nudges. */
+    if (level_num == 3) {
+        level_patch_l4_door_texture_alignment(level);
+    }
+}
+
 static size_t zone_data_guess_len(const LevelState *level, int32_t zoff)
 {
     if (!level->data || zoff < 0) return 0;
