@@ -1662,19 +1662,24 @@ void objects_update(GameState *state)
                          * compressed form of the same coordinate). */
                         int32_t obj_yoff = (int32_t)obj_w(obj->raw + 4) << 7;
 
-                        /* Vertical velocity: reuse ENEMY_OBJ_YVEL_OFF (raw+48).
-                         * Ground enemies never write this field; flying enemies
-                         * (EyeBall, FlyingScalyBall) are excluded by !flying_hover. */
-                        int32_t obj_yvel = (int32_t)OBJ_TD_W(obj, ENEMY_OBJ_YVEL_OFF);
+                        if (obj_type_to_enemy_index(obj_type) >= 0) {
+                            /* Vertical velocity: reuse ENEMY_OBJ_YVEL_OFF (raw+48).
+                             * Ground enemies never write this field; flying enemies
+                             * (EyeBall, FlyingScalyBall) are excluded by !flying_hover. */
+                            int32_t obj_yvel = (int32_t)OBJ_TD_W(obj, ENEMY_OBJ_YVEL_OFF);
 
-                        /* Apply the same gravity routine the player uses. */
-                        player_fall(&obj_yoff, &obj_yvel, tyoff, INT32_MAX, false);
+                            /* Apply the same gravity routine the player uses. */
+                            player_fall(&obj_yoff, &obj_yvel, tyoff, INT32_MAX, false);
 
-                        /* Clamp velocity to int16 range before storing back. */
-                        if (obj_yvel >  32767) obj_yvel =  32767;
-                        if (obj_yvel < -32768) obj_yvel = -32768;
-                        OBJ_SET_TD_W(obj, ENEMY_OBJ_YVEL_OFF, (int16_t)obj_yvel);
-                        obj_sw(obj->raw + 4, (int16_t)(obj_yoff >> 7));
+                            /* Clamp velocity to int16 range before storing back. */
+                            if (obj_yvel >  32767) obj_yvel =  32767;
+                            if (obj_yvel < -32768) obj_yvel = -32768;
+                            OBJ_SET_TD_W(obj, ENEMY_OBJ_YVEL_OFF, (int16_t)obj_yvel);
+                            obj_sw(obj->raw + 4, (int16_t)(obj_yoff >> 7));
+                        } else {
+                            /* Non-enemy objects should track floor height directly. */
+                            obj_sw(obj->raw + 4, (int16_t)(tyoff >> 7));
+                        }
                     }
                 }
             }
