@@ -1347,6 +1347,325 @@ ZoneInfo zone_info_swap_endianness(const ZoneInfo *z)
     return out;
 }
 
+/* Payload bytes after type word in zone graphics stream (matches renderer zone_gfx_entry_data_skip). */
+static size_t zone_gfx_payload_skip(int16_t entry_type, const uint8_t *data)
+{
+    switch (entry_type) {
+    case 0:
+    case 13: return 28;
+    case 3:
+    case 12: return 0;
+    case 4: return 2;
+    case 5: return 28;
+    case 6: return 4;
+    case 1:
+    case 2:
+    case 7:
+    case 8:
+    case 9:
+    case 10:
+    case 11:
+    {
+        int16_t nsm1 = read_word(data + 2);
+        int sides = (int)nsm1 + 1;
+        if (sides < 0) sides = 0;
+        if (sides > 100) sides = 100;
+        return (size_t)(4 + 2 * sides + 10);
+    }
+    default: return 0;
+    }
+}
+
+static size_t zone_data_guess_len(const LevelState *level, int32_t zoff)
+{
+    if (!level->data || zoff < 0) return 0;
+    size_t cap = level->data_byte_count;
+    if (cap == 0) return 512;
+    size_t start = (size_t)zoff;
+    if (start >= cap) return 0;
+    size_t best = cap - start;
+    int n = level_zone_slot_count(level);
+    for (int i = 0; i < n; i++) {
+        int32_t o = read_long(level->zone_adds + (size_t)i * 4u);
+        if (o > zoff && (size_t)o < cap) {
+            size_t cand = (size_t)o - start;
+            if (cand > 0 && cand < best) best = cand;
+        }
+    }
+    if (best > 4096u) best = 4096u;
+    return best;
+}
+
+static void hexdump_block(const char *label, const uint8_t *p, size_t len)
+{
+    printf("[ZONELOG] %s (%zu bytes):\n", label, len);
+    for (size_t i = 0; i < len; i += 16u) {
+        printf("[ZONELOG]   %04zx:", i);
+        size_t n = len - i;
+        if (n > 16u) n = 16u;
+        for (size_t j = 0; j < n; j++)
+            printf(" %02x", p[i + j]);
+        printf("\n");
+    }
+}
+
+static void log_gfx_poly_stream(const char *which,
+                                int32_t gfx_off, const uint8_t *gbase, size_t gcount)
+{
+    if (gfx_off < 0 || !gbase || gcount == 0) {
+        printf("[ZONELOG]   %s gfx: (none / invalid off=%ld)\n", which, (long)gfx_off);
+        return;
+    }
+    size_t go = (size_t)gfx_off;
+    if (go >= gcount) {
+        printf("[ZONELOG]   %s gfx: offset %zu out of range (graphics_byte_count=%zu)\n",
+               which, go, gcount);
+        return;
+    }
+    const uint8_t *ptr = gbase + go;
+    const uint8_t *gend = gbase + gcount;
+    int16_t stream_zone = read_word(ptr);
+    ptr += 2;
+    printf("[ZONELOG]   %s stream at graphics+%ld zone_word=%d\n",
+           which, (long)gfx_off, (int)stream_zone);
+
+    int iter = 0;
+    while (ptr + 2 <= gend && iter++ < 512) {
+        int16_t t = read_word(ptr);
+        ptr += 2;
+        if (t < 0) {
+            printf("[ZONELOG]     [%d] END (type=%d)\n", iter - 1, (int)t);
+            break;
+        }
+        size_t skip = zone_gfx_payload_skip(t, ptr);
+        if (ptr + skip > gend) {
+            printf("[ZONELOG]     [%d] type=%d TRUNCATED (need %zu bytes)\n",
+                   iter - 1, (int)t, skip);
+            break;
+        }
+
+        switch (t) {
+        case 0:
+        case 13:
+        {
+            int16_t p1 = read_word(ptr + 0);
+            int16_t p2 = read_word(ptr + 2);
+            int16_t tex_id = read_word(ptr + 12);
+            int32_t topw = read_long(ptr + 18);
+            int32_t botw = read_long(ptr + 22);
+            printf("[ZONELOG]     [%d] wall(%d) p1=%d p2=%d tex_id=%d top=%ld bot=%ld\n",
+                   iter - 1, (int)t, (int)p1, (int)p2, (int)tex_id, (long)topw, (long)botw);
+            break;
+        }
+        case 1:
+        case 2:
+        case 7:
+        case 8:
+        case 9:
+        case 10:
+        case 11:
+        {
+            int16_t ypos = read_word(ptr + 0);
+            int16_t nsm1 = read_word(ptr + 2);
+            int sides_full = (int)nsm1 + 1;
+            if (sides_full < 0) sides_full = 0;
+            if (sides_full > 100) sides_full = 100;
+            int spr = sides_full < 40 ? sides_full : 40;
+            printf("[ZONELOG]     [%d] floorish(%d) ypos=%d sides=%d pts=[",
+                   iter - 1, (int)t, (int)ypos, sides_full);
+            for (int s = 0; s < spr; s++) {
+                printf("%d%s", (int)read_word(ptr + 4 + s * 2), s + 1 < spr ? "," : "");
+            }
+            if (sides_full > spr) printf(",...");
+            printf("] scale=%d tile_off=%d bright_off=%d\n",
+                   (int)read_word(ptr + 4 + sides_full * 2 + 2),
+                   (int)read_word(ptr + 4 + sides_full * 2 + 4),
+                   (int)read_word(ptr + 4 + sides_full * 2 + 6));
+            break;
+        }
+        case 4:
+            printf("[ZONELOG]     [%d] object draw_mode=%d\n", iter - 1, (int)read_word(ptr));
+            break;
+        case 5:
+            printf("[ZONELOG]     [%d] arc center=%d edge=%d\n",
+                   iter - 1, (int)read_word(ptr), (int)read_word(ptr + 2));
+            break;
+        case 6:
+            printf("[ZONELOG]     [%d] light beam\n", iter - 1);
+            break;
+        case 12:
+            printf("[ZONELOG]     [%d] backdrop (sky marker)\n", iter - 1);
+            break;
+        case 3:
+            printf("[ZONELOG]     [%d] clip setter (no data)\n", iter - 1);
+            break;
+        default:
+            printf("[ZONELOG]     [%d] unknown type=%d skip=%zu\n", iter - 1, (int)t, skip);
+            break;
+        }
+        ptr += skip;
+    }
+    if (iter >= 512)
+        printf("[ZONELOG]     ... (truncated after 512 entries)\n");
+}
+
+void level_log_player_zone_full(const GameState *state)
+{
+    if (!state) return;
+    const PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
+    int16_t zid = plr->zone;
+
+    printf("[ZONELOG] ========== player zone dump ==========\n");
+    printf("[ZONELOG] viewer=%s zone_id=%d stood_in_top=%d roompt=%ld list_of_graph=%ld angpos=%d\n",
+           state->mode == MODE_SLAVE ? "plr2" : "plr1",
+           (int)zid, (int)plr->stood_in_top, (long)plr->roompt, (long)plr->list_of_graph_rooms,
+           (int)plr->angpos);
+
+    const LevelState *level = &state->level;
+    if (!level->zone_adds || !level->data) {
+        printf("[ZONELOG] (no zone_adds/data)\n");
+        return;
+    }
+
+    int slots = level_zone_slot_count(level);
+    if (zid < 0 || zid >= slots) {
+        printf("[ZONELOG] zone_id out of range (slots=%d)\n", slots);
+        return;
+    }
+
+    int32_t zoff = read_long(level->zone_adds + (size_t)zid * 4u);
+    printf("[ZONELOG] zone_adds[%d] -> data offset %ld\n", (int)zid, (long)zoff);
+    if (zoff < 0 || (level->data_byte_count > 0 && (size_t)zoff >= level->data_byte_count)) {
+        printf("[ZONELOG] invalid zone offset\n");
+        return;
+    }
+
+    const uint8_t *zd = level->data + zoff;
+    size_t zlen = zone_data_guess_len(level, zoff);
+    hexdump_block("zone data (raw)", zd, zlen);
+
+    printf("[ZONELOG] zone fields (decoded):\n");
+    printf("[ZONELOG]   id_word=%d floor=%ld roof=%ld upper_floor=%ld upper_roof=%ld water=%ld\n",
+           (int)read_word(zd + 0),
+           (long)read_long(zd + ZONE_OFF_FLOOR),
+           (long)read_long(zd + ZONE_OFF_ROOF),
+           (long)read_long(zd + ZONE_OFF_UPPER_FLOOR),
+           (long)read_long(zd + ZONE_OFF_UPPER_ROOF),
+           (long)read_long(zd + ZONE_OFF_WATER));
+    printf("[ZONELOG]   brightness=%d upper_bright=%d back=%d tel_zone=%d tel=(%d,%d) list_of_graph=%d\n",
+           (int)read_word(zd + ZONE_OFF_BRIGHTNESS),
+           (int)read_word(zd + ZONE_OFF_UPPER_BRIGHT),
+           (int)read_word(zd + ZONE_OFF_BACK),
+           (int)read_word(zd + ZONE_OFF_TEL_ZONE),
+           (int)read_word(zd + ZONE_OFF_TEL_X),
+           (int)read_word(zd + ZONE_OFF_TEL_Z),
+           (int)read_word(zd + ZONE_OFF_LIST_OF_GRAPH));
+
+    if (!level->zone_graph_adds || !level->graphics) {
+        printf("[ZONELOG] (no zone_graph_adds/graphics)\n");
+        return;
+    }
+    if (level->num_zone_graph_entries > 0 && zid >= level->num_zone_graph_entries) {
+        printf("[ZONELOG] zone_id >= num_zone_graph_entries (%d)\n", level->num_zone_graph_entries);
+        return;
+    }
+
+    const uint8_t *zgraph = level->zone_graph_adds + (size_t)zid * 8u;
+    int32_t lower_gfx = read_long(zgraph + 0);
+    int32_t upper_gfx = read_long(zgraph + 4);
+    printf("[ZONELOG] zone_graph_adds: lower gfx_off=%ld upper gfx_off=%ld\n",
+           (long)lower_gfx, (long)upper_gfx);
+
+    size_t gbc = level->graphics_byte_count;
+    const uint8_t *gbase = level->graphics;
+    log_gfx_poly_stream("lower", lower_gfx, gbase, gbc);
+    log_gfx_poly_stream("upper", upper_gfx, gbase, gbc);
+    printf("[ZONELOG] ========== end zone dump ==========\n");
+}
+
+void level_log_zone_full(const LevelState *level, int16_t zone_id, const char *label)
+{
+    const char *which = (label && label[0] != '\0') ? label : "zone";
+    int16_t zid = zone_id;
+
+    printf("[ZONELOG] ========== %s zone dump ==========\n", which);
+    printf("[ZONELOG] zone_id=%d\n", (int)zid);
+
+    if (!level) {
+        printf("[ZONELOG] (no level)\n");
+        printf("[ZONELOG] ========== end zone dump ==========\n");
+        return;
+    }
+    if (!level->zone_adds || !level->data) {
+        printf("[ZONELOG] (no zone_adds/data)\n");
+        printf("[ZONELOG] ========== end zone dump ==========\n");
+        return;
+    }
+
+    {
+        int slots = level_zone_slot_count(level);
+        if (zid < 0 || zid >= slots) {
+            printf("[ZONELOG] zone_id out of range (slots=%d)\n", slots);
+            printf("[ZONELOG] ========== end zone dump ==========\n");
+            return;
+        }
+    }
+
+    int32_t zoff = read_long(level->zone_adds + (size_t)zid * 4u);
+    printf("[ZONELOG] zone_adds[%d] -> data offset %ld\n", (int)zid, (long)zoff);
+    if (zoff < 0 || (level->data_byte_count > 0 && (size_t)zoff >= level->data_byte_count)) {
+        printf("[ZONELOG] invalid zone offset\n");
+        printf("[ZONELOG] ========== end zone dump ==========\n");
+        return;
+    }
+
+    const uint8_t *zd = level->data + zoff;
+    size_t zlen = zone_data_guess_len(level, zoff);
+    hexdump_block("zone data (raw)", zd, zlen);
+
+    printf("[ZONELOG] zone fields (decoded):\n");
+    printf("[ZONELOG]   id_word=%d floor=%ld roof=%ld upper_floor=%ld upper_roof=%ld water=%ld\n",
+           (int)read_word(zd + 0),
+           (long)read_long(zd + ZONE_OFF_FLOOR),
+           (long)read_long(zd + ZONE_OFF_ROOF),
+           (long)read_long(zd + ZONE_OFF_UPPER_FLOOR),
+           (long)read_long(zd + ZONE_OFF_UPPER_ROOF),
+           (long)read_long(zd + ZONE_OFF_WATER));
+    printf("[ZONELOG]   brightness=%d upper_bright=%d back=%d tel_zone=%d tel=(%d,%d) list_of_graph=%d\n",
+           (int)read_word(zd + ZONE_OFF_BRIGHTNESS),
+           (int)read_word(zd + ZONE_OFF_UPPER_BRIGHT),
+           (int)read_word(zd + ZONE_OFF_BACK),
+           (int)read_word(zd + ZONE_OFF_TEL_ZONE),
+           (int)read_word(zd + ZONE_OFF_TEL_X),
+           (int)read_word(zd + ZONE_OFF_TEL_Z),
+           (int)read_word(zd + ZONE_OFF_LIST_OF_GRAPH));
+
+    if (!level->zone_graph_adds || !level->graphics) {
+        printf("[ZONELOG] (no zone_graph_adds/graphics)\n");
+        printf("[ZONELOG] ========== end zone dump ==========\n");
+        return;
+    }
+    if (level->num_zone_graph_entries > 0 && zid >= level->num_zone_graph_entries) {
+        printf("[ZONELOG] zone_id >= num_zone_graph_entries (%d)\n", level->num_zone_graph_entries);
+        printf("[ZONELOG] ========== end zone dump ==========\n");
+        return;
+    }
+
+    const uint8_t *zgraph = level->zone_graph_adds + (size_t)zid * 8u;
+    int32_t lower_gfx = read_long(zgraph + 0);
+    int32_t upper_gfx = read_long(zgraph + 4);
+    printf("[ZONELOG] zone_graph_adds: lower gfx_off=%ld upper gfx_off=%ld\n",
+           (long)lower_gfx, (long)upper_gfx);
+
+    {
+        size_t gbc = level->graphics_byte_count;
+        const uint8_t *gbase = level->graphics;
+        log_gfx_poly_stream("lower", lower_gfx, gbase, gbc);
+        log_gfx_poly_stream("upper", upper_gfx, gbase, gbc);
+    }
+    printf("[ZONELOG] ========== end zone dump ==========\n");
+}
+
 void level_log_zones(const LevelState *level)
 {
     if (!level->zone_adds || !level->data || level->num_zones <= 0)

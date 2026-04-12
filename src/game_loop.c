@@ -131,6 +131,7 @@ void game_loop(GameState *state)
          * Always: Poll input every display frame for responsiveness
          * ================================================================ */
         input_update(state->key_map, &state->last_pressed);
+        bool f2_pick_log_requested = input_f2_pick_log_requested();
         if (input_f5_save_requested())
             player_save_position(state);
         if (input_f9_load_requested()) {
@@ -432,9 +433,22 @@ void game_loop(GameState *state)
         /* ================================================================
          * Always: Render every display frame (60Hz VSync) for smooth output
          * ================================================================ */
+        if (f2_pick_log_requested) {
+            renderer_request_center_pick_capture();
+        }
         display_energy_bar(state->energy);
         display_ammo_bar(state->ammo);
         display_draw_display(state);
+        if (f2_pick_log_requested) {
+            PlayerState *view_plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
+            int16_t looking_zone = -1;
+            renderer_get_center_pick(&looking_zone, NULL);
+            printf("[DEBUG][F2] standing_zone=%d looking_zone=%d\n",
+                   (int)view_plr->zone, (int)looking_zone);
+            level_log_zones(&state->level);
+            level_log_player_zone_full(state);
+            level_log_zone_full(&state->level, looking_zone, "looking");
+        }
 
         fps_frames_in_period++;
         {

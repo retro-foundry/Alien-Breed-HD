@@ -118,6 +118,18 @@ int level_find_zone_for_point(const LevelState *level, int32_t x, int32_t z, int
 void level_log_zones(const LevelState *level);
 
 /*
+ * Log the viewing player's current zone index, decoded zone data block, and parsed
+ * lower/upper graphics polygon streams (walls/floors/roofs/objects). Intended for debug.
+ */
+void level_log_player_zone_full(const GameState *state);
+/*
+ * Log one specific zone index with decoded zone data block and parsed lower/upper
+ * graphics polygon streams (walls/floors/roofs/objects). Intended for debug.
+ * label may be NULL; when provided it is included in the dump header.
+ */
+void level_log_zone_full(const LevelState *level, int16_t zone_id, const char *label);
+
+/*
  * Parse loaded level data and resolve all internal pointers.
  *
  * Translated from AB3DI.s blag: section.

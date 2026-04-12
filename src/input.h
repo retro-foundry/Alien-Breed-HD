@@ -52,6 +52,8 @@ bool input_f5_save_requested(void);
 bool input_f9_load_requested(void);
 bool input_f6_gouraud_visualize_requested(void);
 bool input_f7_spill_visualize_requested(void);
+/* F2: log center-pick debug info (once per key press). */
+bool input_f2_pick_log_requested(void);
 /* Tab: toggle automap overlay (once per key press). */
 bool input_automap_toggle_requested(void);
 /* PgUp/PgDn: automap zoom (once per key press). */

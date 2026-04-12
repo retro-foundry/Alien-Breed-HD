@@ -103,6 +103,16 @@ RendererState g_renderer;
 static int g_renderer_rgb_raster_expand = 0;
 /* Set by display.c when the GL weapon/tint post-pass will handle gun+tint this frame. */
 static int s_weapon_post_gl_active = 0;
+/* Offscreen picking buffers (front/back swap with render buffers each frame). */
+#define RENDERER_PICK_ZONE_NONE 0xFFFFu
+static uint16_t *g_pick_zone_buffer = NULL;
+static uint16_t *g_pick_zone_back_buffer = NULL;
+static uint8_t *g_pick_player_buffer = NULL;
+static uint8_t *g_pick_player_back_buffer = NULL;
+/* Picking is one-shot on demand (F2): armed -> captured on next frame only. */
+static int g_pick_capture_armed = 0;
+static int g_pick_capture_active = 0;
+static int g_pick_last_frame_valid = 0;
 
 void renderer_set_weapon_post_gl_active(int active) { s_weapon_post_gl_active = active; }
 int8_t renderer_get_last_fill_screen_water(void) { return g_renderer.last_fill_screen_water; }
@@ -1116,6 +1126,8 @@ typedef AB3D_CACHELINE_ALIGN struct {
     int16_t wall_bot_clip;
     int16_t slice_left;
     int16_t slice_right;
+    int16_t pick_zone_id;
+    uint8_t pick_player_id;
     int8_t  fill_screen_water;
     int8_t  update_column_clip;
 
@@ -1141,6 +1153,8 @@ static void render_slice_context_reset(RenderSliceContext *ctx,
     ctx->wall_bot_clip = -1;
     ctx->slice_left = left;
     ctx->slice_right = right;
+    ctx->pick_zone_id = -1;
+    ctx->pick_player_id = 0;
     ctx->cur_wall_pal = NULL;
     ctx->fill_screen_water = 0;
 }
@@ -1179,6 +1193,99 @@ static inline uint32_t *renderer_active_rgb(void)
 static inline uint16_t *renderer_active_cw(void)
 {
     return g_renderer.cw_buffer;
+}
+
+static inline uint16_t *renderer_active_pick_zone(void)
+{
+    if (!g_pick_capture_active) return NULL;
+    return g_pick_zone_buffer;
+}
+
+static inline uint8_t *renderer_active_pick_player(void)
+{
+    if (!g_pick_capture_active) return NULL;
+    return g_pick_player_buffer;
+}
+
+static inline uint16_t renderer_pick_zone_encode(int16_t zone_id)
+{
+    if (zone_id < 0) return RENDERER_PICK_ZONE_NONE;
+    return (uint16_t)zone_id;
+}
+
+static void renderer_pick_clear_active_buffers(void)
+{
+    int w = g_renderer.width;
+    int h = g_renderer.height;
+    size_t count;
+    if (!g_pick_zone_buffer || !g_pick_player_buffer) return;
+    if (w <= 0 || h <= 0) return;
+    count = (size_t)w * (size_t)h;
+    memset(g_pick_zone_buffer, 0xFF, count * sizeof(uint16_t));
+    memset(g_pick_player_buffer, 0, count * sizeof(uint8_t));
+}
+
+static inline void renderer_pick_mark_row_span(const RenderSliceContext *ctx,
+                                               int y, int xl, int xr,
+                                               uint16_t zone_value)
+{
+    uint16_t *pick_zone = renderer_active_pick_zone();
+    uint8_t *pick_player = renderer_active_pick_player();
+    int w = g_renderer.width;
+    size_t row;
+    if ((!pick_zone && !pick_player) || !ctx) return;
+    if (w <= 0 || y < 0 || y >= g_renderer.height) return;
+    if (xl < 0) xl = 0;
+    if (xr >= w) xr = w - 1;
+    if (xl > xr) return;
+    row = (size_t)y * (size_t)w + (size_t)xl;
+    if (pick_zone) {
+        for (int x = xl; x <= xr; x++) pick_zone[row + (size_t)(x - xl)] = zone_value;
+    }
+    if (pick_player) {
+        memset(pick_player + row, 0, (size_t)(xr - xl + 1));
+    }
+}
+
+static inline void renderer_pick_mark_wall_column(const RenderSliceContext *ctx,
+                                                  int x, int ct, int cb,
+                                                  int do_ext_l, int do_ext_r,
+                                                  int top_ext, int bot_ext)
+{
+    uint16_t *pick_zone = renderer_active_pick_zone();
+    uint8_t *pick_player = renderer_active_pick_player();
+    uint16_t zone_value;
+    int w = g_renderer.width;
+    size_t pix;
+    if ((!pick_zone && !pick_player) || !ctx) return;
+    if (w <= 0 || x < 0 || x >= w || ct > cb) return;
+
+    zone_value = renderer_pick_zone_encode(ctx->pick_zone_id);
+    pix = (size_t)ct * (size_t)w + (size_t)x;
+    for (int y = ct; y <= cb; y++) {
+        if (pick_zone) {
+            pick_zone[pix] = zone_value;
+            if (do_ext_l && x > 0) pick_zone[pix - 1] = zone_value;
+            if (do_ext_r && x + 1 < w) pick_zone[pix + 1] = zone_value;
+        }
+        if (pick_player) {
+            pick_player[pix] = 0;
+            if (do_ext_l && x > 0) pick_player[pix - 1] = 0;
+            if (do_ext_r && x + 1 < w) pick_player[pix + 1] = 0;
+        }
+        pix += (size_t)w;
+    }
+
+    if (top_ext && ct > 0) {
+        size_t up = ((size_t)(ct - 1) * (size_t)w) + (size_t)x;
+        if (pick_zone) pick_zone[up] = zone_value;
+        if (pick_player) pick_player[up] = 0;
+    }
+    if (bot_ext && cb + 1 < g_renderer.height) {
+        size_t dn = ((size_t)(cb + 1) * (size_t)w) + (size_t)x;
+        if (pick_zone) pick_zone[dn] = zone_value;
+        if (pick_player) pick_player[dn] = 0;
+    }
 }
 
 uint32_t *renderer_get_active_rgb_target(void)
@@ -2034,6 +2141,14 @@ static void free_buffers(void)
     g_renderer.cw_buffer = NULL;
     ab3d_aligned_free(g_renderer.cw_back_buffer);
     g_renderer.cw_back_buffer = NULL;
+    ab3d_aligned_free(g_pick_zone_buffer);
+    g_pick_zone_buffer = NULL;
+    ab3d_aligned_free(g_pick_zone_back_buffer);
+    g_pick_zone_back_buffer = NULL;
+    ab3d_aligned_free(g_pick_player_buffer);
+    g_pick_player_buffer = NULL;
+    ab3d_aligned_free(g_pick_player_back_buffer);
+    g_pick_player_back_buffer = NULL;
     ab3d_aligned_free(g_renderer.clip.top);
     g_renderer.clip.top = NULL;
     ab3d_aligned_free(g_renderer.clip.bot);
@@ -2066,6 +2181,13 @@ static void allocate_buffers(int w, int h)
     size_t cw_size = buf_size * sizeof(uint16_t);
     g_renderer.cw_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
     g_renderer.cw_back_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
+
+    g_pick_zone_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
+    g_pick_zone_back_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
+    g_pick_player_buffer = (uint8_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, buf_size);
+    g_pick_player_back_buffer = (uint8_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, buf_size);
+    if (g_pick_zone_buffer) memset(g_pick_zone_buffer, 0xFF, cw_size);
+    if (g_pick_zone_back_buffer) memset(g_pick_zone_back_buffer, 0xFF, cw_size);
 
     size_t clip_size = (size_t)w * sizeof(int16_t);
     g_renderer.clip.top = (int16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, clip_size);
@@ -2656,6 +2778,17 @@ void renderer_swap(void)
     uint16_t *tmp3 = g_renderer.cw_buffer;
     g_renderer.cw_buffer = g_renderer.cw_back_buffer;
     g_renderer.cw_back_buffer = tmp3;
+
+    {
+        uint16_t *tmp_pick_zone = g_pick_zone_buffer;
+        g_pick_zone_buffer = g_pick_zone_back_buffer;
+        g_pick_zone_back_buffer = tmp_pick_zone;
+    }
+    {
+        uint8_t *tmp_pick_player = g_pick_player_buffer;
+        g_pick_player_buffer = g_pick_player_back_buffer;
+        g_pick_player_back_buffer = tmp_pick_player;
+    }
 }
 
 const uint8_t *renderer_get_buffer(void)
@@ -2671,6 +2804,34 @@ const uint32_t *renderer_get_rgb_buffer(void)
 const uint16_t *renderer_get_cw_buffer(void)
 {
     return g_renderer.cw_back_buffer; /* The just-drawn 12-bit color-word frame */
+}
+
+void renderer_request_center_pick_capture(void)
+{
+    g_pick_capture_armed = 1;
+}
+
+void renderer_get_center_pick(int16_t *out_zone_id, int *out_player_id)
+{
+    int w = g_renderer.width;
+    int h = g_renderer.height;
+    if (out_zone_id) *out_zone_id = -1;
+    if (out_player_id) *out_player_id = 0;
+    if (!g_pick_last_frame_valid) return;
+    if (w <= 0 || h <= 0 || !g_pick_zone_back_buffer || !g_pick_player_back_buffer) return;
+
+    {
+        int cx = w / 2;
+        int cy = h / 2;
+        size_t idx = (size_t)cy * (size_t)w + (size_t)cx;
+        uint16_t zone = g_pick_zone_back_buffer[idx];
+        if (out_zone_id) {
+            *out_zone_id = (zone == RENDERER_PICK_ZONE_NONE) ? -1 : (int16_t)zone;
+        }
+        if (out_player_id) {
+            *out_player_id = (int)g_pick_player_back_buffer[idx];
+        }
+    }
 }
 
 int renderer_get_width(void)  { return g_renderer.width; }
@@ -3424,6 +3585,10 @@ static void draw_wall_rasterize_segment(
                 if (expand) rgb[dn] = rgb[last_pix];
             }
         }
+        renderer_pick_mark_wall_column(ctx, x, ct, cb,
+                                       do_ext_l, do_ext_r,
+                                       (ct > top_clip_val),
+                                       (cb + 1 <= bot_clip_val));
 
         /* Column clip update.
          * Register real wall geometry at x unconditionally.
@@ -3606,6 +3771,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
     int xl = (x_left < ctx->left_clip) ? ctx->left_clip : x_left;
     int xr = (x_right >= ctx->right_clip) ? ctx->right_clip - 1 : x_right;
     if (xl > xr) return;
+    renderer_pick_mark_row_span(ctx, y, xl, xr, RENDERER_PICK_ZONE_NONE);
 
 #if !RENDER_SKY
     {
@@ -3794,6 +3960,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     int xl = (x_left < ctx->left_clip) ? ctx->left_clip : x_left;
     int xr = (x_right >= ctx->right_clip) ? ctx->right_clip - 1 : x_right;
     if (xl > xr) return;
+    renderer_pick_mark_row_span(ctx, y, xl, xr, renderer_pick_zone_encode(ctx->pick_zone_id));
 
     const int expand = g_renderer_rgb_raster_expand;
 
@@ -4644,6 +4811,8 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     const int spill_visualize = (is_spill && g_debug_spill_visualize) ? 1 : 0;
     const uint16_t spill_vis_cw = 0x0F0Fu;
     const uint32_t spill_vis_rgb = amiga12_to_argb(spill_vis_cw);
+    uint8_t *pick_player = renderer_active_pick_player();
+    const uint8_t pick_player_id = ctx->pick_player_id;
 
     /* Fixed-point 16.16 DDA stepping (replaces per-pixel integer division). */
     const int32_t src_col_step = (width > 1)
@@ -4761,21 +4930,23 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                     int src_row = row_fp >> 16;
                     row_fp += src_row_step;
                     if (src_row >= eff_rows) src_row = eff_rows - 1;
+                    if (have_spill_plane_depth_clip &&
+                        renderer_spill_pixel_occluded_by_zone_planes(screen_row,
+                                                                      center_y,
+                                                                      z32,
+                                                                      zone_top_rel_8,
+                                                                      zone_bot_rel_8,
+                                                                      g_renderer.proj_y_scale)) {
+                        pix += rw_stride;
+                        continue;
+                    }
+                    if (pick_player && pick_player_id) pick_player[pix] = pick_player_id;
+                    {
                         const int row_idx = down_strip_i + src_row;
                         if (row_idx <= max_row_idx) {
                             const uint16_t w = (uint16_t)((src[row_idx * 2] << 8) | src[row_idx * 2 + 1]);
                             const uint8_t texel = (uint8_t)((w >> texel_shift) & 0x1F);
                             if (texel != 0) {
-                            if (have_spill_plane_depth_clip &&
-                                renderer_spill_pixel_occluded_by_zone_planes(screen_row,
-                                                                              center_y,
-                                                                              z32,
-                                                                              zone_top_rel_8,
-                                                                              zone_bot_rel_8,
-                                                                              g_renderer.proj_y_scale)) {
-                                pix += rw_stride;
-                                continue;
-                            }
                                 if (spill_visualize) {
                                     rgb[pix] = spill_vis_rgb;
                                     cw[pix] = spill_vis_cw;
@@ -4785,6 +4956,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                 }
                             }
                         }
+                    }
                     pix += rw_stride;
                 }
             }
@@ -4799,24 +4971,27 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                     int src_row = row_fp >> 16;
                     row_fp += src_row_step;
                     if (src_row >= eff_rows) src_row = eff_rows - 1;
+                    if (have_spill_plane_depth_clip &&
+                        renderer_spill_pixel_occluded_by_zone_planes(screen_row,
+                                                                      center_y,
+                                                                      z32,
+                                                                      zone_top_rel_8,
+                                                                      zone_bot_rel_8,
+                                                                      g_renderer.proj_y_scale)) {
+                        pix += rw_stride;
+                        continue;
+                    }
+                    if (pick_player && pick_player_id) pick_player[pix] = pick_player_id;
+                    {
                         const int row_idx = down_strip_i + src_row;
                         if (row_idx <= max_row_idx) {
                             const uint16_t w = (uint16_t)((src[row_idx * 2] << 8) | src[row_idx * 2 + 1]);
                             const uint8_t texel = (uint8_t)((w >> texel_shift) & 0x1F);
                             if (texel != 0) {
-                            if (have_spill_plane_depth_clip &&
-                                renderer_spill_pixel_occluded_by_zone_planes(screen_row,
-                                                                              center_y,
-                                                                              z32,
-                                                                              zone_top_rel_8,
-                                                                              zone_bot_rel_8,
-                                                                              g_renderer.proj_y_scale)) {
-                                    pix += rw_stride;
-                                    continue;
-                            }
                                 cw[pix] = spill_visualize ? spill_vis_cw : spr_cw[texel];
                             }
                         }
+                    }
                     pix += rw_stride;
                 }
             }
@@ -4837,6 +5012,7 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
     RenderSliceContext ctx;
     render_slice_context_init(&ctx, g_renderer.left_clip, g_renderer.right_clip,
                               g_renderer.top_clip, g_renderer.bot_clip);
+    ctx.pick_player_id = 0;
     renderer_draw_sprite_ctx(&ctx, screen_x, screen_y, width, height, z,
                              wad, wad_size, ptr_data, ptr_size, pal, pal_size,
                              ptr_offset, down_strip, src_cols, src_rows, brightness,
@@ -6457,6 +6633,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             {
                 int32_t orp_z_i16 = ROT_Z_INT(orp_z);
                 if (orp_z_i16 > 32767) orp_z_i16 = 32767;
+                ctx->pick_player_id = 0;
                 renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
                                          (int16_t)sprite_w, (int16_t)sprite_h,
                                          (int16_t)orp_z_i16,
@@ -6645,6 +6822,14 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
 
         const uint8_t *obj_pal = r->sprite_pal_data[vect_num];
         size_t obj_pal_size = r->sprite_pal_size[vect_num];
+        {
+            uint8_t pick_player_id = 0;
+            if (entry_src == DRAW_SRC_OBJECT) {
+                if (obj_number == OBJ_NBR_PLR1) pick_player_id = 1;
+                else if (obj_number == OBJ_NBR_PLR2) pick_player_id = 2;
+            }
+            ctx->pick_player_id = pick_player_id;
+        }
 
         {
             int32_t orp_z_int = ROT_Z_INT(orp->z);
@@ -7286,6 +7471,10 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
 {
     RendererState *r = &g_renderer;
     LevelState *level = &state->level;
+    if (ctx) {
+        ctx->pick_zone_id = zone_id;
+        ctx->pick_player_id = 0;
+    }
 
     if (!level->data || !level->zone_adds || !level->zone_graph_adds) return;
     {
@@ -8541,6 +8730,9 @@ static void renderer_apply_underwater_tint(int8_t fill_screen_water)
 void renderer_draw_display(GameState *state)
 {
     RendererState *r = &g_renderer;
+    int pick_this_frame = g_pick_capture_armed ? 1 : 0;
+    g_pick_capture_armed = 0;
+    g_pick_capture_active = pick_this_frame;
     if (!r->buffer) return;
     int prof_on = renderer_profile_enabled();
     uint64_t t0 = 0;
@@ -8645,6 +8837,9 @@ void renderer_draw_display(GameState *state)
         if (r->clip.z) memset(r->clip.z, 0, (size_t)w * sizeof(int32_t));
         if (r->clip.z2) memset(r->clip.z2, 0, (size_t)w * sizeof(int32_t));
     }
+    if (pick_this_frame) {
+        renderer_pick_clear_active_buffers();
+    }
 
     /* 4. Rotate geometry */
     renderer_rotate_level_pts(state);
@@ -8719,6 +8914,8 @@ void renderer_draw_display(GameState *state)
 
     /* 8. Swap buffers (the just-drawn buffer becomes the display buffer) */
     renderer_swap();
+    g_pick_last_frame_valid = pick_this_frame;
+    g_pick_capture_active = 0;
 
     /* Automap is drawn via SDL in display.c after the frame is composited. */
     if (prof_on) {
