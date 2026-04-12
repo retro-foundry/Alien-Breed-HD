@@ -333,11 +333,12 @@ void ai_control(GameObject *obj, GameState *state, const AIParams *params)
             obj_idx++;
             continue;
         }
+        int16_t other_zone_word = (int16_t)((to_room[0] << 8) | to_room[1]);
 
         /* Amiga: Viewery = 4(a0), Targety = 4(a2) — Y in >>7 scale for crossing height */
         int16_t viewer_y = (int16_t)obj_w(obj->raw + 4);
         int16_t target_y = (int16_t)obj_w(other->raw + 4);
-        uint8_t vis = can_it_be_seen(level, from_room, to_room, other_zone,
+        uint8_t vis = can_it_be_seen(level, from_room, to_room, other_zone_word,
                                      self_x, self_z, viewer_y,
                                      other_x, other_z, target_y,
                                      obj->obj.in_top, other->obj.in_top, 0);

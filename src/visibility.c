@@ -90,10 +90,28 @@ static int resolve_lgr_entry_zone_id(const LevelState *level, int16_t entry_word
 #define DOOR_TYPE_ALWAYS_OPEN  4
 #define DOOR_TYPE_NEVER_OPEN  5
 
-/* Return zone_adds slot index for room pointer, or -1. */
-static int16_t zone_index_from_room(const LevelState *level, const uint8_t *room)
+static int resolve_zone_index_from_hint_or_room(const LevelState *level,
+                                                const uint8_t *room,
+                                                int16_t zone_hint)
 {
-    return (int16_t)level_zone_index_from_room_ptr(level, room);
+    int zone_slots;
+    int zi;
+
+    if (!level) return -1;
+
+    zone_slots = level_zone_slot_count(level);
+    zi = -1;
+
+    if (zone_hint >= 0) {
+        zi = level_connect_to_zone_index(level, zone_hint);
+        if (zi < 0 && zone_hint < zone_slots)
+            zi = zone_hint;
+    }
+
+    if (zi < 0 && room)
+        zi = level_zone_index_from_room_ptr(level, room);
+
+    return zi;
 }
 
 /* Return true if exit line_idx from zone current_zone_id is blocked by a closed door. */
@@ -394,22 +412,40 @@ uint8_t can_it_be_seen(const LevelState *level,
                        int8_t viewer_top, int8_t target_top,
                        int full_height)
 {
+    int current_zone_idx;
+    int target_zone_idx;
+
     if (!level->data || !level->floor_lines) {
         return 0;
+    }
+
+    if (!level->zone_adds) return 0;
+    int zone_slots = level_zone_slot_count(level);
+    if (zone_slots <= 0) return 0;
+
+    current_zone_idx = resolve_zone_index_from_hint_or_room(level, from_room, -1);
+    target_zone_idx = resolve_zone_index_from_hint_or_room(level, to_room, to_zone_id);
+
+    if (!full_height) {
+        if (!level_zone_has_upper_layer(level, (int16_t)current_zone_idx))
+            viewer_top = 0;
+        if (!level_zone_has_upper_layer(level, (int16_t)target_zone_idx))
+            target_top = 0;
     }
 
     /* Same room (insameroom): normally visible only on same floor.
      * Full-height callers (e.g. blast/hitscan paths) intentionally
      * allow cross-section visibility in the same zone. */
     if (from_room == to_room) {
+        if (!full_height &&
+            !level_zone_has_upper_layer(level, (int16_t)current_zone_idx)) {
+            viewer_top = 0;
+            target_top = 0;
+        }
         if (full_height || viewer_top == target_top)
             return 0x03u;
         return 0u;
     }
-
-    if (!level->zone_adds) return 0;
-    int zone_slots = level_zone_slot_count(level);
-    if (zone_slots <= 0) return 0;
 
     /* to_zone_id is the target's zone id (caller passes it; do not read from to_room) */
     const uint8_t *list = from_room + ZONE_LIST_OF_GRAPH;
@@ -501,7 +537,7 @@ uint8_t can_it_be_seen(const LevelState *level,
     int32_t dy = (int32_t)target_y - (int32_t)viewer_y;
     const uint8_t *current_room = from_room;
     int8_t d2 = viewer_top;
-    int16_t current_zone_id = zone_index_from_room(level, from_room);
+    int current_zone_id = current_zone_idx;
 
     for (int depth = 0; depth < 20; depth++) {
         int16_t exit_rel = read_be16(current_room + ZONE_EXIT_LIST);
@@ -542,7 +578,7 @@ uint8_t can_it_be_seen(const LevelState *level,
             if (connect_index < 0 || connect_index >= zone_slots) return 0;
 
             /* Closed door blocks this exit. */
-            if (is_exit_blocked_by_door(level, current_zone_id, line_idx)) return 0;
+            if (is_exit_blocked_by_door(level, (int16_t)current_zone_id, line_idx)) return 0;
 
             /* Height at which ray crosses this exit line.
              * Amiga d4 = (tz-lz)*lxlen - (tx-lx)*lzlen  (target signed distance, negated)
@@ -578,8 +614,7 @@ uint8_t can_it_be_seen(const LevelState *level,
                  * through height-separated alternative exits. */
                 int32_t floor_h = read_be32(current_room + ZONE_FLOOR_HEIGHT);
                 int32_t roof_h  = read_be32(current_room + ZONE_ROOF_HEIGHT);
-                int32_t cur_up  = read_be32(current_room + ZONE_UPPER_FLOOR);
-                if (cur_up != 0) {
+                if (level_zone_has_upper_layer(level, (int16_t)current_zone_id)) {
                     int32_t cur_up_roof = read_be32(current_room + ZONE_UPPER_ROOF);
                     if (cur_up_roof < roof_h) roof_h = cur_up_roof;
                 }
@@ -587,8 +622,7 @@ uint8_t can_it_be_seen(const LevelState *level,
 
                 int32_t next_floor = read_be32(next_zone + ZONE_FLOOR_HEIGHT);
                 int32_t next_roof  = read_be32(next_zone + ZONE_ROOF_HEIGHT);
-                int32_t next_up    = read_be32(next_zone + ZONE_UPPER_FLOOR);
-                if (next_up != 0) {
+                if (level_zone_has_upper_layer(level, (int16_t)connect_index)) {
                     int32_t next_up_roof = read_be32(next_zone + ZONE_UPPER_ROOF);
                     if (next_up_roof < next_roof) next_roof = next_up_roof;
                 }
@@ -599,9 +633,11 @@ uint8_t can_it_be_seen(const LevelState *level,
                 /* Current room height clearance (Amiga: comparewithbottom / top section) */
                 int32_t floor_h = read_be32(current_room + ZONE_FLOOR_HEIGHT);
                 int32_t roof_h  = read_be32(current_room + ZONE_ROOF_HEIGHT);
-                if (d2) {
+                if (d2 && level_zone_has_upper_layer(level, (int16_t)current_zone_id)) {
                     floor_h = read_be32(current_room + ZONE_UPPER_FLOOR);
                     roof_h  = read_be32(current_room + ZONE_UPPER_ROOF);
+                } else {
+                    d2 = 0;
                 }
                 if (cross_y < roof_h || cross_y > floor_h) return 0;
 
@@ -613,6 +649,8 @@ uint8_t can_it_be_seen(const LevelState *level,
                 if (cross_y > next_roof) {
                     entry_top = 0;
                 } else {
+                    if (!level_zone_has_upper_layer(level, (int16_t)connect_index))
+                        return 0;
                     entry_top = 1;
                     int32_t up_floor = read_be32(next_zone + ZONE_UPPER_FLOOR);
                     int32_t up_roof  = read_be32(next_zone + ZONE_UPPER_ROOF);
@@ -627,7 +665,7 @@ uint8_t can_it_be_seen(const LevelState *level,
             }
             current_room = next_zone;
             d2 = entry_top;
-            current_zone_id = (int16_t)connect_index;
+            current_zone_id = connect_index;
             found_exit = true;
             break;
         }

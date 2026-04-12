@@ -121,6 +121,30 @@ static void enemy_apply_step_limits(const GameObject *obj,
                                     const EnemyParams *params,
                                     MoveContext *ctx);
 
+static int object_resolve_zone_index(const LevelState *level, int16_t zone_word)
+{
+    int zone_slots;
+    int zi;
+
+    if (!level || !level->zone_adds || !level->data || zone_word < 0)
+        return -1;
+
+    zone_slots = level_zone_slot_count(level);
+    zi = level_connect_to_zone_index(level, zone_word);
+    if (zi < 0 && zone_word < zone_slots)
+        zi = zone_word;
+    if (zi < 0 || zi >= zone_slots)
+        return -1;
+    return zi;
+}
+
+static int object_zone_use_upper(const LevelState *level, int zone_index, int8_t in_top)
+{
+    if (!level || !in_top || zone_index < 0)
+        return 0;
+    return level_zone_has_upper_layer(level, (int16_t)zone_index) ? 1 : 0;
+}
+
 /* -----------------------------------------------------------------------
  * enemy_viewpoint - Amiga AlienControl.s ViewpointToDraw
  * Returns 0=towards, 1=right, 2=away, 3=left based on angle between
@@ -450,18 +474,17 @@ static void enemy_update_flying_soft_dead(GameObject *obj,
     NASTY_LIVES(*obj) = 0;
     NASTY_DAMAGE(*obj) = 0;
 
-    int zone_slots = level_zone_slot_count(&state->level);
-    int zone_idx = level_connect_to_zone_index(&state->level, OBJ_ZONE(obj));
-    if (zone_idx < 0 && OBJ_ZONE(obj) >= 0 && OBJ_ZONE(obj) < zone_slots)
-        zone_idx = OBJ_ZONE(obj);
-    if (zone_idx < 0 || zone_idx >= zone_slots ||
-        !state->level.zone_adds || !state->level.data) {
+    int zone_idx = object_resolve_zone_index(&state->level, OBJ_ZONE(obj));
+    int use_upper = 0;
+    if (zone_idx < 0 || !state->level.zone_adds || !state->level.data) {
         return;
     }
 
     int32_t zoff = (int32_t)be32(state->level.zone_adds + (uint32_t)zone_idx * 4u);
     const uint8_t *zd = state->level.data + zoff;
-    int32_t floor_h = be32(zd + (obj->obj.in_top ? ZONE_OFF_UPPER_FLOOR : ZONE_OFF_FLOOR));
+    use_upper = object_zone_use_upper(&state->level, zone_idx, obj->obj.in_top);
+    if (!use_upper) obj->obj.in_top = 0;
+    int32_t floor_h = be32(zd + (use_upper ? ZONE_OFF_UPPER_FLOOR : ZONE_OFF_FLOOR));
     int16_t floor_y = (int16_t)((floor_h >> 7) - params->nas_height);
 
     int16_t y = obj_w(obj->raw + 4);
@@ -534,19 +557,15 @@ static void enemy_convert_to_blue_key(GameObject *obj, GameState *state)
 
     /* Snap key to the local floor immediately so it does not remain at enemy height. */
     if (state && state->level.zone_adds && state->level.data) {
-        int zone_slots = level_zone_slot_count(&state->level);
-        int src_zone = level_connect_to_zone_index(&state->level, OBJ_ZONE(obj));
-        if (src_zone < 0 && OBJ_ZONE(obj) >= 0 && OBJ_ZONE(obj) < zone_slots)
-            src_zone = OBJ_ZONE(obj);
-
-        if (src_zone >= 0 && src_zone < zone_slots) {
+        int src_zone = object_resolve_zone_index(&state->level, OBJ_ZONE(obj));
+        if (src_zone >= 0) {
             int32_t zo = be32(state->level.zone_adds + (uint32_t)src_zone * 4u);
             if (zo > 0) {
                 const uint8_t *zd = state->level.data + zo;
                 int32_t floor_h = be32(zd + ZONE_OFF_FLOOR);
-                int32_t upper_floor = be32(zd + ZONE_OFF_UPPER_FLOOR);
-                if (upper_floor != 0 && obj->obj.in_top)
-                    floor_h = upper_floor;
+                int use_upper = object_zone_use_upper(&state->level, src_zone, obj->obj.in_top);
+                if (use_upper) floor_h = be32(zd + ZONE_OFF_UPPER_FLOOR);
+                else obj->obj.in_top = 0;
                 obj_sw(obj->raw + 4, (int16_t)((floor_h >> 7) - 32));
             }
         }
@@ -1116,9 +1135,11 @@ static bool dead_object_is_runtime_corpse(const GameObject *obj)
  * ----------------------------------------------------------------------- */
 static void enemy_update_can_see(GameObject *obj, GameState *state)
 {
-    int16_t enemy_zone = OBJ_ZONE(obj);
+    int enemy_zone = object_resolve_zone_index(&state->level, OBJ_ZONE(obj));
     if (enemy_zone < 0) return;
-    const uint8_t *from_room = level_get_zone_data_ptr(&state->level, enemy_zone);
+    if (obj->obj.in_top && !object_zone_use_upper(&state->level, enemy_zone, 1))
+        obj->obj.in_top = 0;
+    const uint8_t *from_room = level_get_zone_data_ptr(&state->level, (int16_t)enemy_zone);
     if (!from_room) return;
 
     int enemy_cid = (int)OBJ_CID(obj);
@@ -1130,14 +1151,17 @@ static void enemy_update_can_see(GameObject *obj, GameState *state)
 
     /* Player 1 -> bit 0 */
     {
-        int16_t plr_zone = state->plr1.zone;
-        const uint8_t *to_room = level_get_zone_data_ptr(&state->level, plr_zone);
+        int plr_zone = object_resolve_zone_index(&state->level, state->plr1.zone);
+        const uint8_t *to_room = (plr_zone >= 0)
+            ? level_get_zone_data_ptr(&state->level, (int16_t)plr_zone)
+            : NULL;
         if (to_room) {
+            int16_t plr_zone_word = be16(to_room + 0);
             int16_t plr_x    = (int16_t)state->plr1.p_xoff;
             int16_t plr_z    = (int16_t)state->plr1.p_zoff;
             int16_t target_y = (int16_t)(state->plr1.p_yoff >> 7);
             uint8_t vis = can_it_be_seen(&state->level,
-                                         from_room, to_room, plr_zone,
+                                         from_room, to_room, plr_zone_word,
                                          enemy_x, enemy_z, viewer_y,
                                          plr_x, plr_z, target_y,
                                          obj->obj.in_top,
@@ -1147,14 +1171,17 @@ static void enemy_update_can_see(GameObject *obj, GameState *state)
     }
     /* Player 2 -> bit 1 */
     {
-        int16_t plr_zone = state->plr2.zone;
-        const uint8_t *to_room = level_get_zone_data_ptr(&state->level, plr_zone);
+        int plr_zone = object_resolve_zone_index(&state->level, state->plr2.zone);
+        const uint8_t *to_room = (plr_zone >= 0)
+            ? level_get_zone_data_ptr(&state->level, (int16_t)plr_zone)
+            : NULL;
         if (to_room) {
+            int16_t plr_zone_word = be16(to_room + 0);
             int16_t plr_x    = (int16_t)state->plr2.p_xoff;
             int16_t plr_z    = (int16_t)state->plr2.p_zoff;
             int16_t target_y = (int16_t)(state->plr2.p_yoff >> 7);
             uint8_t vis = can_it_be_seen(&state->level,
-                                         from_room, to_room, plr_zone,
+                                         from_room, to_room, plr_zone_word,
                                          enemy_x, enemy_z, viewer_y,
                                          plr_x, plr_z, target_y,
                                          obj->obj.in_top,
@@ -1417,13 +1444,12 @@ static int32_t enemy_move_y_for_context(const GameObject *obj,
                        (int32_t)(params->thing_height >> 8)) << 7);
 
     if (OBJ_ZONE(obj) >= 0 && state->level.zone_adds && state->level.data) {
-        int src_zone = level_connect_to_zone_index(&state->level, OBJ_ZONE(obj));
-        if (src_zone < 0 && OBJ_ZONE(obj) < zone_slots)
-            src_zone = OBJ_ZONE(obj);
+        int src_zone = object_resolve_zone_index(&state->level, OBJ_ZONE(obj));
         if (src_zone >= 0 && src_zone < zone_slots) {
             int32_t zo = (int32_t)be32(state->level.zone_adds + (uint32_t)src_zone * 4u);
             const uint8_t *zd = state->level.data + zo;
-            int32_t floor_h = be32(zd + (obj->obj.in_top ? ZONE_OFF_UPPER_FLOOR : ZONE_OFF_FLOOR));
+            int use_upper = object_zone_use_upper(&state->level, src_zone, obj->obj.in_top);
+            int32_t floor_h = be32(zd + (use_upper ? ZONE_OFF_UPPER_FLOOR : ZONE_OFF_FLOOR));
 
             /* Most ground enemies effectively use floor-thingheight for MoveObject.
              * Big Ugly is a documented outlier in BigUglyAlien.s:
@@ -1451,13 +1477,9 @@ static void enemy_update_flying_vertical(GameObject *obj, const GameState *state
 {
     if (!state || !state->level.zone_adds || !state->level.data) return;
 
-    int zone_slots = level_zone_slot_count(&state->level);
-    int16_t zid = OBJ_ZONE(obj);
-    if (zid < 0) return;
-
-    int src_zone = level_connect_to_zone_index(&state->level, zid);
-    if (src_zone < 0 && zid < zone_slots) src_zone = zid;
-    if (src_zone < 0 || src_zone >= zone_slots) return;
+    int src_zone = object_resolve_zone_index(&state->level, OBJ_ZONE(obj));
+    int use_upper = 0;
+    if (src_zone < 0) return;
 
     int32_t zo = (int32_t)be32(state->level.zone_adds + (uint32_t)src_zone * 4u);
     if (zo <= 0) return;
@@ -1465,9 +1487,12 @@ static void enemy_update_flying_vertical(GameObject *obj, const GameState *state
 
     int32_t floor_h = be32(room + ZONE_OFF_FLOOR);
     int32_t roof_h  = be32(room + ZONE_OFF_ROOF);
-    if (obj->obj.in_top) {
+    use_upper = object_zone_use_upper(&state->level, src_zone, obj->obj.in_top);
+    if (use_upper) {
         floor_h = be32(room + ZONE_OFF_UPPER_FLOOR);
         roof_h  = be32(room + ZONE_OFF_UPPER_ROOF);
+    } else {
+        obj->obj.in_top = 0;
     }
 
     int16_t yvel = OBJ_TD_W(obj, ENEMY_OBJ_YVEL_OFF);
@@ -1594,6 +1619,10 @@ void objects_update(GameState *state)
 
         /* Dispatch by object type (needed before Y refresh — Amiga gates on objNumber). */
         int8_t obj_type = obj->obj.number;
+        int obj_zone_index = object_resolve_zone_index(&state->level, OBJ_ZONE(obj));
+        if (obj_zone_index >= 0 &&
+            obj->obj.in_top && !object_zone_use_upper(&state->level, obj_zone_index, 1))
+            obj->obj.in_top = 0;
 
         /* Update rendering Y from live zone floor (lift_routine / doors write ToZoneFloor each tick).
          * ObjectDataHandler (Anims.s): objNumber < 0 skips ItsA* — we still skip for decorative 3D
@@ -1614,17 +1643,13 @@ void objects_update(GameState *state)
             if ((obj_type >= 0 || corpse_on_floor) && !flying_hover &&
                 obj_type != OBJ_NBR_PLR1 && obj_type != OBJ_NBR_PLR2 &&
                 obj_type != OBJ_NBR_GAS_PIPE) {
-                int16_t obj_zone = OBJ_ZONE(obj);
-                if (obj_zone >= 0 && obj_zone < zone_slots &&
-                    state->level.zone_adds && state->level.data) {
-                    int32_t zo = be32(state->level.zone_adds + obj_zone * 4);
+                if (obj_zone_index >= 0 && state->level.zone_adds && state->level.data) {
+                    int32_t zo = be32(state->level.zone_adds + (size_t)obj_zone_index * 4u);
                     if (zo > 0) {
                         const uint8_t *zd = state->level.data + zo;
                         int32_t floor_h = be32(zd + 2);  /* ToZoneFloor */
-
-                        int32_t upper_floor = be32(zd + 10);
-                        if (upper_floor != 0 && obj->obj.in_top)
-                            floor_h = upper_floor;
+                        if (object_zone_use_upper(&state->level, obj_zone_index, obj->obj.in_top))
+                            floor_h = be32(zd + 10);
 
                         int world_h = object_floor_render_offset_units(obj, obj_type);
 
@@ -2977,14 +3002,13 @@ void object_handle_barrel(GameObject *obj, GameState *state)
 
     /* Keep barrel anchored to floor each tick (y = floor>>7 - 60). */
     {
-        int zone_slots = level_zone_slot_count(&state->level);
-        int src_zone = level_connect_to_zone_index(&state->level, OBJ_ZONE(obj));
-        if (src_zone < 0 && OBJ_ZONE(obj) >= 0 && OBJ_ZONE(obj) < zone_slots)
-            src_zone = OBJ_ZONE(obj);
-        if (src_zone >= 0 && src_zone < zone_slots && state->level.zone_adds && state->level.data) {
+        int src_zone = object_resolve_zone_index(&state->level, OBJ_ZONE(obj));
+        if (src_zone >= 0 && state->level.zone_adds && state->level.data) {
             int32_t zo = (int32_t)be32(state->level.zone_adds + (uint32_t)src_zone * 4u);
             const uint8_t *zd = state->level.data + zo;
-            int32_t floor_h = be32(zd + (obj->obj.in_top ? ZONE_OFF_UPPER_FLOOR : ZONE_OFF_FLOOR));
+            int use_upper = object_zone_use_upper(&state->level, src_zone, obj->obj.in_top);
+            int32_t floor_h = be32(zd + (use_upper ? ZONE_OFF_UPPER_FLOOR : ZONE_OFF_FLOOR));
+            if (!use_upper) obj->obj.in_top = 0;
             obj_sw(obj->raw + 4, (int16_t)((floor_h >> 7) - 60));
         }
     }

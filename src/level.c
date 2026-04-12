@@ -892,6 +892,58 @@ int level_zone_slot_count(const LevelState *level)
     return slots;
 }
 
+int level_zone_has_upper_layer(const LevelState *level, int16_t zone_id)
+{
+    if (!level || !level->zone_adds || !level->data)
+        return 0;
+
+    {
+        int zone_slots = level_zone_slot_count(level);
+        int zi = -1;
+        if (zone_id >= 0 && zone_id < zone_slots)
+            zi = (int)zone_id;
+        else
+            zi = level_connect_to_zone_index(level, zone_id);
+
+        if (zi < 0 || zi >= zone_slots)
+            return 0;
+
+        {
+            int32_t zoff = read_long(level->zone_adds + (size_t)zi * 4u);
+            if (zoff < 0)
+                return 0;
+
+            if (level->data_byte_count > 0 &&
+                (size_t)zoff + 18u > level->data_byte_count)
+                return 0;
+
+            {
+                const uint8_t *zd = level->data + zoff;
+                int32_t upper_floor = read_long(zd + ZONE_OFF_UPPER_FLOOR);
+                int32_t upper_roof = read_long(zd + ZONE_OFF_UPPER_ROOF);
+                if (upper_floor <= upper_roof)
+                    return 0;
+            }
+        }
+
+        if (level->zone_graph_adds && level->graphics) {
+            if (level->num_zone_graph_entries > 0 && zi >= level->num_zone_graph_entries)
+                return 0;
+
+            {
+                int32_t upper_gfx = read_long(level->zone_graph_adds + (size_t)zi * 8u + 4u);
+                if (upper_gfx <= 0)
+                    return 0;
+                if (level->graphics_byte_count > 0 &&
+                    (size_t)upper_gfx + 2u > level->graphics_byte_count)
+                    return 0;
+            }
+        }
+    }
+
+    return 1;
+}
+
 int level_connect_to_zone_index(const LevelState *level, int16_t connect)
 {
     if (!level->zone_adds || !level->data || connect < 0)

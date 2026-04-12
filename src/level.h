@@ -94,6 +94,13 @@ int level_set_zone_water(LevelState *level, int16_t zone_id, int32_t water_y);
 int level_zone_slot_count(const LevelState *level);
 
 /*
+ * Return 1 when zone_id has a usable upper section (valid upper height range
+ * and valid upper graphics stream when graph tables are present), else 0.
+ * Accepts either a zone slot index or a file-zone id/connect value.
+ */
+int level_zone_has_upper_layer(const LevelState *level, int16_t zone_id);
+
+/*
  * Map floor-line connect value (zone id/index from file) to a zone_adds slot index.
  * Returns index in range 0..level_zone_slot_count()-1, or -1 if invalid/unresolvable.
  */

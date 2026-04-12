@@ -197,6 +197,7 @@ static bool transition_height_ok_single(const MoveContext *ctx, int32_t mover_y,
 
 /* Amiga checkotherwalls first tests lower floor/roof, then upper floor/roof. */
 static bool transition_height_ok_zone(const MoveContext *ctx, int32_t mover_y,
+    const LevelState *level, int target_zone_index,
     const uint8_t *target_zone, int8_t *out_in_top)
 {
     if (!ctx || !target_zone) return false;
@@ -210,7 +211,8 @@ static bool transition_height_ok_zone(const MoveContext *ctx, int32_t mover_y,
         }
     }
 
-    {
+    if (level && target_zone_index >= 0 &&
+        level_zone_has_upper_layer(level, (int16_t)target_zone_index)) {
         int32_t floor_h = read_be32(target_zone + ZONE_UPPER_FLOOR);
         int32_t roof_h = read_be32(target_zone + ZONE_UPPER_ROOF);
         if (transition_height_ok_single(ctx, mover_y, floor_h, roof_h)) {
@@ -223,9 +225,11 @@ static bool transition_height_ok_zone(const MoveContext *ctx, int32_t mover_y,
 }
 
 static bool transition_height_ok_zone_for_mover(const MoveContext *ctx, int32_t mover_y,
+    const LevelState *level, int target_zone_index,
     const uint8_t *target_zone, int8_t *out_in_top)
 {
-    return transition_height_ok_zone(ctx, mover_y, target_zone, out_in_top);
+    return transition_height_ok_zone(ctx, mover_y, level, target_zone_index,
+                                     target_zone, out_in_top);
 }
 
 static void mark_floorline_touch_flag(const MoveContext *ctx, const uint8_t *fline);
@@ -277,14 +281,19 @@ static int32_t compute_crossing_height_asm(const MoveContext *ctx,
     return (int32_t)hit_y;
 }
 
-static bool pass1_vertical_hit_asm(const MoveContext *ctx, const uint8_t *target_zone, int32_t hit_y)
+static bool pass1_vertical_hit_asm(const MoveContext *ctx,
+    const LevelState *level, int target_zone_index,
+    const uint8_t *target_zone, int32_t hit_y)
 {
     int8_t in_top = 0;
     if (!ctx || !target_zone) return true;
-    return !transition_height_ok_zone_for_mover(ctx, hit_y, target_zone, &in_top);
+    return !transition_height_ok_zone_for_mover(ctx, hit_y, level, target_zone_index,
+                                                target_zone, &in_top);
 }
 
-static bool pass1_exit_is_nonblocking(const MoveContext *ctx, const uint8_t *target_zone,
+static bool pass1_exit_is_nonblocking(const MoveContext *ctx,
+    const LevelState *level, int target_zone_index,
+    const uint8_t *target_zone,
     int32_t lx, int32_t lz, int16_t lxlen, int16_t lzlen, int32_t a4, int32_t a6,
     int32_t orig_newx, int32_t orig_newz, int32_t line_len)
 {
@@ -304,7 +313,7 @@ static bool pass1_exit_is_nonblocking(const MoveContext *ctx, const uint8_t *tar
 
     {
         int32_t hit_y = compute_crossing_height_asm(ctx, cross_new, cross_old, line_len + ctx->extlen);
-        return !pass1_vertical_hit_asm(ctx, target_zone, hit_y);
+        return !pass1_vertical_hit_asm(ctx, level, target_zone_index, target_zone, hit_y);
     }
 }
 
@@ -425,7 +434,8 @@ static int firstpass_othercheck_hit(int16_t hit_x, int16_t hit_z,
 
 static int check_wall_line_walls_asm(MoveContext *ctx, const uint8_t *fline,
     int32_t lx, int32_t lz, int16_t lxlen, int16_t lzlen, int32_t line_len,
-    int32_t a4, int32_t a6, const uint8_t *target_zone,
+    int32_t a4, int32_t a6, const LevelState *level, int target_zone_index,
+    const uint8_t *target_zone,
     int32_t *xdiff, int32_t *zdiff)
 {
     int16_t sx = (int16_t)ctx->newx;
@@ -456,7 +466,8 @@ static int check_wall_line_walls_asm(MoveContext *ctx, const uint8_t *fline,
         int32_t cross_old = (int32_t)d5 * (int32_t)rel_ox - (int32_t)d2 * (int32_t)rel_oz;
         int32_t hit_y = compute_crossing_height_asm(ctx, cross_new, cross_old, den);
 
-        if (target_zone && !pass1_vertical_hit_asm(ctx, target_zone, hit_y)) {
+        if (target_zone && !pass1_vertical_hit_asm(ctx, level, target_zone_index,
+                                                   target_zone, hit_y)) {
             return 0;
         }
 
@@ -945,7 +956,8 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
 
         if (pass_is_other) {
             int8_t target_in_top = 0;
-            if (transition_height_ok_zone_for_mover(ctx, ctx->newy, target_zone, &target_in_top)) {
+            if (transition_height_ok_zone_for_mover(ctx, ctx->newy, level, connect_index,
+                                                    target_zone, &target_in_top)) {
                 if (!(ctx->no_transition_back && target_room == ctx->no_transition_back)) {
                     /* checkotherwalls: passable exit -> skip wall collision. */
                     return 0;
@@ -997,7 +1009,7 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
     /* Amiga checkwalls uses integer wall math for all movers, including extlen==0 bullets. */
     if (pass_is_walls) {
         return check_wall_line_walls_asm(ctx, fline, lx, lz, lxlen, lzlen, line_len,
-            a4, a6, has_target_zone ? target_zone : NULL, xdiff, zdiff);
+            a4, a6, level, connect_index, has_target_zone ? target_zone : NULL, xdiff, zdiff);
     }
 
     /* ---- Wall collision with extents ----
@@ -1044,7 +1056,8 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
             mark_floorline_touch_flag(ctx, fline);
             ctx->hitwall = 1;
             if (pass_is_walls && has_target_zone &&
-                pass1_exit_is_nonblocking(ctx, target_zone, lx, lz, lxlen, lzlen, a4, a6,
+                pass1_exit_is_nonblocking(ctx, level, connect_index, target_zone,
+                    lx, lz, lxlen, lzlen, a4, a6,
                     orig_newx, orig_newz, line_len)) {
                 ctx->newx = orig_newx;
                 ctx->newz = orig_newz;
@@ -1091,7 +1104,8 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
                 ctx->hitwall = 1;
                 ctx->wall_hit_y = ctx->newy;
                 if (pass_is_walls && has_target_zone &&
-                    pass1_exit_is_nonblocking(ctx, target_zone, lx, lz, lxlen, lzlen, a4, a6,
+                    pass1_exit_is_nonblocking(ctx, level, connect_index, target_zone,
+                        lx, lz, lxlen, lzlen, a4, a6,
                         orig_newx, orig_newz, line_len)) {
                     ctx->newx = orig_newx;
                     ctx->newz = orig_newz;
@@ -1117,7 +1131,8 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
             ctx->hitwall = 1;
             ctx->wall_hit_y = ctx->newy;
             if (pass_is_walls && has_target_zone &&
-                pass1_exit_is_nonblocking(ctx, target_zone, lx, lz, lxlen, lzlen, a4, a6,
+                pass1_exit_is_nonblocking(ctx, level, connect_index, target_zone,
+                    lx, lz, lxlen, lzlen, a4, a6,
                     orig_newx, orig_newz, line_len)) {
                 ctx->newx = orig_newx;
                 ctx->newz = orig_newz;
@@ -1188,7 +1203,8 @@ static void find_room(MoveContext* ctx, LevelState* level,
 
                         {
                             int8_t pass_in_top = target_in_top;
-                            if (!transition_height_ok_zone_for_mover(ctx, cross_y, target_zone, &pass_in_top)) {
+                            if (!transition_height_ok_zone_for_mover(ctx, cross_y, level, connect_index,
+                                                                    target_zone, &pass_in_top)) {
                                 continue;
                             }
                         }
