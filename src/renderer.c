@@ -113,6 +113,8 @@ static uint8_t *g_pick_player_back_buffer = NULL;
 static int g_pick_capture_armed = 0;
 static int g_pick_capture_active = 0;
 static int g_pick_last_frame_valid = 0;
+static int g_renderfix_l6_zone120_seen = 0;
+static int g_renderfix_l6_zone123_seen = 0;
 
 void renderer_set_weapon_post_gl_active(int active) { s_weapon_post_gl_active = active; }
 int8_t renderer_get_last_fill_screen_water(void) { return g_renderer.last_fill_screen_water; }
@@ -6990,6 +6992,33 @@ static int renderer_level4_adjacent_door_wall_match(int16_t p1, int16_t p2, int1
     return 0;
 }
 
+static int renderer_wall_gfx_off_matches_door_zone(const LevelState *level,
+                                                    uint32_t gfx_off,
+                                                    int16_t door_zone_id)
+{
+    if (!level || !level->door_wall_list || !level->door_wall_list_offsets || !level->door_data)
+        return 0;
+    if (level->num_doors <= 0)
+        return 0;
+
+    const uint8_t *lst = level->door_wall_list;
+    for (int di = 0; di < level->num_doors; di++) {
+        int16_t zone_id = rd16(level->door_data + (size_t)di * 22u + 0u);
+        if (zone_id != door_zone_id)
+            continue;
+
+        uint32_t start = level->door_wall_list_offsets[di];
+        uint32_t end = level->door_wall_list_offsets[di + 1];
+        for (uint32_t j = start; j < end; j++) {
+            const uint8_t *ent = lst + (size_t)j * 10u;
+            uint32_t ent_gfx = (uint32_t)rd32(ent + 2);
+            if (ent_gfx == gfx_off)
+                return 1;
+        }
+    }
+    return 0;
+}
+
 static void renderer_reset_level_sky_cache_internal(void)
 {
     free(g_level_sky_cache_polys);
@@ -7662,6 +7691,9 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
             int16_t tex_id = rd16(ptr + 12);
             if (p1 >= 0 && p1 < MAX_POINTS && p2 >= 0 && p2 < MAX_POINTS)
             {
+                uint32_t wall_gfx_off = (level->graphics != NULL)
+                                            ? (uint32_t)((ptr - 2) - level->graphics)
+                                            : 0u;
                 int32_t rx1 = r->rotated[p1].x;
                 int32_t rz1 = r->rotated[p1].z;
                 int32_t rx2 = r->rotated[p2].x;
@@ -7751,6 +7783,28 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     if (wall_height_for_tex < 1) wall_height_for_tex = 1;
                 }
 
+                /* Level 6 (1-indexed), door zones 120/123:
+                 * apply the same scale-only correction, keyed by door wall-list membership
+                 * so adjacent-zone faces are included automatically. */
+                if (state->current_level == 5) {
+                    int l6_zone120 = renderer_wall_gfx_off_matches_door_zone(level, wall_gfx_off, 120);
+                    int l6_zone123 = renderer_wall_gfx_off_matches_door_zone(level, wall_gfx_off, 123);
+                    if (l6_zone120 || l6_zone123) {
+                    wall_height_for_tex = (int16_t)(wall_height_for_tex - 16);
+                    if (wall_height_for_tex < 1) wall_height_for_tex = 1;
+                    if (l6_zone120 && !g_renderfix_l6_zone120_seen) {
+                        g_renderfix_l6_zone120_seen = 1;
+                        printf("[RENDERFIX] level 6 door zone 120 scale fix active (first hit: zone=%d p1=%d p2=%d tex=%d gfx_off=%u)\n",
+                               (int)zone_id, (int)p1, (int)p2, (int)tex_id, (unsigned)wall_gfx_off);
+                    }
+                    if (l6_zone123 && !g_renderfix_l6_zone123_seen) {
+                        g_renderfix_l6_zone123_seen = 1;
+                        printf("[RENDERFIX] level 6 door zone 123 scale fix active (first hit: zone=%d p1=%d p2=%d tex=%d gfx_off=%u)\n",
+                               (int)zone_id, (int)p1, (int)p2, (int)tex_id, (unsigned)wall_gfx_off);
+                    }
+                    }
+                }
+
                 /* Switch walls (tex_id 11): same texture has on/off states.
                  * State is in wall first word bit 1 (p1 & 2): set = on, clear = off.
                  * Texture layout: off = left half (fromtile), on = right half (fromtile + 32).
@@ -7768,7 +7822,6 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     /* Automap: tag this wall as seen (serialized via g_automap_mutex). */
                     if (level->points && level->graphics) {
                         /* door_wall_list gfx_off points to the wall record starting at the type word. */
-                        uint32_t wall_gfx_off = (uint32_t)((ptr - 2) - level->graphics);
                         int16_t wx1 = rd16(level->points + (size_t)p1 * 4u + 0u);
                         int16_t wz1 = rd16(level->points + (size_t)p1 * 4u + 2u);
                         int16_t wx2 = rd16(level->points + (size_t)p2 * 4u + 0u);
