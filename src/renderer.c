@@ -280,6 +280,27 @@ static inline int32_t rd32(const uint8_t *p) {
     return (int32_t)((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]);
 }
 
+/* Resolve ListOfGraphRooms entry to a concrete zone id.
+ * Amiga level data stores a graph index when zone_graph_adds/graphics are present. */
+static int renderer_resolve_lgr_entry_zone_id(const LevelState *level, int16_t entry_word, int16_t *out_zone_id)
+{
+    if (!out_zone_id || entry_word < 0) return 0;
+    if (level && level->zone_graph_adds && level->graphics) {
+        if (level->num_zone_graph_entries > 0 && entry_word >= level->num_zone_graph_entries)
+            return 0;
+        {
+            uint32_t gfx_off = (uint32_t)rd32(level->zone_graph_adds + (unsigned)entry_word * 8u);
+            if (level->graphics_byte_count > 0 &&
+                ((size_t)gfx_off + 2u > level->graphics_byte_count))
+                return 0;
+            *out_zone_id = rd16(level->graphics + gfx_off);
+            return 1;
+        }
+    }
+    *out_zone_id = entry_word;
+    return 1;
+}
+
 /* Forward decls used by early helpers (defined later). */
 static uint32_t amiga12_to_argb(uint16_t c12);
 
@@ -8318,7 +8339,9 @@ static int renderer_compute_zone_clip_span(GameState *state, int16_t zone_id,
 
     const uint8_t *lgr_entry = NULL;
     while (rd16(lgr) >= 0) {
-        if (rd16(lgr) == zone_id) {
+        int16_t entry_zone = -1;
+        if (renderer_resolve_lgr_entry_zone_id(&state->level, rd16(lgr), &entry_zone) &&
+            entry_zone == zone_id) {
             lgr_entry = lgr;
             break;
         }

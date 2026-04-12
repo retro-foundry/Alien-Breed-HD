@@ -89,6 +89,35 @@ static bool mark_visible_zones_from_graph_list(uint8_t vis_zones[256],
     return any;
 }
 
+/* Level-specific zone-order tweak:
+ * Level 8 (1-indexed), standing in zone 49, can occasionally order zone 3
+ * in front of zone 16 from a problematic viewpoint. Force 16 in front of 3.
+ * Renderer draws zone_order in reverse, so lower index is closer/front. */
+static void apply_zone_order_workaround_level8_zone49(GameState *state, const PlayerState *view_plr)
+{
+    if (!state || !view_plr) return;
+    if (state->current_level != 7) return; /* level 8 (1-indexed) */
+    if (view_plr->zone != 49) return;
+
+    int count = state->zone_order_count;
+    if (count < 0) return;
+    if (count > 256) count = 256;
+
+    int idx16 = -1;
+    int idx3 = -1;
+    for (int i = 0; i < count; i++) {
+        if (state->zone_order_zones[i] == 16) idx16 = i;
+        else if (state->zone_order_zones[i] == 3) idx3 = i;
+    }
+    if (idx16 < 0 || idx3 < 0) return;
+
+    if (idx16 > idx3) {
+        int16_t t = state->zone_order_zones[idx16];
+        state->zone_order_zones[idx16] = state->zone_order_zones[idx3];
+        state->zone_order_zones[idx3] = t;
+    }
+}
+
 /*
  * game_loop - The main per-frame game loop
  *
@@ -351,6 +380,7 @@ void game_loop(GameState *state)
                 memcpy(state->zone_order_zones, zo.zones,
                        (size_t)(zo.count < 256 ? zo.count : 256) * sizeof(int16_t));
                 state->zone_order_count = zo.count;
+                apply_zone_order_workaround_level8_zone49(state, view_plr);
                 state->view_list_of_graph_rooms = lgr_ptr;
             }
 
