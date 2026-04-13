@@ -217,6 +217,22 @@ static inline int poly_proj_x_scale_px(const RendererState *r, const GameState *
     return (int)s;
 }
 
+static inline size_t poly_cw_index_xy(int x, int y, int width, int height)
+{
+#if AB3D_CW_COL_MAJOR
+    (void)width;
+    return (size_t)x * (size_t)height + (size_t)y;
+#else
+    (void)height;
+    return (size_t)y * (size_t)width + (size_t)x;
+#endif
+}
+
+static inline void poly_cw_store_xy(uint16_t *cw, int x, int y, int width, int height, uint16_t v)
+{
+    cw[poly_cw_index_xy(x, y, width, height)] = v;
+}
+
 /* -----------------------------------------------------------------------
  * Per-vertex screen coordinate cache (shared across all polygons in one
  * draw call, reset for each object).
@@ -360,6 +376,7 @@ static void draw_filled_polygon(const int *sx, const int *sy, int n,
     }
 
     int W = g_renderer.width;
+    int H = g_renderer.height;
     uint16_t cw_fill = renderer_argb_to_amiga12(color);
     for (int y = min_y; y <= max_y; y++) {
         int x0 = span_min[y - min_y];
@@ -368,11 +385,10 @@ static void draw_filled_polygon(const int *sx, const int *sy, int n,
         if (x1 > clip_right) x1 = clip_right;
         if (x0 > x1) continue;
         uint32_t *row = rgb + (size_t)y * W;
-        uint16_t *row_cw = cw + (size_t)y * W;
         for (int x = x0; x <= x1; x++) {
             if (renderer_get_rgb_raster_expand())
                 row[x] = color;
-            row_cw[x] = cw_fill;
+            poly_cw_store_xy(cw, x, y, W, H, cw_fill);
         }
     }
 }
@@ -827,10 +843,10 @@ static void draw_textured_triangle(const int *sx, const int *sy,
 
     double inv_area = 1.0 / area;
     int W = g_renderer.width;
+    int H = g_renderer.height;
 
     for (int y = min_y; y <= max_y; y++) {
         uint32_t *row = rgb + (size_t)y * W;
-        uint16_t *row_cw = cw + (size_t)y * W;
         double py = (double)y + 0.5;
         for (int x = min_x; x <= max_x; x++) {
             double px = (double)x + 0.5;
@@ -858,7 +874,7 @@ static void draw_textured_triangle(const int *sx, const int *sy,
             uint16_t pal_cw = sample_poly_palette_cw(pal_idx, pixel_shade);
             if (renderer_get_rgb_raster_expand())
                 row[x] = amiga12_to_argb_local(pal_cw);
-            row_cw[x] = pal_cw;
+            poly_cw_store_xy(cw, x, y, W, H, pal_cw);
         }
     }
 }

@@ -41,6 +41,12 @@
 #ifndef RENDER_SKY
 #define RENDER_SKY 1
 #endif
+/* cw buffer layout for experiments:
+ * 0 = row-major (legacy/default), 1 = column-major (x-major).
+ * display.c and renderer.c both consume this flag, so keep it in this shared header. */
+#ifndef AB3D_CW_COL_MAJOR
+#define AB3D_CW_COL_MAJOR 1
+#endif
 /* 1 = clear framebuffer (renderer_clear) and empty-canvas fills when sky is off; 0 = leave buffer. */
 #ifndef RENDER_CLEAR
 #define RENDER_CLEAR 0

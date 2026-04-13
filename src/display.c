@@ -427,6 +427,16 @@ static DisplayGlAttachShaderFn             g_gl_attach_shader;
 static DisplayGlCompileShaderFn            g_gl_compile_shader;
 static DisplayGlGetProgramInfoLogFn       g_gl_get_program_info_log;
 
+static inline size_t display_cw_index_xy(int x, int y, int w, int h)
+{
+#if AB3D_CW_COL_MAJOR
+    return (size_t)x * (size_t)h + (size_t)y;
+#else
+    (void)h;
+    return (size_t)y * (size_t)w + (size_t)x;
+#endif
+}
+
 #if defined(__EMSCRIPTEN__)
 static const char display_gl_vs_src[] =
     "#version 300 es\n"
@@ -444,11 +454,22 @@ static const char display_gl_fs_src[] =
     "precision highp float;\n"
     "precision highp int;\n"
     "uniform highp usampler2D u_cw;\n"
+    "uniform highp int u_fb_w;\n"
+    "uniform highp int u_fb_h;\n"
     "in highp vec2 v_uv;\n"
     "out highp vec4 o_col;\n"
     "void main() {\n"
-    "  highp vec2 uv = v_uv;\n"
-    "  highp uint w = texture(u_cw, uv).r;\n"
+    "  highp int fb_w = (u_fb_w > 0) ? u_fb_w : 1;\n"
+    "  highp int fb_h = (u_fb_h > 0) ? u_fb_h : 1;\n"
+    "  highp int ox = int(clamp(v_uv.x * float(fb_w), 0.0, float(fb_w - 1)));\n"
+    "  highp int oy = int(clamp(v_uv.y * float(fb_h), 0.0, float(fb_h - 1)));\n"
+#if AB3D_CW_COL_MAJOR
+    "  highp int lin = ox * fb_h + oy;\n"
+    "  highp ivec2 tp = ivec2(lin % fb_w, lin / fb_w);\n"
+#else
+    "  highp ivec2 tp = ivec2(ox, oy);\n"
+#endif
+    "  highp uint w = texelFetch(u_cw, tp, 0).r;\n"
     "  highp uint c = w & 0xFFFu;\n"
     "  highp uint r4 = (c >> 8) & 0xFu;\n"
     "  highp uint g4 = (c >> 4) & 0xFu;\n"
@@ -472,12 +493,22 @@ static const char display_gl_vs_src[] =
 static const char display_gl_fs_src[] =
     "#version 330 core\n"
     "uniform usampler2D u_cw;\n"
+    "uniform int u_fb_w;\n"
+    "uniform int u_fb_h;\n"
     "in vec2 v_uv;\n"
     "out vec4 o_col;\n"
     "void main() {\n"
-    "  /* Top-down CPU rows match default GL unpack (row 0 -> t=0); do not flip v_uv. */\n"
-    "  vec2 uv = v_uv;\n"
-    "  uint w = texture(u_cw, uv).r;\n"
+    "  int fb_w = (u_fb_w > 0) ? u_fb_w : 1;\n"
+    "  int fb_h = (u_fb_h > 0) ? u_fb_h : 1;\n"
+    "  int ox = int(clamp(v_uv.x * float(fb_w), 0.0, float(fb_w - 1)));\n"
+    "  int oy = int(clamp(v_uv.y * float(fb_h), 0.0, float(fb_h - 1)));\n"
+#if AB3D_CW_COL_MAJOR
+    "  int lin = ox * fb_h + oy;\n"
+    "  ivec2 tp = ivec2(lin % fb_w, lin / fb_w);\n"
+#else
+    "  ivec2 tp = ivec2(ox, oy);\n"
+#endif
+    "  uint w = texelFetch(u_cw, tp, 0).r;\n"
     "  uint c = w & 0xFFFu;\n"
     "  uint r4 = (c >> 8) & 0xFu;\n"
     "  uint g4 = (c >> 4) & 0xFu;\n"
@@ -1233,6 +1264,8 @@ static void display_gl_resize_cw_texture(int w, int h)
 static void display_gl_present_cw(const uint16_t *src, int w, int h)
 {
     GLint loc_u;
+    GLint loc_w;
+    GLint loc_h;
     int win_w = 1, win_h = 1;
 
     if (!g_gl_unpack_ok || !src || w < 1 || h < 1) return;
@@ -1266,6 +1299,10 @@ static void display_gl_present_cw(const uint16_t *src, int w, int h)
         g_gl_bind_texture(0x0DE1 /* GL_TEXTURE_2D */, g_gl_tex_cw);
         g_gl_uniform1i(loc_u, 0);
     }
+    loc_w = g_gl_get_uniform_location(g_gl_prog, "u_fb_w");
+    if (loc_w >= 0) g_gl_uniform1i(loc_w, w);
+    loc_h = g_gl_get_uniform_location(g_gl_prog, "u_fb_h");
+    if (loc_h >= 0) g_gl_uniform1i(loc_h, h);
     g_gl_bind_vertex_array(g_gl_vao);
     g_gl_draw_arrays(GL_TRIANGLE_STRIP, 0, 4);
     g_gl_bind_vertex_array(0);
@@ -1306,7 +1343,7 @@ static void display_cpu_unpack_cw_to_texture(const uint16_t *src, int w, int h)
     if (!g_texture || !src || w < 1 || h < 1) return;
 
     /* Fast path: cw_buffer is already packed 0x0RGB words. Push directly; no per-pixel CPU work. */
-    if (g_texture_is_4444_direct) {
+    if (g_texture_is_4444_direct && !AB3D_CW_COL_MAJOR) {
         if (SDL_UpdateTexture(g_texture, NULL, src, (int)((size_t)w * sizeof(uint16_t))) != 0) {
             return;
         }
@@ -1318,9 +1355,8 @@ static void display_cpu_unpack_cw_to_texture(const uint16_t *src, int w, int h)
     if (SDL_LockTexture(g_texture, NULL, &pixels, &pitch) < 0) return;
     for (int y = 0; y < h; y++) {
         uint32_t *dst_row = (uint32_t*)((uint8_t*)pixels + (size_t)y * (size_t)pitch);
-        const uint16_t *srow = src + (size_t)y * (size_t)w;
         for (int x = 0; x < w; x++) {
-            uint32_t c = (uint32_t)(srow[x] & 0xFFFu);
+            uint32_t c = (uint32_t)(src[display_cw_index_xy(x, y, w, h)] & 0xFFFu);
             uint32_t r4 = (c >> 8) & 0xFu;
             uint32_t g4 = (c >> 4) & 0xFu;
             uint32_t b4 = c & 0xFu;

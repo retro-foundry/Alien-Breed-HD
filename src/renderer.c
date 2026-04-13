@@ -63,11 +63,72 @@
 #define AB3D_PREFETCH_WRITE(p) ((void)0)
 #endif
 
+/* Non-temporal uint16_t store: bypasses L1/L2 cache on write to avoid polluting
+ * the cache hierarchy with strided column-major cw_buffer writes (960KB, exceeds L2).
+ * Caller must issue _mm_sfence() before the buffer is read back.
+ * GCC/Clang: __builtin_nontemporal_store generates per-target optimal code.
+ * MSVC: no 16-bit NT store exists in the ISA; falls back to plain assign
+ * (removing the cw prefetch hints still reduces fetch pressure). */
+#if defined(__GNUC__) || defined(__clang__)
+#define AB3D_NT_STORE_U16(ptr, val) __builtin_nontemporal_store((uint16_t)(val), (uint16_t *)(ptr))
+#else
+#define AB3D_NT_STORE_U16(ptr, val) (*(ptr) = (uint16_t)(val))
+#endif
+
 #if defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER)
 #define AB3D_RESTRICT __restrict
 #else
 #define AB3D_RESTRICT
 #endif
+
+#ifndef AB3D_CW_COL_MAJOR
+#define AB3D_CW_COL_MAJOR 0
+#endif
+
+#ifndef AB3D_ENABLE_FLOOR_COL_FAST
+#define AB3D_ENABLE_FLOOR_COL_FAST 0
+#endif
+
+static inline size_t renderer_cw_index_xy(int x, int y, int width, int height)
+{
+#if AB3D_CW_COL_MAJOR
+    (void)width;
+    return (size_t)x * (size_t)height + (size_t)y;
+#else
+    (void)height;
+    return (size_t)y * (size_t)width + (size_t)x;
+#endif
+}
+
+static inline size_t renderer_cw_step_y(int width)
+{
+#if AB3D_CW_COL_MAJOR
+    (void)width;
+    return 1u;
+#else
+    return (size_t)width;
+#endif
+}
+
+static inline size_t renderer_cw_step_x(int height)
+{
+#if AB3D_CW_COL_MAJOR
+    return (size_t)height;
+#else
+    (void)height;
+    return 1u;
+#endif
+}
+
+static inline uint16_t renderer_cw_load_xy(const uint16_t *cw, int x, int y, int width, int height)
+{
+    return cw[renderer_cw_index_xy(x, y, width, height)];
+}
+
+static inline void renderer_cw_store_xy(uint16_t *cw, int x, int y, int width, int height, uint16_t v)
+{
+    cw[renderer_cw_index_xy(x, y, width, height)] = v;
+}
 
 #if defined(__clang__) || defined(__GNUC__)
 #define AB3D_ATTR_UNUSED __attribute__((unused))
@@ -214,9 +275,13 @@ typedef struct {
     uint64_t wall_pixels_core;
     uint64_t wall_pixels_side_ext;
     uint64_t wall_pixels_cap_ext;
+    uint64_t ticks_wall;
     uint64_t floor_spans;
     uint64_t floor_pixels;
+    uint64_t floor_fast_spans;
+    uint64_t floor_fast_pixels;
     uint64_t water_pixels;
+    uint64_t ticks_floor;
     uint64_t sprite_calls;
     uint64_t sprite_columns;
     uint64_t sprite_pixels_visible;
@@ -224,6 +289,7 @@ typedef struct {
     uint64_t sprite_pixels_spill_occluded;
     uint64_t sprite_pixels_tested;
     uint64_t sprite_pixels_drawn;
+    uint64_t ticks_sprite;
 } RendererWorkloadStats;
 
 static void renderer_workload_stats_reset(RendererWorkloadStats *stats);
@@ -1210,7 +1276,10 @@ typedef AB3D_CACHELINE_ALIGN struct {
 
     /* ---- Cold: floor palette span cache (lazily populated) ---- */
     const uint8_t *floor_pal_cache_src;
+    uint8_t  floor_pal_cache_all_levels_ready;
     uint8_t  floor_pal_cache_valid[FLOOR_PAL_LEVEL_COUNT];
+    const uint16_t *floor_pal_cw_levels[FLOOR_PAL_LEVEL_COUNT];
+    const uint32_t *floor_pal_rgb_levels[FLOOR_PAL_LEVEL_COUNT];
     uint16_t floor_span_cw_cache[FLOOR_PAL_LEVEL_COUNT][256];
     uint32_t floor_span_rgb_cache[FLOOR_PAL_LEVEL_COUNT][256];
 } RenderSliceContext;
@@ -1251,7 +1320,10 @@ static void render_slice_context_init(RenderSliceContext *ctx,
     renderer_workload_stats_reset(&ctx->workload_stats);
     ctx->profile_collect_stats = g_renderer_profile_collect_stats ? 1u : 0u;
     ctx->floor_pal_cache_src = NULL;
+    ctx->floor_pal_cache_all_levels_ready = 0u;
     memset(ctx->floor_pal_cache_valid, 0, sizeof(ctx->floor_pal_cache_valid));
+    memset(ctx->floor_pal_cw_levels, 0, sizeof(ctx->floor_pal_cw_levels));
+    memset(ctx->floor_pal_rgb_levels, 0, sizeof(ctx->floor_pal_rgb_levels));
     ctx->strip_left = left;
     ctx->strip_right = right;
     render_slice_context_reset(ctx, left, right, top, bot);
@@ -1856,9 +1928,13 @@ static void renderer_workload_stats_add(RendererWorkloadStats *dst, const Render
     dst->wall_pixels_core += src->wall_pixels_core;
     dst->wall_pixels_side_ext += src->wall_pixels_side_ext;
     dst->wall_pixels_cap_ext += src->wall_pixels_cap_ext;
+    dst->ticks_wall += src->ticks_wall;
     dst->floor_spans += src->floor_spans;
     dst->floor_pixels += src->floor_pixels;
+    dst->floor_fast_spans += src->floor_fast_spans;
+    dst->floor_fast_pixels += src->floor_fast_pixels;
     dst->water_pixels += src->water_pixels;
+    dst->ticks_floor += src->ticks_floor;
     dst->sprite_calls += src->sprite_calls;
     dst->sprite_columns += src->sprite_columns;
     dst->sprite_pixels_visible += src->sprite_pixels_visible;
@@ -1866,6 +1942,7 @@ static void renderer_workload_stats_add(RendererWorkloadStats *dst, const Render
     dst->sprite_pixels_spill_occluded += src->sprite_pixels_spill_occluded;
     dst->sprite_pixels_tested += src->sprite_pixels_tested;
     dst->sprite_pixels_drawn += src->sprite_pixels_drawn;
+    dst->ticks_sprite += src->ticks_sprite;
 }
 
 static uint64_t renderer_workload_estimated_writes(const RendererWorkloadStats *stats)
@@ -2018,10 +2095,79 @@ static void renderer_profile_maybe_report(uint64_t now)
                                   g_renderer_profile.workload_totals.sprite_pixels_drawn;
         }
         double avg_writes = (double)writes_total / frames;
+        double avg_world_wall = ((double)g_renderer_profile.workload_totals.ticks_wall * 1000.0) / (freq * frames);
+        double avg_world_floor = ((double)g_renderer_profile.workload_totals.ticks_floor * 1000.0) / (freq * frames);
+        double avg_world_sprite = ((double)g_renderer_profile.workload_totals.ticks_sprite * 1000.0) / (freq * frames);
+        double avg_floor_px = (double)g_renderer_profile.workload_totals.floor_pixels / frames;
+        double avg_floor_fast_px = (double)g_renderer_profile.workload_totals.floor_fast_pixels / frames;
+        double avg_floor_fast_spans = (double)g_renderer_profile.workload_totals.floor_fast_spans / frames;
+        double avg_wall_px = (double)(g_renderer_profile.workload_totals.wall_pixels_core +
+                                      g_renderer_profile.workload_totals.wall_pixels_side_ext +
+                                      g_renderer_profile.workload_totals.wall_pixels_cap_ext) / frames;
+        double avg_wall_side_px = (double)g_renderer_profile.workload_totals.wall_pixels_side_ext / frames;
+        double avg_wall_cap_px = (double)g_renderer_profile.workload_totals.wall_pixels_cap_ext / frames;
+        double avg_wall_cols = (double)g_renderer_profile.workload_totals.wall_columns / frames;
+        double avg_wall_segs = (double)g_renderer_profile.workload_totals.wall_segments / frames;
+        double avg_wall_px_per_col = (g_renderer_profile.workload_totals.wall_columns > 0)
+            ? ((double)(g_renderer_profile.workload_totals.wall_pixels_core +
+                        g_renderer_profile.workload_totals.wall_pixels_side_ext +
+                        g_renderer_profile.workload_totals.wall_pixels_cap_ext) /
+               (double)g_renderer_profile.workload_totals.wall_columns)
+            : 0.0;
+        double avg_wall_cols_per_seg = (g_renderer_profile.workload_totals.wall_segments > 0)
+            ? ((double)g_renderer_profile.workload_totals.wall_columns /
+               (double)g_renderer_profile.workload_totals.wall_segments)
+            : 0.0;
+        double avg_wall_ext_pct = (avg_wall_px > 0.0)
+            ? (100.0 * (avg_wall_side_px + avg_wall_cap_px) / avg_wall_px)
+            : 0.0;
+        double avg_wall_ms_per_mpx = (avg_wall_px > 0.0)
+            ? (avg_world_wall * 1000000.0 / avg_wall_px)
+            : 0.0;
+        double avg_floor_ms_per_mpx = (avg_floor_px > 0.0)
+            ? (avg_world_floor * 1000000.0 / avg_floor_px)
+            : 0.0;
+        double avg_floor_fast_pct = (avg_floor_px > 0.0)
+            ? (100.0 * avg_floor_fast_px / avg_floor_px)
+            : 0.0;
+        double avg_world_ms_per_mwrite = (avg_writes > 0.0)
+            ? (avg_world * 1000000.0 / avg_writes)
+            : 0.0;
         double avg_overdraw = (g_renderer_profile.screen_pixels_total > 0)
             ? ((double)writes_total / (double)g_renderer_profile.screen_pixels_total)
             : 0.0;
         uint64_t worst_writes = renderer_workload_estimated_writes(&g_renderer_profile.worst_workload);
+        double worst_world_wall = ((double)g_renderer_profile.worst_workload.ticks_wall * 1000.0) / freq;
+        double worst_world_floor = ((double)g_renderer_profile.worst_workload.ticks_floor * 1000.0) / freq;
+        double worst_world_sprite = ((double)g_renderer_profile.worst_workload.ticks_sprite * 1000.0) / freq;
+        double worst_floor_px = (double)g_renderer_profile.worst_workload.floor_pixels;
+        double worst_floor_fast_px = (double)g_renderer_profile.worst_workload.floor_fast_pixels;
+        double worst_wall_px = (double)(g_renderer_profile.worst_workload.wall_pixels_core +
+                                        g_renderer_profile.worst_workload.wall_pixels_side_ext +
+                                        g_renderer_profile.worst_workload.wall_pixels_cap_ext);
+        double worst_wall_px_per_col = (g_renderer_profile.worst_workload.wall_columns > 0)
+            ? (worst_wall_px / (double)g_renderer_profile.worst_workload.wall_columns)
+            : 0.0;
+        double worst_wall_cols_per_seg = (g_renderer_profile.worst_workload.wall_segments > 0)
+            ? ((double)g_renderer_profile.worst_workload.wall_columns /
+               (double)g_renderer_profile.worst_workload.wall_segments)
+            : 0.0;
+        double worst_wall_ext_pct = (worst_wall_px > 0.0)
+            ? (100.0 * (double)(g_renderer_profile.worst_workload.wall_pixels_side_ext +
+                                g_renderer_profile.worst_workload.wall_pixels_cap_ext) / worst_wall_px)
+            : 0.0;
+        double worst_wall_ms_per_mpx = (worst_wall_px > 0.0)
+            ? (worst_world_wall * 1000000.0 / worst_wall_px)
+            : 0.0;
+        double worst_floor_ms_per_mpx = (worst_floor_px > 0.0)
+            ? (worst_world_floor * 1000000.0 / worst_floor_px)
+            : 0.0;
+        double worst_floor_fast_pct = (worst_floor_px > 0.0)
+            ? (100.0 * worst_floor_fast_px / worst_floor_px)
+            : 0.0;
+        double worst_world_ms_per_mwrite = (worst_writes > 0)
+            ? (g_renderer_profile.worst_world_ms * 1000000.0 / (double)worst_writes)
+            : 0.0;
         double worst_overdraw = (g_renderer_profile.worst_screen_pixels > 0)
             ? ((double)worst_writes / (double)g_renderer_profile.worst_screen_pixels)
             : 0.0;
@@ -2052,6 +2198,16 @@ static void renderer_profile_maybe_report(uint64_t now)
                (unsigned long long)g_renderer_profile.fill_water_weak_frames,
                g_renderer_profile.slow_threshold_ms,
                (unsigned long long)g_renderer_profile.slow_frames);
+         printf("[RPROF] world(avg): wall=%.3fms(%.0f%%) floor=%.3fms(%.0f%%) sprite=%.3fms(%.0f%%) efficiency=%.3f ms/Mwrite\n",
+             avg_world_wall, (avg_world > 0.0) ? (100.0 * avg_world_wall / avg_world) : 0.0,
+             avg_world_floor, (avg_world > 0.0) ? (100.0 * avg_world_floor / avg_world) : 0.0,
+             avg_world_sprite, (avg_world > 0.0) ? (100.0 * avg_world_sprite / avg_world) : 0.0,
+             avg_world_ms_per_mwrite);
+         printf("[RPROF] wall(avg): segs=%.0f cols=%.0f px/col=%.1f cols/seg=%.1f side_px=%.0f cap_px=%.0f ext=%.1f%% efficiency=%.3f ms/Mwallpx\n",
+             avg_wall_segs, avg_wall_cols, avg_wall_px_per_col, avg_wall_cols_per_seg,
+             avg_wall_side_px, avg_wall_cap_px, avg_wall_ext_pct, avg_wall_ms_per_mpx);
+         printf("[RPROF] floor(avg): px=%.0f fast_px=%.0f fast_spans=%.0f fast=%.0f%% efficiency=%.3f ms/Mfloorpx\n",
+             avg_floor_px, avg_floor_fast_px, avg_floor_fast_spans, avg_floor_fast_pct, avg_floor_ms_per_mpx);
         if (g_renderer_profile.worst_total_ms > 0.0) {
             printf("[RPROF] worst frame=%llu total=%.3fms setup=%.3f world=%.3f tint=%.3f gun=%.3f swap=%.3f prepass=%d/%d clip_px=%d workers(world/tint)=%d/%d writes=%llu overdraw=%.2fx wall_px=%llu floor_px=%llu water_px=%llu sprite_draw=%llu sprite_test=%llu sprite_wall_occ=%llu sprite_spill_occ=%llu water=%s\n",
                    (unsigned long long)g_renderer_profile.worst_frame_idx,
@@ -2078,6 +2234,18 @@ static void renderer_profile_maybe_report(uint64_t now)
                    (unsigned long long)g_renderer_profile.worst_workload.sprite_pixels_wall_occluded,
                    (unsigned long long)g_renderer_profile.worst_workload.sprite_pixels_spill_occluded,
                    worst_water);
+                 printf("[RPROF] worst world breakdown: wall=%.3fms floor=%.3fms sprite=%.3fms efficiency=%.3f ms/Mwrite\n",
+                     worst_world_wall, worst_world_floor, worst_world_sprite, worst_world_ms_per_mwrite);
+                     printf("[RPROF] worst wall breakdown: cols=%llu segs=%llu px/col=%.1f cols/seg=%.1f ext=%.1f%% efficiency=%.3f ms/Mwallpx\n",
+                         (unsigned long long)g_renderer_profile.worst_workload.wall_columns,
+                         (unsigned long long)g_renderer_profile.worst_workload.wall_segments,
+                         worst_wall_px_per_col, worst_wall_cols_per_seg,
+                         worst_wall_ext_pct, worst_wall_ms_per_mpx);
+                    printf("[RPROF] worst floor breakdown: px=%llu fast_px=%llu fast=%.0f%% efficiency=%.3f ms/Mfloorpx\n",
+                        (unsigned long long)g_renderer_profile.worst_workload.floor_pixels,
+                        (unsigned long long)g_renderer_profile.worst_workload.floor_fast_pixels,
+                        worst_floor_fast_pct,
+                        worst_floor_ms_per_mpx);
         }
         fflush(stdout);
     }
@@ -2301,7 +2469,10 @@ static void floor_span_prepare_pal_cache(RenderSliceContext *ctx,
 
     if (ctx->floor_pal_cache_src != pal_lut_src) {
         ctx->floor_pal_cache_src = pal_lut_src;
+        ctx->floor_pal_cache_all_levels_ready = 0u;
         memset(ctx->floor_pal_cache_valid, 0, sizeof(ctx->floor_pal_cache_valid));
+        memset(ctx->floor_pal_cw_levels, 0, sizeof(ctx->floor_pal_cw_levels));
+        memset(ctx->floor_pal_rgb_levels, 0, sizeof(ctx->floor_pal_rgb_levels));
     }
 
     if (!ctx->floor_pal_cache_valid[level]) {
@@ -2312,9 +2483,31 @@ static void floor_span_prepare_pal_cache(RenderSliceContext *ctx,
             ctx->floor_span_rgb_cache[level][ti] = amiga12_to_argb(cw);
         }
         ctx->floor_pal_cache_valid[level] = 1;
+        ctx->floor_pal_cw_levels[level] = ctx->floor_span_cw_cache[level];
+        ctx->floor_pal_rgb_levels[level] = ctx->floor_span_rgb_cache[level];
     }
 
     *cw_out = ctx->floor_span_cw_cache[level];
+}
+
+static void floor_span_prepare_pal_cache_all_levels(RenderSliceContext *ctx,
+                                                    const uint8_t *pal_lut_src)
+{
+    if (!ctx || !pal_lut_src) return;
+    if (ctx->floor_pal_cache_src != pal_lut_src) {
+        ctx->floor_pal_cache_src = pal_lut_src;
+        ctx->floor_pal_cache_all_levels_ready = 0u;
+        memset(ctx->floor_pal_cache_valid, 0, sizeof(ctx->floor_pal_cache_valid));
+        memset(ctx->floor_pal_cw_levels, 0, sizeof(ctx->floor_pal_cw_levels));
+        memset(ctx->floor_pal_rgb_levels, 0, sizeof(ctx->floor_pal_rgb_levels));
+    }
+    if (ctx->floor_pal_cache_all_levels_ready) return;
+
+    for (int level = 0; level < FLOOR_PAL_LEVEL_COUNT; level++) {
+        const uint16_t *cw_level = NULL;
+        floor_span_prepare_pal_cache(ctx, pal_lut_src, level, &cw_level);
+    }
+    ctx->floor_pal_cache_all_levels_ready = 1u;
 }
 
 void renderer_set_water_assets(const uint8_t *water_file, size_t water_file_size,
@@ -2776,7 +2969,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     buf[p] = 0;
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = below_px;
-                    cw[p] = below_cw;
+                    renderer_cw_store_xy(cw, x, y, w, h, below_cw);
                 }
             }
         }
@@ -2842,7 +3035,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     buf[p] = 0;
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = px;
-                    cw[p] = argb_to_amiga12(px);
+                    renderer_cw_store_xy(cw, x, y, w, h, argb_to_amiga12(px));
                 }
             }
         } else
@@ -2875,7 +3068,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     buf[p] = 0;
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = amiga12_to_argb(cw12);
-                    cw[p] = cw12;
+                    renderer_cw_store_xy(cw, x, y, w, h, cw12);
                     sx_fp += sx_step_fp;
                 }
             }
@@ -2913,7 +3106,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     buf[p] = 0;
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = px;
-                    cw[p] = argb_to_amiga12(px);
+                    renderer_cw_store_xy(cw, x, y, w, h, argb_to_amiga12(px));
                 }
             }
         } else
@@ -2942,7 +3135,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     buf[p] = 0;
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = s_sky_argb[idx];
-                    cw[p] = s_sky_cw[idx];
+                    renderer_cw_store_xy(cw, x, y, w, h, s_sky_cw[idx]);
                     sx_fp += sx_step_fp;
                 }
             }
@@ -2969,7 +3162,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                 buf[p] = 0;
                 if (g_renderer_rgb_raster_expand)
                     rgb[p] = px;
-                cw[p] = argb_to_amiga12(px);
+                renderer_cw_store_xy(cw, x, y, w, h, argb_to_amiga12(px));
                 sx_fp += sx_step_fp;
             }
         }
@@ -3491,9 +3684,11 @@ static void draw_wall_rasterize_segment(
 
     const int expand = g_renderer_rgb_raster_expand;
     const int width = g_renderer.width;
-    const size_t wstride = (size_t)width;
-    const int32_t proj_y_scale = g_renderer.proj_y_scale;
     const int height = g_renderer.height;
+    const size_t wstride = (size_t)width;
+    const size_t cw_step_y = renderer_cw_step_y(width);
+    const size_t cw_step_x = renderer_cw_step_x(height);
+    const int32_t proj_y_scale = g_renderer.proj_y_scale;
     const int half_h = height / 2;
 
     if (d6_max < 0) d6_max = 0;
@@ -3504,6 +3699,8 @@ static void draw_wall_rasterize_segment(
     const int effective_bot = (ctx->wall_bot_clip >= 0) ? (int)ctx->wall_bot_clip : (int)ctx->bot_clip;
     const int top_clip_val = (int)ctx->top_clip;
     const int bot_clip_val = (int)ctx->bot_clip;
+    const int update_column_clip = (ctx->update_column_clip != 0);
+    const int pick_capture_active = (g_pick_capture_active != 0);
 
     /* Precompute projection factors: top/bot * proj_y_scale * RENDER_SCALE */
     const int64_t top_proj = (int64_t)top * (int64_t)proj_y_scale * (int64_t)RENDER_SCALE;
@@ -3640,6 +3837,7 @@ static void draw_wall_rasterize_segment(
         }
 
         size_t pix = (size_t)ct * wstride + (size_t)x;
+        size_t pix_cw = renderer_cw_index_xy(x, ct, width, height);
 
         /* ---- Main vertical raster with merged horizontal edge extension ----
          * Textured loops are 4-way specialized on the column-constant
@@ -3655,6 +3853,7 @@ static void draw_wall_rasterize_segment(
             /* Dominant wall path: no RGB expand, no side extension. Keep loop body minimal. */
             if (!expand && !do_ext_l && !do_ext_r && (unsigned)pack_mode < 3u) {
                 size_t pix_hot = pix;
+                size_t pix_hot_cw = pix_cw;
                 size_t pf_hot = pix_hot + (size_t)wstride * WALL_PF_DIST;
                 int32_t tex_y_hot = tex_y;
                 const int hot_count = cb - ct + 1;
@@ -3666,8 +3865,9 @@ static void draw_wall_rasterize_segment(
         uint16_t w_ = ((uint16_t)tex_strip[ra_] << 8) | tex_strip[ra_ + 1]; \
         uint8_t t_ = (uint8_t)((w_ >> (SHIFT_)) & 31u); \
         buf[pix_hot] = 2; \
-        cw[pix_hot] = cache_cw[t_]; \
+        AB3D_NT_STORE_U16(&cw[pix_hot_cw], cache_cw[t_]); \
         pix_hot += wstride; \
+        pix_hot_cw += cw_step_y; \
         pf_hot += wstride; \
         tex_y_hot += tex_step; \
     } while (0)
@@ -3678,7 +3878,6 @@ static void draw_wall_rasterize_segment(
                             int i = 0;
                             for (; i + 3 < hot_count; i += 4) {
                                 AB3D_PREFETCH_WRITE(&buf[pf_hot]);
-                                AB3D_PREFETCH_WRITE(&cw[pf_hot]);
                                 WALL_TEX_HOT_ROW(0);
                                 WALL_TEX_HOT_ROW(0);
                                 WALL_TEX_HOT_ROW(0);
@@ -3698,7 +3897,6 @@ static void draw_wall_rasterize_segment(
                             int i = 0;
                             for (; i + 3 < hot_count; i += 4) {
                                 AB3D_PREFETCH_WRITE(&buf[pf_hot]);
-                                AB3D_PREFETCH_WRITE(&cw[pf_hot]);
                                 WALL_TEX_HOT_ROW(5);
                                 WALL_TEX_HOT_ROW(5);
                                 WALL_TEX_HOT_ROW(5);
@@ -3718,7 +3916,6 @@ static void draw_wall_rasterize_segment(
                             int i = 0;
                             for (; i + 3 < hot_count; i += 4) {
                                 AB3D_PREFETCH_WRITE(&buf[pf_hot]);
-                                AB3D_PREFETCH_WRITE(&cw[pf_hot]);
                                 WALL_TEX_HOT_ROW(10);
                                 WALL_TEX_HOT_ROW(10);
                                 WALL_TEX_HOT_ROW(10);
@@ -3737,21 +3934,21 @@ static void draw_wall_rasterize_segment(
 #undef WALL_TEX_HOT_ROW
 
                 pix = pix_hot;
+                pix_cw = pix_hot_cw;
                 tex_y = tex_y_hot;
             } else if (expand) {
 #define WALL_TEX_E(EL, ER) \
     do { for (int y_ = ct; y_ <= cb; y_++) { \
         AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]); \
-        AB3D_PREFETCH_WRITE(&cw[pix + (size_t)wstride * WALL_PF_DIST]); \
         AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]); \
         int ra_ = ((int)(tex_y >> 16) & valand) << 1; \
         uint16_t w_ = ((uint16_t)tex_strip[ra_] << 8) | tex_strip[ra_ + 1]; \
         uint8_t t_ = (uint8_t)((w_ >> pack_shift) & 31u); \
         uint16_t cv_ = cache_cw[t_]; uint32_t rv_ = cache_rgb[t_]; \
-        buf[pix] = 2; cw[pix] = cv_; rgb[pix] = rv_; \
-        if (EL) { buf[pix - 1] = 2; cw[pix - 1] = cv_; rgb[pix - 1] = rv_; } \
-        if (ER) { buf[pix + 1] = 2; cw[pix + 1] = cv_; rgb[pix + 1] = rv_; } \
-        pix += wstride; tex_y += tex_step; \
+        buf[pix] = 2; AB3D_NT_STORE_U16(&cw[pix_cw], cv_); rgb[pix] = rv_; \
+        if (EL) { buf[pix - 1] = 2; cw[pix_cw - cw_step_x] = cv_; rgb[pix - 1] = rv_; } \
+        if (ER) { buf[pix + 1] = 2; cw[pix_cw + cw_step_x] = cv_; rgb[pix + 1] = rv_; } \
+        pix += wstride; pix_cw += cw_step_y; tex_y += tex_step; \
     } } while (0)
                 if      ( do_ext_l &&  do_ext_r) WALL_TEX_E(1, 1);
                 else if ( do_ext_l             ) WALL_TEX_E(1, 0);
@@ -3762,15 +3959,14 @@ static void draw_wall_rasterize_segment(
 #define WALL_TEX_C(EL, ER) \
     do { for (int y_ = ct; y_ <= cb; y_++) { \
         AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]); \
-        AB3D_PREFETCH_WRITE(&cw[pix + (size_t)wstride * WALL_PF_DIST]); \
         int ra_ = ((int)(tex_y >> 16) & valand) << 1; \
         uint16_t w_ = ((uint16_t)tex_strip[ra_] << 8) | tex_strip[ra_ + 1]; \
         uint8_t t_ = (uint8_t)((w_ >> pack_shift) & 31u); \
         uint16_t cv_ = cache_cw[t_]; \
-        buf[pix] = 2; cw[pix] = cv_; \
-        if (EL) { buf[pix - 1] = 2; cw[pix - 1] = cv_; } \
-        if (ER) { buf[pix + 1] = 2; cw[pix + 1] = cv_; } \
-        pix += wstride; tex_y += tex_step; \
+        buf[pix] = 2; AB3D_NT_STORE_U16(&cw[pix_cw], cv_); \
+        if (EL) { buf[pix - 1] = 2; cw[pix_cw - cw_step_x] = cv_; } \
+        if (ER) { buf[pix + 1] = 2; cw[pix_cw + cw_step_x] = cv_; } \
+        pix += wstride; pix_cw += cw_step_y; tex_y += tex_step; \
     } } while (0)
                 if      ( do_ext_l &&  do_ext_r) WALL_TEX_C(1, 1);
                 else if ( do_ext_l             ) WALL_TEX_C(1, 0);
@@ -3784,42 +3980,42 @@ static void draw_wall_rasterize_segment(
             if (expand) {
                 for (int y = ct; y <= cb; y++) {
                     AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
-                    AB3D_PREFETCH_WRITE(&cw[pix + (size_t)wstride * WALL_PF_DIST]);
                     AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]);
-                    buf[pix] = 2; cw[pix] = cw0; rgb[pix] = rgb0;
-                    if (do_ext_l) { buf[pix - 1] = 2; cw[pix - 1] = cw0; rgb[pix - 1] = rgb0; }
-                    if (do_ext_r) { buf[pix + 1] = 2; cw[pix + 1] = cw0; rgb[pix + 1] = rgb0; }
+                    buf[pix] = 2; AB3D_NT_STORE_U16(&cw[pix_cw], cw0); rgb[pix] = rgb0;
+                    if (do_ext_l) { buf[pix - 1] = 2; cw[pix_cw - cw_step_x] = cw0; rgb[pix - 1] = rgb0; }
+                    if (do_ext_r) { buf[pix + 1] = 2; cw[pix_cw + cw_step_x] = cw0; rgb[pix + 1] = rgb0; }
                     pix += wstride;
+                    pix_cw += cw_step_y;
                 }
             } else {
                 for (int y = ct; y <= cb; y++) {
                     AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
-                    AB3D_PREFETCH_WRITE(&cw[pix + (size_t)wstride * WALL_PF_DIST]);
-                    buf[pix] = 2; cw[pix] = cw0;
-                    if (do_ext_l) { buf[pix - 1] = 2; cw[pix - 1] = cw0; }
-                    if (do_ext_r) { buf[pix + 1] = 2; cw[pix + 1] = cw0; }
+                    buf[pix] = 2; AB3D_NT_STORE_U16(&cw[pix_cw], cw0);
+                    if (do_ext_l) { buf[pix - 1] = 2; cw[pix_cw - cw_step_x] = cw0; }
+                    if (do_ext_r) { buf[pix + 1] = 2; cw[pix_cw + cw_step_x] = cw0; }
                     pix += wstride;
+                    pix_cw += cw_step_y;
                 }
             }
         } else {
             if (expand) {
                 for (int y = ct; y <= cb; y++) {
                     AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
-                    AB3D_PREFETCH_WRITE(&cw[pix + (size_t)wstride * WALL_PF_DIST]);
                     AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]);
-                    buf[pix] = 2; rgb[pix] = fallback_rgb; cw[pix] = fallback_cw;
-                    if (do_ext_l) { buf[pix - 1] = 2; rgb[pix - 1] = fallback_rgb; cw[pix - 1] = fallback_cw; }
-                    if (do_ext_r) { buf[pix + 1] = 2; rgb[pix + 1] = fallback_rgb; cw[pix + 1] = fallback_cw; }
+                    buf[pix] = 2; rgb[pix] = fallback_rgb; AB3D_NT_STORE_U16(&cw[pix_cw], fallback_cw);
+                    if (do_ext_l) { buf[pix - 1] = 2; rgb[pix - 1] = fallback_rgb; cw[pix_cw - cw_step_x] = fallback_cw; }
+                    if (do_ext_r) { buf[pix + 1] = 2; rgb[pix + 1] = fallback_rgb; cw[pix_cw + cw_step_x] = fallback_cw; }
                     pix += wstride;
+                    pix_cw += cw_step_y;
                 }
             } else {
                 for (int y = ct; y <= cb; y++) {
                     AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
-                    AB3D_PREFETCH_WRITE(&cw[pix + (size_t)wstride * WALL_PF_DIST]);
-                    buf[pix] = 2; cw[pix] = fallback_cw;
-                    if (do_ext_l) { buf[pix - 1] = 2; cw[pix - 1] = fallback_cw; }
-                    if (do_ext_r) { buf[pix + 1] = 2; cw[pix + 1] = fallback_cw; }
+                    buf[pix] = 2; AB3D_NT_STORE_U16(&cw[pix_cw], fallback_cw);
+                    if (do_ext_l) { buf[pix - 1] = 2; cw[pix_cw - cw_step_x] = fallback_cw; }
+                    if (do_ext_r) { buf[pix + 1] = 2; cw[pix_cw + cw_step_x] = fallback_cw; }
                     pix += wstride;
+                    pix_cw += cw_step_y;
                 }
             }
         }
@@ -3829,23 +4025,27 @@ static void draw_wall_rasterize_segment(
         {
             size_t first_pix = (size_t)ct * wstride + (size_t)x;
             size_t last_pix  = (size_t)cb * wstride + (size_t)x;
+            size_t first_pix_cw = renderer_cw_index_xy(x, ct, width, height);
+            size_t last_pix_cw  = renderer_cw_index_xy(x, cb, width, height);
             if (ct > top_clip_val) {
                 size_t up = first_pix - wstride;
                 buf[up] = 2;
-                cw[up] = cw[first_pix];
+                cw[first_pix_cw - cw_step_y] = cw[first_pix_cw];
                 if (expand) rgb[up] = rgb[first_pix];
             }
             if (cb + 1 <= bot_clip_val) {
                 size_t dn = last_pix + wstride;
                 buf[dn] = 2;
-                cw[dn] = cw[last_pix];
+                cw[last_pix_cw + cw_step_y] = cw[last_pix_cw];
                 if (expand) rgb[dn] = rgb[last_pix];
             }
         }
-        renderer_pick_mark_wall_column(ctx, x, ct, cb,
-                                       do_ext_l, do_ext_r,
-                                       (ct > top_clip_val),
-                                       (cb + 1 <= bot_clip_val));
+        if (pick_capture_active) {
+            renderer_pick_mark_wall_column(ctx, x, ct, cb,
+                                           do_ext_l, do_ext_r,
+                                           (ct > top_clip_val),
+                                           (cb + 1 <= bot_clip_val));
+        }
 
         /* Column clip update.
          * Register real wall geometry at x unconditionally.
@@ -3853,7 +4053,7 @@ static void draw_wall_rasterize_segment(
          * For extension pixels at x+/-1, add clip spans only when neighboring
          * columns already contain overlapping wall spans. This preserves seam
          * occlusion while avoiding phantom occluders at stepped boundaries. */
-        if (ctx->update_column_clip) {
+        if (update_column_clip) {
             int occ_top = ct, occ_bot = cb;
             if (ct > top_clip_val) occ_top = ct - 1;
             if (cb + 1 <= bot_clip_val) occ_bot = cb + 1;
@@ -3978,8 +4178,11 @@ static void renderer_draw_wall_ctx(RenderSliceContext *ctx,
     int64_t tex_over_z_delta_fp = tex_over_z2_fp - tex_over_z1_fp;
     int32_t bright_delta = (int32_t)right_brightness - (int32_t)left_brightness;
 
-    if (ctx && ctx->profile_collect_stats) {
+    int profile_collect_stats = (ctx && ctx->profile_collect_stats);
+    uint64_t wall_t0 = 0;
+    if (profile_collect_stats) {
         ctx->workload_stats.wall_segments++;
+        wall_t0 = SDL_GetPerformanceCounter();
     }
 
     draw_wall_rasterize_segment(ctx,
@@ -3990,6 +4193,9 @@ static void renderer_draw_wall_ctx(RenderSliceContext *ctx,
                                 top, bot, texture,
                                 valand, valshift, horand, totalyoff, fromtile,
                                 tex_id, wall_height_for_tex, d6_max);
+    if (profile_collect_stats) {
+        ctx->workload_stats.ticks_wall += SDL_GetPerformanceCounter() - wall_t0;
+    }
 }
 
 void renderer_draw_wall(int32_t x1, int32_t z1, int32_t x2, int32_t z2,
@@ -4045,7 +4251,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
             buf[p] = 0;
             if (g_renderer_rgb_raster_expand)
                 rgb[p] = sky_px;
-            cwbuf[p] = sky_cw;
+            renderer_cw_store_xy(cwbuf, x, y, w, rs->height, sky_cw);
         }
     }
 #else
@@ -4106,7 +4312,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                     buf[p] = 0;
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = amiga12_to_argb(cw12);
-                    cwbuf[p] = cw12;
+                    renderer_cw_store_xy(cwbuf, x, y, w, h, cw12);
                     sx_fp += sx_step_fp;
                 }
             } else {
@@ -4123,7 +4329,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                     buf[p] = 0;
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = amiga12_to_argb(cw12);
-                    cwbuf[p] = cw12;
+                    renderer_cw_store_xy(cwbuf, x, y, w, h, cw12);
                     sx_fp += sx_step_fp;
                 }
             }
@@ -4153,7 +4359,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                 buf[p] = 0;
                 if (g_renderer_rgb_raster_expand)
                     rgb[p] = s_sky_argb[idx];
-                cwbuf[p] = s_sky_cw[idx];
+                renderer_cw_store_xy(cwbuf, x, y, w, h, s_sky_cw[idx]);
                 sx_fp += sx_step_fp;
             }
         } else {
@@ -4173,7 +4379,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                 buf[p] = 0;
                 if (g_renderer_rgb_raster_expand)
                     rgb[p] = px;
-                cwbuf[p] = argb_to_amiga12(px);
+                renderer_cw_store_xy(cwbuf, x, y, w, h, argb_to_amiga12(px));
                 sx_fp += sx_step_fp;
             }
         }
@@ -4418,8 +4624,36 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     uint8_t *row8 = buf + (size_t)y * w + (size_t)xl;
     uint32_t *row32 = rgb + (size_t)y * w + (size_t)xl;
     uint16_t *row16 = cwbuf + (size_t)y * w + (size_t)xl;
+    const int cw_col_major = AB3D_CW_COL_MAJOR;
+    const int floor_cw_nt = (cw_col_major && !is_water);
+    const size_t cw_step_x = renderer_cw_step_x(rs->height);
+    size_t row16_idx = renderer_cw_index_xy(xl, y, w, rs->height);
+#define FLOOR_CW_STORE_ROW(V_) \
+    do { \
+        if (!cw_col_major) { \
+            *row16++ = (V_); \
+        } else { \
+            if (floor_cw_nt) AB3D_NT_STORE_U16(&cwbuf[row16_idx], (V_)); \
+            else cwbuf[row16_idx] = (V_); \
+            row16_idx += cw_step_x; \
+            row16++; \
+        } \
+    } while (0)
+#define FLOOR_CW_STORE_P16(V_) \
+    do { \
+        if (!cw_col_major) { \
+            *p16++ = (V_); \
+        } else { \
+            if (floor_cw_nt) AB3D_NT_STORE_U16(&cwbuf[p16_idx], (V_)); \
+            else cwbuf[p16_idx] = (V_); \
+            p16_idx += cw_step_x; \
+            p16++; \
+        } \
+    } while (0)
     size_t water_refr_base0 = 0;
     size_t water_refr_base1 = 0;
+    size_t water_refr_cw_base0 = 0;
+    size_t water_refr_cw_base1 = 0;
     int water_refr_frac = 0;
     int water_has_next_refr = 0;
     const int water_has_back_buffers = (rs->rgb_back_buffer && rs->cw_back_buffer);
@@ -4435,6 +4669,8 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         water_has_next_refr = (water_refr_frac > 0 && refr_y_next != refr_y);
         water_refr_base0 = (size_t)refr_y * (size_t)rs->width;
         water_refr_base1 = (size_t)refr_y_next * (size_t)rs->width;
+        water_refr_cw_base0 = renderer_cw_index_xy(xl, refr_y, rs->width, rs->height);
+        water_refr_cw_base1 = renderer_cw_index_xy(xl, refr_y_next, rs->width, rs->height);
     }
 
     /* Fast non-water textured path: no per-pixel branching. */
@@ -4443,12 +4679,13 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             uint8_t *p8 = row8;
             uint32_t *p32 = row32;
             uint16_t *p16 = row16;
+            size_t p16_idx = row16_idx;
             const uint32_t *span_rgb = ctx->floor_span_rgb_cache[floor_pal_level];
             uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
             uint32_t v_pf = v_fp + (uint32_t)v_step * 8u;
             int i = 0;
 #if AB3D_HAVE_SSE2
-            for (; i <= span_len - 4; i += 4) {
+            if (!cw_col_major) for (; i <= span_len - 4; i += 4) {
                 if (i + 8 < span_len) {
                     AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
                 }
@@ -4485,6 +4722,41 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 p16 += 4;
             }
 #endif
+            if (cw_col_major) {
+                for (; i <= span_len - 4; i += 4) {
+                    if (i + 8 < span_len) {
+                        AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
+                    }
+                    uint8_t t0 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step;
+                    v_fp += (uint32_t)v_step;
+                    uint8_t t1 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step;
+                    v_fp += (uint32_t)v_step;
+                    uint8_t t2 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step;
+                    v_fp += (uint32_t)v_step;
+                    uint8_t t3 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step;
+                    v_fp += (uint32_t)v_step;
+                    u_pf += (uint32_t)u_step * 4u;
+                    v_pf += (uint32_t)v_step * 4u;
+
+                    *(uint32_t *)(void *)p8 = 0x01010101u;
+                    p8 += 4;
+                    p32[0] = span_rgb[t0];
+                    p32[1] = span_rgb[t1];
+                    p32[2] = span_rgb[t2];
+                    p32[3] = span_rgb[t3];
+                    p32 += 4;
+
+                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t0]); p16_idx += cw_step_x;
+                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t1]); p16_idx += cw_step_x;
+                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t2]); p16_idx += cw_step_x;
+                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t3]); p16_idx += cw_step_x;
+                    p16 += 4;
+                }
+            }
             for (; i < span_len; i++) {
                 if (i + 8 < span_len) {
                     AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
@@ -4497,16 +4769,17 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
 
                 *p8++ = 1;
                 *p32++ = span_rgb[texel];
-                *p16++ = span_cw[texel];
+                FLOOR_CW_STORE_P16(span_cw[texel]);
             }
         } else {
             uint8_t *p8 = row8;
             uint16_t *p16 = row16;
+            size_t p16_idx = row16_idx;
             uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
             uint32_t v_pf = v_fp + (uint32_t)v_step * 8u;
             int i = 0;
 #if AB3D_HAVE_SSE2
-            for (; i <= span_len - 4; i += 4) {
+            if (!cw_col_major) for (; i <= span_len - 4; i += 4) {
                 if (i + 8 < span_len) {
                     AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
                 }
@@ -4537,6 +4810,35 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 p16 += 4;
             }
 #endif
+            if (cw_col_major) {
+                for (; i <= span_len - 4; i += 4) {
+                    if (i + 8 < span_len) {
+                        AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
+                    }
+                    uint8_t t0 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step;
+                    v_fp += (uint32_t)v_step;
+                    uint8_t t1 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step;
+                    v_fp += (uint32_t)v_step;
+                    uint8_t t2 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step;
+                    v_fp += (uint32_t)v_step;
+                    uint8_t t3 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step;
+                    v_fp += (uint32_t)v_step;
+                    u_pf += (uint32_t)u_step * 4u;
+                    v_pf += (uint32_t)v_step * 4u;
+
+                    *(uint32_t *)(void *)p8 = 0x01010101u;
+                    p8 += 4;
+                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t0]); p16_idx += cw_step_x;
+                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t1]); p16_idx += cw_step_x;
+                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t2]); p16_idx += cw_step_x;
+                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t3]); p16_idx += cw_step_x;
+                    p16 += 4;
+                }
+            }
             for (; i < span_len; i++) {
                 if (i + 8 < span_len) {
                     AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
@@ -4548,7 +4850,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 v_pf += (uint32_t)v_step;
 
                 *p8++ = 1;
-                *p16++ = span_cw[texel];
+                FLOOR_CW_STORE_P16(span_cw[texel]);
             }
         }
         return;
@@ -4558,14 +4860,17 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         uint8_t *p8 = row8;
         uint32_t *p32 = row32;
         uint16_t *p16 = row16;
+        size_t p16_idx = row16_idx;
         size_t bg_i0 = water_refr_base0 + (size_t)xl;
         size_t bg_i1 = water_refr_base1 + (size_t)xl;
+        size_t bg_cw_i0 = water_refr_cw_base0;
+        size_t bg_cw_i1 = water_refr_cw_base1;
         const int water_has_file = (g_water_file && g_water_file_size >= 65536u);
         const int water_has_brighten = (g_water_brighten && g_water_brighten_size >= 512u);
         uint32_t dist_off = (((uint32_t)dist) & 0xFF00u) << 1;
         if (dist_off > (uint32_t)(12 * 512)) dist_off = (uint32_t)(12 * 512);
 
-        for (int i = 0; i < span_len; i++, bg_i0++, bg_i1++) {
+        for (int i = 0; i < span_len; i++, bg_i0++, bg_i1++, bg_cw_i0 += cw_step_x, bg_cw_i1 += cw_step_x) {
             uint8_t u8 = (uint8_t)((u_fp >> 16) & 0xFFu);
             uint8_t v8 = (uint8_t)((v_fp >> 16) & 0xFFu);
             u_fp += (uint32_t)u_step;
@@ -4587,7 +4892,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 water_level = (uint8_t)(texture[tex_idx] >> 4);
             }
 
-            uint16_t bg_cw0 = cwbuf[bg_i0];
+            uint16_t bg_cw0 = cwbuf[bg_cw_i0];
             uint32_t bg0 = 0;
             if (expand)
                 bg0 = rgb[bg_i0];
@@ -4597,7 +4902,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                  * contain prior-frame values; mirror that by sampling back-buffer content.
                  * Also avoid water-over-water feedback between adjacent zones in this port's
                  * per-zone streaming path by treating existing water-tagged pixels the same way. */
-                bg_cw0 = rs->cw_back_buffer[bg_i0];
+                bg_cw0 = rs->cw_back_buffer[bg_cw_i0];
                 if (expand)
                     bg0 = rs->rgb_back_buffer[bg_i0];
             }
@@ -4607,11 +4912,11 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             uint16_t bg_cw1 = bg_cw0;
             uint8_t bg_sample1 = bg_sample0;
             if (water_has_next_refr) {
-                bg_cw1 = cwbuf[bg_i1];
+                bg_cw1 = cwbuf[bg_cw_i1];
                 if (expand)
                     bg1 = rgb[bg_i1];
                 if ((buf[bg_i1] == 0 || buf[bg_i1] == 4) && water_has_back_buffers) {
-                    bg_cw1 = rs->cw_back_buffer[bg_i1];
+                    bg_cw1 = rs->cw_back_buffer[bg_cw_i1];
                     if (expand)
                         bg1 = rs->rgb_back_buffer[bg_i1];
                 }
@@ -4707,7 +5012,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 *p32++ = out;
             else
                 p32++;
-            *p16++ = out_cw;
+            FLOOR_CW_STORE_P16(out_cw);
         }
         return;
     }
@@ -4719,6 +5024,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     int32_t gour_bright_step = 0;
     const int dist_add = (dist >> 7);
     if (use_gour) {
+        const int need_gour_bright = (g_debug_floor_gouraud_only || !(texture && pal_lut_src));
         /* Use the full original polygon span (x_left..x_right) for the gradient, then
          * advance to the clipped draw start xl.  Using the clipped width (xr-xl) here
          * was the column-strip shading artifact: strips with a clipped left edge would
@@ -4733,11 +5039,13 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         if (left_level > 14) left_level = 14;
         if (right_level > 14) right_level = 14;
         gour_level_step  = (full_span_w > 0) ? (int32_t)(((int64_t)(right_level      - left_level)      << 16) / full_span_w) : 0;
-        gour_bright_step = (full_span_w > 0) ? (int32_t)(((int64_t)(right_brightness - left_brightness) << 16) / full_span_w) : 0;
         /* Advance from the polygon's left edge to the clipped draw start. */
         int clip_advance = xl - (int)x_left;
         gour_level_fp  = ((int32_t)left_level      << 16) + (int32_t)((int64_t)gour_level_step  * clip_advance);
-        gour_bright_fp = ((int32_t)left_brightness << 16) + (int32_t)((int64_t)gour_bright_step * clip_advance);
+        if (need_gour_bright) {
+            gour_bright_step = (full_span_w > 0) ? (int32_t)(((int64_t)(right_brightness - left_brightness) << 16) / full_span_w) : 0;
+            gour_bright_fp = ((int32_t)left_brightness << 16) + (int32_t)((int64_t)gour_bright_step * clip_advance);
+        }
     }
 
     if (g_debug_floor_gouraud_only && !is_water) {
@@ -4756,7 +5064,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)g << 16) | ((uint32_t)g << 8) | (uint32_t)g);
             *row8++ = 1;
             RASTER_PUT_PP(&row32, argb);
-            *row16++ = argb_to_amiga12(argb);
+            FLOOR_CW_STORE_ROW(argb_to_amiga12(argb));
         }
         return;
     }
@@ -4765,30 +5073,120 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         uint8_t *p8 = row8;
         uint32_t *p32 = row32;
         uint16_t *p16 = row16;
+        size_t p16_idx = row16_idx;
 
         if (use_gour) {
-            const uint16_t *gour_cw_levels[FLOOR_PAL_LEVEL_COUNT];
-            for (int level = 0; level < FLOOR_PAL_LEVEL_COUNT; level++) {
-                floor_span_prepare_pal_cache(ctx, pal_lut_src, level, &gour_cw_levels[level]);
-            }
+            floor_span_prepare_pal_cache_all_levels(ctx, pal_lut_src);
+            const uint16_t *const *gour_cw_levels = ctx->floor_pal_cw_levels;
+            const uint32_t *const *gour_rgb_levels = ctx->floor_pal_rgb_levels;
+            uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
+            uint32_t v_pf = v_fp + (uint32_t)v_step * 8u;
 
-            for (int i = 0; i < span_len; i++) {
-                int gour_level = (int)(gour_level_fp >> 16);
-                gour_level_fp += gour_level_step;
-                if (gour_level < 0) gour_level = 0;
-                if (gour_level > 14) gour_level = 14;
+            if (expand) {
+                int i = 0;
+                for (; i <= span_len - 4; i += 4) {
+                    if (i + 8 < span_len) {
+                        AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
+                    }
 
-                uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
-                u_fp += (uint32_t)u_step;
-                v_fp += (uint32_t)v_step;
+                    int g0 = (int)(gour_level_fp >> 16); gour_level_fp += gour_level_step;
+                    int g1 = (int)(gour_level_fp >> 16); gour_level_fp += gour_level_step;
+                    int g2 = (int)(gour_level_fp >> 16); gour_level_fp += gour_level_step;
+                    int g3 = (int)(gour_level_fp >> 16); gour_level_fp += gour_level_step;
+                    if (g0 < 0) g0 = 0; if (g0 >= FLOOR_PAL_LEVEL_COUNT) g0 = FLOOR_PAL_LEVEL_COUNT - 1;
+                    if (g1 < 0) g1 = 0; if (g1 >= FLOOR_PAL_LEVEL_COUNT) g1 = FLOOR_PAL_LEVEL_COUNT - 1;
+                    if (g2 < 0) g2 = 0; if (g2 >= FLOOR_PAL_LEVEL_COUNT) g2 = FLOOR_PAL_LEVEL_COUNT - 1;
+                    if (g3 < 0) g3 = 0; if (g3 >= FLOOR_PAL_LEVEL_COUNT) g3 = FLOOR_PAL_LEVEL_COUNT - 1;
 
-                uint16_t out_cw = gour_cw_levels[gour_level][texel];
-                *p8++ = 1;
-                if (expand)
-                    *p32++ = amiga12_to_argb(out_cw);
-                else
-                    p32++;
-                *p16++ = out_cw;
+                    uint8_t t0 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                    uint8_t t1 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                    uint8_t t2 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                    uint8_t t3 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                    u_pf += (uint32_t)u_step * 4u;
+                    v_pf += (uint32_t)v_step * 4u;
+
+                    *p8++ = 1; *p32++ = gour_rgb_levels[g0][t0]; FLOOR_CW_STORE_P16(gour_cw_levels[g0][t0]);
+                    *p8++ = 1; *p32++ = gour_rgb_levels[g1][t1]; FLOOR_CW_STORE_P16(gour_cw_levels[g1][t1]);
+                    *p8++ = 1; *p32++ = gour_rgb_levels[g2][t2]; FLOOR_CW_STORE_P16(gour_cw_levels[g2][t2]);
+                    *p8++ = 1; *p32++ = gour_rgb_levels[g3][t3]; FLOOR_CW_STORE_P16(gour_cw_levels[g3][t3]);
+                }
+
+                for (; i < span_len; i++) {
+                    if (i + 8 < span_len) {
+                        AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
+                    }
+
+                    int gour_level = (int)(gour_level_fp >> 16);
+                    gour_level_fp += gour_level_step;
+                    if (gour_level < 0) gour_level = 0;
+                    if (gour_level >= FLOOR_PAL_LEVEL_COUNT) gour_level = FLOOR_PAL_LEVEL_COUNT - 1;
+
+                    uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step;
+                    v_fp += (uint32_t)v_step;
+                    u_pf += (uint32_t)u_step;
+                    v_pf += (uint32_t)v_step;
+
+                    *p8++ = 1;
+                    *p32++ = gour_rgb_levels[gour_level][texel];
+                    FLOOR_CW_STORE_P16(gour_cw_levels[gour_level][texel]);
+                }
+            } else {
+                int i = 0;
+                for (; i <= span_len - 4; i += 4) {
+                    if (i + 8 < span_len) {
+                        AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
+                    }
+
+                    int g0 = (int)(gour_level_fp >> 16); gour_level_fp += gour_level_step;
+                    int g1 = (int)(gour_level_fp >> 16); gour_level_fp += gour_level_step;
+                    int g2 = (int)(gour_level_fp >> 16); gour_level_fp += gour_level_step;
+                    int g3 = (int)(gour_level_fp >> 16); gour_level_fp += gour_level_step;
+                    if (g0 < 0) g0 = 0; if (g0 >= FLOOR_PAL_LEVEL_COUNT) g0 = FLOOR_PAL_LEVEL_COUNT - 1;
+                    if (g1 < 0) g1 = 0; if (g1 >= FLOOR_PAL_LEVEL_COUNT) g1 = FLOOR_PAL_LEVEL_COUNT - 1;
+                    if (g2 < 0) g2 = 0; if (g2 >= FLOOR_PAL_LEVEL_COUNT) g2 = FLOOR_PAL_LEVEL_COUNT - 1;
+                    if (g3 < 0) g3 = 0; if (g3 >= FLOOR_PAL_LEVEL_COUNT) g3 = FLOOR_PAL_LEVEL_COUNT - 1;
+
+                    uint8_t t0 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                    uint8_t t1 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                    uint8_t t2 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                    uint8_t t3 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                    u_pf += (uint32_t)u_step * 4u;
+                    v_pf += (uint32_t)v_step * 4u;
+
+                    *p8++ = 1; FLOOR_CW_STORE_P16(gour_cw_levels[g0][t0]);
+                    *p8++ = 1; FLOOR_CW_STORE_P16(gour_cw_levels[g1][t1]);
+                    *p8++ = 1; FLOOR_CW_STORE_P16(gour_cw_levels[g2][t2]);
+                    *p8++ = 1; FLOOR_CW_STORE_P16(gour_cw_levels[g3][t3]);
+                }
+
+                for (; i < span_len; i++) {
+                    if (i + 8 < span_len) {
+                        AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
+                    }
+
+                    int gour_level = (int)(gour_level_fp >> 16);
+                    gour_level_fp += gour_level_step;
+                    if (gour_level < 0) gour_level = 0;
+                    if (gour_level >= FLOOR_PAL_LEVEL_COUNT) gour_level = FLOOR_PAL_LEVEL_COUNT - 1;
+
+                    uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step;
+                    v_fp += (uint32_t)v_step;
+                    u_pf += (uint32_t)u_step;
+                    v_pf += (uint32_t)v_step;
+
+                    *p8++ = 1;
+                    FLOOR_CW_STORE_P16(gour_cw_levels[gour_level][texel]);
+                }
             }
             return;
         }
@@ -4811,7 +5209,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
 
                     *p8++ = 1;
                     *p32++ = amiga12_to_argb(out_cw);
-                    *p16++ = out_cw;
+                    FLOOR_CW_STORE_P16(out_cw);
                 }
             } else {
                 uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
@@ -4828,7 +5226,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     uint16_t out_cw = (uint16_t)((lut[texel * 2] << 8) | lut[texel * 2 + 1]);
 
                     *p8++ = 1;
-                    *p16++ = out_cw;
+                    FLOOR_CW_STORE_P16(out_cw);
                 }
             }
             return;
@@ -4839,6 +5237,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         uint8_t *p8 = row8;
         uint32_t *p32 = row32;
         uint16_t *p16 = row16;
+        size_t p16_idx = row16_idx;
 
         if (use_gour) {
             for (int i = 0; i < span_len; i++) {
@@ -4857,7 +5256,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)lit << 16) | ((uint32_t)lit << 8) | (uint32_t)lit);
                 *p8++ = 1;
                 RASTER_PUT_PP(&p32, argb);
-                *p16++ = argb_to_amiga12(argb);
+                FLOOR_CW_STORE_P16(argb_to_amiga12(argb));
             }
             return;
         }
@@ -4870,7 +5269,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)lit << 16) | ((uint32_t)lit << 8) | (uint32_t)lit);
             *row8++ = 1;
             RASTER_PUT_PP(&row32, argb);
-            *row16++ = argb_to_amiga12(argb);
+            FLOOR_CW_STORE_ROW(argb_to_amiga12(argb));
         }
         return;
     }
@@ -4886,7 +5285,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)g << 16) | ((uint32_t)g << 8) | (uint32_t)g);
             *row8++ = 1;
             RASTER_PUT_PP(&row32, argb);
-            *row16++ = argb_to_amiga12(argb);
+            FLOOR_CW_STORE_ROW(argb_to_amiga12(argb));
         }
     } else {
         uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray);
@@ -4894,9 +5293,12 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         for (int i = 0; i < span_len; i++) {
             *row8++ = 1;
             RASTER_PUT_PP(&row32, argb);
-            *row16++ = out_cw;
+            FLOOR_CW_STORE_ROW(out_cw);
         }
     }
+
+#undef FLOOR_CW_STORE_ROW
+#undef FLOOR_CW_STORE_P16
 }
 
 void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
@@ -4912,6 +5314,268 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     renderer_draw_floor_span_ctx(&ctx, y, x_left, x_right, floor_height, texture, floor_pal,
                                  brightness, left_brightness, right_brightness, use_gouraud,
                                  scaleval, is_water, water_rows_left);
+}
+
+typedef struct {
+    int16_t le;
+    int16_t re;
+    int32_t u_step;
+    int32_t v_step;
+    uint32_t u_base;
+    uint32_t v_base;
+    int32_t bright_base_fp;
+    int32_t bright_step_fp;
+    int16_t bright_term;
+    const uint16_t *span_cw;
+    uint8_t use_gour;
+    uint8_t valid;
+} FloorRowFast;
+
+static int renderer_draw_floor_columns_ctx_fast(RenderSliceContext *ctx,
+                                                const int16_t *left_edge,
+                                                const int16_t *right_edge_tab,
+                                                const int16_t *left_bright_tab,
+                                                const int16_t *right_bright_tab,
+                                                int poly_top, int poly_bot,
+                                                int32_t floor_height,
+                                                const uint8_t *texture,
+                                                const uint8_t *floor_pal,
+                                                int16_t brightness,
+                                                int16_t use_gour_floor,
+                                                int16_t scaleval)
+{
+#if !AB3D_CW_COL_MAJOR
+    (void)ctx; (void)left_edge; (void)right_edge_tab; (void)poly_top; (void)poly_bot;
+    (void)left_bright_tab; (void)right_bright_tab;
+    (void)floor_height; (void)texture; (void)floor_pal; (void)brightness;
+    (void)use_gour_floor; (void)scaleval;
+    return 0;
+#else
+    RendererState *rs = &g_renderer;
+    uint8_t *buf = renderer_active_buf();
+    uint32_t *rgb = renderer_active_rgb();
+    uint16_t *cwbuf = renderer_active_cw();
+    if (!ctx || !left_edge || !right_edge_tab || !texture || !floor_pal) return 0;
+    if (!buf || !rgb || !cwbuf) return 0;
+
+    const int w = rs->width;
+    const int h = rs->height;
+    if (w < 1 || h < 1) return 0;
+
+    int y0 = poly_top;
+    int y1 = poly_bot;
+    if (y0 < ctx->top_clip) y0 = ctx->top_clip;
+    if (y1 > ctx->bot_clip) y1 = ctx->bot_clip;
+    if (y0 < 0) y0 = 0;
+    if (y1 >= h) y1 = h - 1;
+    if (y0 > y1) return 0;
+
+    FloorRowFast *rows = (FloorRowFast *)malloc((size_t)h * sizeof(FloorRowFast));
+    if (!rows) return 0;
+    for (int i = 0; i < h; i++) {
+        rows[i].valid = 0;
+        rows[i].le = 1;
+        rows[i].re = 0;
+        rows[i].span_cw = NULL;
+    }
+
+    const int expand = g_renderer_rgb_raster_expand;
+    const int center = h / 2;
+    const int32_t proj_y_scale = g_renderer.proj_y_scale;
+    int32_t fh_8 = floor_height >> (WORLD_Y_FRAC_BITS - 1);
+    int32_t cos_v = ((int32_t)rs->cosval) << 1;
+    int32_t sin_v = ((int32_t)rs->sinval) << 1;
+    int base_w = renderer_clamp_base_width(g_proj_base_width);
+    int center_x = (rs->width * 47) / 96;
+    int32_t cam_scale = FLOOR_CAM_UV_SCALE;
+    if (scaleval != 0) {
+        int s = (int)scaleval;
+        if (s > 0) {
+            if (s > 15) s = 15;
+            {
+                int64_t t = (int64_t)cam_scale << s;
+                if (t > INT32_MAX) t = INT32_MAX;
+                cam_scale = (int32_t)t;
+            }
+        } else {
+            s = -s;
+            if (s > 15) s = 15;
+            cam_scale >>= s;
+            if (cam_scale < 1) cam_scale = 1;
+        }
+    }
+
+    int x_min = w;
+    int x_max = -1;
+    uint64_t span_count = 0;
+    uint64_t px_count = 0;
+    int any_gour = 0;
+    const uint16_t *gour_cw_levels[FLOOR_PAL_LEVEL_COUNT];
+    for (int i = 0; i < FLOOR_PAL_LEVEL_COUNT; i++) gour_cw_levels[i] = NULL;
+
+    for (int y = y0; y <= y1; y++) {
+        int16_t le = left_edge[y];
+        int16_t re = right_edge_tab[y];
+        if (le >= w || re < 0) continue;
+        if (le < ctx->left_clip) le = ctx->left_clip;
+        if (re >= ctx->right_clip) re = (int16_t)(ctx->right_clip - 1);
+        if (le > re) continue;
+
+        int row_dist = y - center;
+        if (row_dist == 0) row_dist = (y < center) ? -1 : 1;
+        int abs_row_dist = (row_dist < 0) ? -row_dist : row_dist;
+        int32_t dist;
+        if (abs_row_dist <= 3) {
+            dist = rs->floor_uv_dist_near;
+        } else {
+            dist = (int32_t)((int64_t)fh_8 * proj_y_scale * RENDER_SCALE / row_dist);
+            if (dist < 0) dist = -dist;
+            if (dist < 16) dist = 16;
+            if (dist > rs->floor_uv_dist_max) dist = rs->floor_uv_dist_max;
+        }
+
+        int32_t d1 = (int32_t)(((int64_t)dist * cos_v));
+        int32_t d2 = (int32_t)(-((int64_t)dist * sin_v));
+        if (scaleval != 0) {
+            int s = (int)scaleval;
+            if (s > 0) {
+                if (s > 15) s = 15;
+                {
+                    int64_t t1 = (int64_t)d1 << s;
+                    int64_t t2 = (int64_t)d2 << s;
+                    if (t1 > INT32_MAX) t1 = INT32_MAX;
+                    if (t1 < INT32_MIN) t1 = INT32_MIN;
+                    if (t2 > INT32_MAX) t2 = INT32_MAX;
+                    if (t2 < INT32_MIN) t2 = INT32_MIN;
+                    d1 = (int32_t)t1;
+                    d2 = (int32_t)t2;
+                }
+            } else {
+                s = -s;
+                if (s > 15) s = 15;
+                d1 >>= s;
+                d2 >>= s;
+            }
+        }
+
+        int32_t u_step;
+        int32_t v_step;
+        if (w == base_w) {
+            u_step = (int32_t)(d1 >> FLOOR_STEP_SHIFT);
+            v_step = (int32_t)(d2 >> FLOOR_STEP_SHIFT);
+        } else {
+            int64_t den = ((int64_t)w << FLOOR_STEP_SHIFT);
+            int64_t num_u = (int64_t)d1 * (int64_t)base_w;
+            int64_t num_v = (int64_t)d2 * (int64_t)base_w;
+            if (num_u >= 0) u_step = (int32_t)((num_u + den / 2) / den);
+            else            u_step = (int32_t)((num_u - den / 2) / den);
+            if (num_v >= 0) v_step = (int32_t)((num_v + den / 2) / den);
+            else            v_step = (int32_t)((num_v - den / 2) / den);
+        }
+
+        int64_t start_u64 = -(int64_t)d2 - (int64_t)center_x * u_step;
+        int64_t start_v64 = (int64_t)d1 - (int64_t)center_x * v_step;
+        start_u64 += (int64_t)rs->xoff * cam_scale;
+        start_v64 += (int64_t)rs->zoff * cam_scale;
+
+        int bright_idx = brightness + 5 + (dist >> 8);
+        if (bright_idx < 0) bright_idx = 0;
+        if (bright_idx > 28) bright_idx = 28;
+        int bright_term = 5 + (dist >> 8);
+        int floor_pal_level = floor_bright_level_table[bright_idx];
+        const uint16_t *span_cw = NULL;
+
+        if (!use_gour_floor) {
+            floor_span_prepare_pal_cache(ctx, floor_pal, floor_pal_level, &span_cw);
+        }
+
+        rows[y].le = le;
+        rows[y].re = re;
+        rows[y].u_step = u_step;
+        rows[y].v_step = v_step;
+        rows[y].u_base = (uint32_t)(int32_t)start_u64;
+        rows[y].v_base = (uint32_t)(int32_t)start_v64;
+        rows[y].bright_term = (int16_t)bright_term;
+        rows[y].use_gour = (uint8_t)(use_gour_floor ? 1 : 0);
+        rows[y].span_cw = span_cw;
+
+        if (use_gour_floor) {
+            int32_t bl = left_bright_tab ? left_bright_tab[y] : brightness;
+            int32_t br = right_bright_tab ? right_bright_tab[y] : brightness;
+            int32_t den = (int32_t)(re - le);
+            rows[y].bright_base_fp = bl << 16;
+            rows[y].bright_step_fp = (den > 0) ? (int32_t)(((br - bl) << 16) / den) : 0;
+            any_gour = 1;
+        } else {
+            rows[y].bright_base_fp = 0;
+            rows[y].bright_step_fp = 0;
+        }
+        rows[y].valid = 1;
+
+        if (le < x_min) x_min = le;
+        if (re > x_max) x_max = re;
+        span_count++;
+        px_count += (uint64_t)(re - le + 1);
+    }
+
+    if (any_gour) {
+        for (int level = 0; level < FLOOR_PAL_LEVEL_COUNT; level++) {
+            floor_span_prepare_pal_cache(ctx, floor_pal, level, &gour_cw_levels[level]);
+        }
+    }
+
+    if (x_min <= x_max) {
+        const size_t cw_step_y = renderer_cw_step_y(w);
+        for (int x = x_min; x <= x_max; x++) {
+            int top = y1 + 1;
+            int bot = y0 - 1;
+            for (int y = y0; y <= y1; y++) {
+                if (!rows[y].valid) continue;
+                if (x < rows[y].le || x > rows[y].re) continue;
+                if (y < top) top = y;
+                bot = y;
+            }
+            if (top > bot) continue;
+
+            size_t cw_idx = renderer_cw_index_xy(x, top, w, h);
+            size_t pix = (size_t)top * (size_t)w + (size_t)x;
+            for (int y = top; y <= bot; y++) {
+                if (rows[y].valid && x >= rows[y].le && x <= rows[y].re) {
+                    uint32_t u_fp = rows[y].u_base + (uint32_t)((int64_t)x * (int64_t)rows[y].u_step);
+                    uint32_t v_fp = rows[y].v_base + (uint32_t)((int64_t)x * (int64_t)rows[y].v_step);
+                    uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    uint16_t out_cw;
+                    if (rows[y].use_gour) {
+                        int32_t bfp = rows[y].bright_base_fp + (int32_t)((int64_t)(x - rows[y].le) * rows[y].bright_step_fp);
+                        int bright_pix = (int)(bfp >> 16);
+                        int bright_idx = bright_pix + rows[y].bright_term;
+                        if (bright_idx < 0) bright_idx = 0;
+                        if (bright_idx > 28) bright_idx = 28;
+                        int level = floor_bright_level_table[bright_idx];
+                        const uint16_t *cw_level = gour_cw_levels[level];
+                        out_cw = cw_level ? cw_level[texel] : rows[y].span_cw ? rows[y].span_cw[texel] : 0;
+                    } else {
+                        out_cw = rows[y].span_cw[texel];
+                    }
+                    cwbuf[cw_idx] = out_cw;
+                    buf[pix] = 1;
+                    if (expand) rgb[pix] = amiga12_to_argb(out_cw);
+                }
+                cw_idx += cw_step_y;
+                pix += (size_t)w;
+            }
+        }
+    }
+
+    if (ctx->profile_collect_stats) {
+        ctx->workload_stats.floor_spans += span_count;
+        ctx->workload_stats.floor_pixels += px_count;
+        ctx->workload_stats.floor_fast_spans += span_count;
+        ctx->workload_stats.floor_fast_pixels += px_count;
+    }
+    free(rows);
+    return 1;
+#endif
 }
 
 static inline int renderer_spill_pixel_occluded_by_zone_planes(int screen_row,
@@ -5074,6 +5738,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     /* --- Hoisted constants for the column/row loops --- */
     const int expand = g_renderer_rgb_raster_expand;
     const size_t rw_stride = (size_t)rw;
+    const size_t cw_step_y = renderer_cw_step_y(rw);
     const int down_strip_i = (int)down_strip;
     const int32_t z32 = (int32_t)z;
     const int center_y = rh / 2;
@@ -5216,6 +5881,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                 if (col_top > col_bot) continue;
                 int32_t row_fp = (int32_t)(col_top - sy) * src_row_step;
                 size_t pix = (size_t)col_top * rw_stride + (size_t)screen_col;
+                size_t pix_cw = renderer_cw_index_xy(screen_col, col_top, rw, rh);
                 for (int screen_row = col_top; screen_row <= col_bot; screen_row++) {
                     int src_row = row_fp >> 16;
                     row_fp += src_row_step;
@@ -5241,15 +5907,16 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                 if (profile_collect_stats) sprite_opaque_writes_total++;
                                 if (spill_visualize) {
                                     rgb[pix] = spill_vis_rgb;
-                                    cw[pix] = spill_vis_cw;
+                                    cw[pix_cw] = spill_vis_cw;
                                 } else {
                                     rgb[pix] = spr_rgb[texel];
-                                    cw[pix] = spr_cw[texel];
+                                    cw[pix_cw] = spr_cw[texel];
                                 }
                             }
                         }
                     }
                     pix += rw_stride;
+                    pix_cw += cw_step_y;
                 }
             }
         } else {
@@ -5259,6 +5926,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                 if (col_top > col_bot) continue;
                 int32_t row_fp = (int32_t)(col_top - sy) * src_row_step;
                 size_t pix = (size_t)col_top * rw_stride + (size_t)screen_col;
+                size_t pix_cw = renderer_cw_index_xy(screen_col, col_top, rw, rh);
                 for (int screen_row = col_top; screen_row <= col_bot; screen_row++) {
                     int src_row = row_fp >> 16;
                     row_fp += src_row_step;
@@ -5282,11 +5950,12 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                             const uint8_t texel = (uint8_t)((w >> texel_shift) & 0x1F);
                             if (texel != 0) {
                                 if (profile_collect_stats) sprite_opaque_writes_total++;
-                                cw[pix] = spill_visualize ? spill_vis_cw : spr_cw[texel];
+                                cw[pix_cw] = spill_visualize ? spill_vis_cw : spr_cw[texel];
                             }
                         }
                     }
                     pix += rw_stride;
+                    pix_cw += cw_step_y;
                 }
             }
         }
@@ -5459,7 +6128,7 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
                     buf[sy * rw + sx] = 15;
                     if (g_renderer_rgb_raster_expand)
                         rgb[sy * rw + sx] = amiga12_to_argb(c12);
-                    cw[sy * rw + sx] = c12;
+                    renderer_cw_store_xy(cw, sx, sy, rw, rh, c12);
                 }
             }
             return;
@@ -6940,19 +7609,37 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 int32_t orp_z_i16 = ROT_Z_INT(orp_z);
                 if (orp_z_i16 > 32767) orp_z_i16 = 32767;
                 ctx->pick_player_id = 0;
-                renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
-                                         (int16_t)sprite_w, (int16_t)sprite_h,
-                                         (int16_t)orp_z_i16,
-                                         r->sprite_wad[expl_vect], r->sprite_wad_size[expl_vect],
-                                         r->sprite_ptr[expl_vect], r->sprite_ptr_size[expl_vect],
-                                         obj_pal, obj_pal_size,
-                                         ptr_off, down_strip,
-                                         32, 32,
-                                         (int16_t)bright, expl_vect,
-                                         draw_clip_left, draw_clip_right,
-                                         entry->zone_top_world, entry->zone_bot_world,
-                                         clip_top_y, clip_bot_y,
-                                         is_spill);
+                if (ctx->profile_collect_stats) {
+                    uint64_t sprite_t0 = SDL_GetPerformanceCounter();
+                    renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
+                                             (int16_t)sprite_w, (int16_t)sprite_h,
+                                             (int16_t)orp_z_i16,
+                                             r->sprite_wad[expl_vect], r->sprite_wad_size[expl_vect],
+                                             r->sprite_ptr[expl_vect], r->sprite_ptr_size[expl_vect],
+                                             obj_pal, obj_pal_size,
+                                             ptr_off, down_strip,
+                                             32, 32,
+                                             (int16_t)bright, expl_vect,
+                                             draw_clip_left, draw_clip_right,
+                                             entry->zone_top_world, entry->zone_bot_world,
+                                             clip_top_y, clip_bot_y,
+                                             is_spill);
+                    ctx->workload_stats.ticks_sprite += SDL_GetPerformanceCounter() - sprite_t0;
+                } else {
+                    renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
+                                             (int16_t)sprite_w, (int16_t)sprite_h,
+                                             (int16_t)orp_z_i16,
+                                             r->sprite_wad[expl_vect], r->sprite_wad_size[expl_vect],
+                                             r->sprite_ptr[expl_vect], r->sprite_ptr_size[expl_vect],
+                                             obj_pal, obj_pal_size,
+                                             ptr_off, down_strip,
+                                             32, 32,
+                                             (int16_t)bright, expl_vect,
+                                             draw_clip_left, draw_clip_right,
+                                             entry->zone_top_world, entry->zone_bot_world,
+                                             clip_top_y, clip_bot_y,
+                                             is_spill);
+                }
             }
             continue;
         }
@@ -7140,19 +7827,37 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         {
             int32_t orp_z_int = ROT_Z_INT(orp->z);
             if (orp_z_int > 32767) orp_z_int = 32767;
-            renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
-                                     (int16_t)sprite_w, (int16_t)sprite_h,
-                                     (int16_t)orp_z_int,
-                                     r->sprite_wad[vect_num], r->sprite_wad_size[vect_num],
-                                     r->sprite_ptr[vect_num], r->sprite_ptr_size[vect_num],
-                                     obj_pal, obj_pal_size,
-                                     ptr_off, down_strip,
-                                     src_cols, src_rows,
-                                     (int16_t)bright, vect_num,
-                                     draw_clip_left, draw_clip_right,
-                                     entry->zone_top_world, entry->zone_bot_world,
-                                     clip_top_y, clip_bot_y,
-                                     is_spill);
+            if (ctx->profile_collect_stats) {
+                uint64_t sprite_t0 = SDL_GetPerformanceCounter();
+                renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
+                                         (int16_t)sprite_w, (int16_t)sprite_h,
+                                         (int16_t)orp_z_int,
+                                         r->sprite_wad[vect_num], r->sprite_wad_size[vect_num],
+                                         r->sprite_ptr[vect_num], r->sprite_ptr_size[vect_num],
+                                         obj_pal, obj_pal_size,
+                                         ptr_off, down_strip,
+                                         src_cols, src_rows,
+                                         (int16_t)bright, vect_num,
+                                         draw_clip_left, draw_clip_right,
+                                         entry->zone_top_world, entry->zone_bot_world,
+                                         clip_top_y, clip_bot_y,
+                                         is_spill);
+                ctx->workload_stats.ticks_sprite += SDL_GetPerformanceCounter() - sprite_t0;
+            } else {
+                renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
+                                         (int16_t)sprite_w, (int16_t)sprite_h,
+                                         (int16_t)orp_z_int,
+                                         r->sprite_wad[vect_num], r->sprite_wad_size[vect_num],
+                                         r->sprite_ptr[vect_num], r->sprite_ptr_size[vect_num],
+                                         obj_pal, obj_pal_size,
+                                         ptr_off, down_strip,
+                                         src_cols, src_rows,
+                                         (int16_t)bright, vect_num,
+                                         draw_clip_left, draw_clip_right,
+                                         entry->zone_top_world, entry->zone_bot_world,
+                                         clip_top_y, clip_bot_y,
+                                         is_spill);
+            }
         }
     }
 }
@@ -7929,6 +8634,38 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
     /* int16_t gfx_zone = rd16(ptr); */
     ptr += 2;
 
+    /* Wall column clip spans are only needed for object/sprite occlusion.
+     * If this zone stream has no object entry at all, skip clip bookkeeping
+     * for every wall in this zone to reduce per-column overhead. */
+    {
+        int8_t prev_update_column_clip = ctx->update_column_clip;
+        if (prev_update_column_clip) {
+            int zone_has_object_entries = 0;
+            const uint8_t *scan = ptr;
+            int scan_iter = 500;
+            while (scan_iter-- > 0) {
+                int16_t t = rd16(scan);
+                scan += 2;
+                if (t < 0) break;
+                if (t == 4) {
+                    zone_has_object_entries = 1;
+                    break;
+                }
+                {
+                    size_t skip = zone_gfx_entry_data_skip(t, scan);
+                    if (skip == 0) {
+                        /* Unknown entry: keep clip updates enabled for safety. */
+                        zone_has_object_entries = 1;
+                        break;
+                    }
+                    scan += skip;
+                }
+            }
+            if (!zone_has_object_entries) {
+                ctx->update_column_clip = 0;
+            }
+        }
+
     /* Zone brightness from level data (no table); anim applied via level_get_zone_brightness. */
     int16_t zone_bright = 0;
     if (zone_id >= 0 && zone_id < level_zone_slot_count(level))
@@ -7940,7 +8677,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
 
     int max_iter = 500; /* Safety limit */
 
-    while (max_iter-- > 0) {
+        while (max_iter-- > 0) {
         int16_t entry_type = rd16(ptr);
         ptr += 2; /* Consume type word (matches ASM (a0)+) */
 
@@ -8472,6 +9209,31 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
              * ASM: move.w (a0)+,d6 / add.w ZoneBright,d6 */
             int16_t bright = zone_bright + floor_bright_off;
 
+            if (AB3D_ENABLE_FLOOR_COL_FAST && AB3D_CW_COL_MAJOR && entry_type != 7 && floor_tex && floor_pal) {
+                if (ctx->profile_collect_stats) {
+                    uint64_t floor_t0 = SDL_GetPerformanceCounter();
+                    renderer_draw_floor_columns_ctx_fast(ctx, left_edge, right_edge_tab,
+                                                         left_bright_tab, right_bright_tab,
+                                                         poly_top, poly_bot,
+                                                         rel_h, floor_tex, floor_pal,
+                                                         bright, use_gour_floor,
+                                                         scaleval);
+                    ctx->workload_stats.ticks_floor += SDL_GetPerformanceCounter() - floor_t0;
+                } else {
+                    renderer_draw_floor_columns_ctx_fast(ctx, left_edge, right_edge_tab,
+                                                         left_bright_tab, right_bright_tab,
+                                                         poly_top, poly_bot,
+                                                         rel_h, floor_tex, floor_pal,
+                                                         bright, use_gour_floor,
+                                                         scaleval);
+                }
+                free(left_edge);
+                free(right_edge_tab);
+                free(left_bright_tab);
+                free(right_bright_tab);
+                break;
+            }
+
             /* Fill between edges for each row (floor and ceiling/roof). Clamp to zone clip. */
             int row_start = poly_top;
             int row_end = poly_bot;
@@ -8522,11 +9284,21 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     row_bright_r = right_bright_tab[row];
                     row_use_gour = 1;
                 }
-                renderer_draw_floor_span_ctx(ctx, (int16_t)row, le, re,
-                                             rel_h, floor_tex, floor_pal,
-                                             bright, row_bright_l, row_bright_r, row_use_gour,
-                                             scaleval, (entry_type == 7) ? 1 : 0,
-                                             water_rows_left);
+                if (ctx->profile_collect_stats) {
+                    uint64_t floor_t0 = SDL_GetPerformanceCounter();
+                    renderer_draw_floor_span_ctx(ctx, (int16_t)row, le, re,
+                                                 rel_h, floor_tex, floor_pal,
+                                                 bright, row_bright_l, row_bright_r, row_use_gour,
+                                                 scaleval, (entry_type == 7) ? 1 : 0,
+                                                 water_rows_left);
+                    ctx->workload_stats.ticks_floor += SDL_GetPerformanceCounter() - floor_t0;
+                } else {
+                    renderer_draw_floor_span_ctx(ctx, (int16_t)row, le, re,
+                                                 rel_h, floor_tex, floor_pal,
+                                                 bright, row_bright_l, row_bright_r, row_use_gour,
+                                                 scaleval, (entry_type == 7) ? 1 : 0,
+                                                 water_rows_left);
+                }
             }
             free(left_edge);
             free(right_edge_tab);
@@ -8696,6 +9468,9 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
             /* Unknown type - skip nothing (type word already consumed) */
             break;
         }
+        }
+
+        ctx->update_column_clip = prev_update_column_clip;
     }
 }
 
@@ -9110,8 +9885,8 @@ static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
         size_t row = (size_t)y * (size_t)w;
         for (int x = x0; x < x1; x++) {
             size_t i = row + (size_t)x;
-            uint16_t c12 = (uint16_t)(src_cw[i] & 0x00FFu);
-            dst_cw[i] = c12;
+            uint16_t c12 = (uint16_t)(renderer_cw_load_xy(src_cw, x, y, w, h) & 0x00FFu);
+            renderer_cw_store_xy(dst_cw, x, y, w, h, c12);
             if (g_renderer_rgb_raster_expand)
                 dst_rgb[i] = amiga12_to_argb(c12);
         }
@@ -9345,6 +10120,10 @@ void renderer_draw_display(GameState *state)
     if (prof_on) t_after_gun = SDL_GetPerformanceCounter();
 
     /* 8. Swap buffers (the just-drawn buffer becomes the display buffer) */
+    /* Flush non-temporal store write-combine buffers before the display path reads cw_buffer. */
+#if AB3D_HAVE_SSE2
+    _mm_sfence();
+#endif
     renderer_swap();
     g_pick_last_frame_valid = pick_this_frame;
     g_pick_capture_active = 0;
