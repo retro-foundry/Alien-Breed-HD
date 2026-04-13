@@ -36,6 +36,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "logging.h"
+#if defined(__EMSCRIPTEN__)
+#include <SDL.h>
+#endif
 #include "settings.h"
 #define printf ab3d_log_printf
 
@@ -580,6 +583,7 @@ void play_game_load_shared_assets(GameState *state)
     io_load_panel();
 }
 
+#if !defined(__EMSCRIPTEN__)
 int play_game_outer_should_continue(GameState *state)
 {
     if (!state->finished_level) {
@@ -611,19 +615,135 @@ int play_game_outer_should_continue(GameState *state)
     display_clear_screen_tint();
     printf("[MUSIC] outcome: well done\n");
 
-#if defined(__EMSCRIPTEN__)
-    /* Web build: after level 3 (1-indexed), loop to the first level instead of continuing. */
-    if (state->current_level == 2) {
-        state->current_level = 0;
-        printf("[CONTROL] Web: after level 3, looping to level 0 (player state preserved)\n");
-        return 1;
-    }
-#endif
     state->current_level++;
     printf("[CONTROL] Loading next level %d (player state preserved)\n",
            (int)state->current_level);
     return 1;
 }
+#else
+typedef enum {
+    EM_OUTER_BR_GAMEOVER,
+    EM_OUTER_BR_ENDGAME,
+    EM_OUTER_BR_WELLDONE,
+    EM_OUTER_BR_QUIT_NO_LEVEL
+} EmOuterBranch;
+
+static EmOuterBranch s_em_outer_br;
+static Uint32 s_em_fade_t0;
+
+int play_game_outer_emscripten_begin(GameState *state)
+{
+    if (!state->finished_level) {
+        if (state->energy <= 0) {
+            s_em_outer_br = EM_OUTER_BR_GAMEOVER;
+            if (!audio_start_one_shot_module("sounds/mt/GameOver.mt"))
+                return 0;
+            control_game_over_fade_tick(0.0f, state);
+            s_em_fade_t0 = SDL_GetTicks();
+            return 1;
+        }
+        s_em_outer_br = EM_OUTER_BR_QUIT_NO_LEVEL;
+        return 0;
+    }
+
+    if (state->current_level >= MAX_LEVELS - 1) {
+        s_em_outer_br = EM_OUTER_BR_ENDGAME;
+        if (!audio_start_one_shot_module("sounds/mt/EndGame.mt"))
+            return 0;
+        control_level_complete_fade_tick(0.0f, state);
+        s_em_fade_t0 = SDL_GetTicks();
+        return 1;
+    }
+
+    s_em_outer_br = EM_OUTER_BR_WELLDONE;
+    if (!audio_start_one_shot_module("sounds/mt/WellDone.mt"))
+        return 0;
+    control_level_complete_fade_tick(0.0f, state);
+    s_em_fade_t0 = SDL_GetTicks();
+    return 1;
+}
+
+int play_game_outer_emscripten_fade_frame(GameState *state)
+{
+    unsigned int duration_ms = audio_music_duration_ms();
+    Uint32 elapsed = SDL_GetTicks() - s_em_fade_t0;
+    if (elapsed >= duration_ms) {
+        switch (s_em_outer_br) {
+        case EM_OUTER_BR_GAMEOVER:
+            control_game_over_fade_tick(1.0f, state);
+            break;
+        case EM_OUTER_BR_ENDGAME:
+        case EM_OUTER_BR_WELLDONE:
+            control_level_complete_fade_tick(1.0f, state);
+            break;
+        default:
+            break;
+        }
+        audio_stop_one_shot_module();
+        /* Match desktop blocking tail: one more tick(1) after playback ends */
+        switch (s_em_outer_br) {
+        case EM_OUTER_BR_GAMEOVER:
+            control_game_over_fade_tick(1.0f, state);
+            break;
+        case EM_OUTER_BR_ENDGAME:
+        case EM_OUTER_BR_WELLDONE:
+            control_level_complete_fade_tick(1.0f, state);
+            break;
+        default:
+            break;
+        }
+        return 1;
+    }
+
+    float progress = (float)elapsed / (float)duration_ms;
+    if (progress > 1.0f) progress = 1.0f;
+    switch (s_em_outer_br) {
+    case EM_OUTER_BR_GAMEOVER:
+        control_game_over_fade_tick(progress, state);
+        break;
+    case EM_OUTER_BR_ENDGAME:
+    case EM_OUTER_BR_WELLDONE:
+        control_level_complete_fade_tick(progress, state);
+        break;
+    default:
+        break;
+    }
+    SDL_PumpEvents();
+    return 0;
+}
+
+int play_game_outer_emscripten_finish(GameState *state)
+{
+    switch (s_em_outer_br) {
+    case EM_OUTER_BR_GAMEOVER:
+        display_clear_screen_tint();
+        printf("[MUSIC] outcome: game over\n");
+        control_setup_new_game_state(state);
+        printf("[CONTROL] Restarting new game after death\n");
+        return 1;
+    case EM_OUTER_BR_ENDGAME:
+        display_clear_screen_tint();
+        printf("[MUSIC] outcome: end game\n");
+        return 0;
+    case EM_OUTER_BR_WELLDONE:
+        display_clear_screen_tint();
+        printf("[MUSIC] outcome: well done\n");
+        /* Web build: after level 3 (1-indexed), loop to the first level instead of continuing. */
+        if (state->current_level == 2) {
+            state->current_level = 0;
+            printf("[CONTROL] Web: after level 3, looping to level 0 (player state preserved)\n");
+            return 1;
+        }
+        state->current_level++;
+        printf("[CONTROL] Loading next level %d (player state preserved)\n",
+               (int)state->current_level);
+        return 1;
+    case EM_OUTER_BR_QUIT_NO_LEVEL:
+    default:
+        return 0;
+    }
+}
+#endif
 
 /*
  * play_game - The outermost game loop

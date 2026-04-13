@@ -29,6 +29,12 @@
 #define DEFAULT_FORMAT  AUDIO_S16SYS
 #define DEFAULT_CHANNELS 1
 #define PLAYBACK_SPEED_DIV 1
+#if defined(__EMSCRIPTEN__)
+/* Web Audio / main thread: larger SDL mix buffer reduces underruns when rAF is busy. */
+#define AUDIO_SAMPLES_DESIRED 2048
+#else
+#define AUDIO_SAMPLES_DESIRED 512
+#endif
 
 /* Amiga LoadFromDisk.s SFX_NAMES: size in bytes (one byte per sample, 8-bit signed). */
 static const unsigned int amiga_sfx_sizes[NUM_NAMED_SFX] = {
@@ -485,7 +491,7 @@ void audio_init(void)
     g_spec.freq = DEFAULT_FREQ;
     g_spec.format = DEFAULT_FORMAT;
     g_spec.channels = (Uint8)DEFAULT_CHANNELS;
-    g_spec.samples = 512;
+    g_spec.samples = AUDIO_SAMPLES_DESIRED;
     g_spec.callback = audio_callback;
     g_spec.userdata = NULL;
 
@@ -679,6 +685,7 @@ void audio_play_module_blocking_once_with_tick(const char *filename,
     if (tick) tick(0.0f, userdata);
 
     printf("[MUSIC] playing once: %s\n", filename);
+
     for (;;) {
         int playing;
         Uint32 pos = 0;
@@ -703,6 +710,51 @@ void audio_play_module_blocking_once_with_tick(const char *filename,
 
     if (tick) tick(1.0f, userdata);
 }
+
+#if defined(__EMSCRIPTEN__)
+int audio_start_one_shot_module(const char *filename)
+{
+    if (!g_audio_ready || g_device == 0) return 0;
+    if (!filename || !*filename) return 0;
+
+    audio_load_module(filename);
+
+    int started = 0;
+    SDL_LockAudioDevice(g_device);
+    if (g_music.loaded && g_music.data && g_music.length > 0) {
+        g_music.loop = 0;
+        g_music.position = 0;
+        g_music.playing = 1;
+        started = 1;
+    }
+    SDL_UnlockAudioDevice(g_device);
+
+    if (started)
+        printf("[MUSIC] one-shot start: %s\n", filename);
+    return started;
+}
+
+unsigned int audio_music_duration_ms(void)
+{
+    if (!g_audio_ready || g_device == 0) return 1u;
+    int bpf = (int)g_spec.channels * (SDL_AUDIO_BITSIZE(g_spec.format) / 8);
+    if (bpf < 1) bpf = 1;
+    if (g_music.length == 0) return 1u;
+    double bytes_per_sec = (double)g_spec.freq * (double)bpf;
+    Uint32 duration_ms = (Uint32)((double)g_music.length / bytes_per_sec * 1000.0 + 0.5);
+    if (duration_ms < 1u) duration_ms = 1u;
+    if (duration_ms > 600000u) duration_ms = 600000u;
+    return (unsigned int)duration_ms;
+}
+
+void audio_stop_one_shot_module(void)
+{
+    if (!g_device) return;
+    SDL_LockAudioDevice(g_device);
+    music_stop_locked();
+    SDL_UnlockAudioDevice(g_device);
+}
+#endif
 
 void audio_play_module_blocking_once(const char *filename)
 {

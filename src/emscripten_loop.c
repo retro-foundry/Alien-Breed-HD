@@ -29,6 +29,8 @@ typedef enum {
 static EmPhase g_em_phase = EM_PREP;
 static bool g_em_copper_ready;
 static GameLoopCtx g_em_gl_ctx;
+/* 0 = run begin, 1 = fading music, 2 = run finish */
+static int g_em_outer_sub;
 
 static void em_frame(void)
 {
@@ -53,16 +55,31 @@ static void em_frame(void)
         }
         return;
     case EM_OUTER_POST:
-        if (play_game_outer_should_continue(st)) {
-            g_em_copper_ready = false;
-            g_em_phase = EM_PREP;
-        } else {
-            display_release_panel_memory();
-            printf("[CONTROL] PlayGame finished\n");
-            tear_down_game(st);
-            printf("\n=== Exit (code 0) ===\n");
-            ab3d_log_shutdown();
-            emscripten_cancel_main_loop();
+        if (g_em_outer_sub == 0) {
+            int need_fade = play_game_outer_emscripten_begin(st);
+            g_em_outer_sub = need_fade ? 1 : 2;
+            if (g_em_outer_sub == 1)
+                return;
+        }
+        if (g_em_outer_sub == 1) {
+            if (!play_game_outer_emscripten_fade_frame(st))
+                return;
+            g_em_outer_sub = 2;
+        }
+        if (g_em_outer_sub == 2) {
+            int cont = play_game_outer_emscripten_finish(st);
+            g_em_outer_sub = 0;
+            if (cont) {
+                g_em_copper_ready = false;
+                g_em_phase = EM_PREP;
+            } else {
+                display_release_panel_memory();
+                printf("[CONTROL] PlayGame finished\n");
+                tear_down_game(st);
+                printf("\n=== Exit (code 0) ===\n");
+                ab3d_log_shutdown();
+                emscripten_cancel_main_loop();
+            }
         }
         return;
     default:
@@ -76,5 +93,6 @@ void emscripten_run_game(GameState *state)
     g_em_st = state;
     g_em_phase = EM_PREP;
     g_em_copper_ready = false;
+    g_em_outer_sub = 0;
     emscripten_set_main_loop(em_frame, 0, 1);
 }

@@ -29,6 +29,13 @@ void audio_play_module_blocking_once_with_tick(const char *filename,
                                                void *userdata);
 void audio_unload_module(void);
 
+#if defined(__EMSCRIPTEN__)
+/* One-shot module playback without blocking the main thread (Web Audio + rAF). */
+int audio_start_one_shot_module(const char *filename);
+unsigned int audio_music_duration_ms(void);
+void audio_stop_one_shot_module(void);
+#endif
+
 /* Sound effects */
 void audio_begin_frame(void); /* Reset per-frame SFX dedupe state (call once per game logic tick). */
 void audio_play_sfx(int sfx_id, int volume, int channel);

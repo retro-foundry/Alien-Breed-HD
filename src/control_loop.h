@@ -32,7 +32,14 @@ int play_the_game_after_game_loop(GameState *state);
 void play_the_game_finalize_session(GameState *state);
 
 /* After a full play_the_game: 1 = continue play_game outer loop, 0 = exit to panel release. */
+#if !defined(__EMSCRIPTEN__)
 int play_game_outer_should_continue(GameState *state);
+#else
+/* Browser: outer post is split across rAF frames (music + fade cannot block one callback). */
+int play_game_outer_emscripten_begin(GameState *state);
+int play_game_outer_emscripten_fade_frame(GameState *state);
+int play_game_outer_emscripten_finish(GameState *state);
+#endif
 
 /* PlayGame - the top-level game loop (ControlLoop.s: PlayGame) */
 void play_game(GameState *state);
