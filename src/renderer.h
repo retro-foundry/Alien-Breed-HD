@@ -404,9 +404,12 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
 void renderer_draw_gun(GameState *state);
 
 /* GL weapon/tint post-pass support.
- * When active, renderer_draw_display skips the CPU gun draw and tint pass;
- * display.c handles them via pre-baked GL textures instead. */
+ * When weapon_post_gl is active, renderer_draw_display skips the CPU gun draw;
+ * display.c draws the gun via GL. When gl_water_tint_post is active, the CPU
+ * underwater fillscrnwater pass is skipped; display.c applies the same effect
+ * via a GL multiply quad (avoids a full-buffer CPU pass each frame). */
 void renderer_set_weapon_post_gl_active(int active);
+void renderer_set_gl_water_tint_post_active(int active);
 int8_t renderer_get_last_fill_screen_water(void);
 /* Fill *out_frame_slot (0-31), *out_ix/iy/iw/ih (internal render pixel rect,
  * no aspect pre-correction).  Returns 1 if a gun should be drawn, 0 otherwise. */

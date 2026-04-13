@@ -109,6 +109,7 @@ RendererState g_renderer;
 static int g_renderer_rgb_raster_expand = 0;
 /* Set by display.c when the GL weapon/tint post-pass will handle gun+tint this frame. */
 static int s_weapon_post_gl_active = 0;
+static int s_gl_water_tint_post_active = 0;
 /* Offscreen picking buffers (front/back swap with render buffers each frame). */
 #define RENDERER_PICK_ZONE_NONE 0xFFFFu
 static uint16_t *g_pick_zone_buffer = NULL;
@@ -125,6 +126,7 @@ static int g_renderfix_l6_zone123_seen = 0;
 static int g_renderer_profile_collect_stats = 0;
 
 void renderer_set_weapon_post_gl_active(int active) { s_weapon_post_gl_active = active; }
+void renderer_set_gl_water_tint_post_active(int active) { s_gl_water_tint_post_active = active; }
 int8_t renderer_get_last_fill_screen_water(void) { return g_renderer.last_fill_screen_water; }
 
 #define RASTER_PUT_PP(pp, val) do { \
@@ -9313,9 +9315,9 @@ void renderer_draw_display(GameState *state)
     /* Save tint value for the GL post-pass (read by display.c after this call). */
     g_renderer.last_fill_screen_water = tint_water;
 
-    /* 6. Underwater fillscrnwater post-pass — skipped when the GL path will handle it. */
+    /* 6. Underwater fillscrnwater post-pass — skipped when GL multiply handles it (or weapon GL). */
     int used_threaded_tint = 0;
-    if (!s_weapon_post_gl_active) {
+    if (!s_weapon_post_gl_active && !s_gl_water_tint_post_active) {
 #ifndef AB3D_NO_THREADS
         if (state->cfg_render_threads) {
             used_threaded_tint = renderer_dispatch_threaded_underwater_tint(tint_water);

@@ -2514,14 +2514,16 @@ static void display_present_cw_frame(GameState *state)
     int w = renderer_get_width(), h = renderer_get_height();
 
     int use_gl_weapon = state && state->cfg_weapon_post_gl && g_gl_unpack_ok && g_gl_hud_ok;
+    int use_gl_water_tint = state && state->cfg_post_tint && g_gl_unpack_ok && g_gl_hud_ok;
 
     if (g_gl_unpack_ok) {
         display_gl_present_cw(src, w, h);
         if (g_gl_hud_ok) {
             display_gl_overlay_begin();
-            if (use_gl_weapon) {
-                /* Tint first (modifies background), then gun on top */
+            /* Underwater multiply: cheap GL quad; avoid per-pixel CPU copy of whole buffer. */
+            if (use_gl_water_tint)
                 display_gl_multiply_tint_rect(renderer_get_last_fill_screen_water());
+            if (use_gl_weapon) {
                 if (state->cfg_weapon_draw) {
                     int frame_slot, ix, iy, iw, ih;
                     if (renderer_get_gun_draw_info(state, &frame_slot, &ix, &iy, &iw, &ih)) {
@@ -2604,9 +2606,11 @@ static void display_present_cw_frame(GameState *state)
 
 void display_draw_display(GameState *state)
 {
-    /* Tell renderer to skip CPU gun+tint when the GL overlay path will handle them. */
+    /* Tell renderer to skip CPU work when the GL overlay path will handle it. */
     int use_gl_weapon = state && state->cfg_weapon_post_gl && g_gl_unpack_ok && g_gl_hud_ok;
+    int use_gl_water_tint = state && state->cfg_post_tint && g_gl_unpack_ok && g_gl_hud_ok;
     renderer_set_weapon_post_gl_active(use_gl_weapon);
+    renderer_set_gl_water_tint_post_active(use_gl_water_tint);
     renderer_draw_display(state);
     display_present_cw_frame(state);
 }
