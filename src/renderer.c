@@ -5583,6 +5583,7 @@ static inline int renderer_spill_pixel_occluded_by_zone_planes(int screen_row,
                                                                 int32_t sprite_z,
                                                                 int32_t zone_top_rel_8,
                                                                 int32_t zone_bot_rel_8,
+                                                                int ignore_top_clip,
                                                                 int32_t proj_y_scale)
 {
     int row_dist = screen_row - center_y;
@@ -5593,7 +5594,7 @@ static inline int renderer_spill_pixel_occluded_by_zone_planes(int screen_row,
                                      (int64_t)(row_dist / 2)) /
                                     (int64_t)row_dist);
         if (z_floor > 0 && sprite_z > z_floor) return 1;
-    } else if (row_dist < 0 && zone_top_rel_8 < 0) {
+    } else if (row_dist < 0 && !ignore_top_clip && zone_top_rel_8 < 0) {
         int32_t ad = -row_dist;
         int32_t rel = -zone_top_rel_8;
         int32_t z_roof = (int32_t)(((int64_t)rel *
@@ -5742,6 +5743,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     const int down_strip_i = (int)down_strip;
     const int32_t z32 = (int32_t)z;
     const int center_y = rh / 2;
+    const int ignore_spill_top_plane = (is_spill && clip_top_sy == INT32_MIN) ? 1 : 0;
     int have_spill_plane_depth_clip = 0;
     int32_t zone_top_rel_8 = 0;
     int32_t zone_bot_rel_8 = 0;
@@ -5892,6 +5894,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                                                       z32,
                                                                       zone_top_rel_8,
                                                                       zone_bot_rel_8,
+                                                                      ignore_spill_top_plane,
                                                                       g_renderer.proj_y_scale)) {
                         if (profile_collect_stats) sprite_spill_occluded_rows_total++;
                         pix += rw_stride;
@@ -5938,6 +5941,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                                                       z32,
                                                                       zone_top_rel_8,
                                                                       zone_bot_rel_8,
+                                                                      ignore_spill_top_plane,
                                                                       g_renderer.proj_y_scale)) {
                         if (profile_collect_stats) sprite_spill_occluded_rows_total++;
                         pix += rw_stride;
@@ -6835,27 +6839,22 @@ static int renderer_collect_adjacent_zone_sources(const RenderSliceContext *ctx,
 
     int zone_slots = level_zone_slot_count(level);
     if (zone_slots <= 0 || zone_id < 0 || zone_id >= zone_slots) return 0;
+    if (zone_slots > 256) zone_slots = 256;
 
     int adj_count = 0;
     int line_count = 0;
     int cur_order = renderer_zone_order_index(state, zone_id);
     const uint8_t *cur_list = renderer_zone_exit_list_ptr(level, zone_id);
-    int visible_count = state->zone_order_count;
-    uint8_t visible_zones[256];
     uint8_t candidate_zones[256];
 
     if (!cur_list) return 0;
 
-    memset(visible_zones, 0, sizeof(visible_zones));
     memset(candidate_zones, 0, sizeof(candidate_zones));
-    if (visible_count < 0) visible_count = 0;
-    if (visible_count > RENDERER_MAX_ZONE_ORDER) visible_count = RENDERER_MAX_ZONE_ORDER;
-    for (int i = 0; i < visible_count; i++) {
-        int16_t zid = state->zone_order_zones[i];
-        if (zid >= 0 && zid < 256) visible_zones[(uint8_t)zid] = 1;
-    }
 
-    /* Forward links: current zone exit list points to adjacent source zone. */
+    /* Forward links: current zone exit list points to adjacent source zone.
+     * Do not require the source zone to already be in zone_order: that makes
+     * spill distance-sensitive, because a nearby billboard can legitimately
+     * cross into the current zone before the whole neighboring zone is visible. */
     for (int i = 0; i < 128; i++) {
         int16_t entry = rd16(cur_list + (size_t)i * 2u);
         if (entry < 0) break; /* -1 ends exits, -2 ends list */
@@ -6866,14 +6865,11 @@ static int renderer_collect_adjacent_zone_sources(const RenderSliceContext *ctx,
         int connect_zone = level_connect_to_zone_index(level, connect);
         if (connect_zone < 0 || connect_zone >= zone_slots || connect_zone == zone_id) continue;
 
-        if (connect_zone < 256 && visible_zones[(uint8_t)connect_zone]) {
-            candidate_zones[(uint8_t)connect_zone] = 1;
-        }
+        candidate_zones[(uint8_t)connect_zone] = 1;
     }
 
-    /* Reverse links: visible zones that point to current zone (covers one-way/broken links). */
-    for (int i = 0; i < visible_count; i++) {
-        int16_t src_zone = state->zone_order_zones[i];
+    /* Reverse links: any zone that points to current zone (covers one-way/broken links). */
+    for (int src_zone = 0; src_zone < zone_slots; src_zone++) {
         if (src_zone < 0 || src_zone >= zone_slots || src_zone == zone_id) continue;
         const uint8_t *src_list = renderer_zone_exit_list_ptr(level, src_zone);
         if (!src_list) continue;
@@ -6894,8 +6890,7 @@ static int renderer_collect_adjacent_zone_sources(const RenderSliceContext *ctx,
     }
 
     /* Build contiguous per-zone line spans to avoid mixed-zone line lists. */
-    for (int i = 0; i < visible_count; i++) {
-        int16_t src_zone = state->zone_order_zones[i];
+    for (int src_zone = 0; src_zone < zone_slots; src_zone++) {
         int line_start;
         const uint8_t *src_list;
         if (src_zone < 0 || src_zone >= zone_slots || src_zone == zone_id) continue;
@@ -7138,9 +7133,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
     int num_pts = level->num_object_points;
     if (num_pts > MAX_OBJ_POINTS) num_pts = MAX_OBJ_POINTS;
 
-    /* Object in_top at offset 63: 0 = lower floor, non-zero = upper floor (kept in sync by movement/objects). */
-    const int obj_off_in_top = 63;
-
     /* Iterate by object index; each object has point number at offset 0 (ObjDraw: move.w (a0)+,d0).
      * Use that to look up ObjRotated[pt_num] so keys and other pickups use correct position/z. */
     for (int obj_idx = 0; obj_idx < RENDERER_OBJECT_SLOT_SCAN_CAP && obj_count < max_draw_entries; obj_idx++) {
@@ -7156,24 +7148,22 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int16_t obj_zone = rd16(obj + 12);
         int in_this_zone = (obj_zone >= 0 && obj_zone == (int16_t)zone_id);
         int adj_slot = -1;
+        int32_t obj_world_y = ((int32_t)rd16(obj + 4)) << WORLD_Y_FRAC_BITS;
+        int32_t half_h = renderer_billboard_half_height_world_fp(spill_world_h);
+        int overlaps_current_section = renderer_world_span_overlaps_room(obj_world_y, half_h,
+                                                                         top_of_room, bot_of_room);
         if (!in_this_zone) {
             adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, obj_zone);
             if (adj_slot < 0) continue;
-            /* Spill on steps: use sprite vertical span overlap against the current
-             * room section instead of center-Y only, so up/down step transitions
-             * can still spill when any visible part overlaps this section. */
-            int32_t adj_world_y = ((int32_t)rd16(obj + 4)) << WORLD_Y_FRAC_BITS;
-            int32_t half_h = renderer_billboard_half_height_world_fp(spill_world_h);
-            if (!renderer_world_span_overlaps_room(adj_world_y, half_h, top_of_room, bot_of_room))
+            if (!overlaps_current_section)
                 continue;
         }
 
-        int obj_on_upper = (obj[obj_off_in_top] != 0);
-        /* Multi-floor: only render objects when we are drawing their floor. Use object's in_top
-         * so upper/lower is consistent with game logic (objects.c, movement). */
-        if (level_filter >= 0) {
-            if ((level_filter == 1 && !obj_on_upper) || (level_filter == 0 && obj_on_upper))
-                continue;
+        /* Multi-floor sprite spill must follow actual vertical overlap with the
+         * current section, not only the object's anchor floor flag. This lets
+         * billboards cross stair splits while clip_top/clip_bot keep pixels in-band. */
+        if (level_filter >= 0 && !overlaps_current_section) {
+            continue;
         }
 
         int16_t draw_clip_left = 0, draw_clip_right = 0;
@@ -7286,18 +7276,18 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             renderer_resolve_billboard_world_size_for_spill(obj, 1, &spill_world_w, &spill_world_h);
             int in_this_zone = (shot_zone == (int16_t)zone_id);
             int adj_slot = -1;
+            int32_t shot_world_y = ((int32_t)rd16(obj + 4)) << WORLD_Y_FRAC_BITS;
+            int32_t half_h = renderer_billboard_half_height_world_fp(spill_world_h);
+            int overlaps_current_section = renderer_world_span_overlaps_room(shot_world_y, half_h,
+                                                                             top_of_room, bot_of_room);
             if (!in_this_zone) {
                 adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, shot_zone);
                 if (adj_slot < 0) continue;
-                int32_t adj_world_y = ((int32_t)rd16(obj + 4)) << WORLD_Y_FRAC_BITS;
-                int32_t half_h = renderer_billboard_half_height_world_fp(spill_world_h);
-                if (!renderer_world_span_overlaps_room(adj_world_y, half_h, top_of_room, bot_of_room))
+                if (!overlaps_current_section)
                     continue;
             }
-            int shot_on_upper = (obj[obj_off_in_top] != 0);
-            if (level_filter >= 0) {
-                if ((level_filter == 1 && !shot_on_upper) || (level_filter == 0 && shot_on_upper))
-                    continue;
+            if (level_filter >= 0 && !overlaps_current_section) {
+                continue;
             }
 
             int16_t draw_clip_left = 0, draw_clip_right = 0;
@@ -7394,22 +7384,24 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             int16_t expl_zone = state->explosions[ei].zone;
             int in_this_zone = (expl_zone == (int16_t)zone_id);
             int adj_slot = -1;
+            int expl_h_est = 100;
+            int32_t half_h;
+            int overlaps_current_section;
+            renderer_get_explosion_frame_and_world_size(state, ei, NULL, NULL, &expl_h_est);
+            half_h = renderer_billboard_half_height_world_fp(expl_h_est);
+            overlaps_current_section = renderer_world_span_overlaps_room(state->explosions[ei].y_floor,
+                                                                         half_h,
+                                                                         top_of_room, bot_of_room);
             if (!in_this_zone) {
                 adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, expl_zone);
                 if (adj_slot < 0) continue;
-                int32_t adj_world_y = state->explosions[ei].y_floor;
-                int expl_h_est = 100;
-                renderer_get_explosion_frame_and_world_size(state, ei, NULL, NULL, &expl_h_est);
-                int32_t half_h = renderer_billboard_half_height_world_fp(expl_h_est);
-                if (!renderer_world_span_overlaps_room(adj_world_y, half_h, top_of_room, bot_of_room))
+                if (!overlaps_current_section)
                     continue;
             }
             if (state->explosions[ei].start_delay > 0) continue;
             if ((int)state->explosions[ei].frame >= 9) continue;
-            int expl_on_upper = (state->explosions[ei].in_top != 0);
-            if (level_filter >= 0) {
-                if ((level_filter == 1 && !expl_on_upper) || (level_filter == 0 && expl_on_upper))
-                    continue;
+            if (level_filter >= 0 && !overlaps_current_section) {
+                continue;
             }
 
             int16_t draw_clip_left = 0, draw_clip_right = 0;
@@ -8245,6 +8237,30 @@ static AB3D_ATTR_UNUSED int zone_stream_has_explicit_roof_polygon(const uint8_t 
     return 0;
 }
 
+static int zone_stream_has_entry_type(const uint8_t *gfx_data, int16_t want_type)
+{
+    if (!gfx_data) return 0;
+
+    const uint8_t *scan = gfx_data + 2;
+    int scan_iter = 500;
+    while (scan_iter-- > 0) {
+        int16_t t = rd16(scan);
+        scan += 2;
+        if (t < 0) break;
+        if (t == want_type) return 1;
+
+        {
+            size_t skip = zone_gfx_entry_data_skip(t, scan);
+            if (skip == 0) {
+                if (t != 3 && t != 12) break;
+                continue;
+            }
+            scan += skip;
+        }
+    }
+    return 0;
+}
+
 /* Rasterize a floor-outline polygon at zone_roof height as a sky ceiling.
  * pt_indices/sides come directly from the type-1 (floor) polygon already read. */
 static void renderer_tessellate_sky_ceiling_ctx(RenderSliceContext *ctx,
@@ -8588,11 +8604,17 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
      * zone_graph_adds: 8 bytes per zone = lower gfx offset (long) + upper gfx offset (long). */
     const uint8_t *zgraph = level->zone_graph_adds + zone_id * 8;
     int32_t gfx_off = use_upper ? rd32(zgraph + 4) : rd32(zgraph);
+    int32_t other_gfx_off = use_upper ? rd32(zgraph) : rd32(zgraph + 4);
     if (gfx_off <= 0 || !level->graphics) return;
     if (level->graphics_byte_count > 0 &&
         ((size_t)gfx_off + 2u > level->graphics_byte_count)) return;
 
     const uint8_t *gfx_data = level->graphics + (size_t)gfx_off;
+    const uint8_t *other_gfx_data = NULL;
+    if (other_gfx_off > 0 && level->graphics &&
+        (level->graphics_byte_count == 0 || ((size_t)other_gfx_off + 2u <= level->graphics_byte_count))) {
+        other_gfx_data = level->graphics + (size_t)other_gfx_off;
+    }
     int32_t zone_water = rd32(zone_data + 18);  /* ToZoneWater */
 
     int32_t y_off = r->yoff;
@@ -8630,6 +8652,10 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
     int zone_has_lift_flag = zone_has_lift(level->lift_data, zone_id);
     int has_door_wall_list = (level->door_wall_list && level->door_wall_list_offsets && level->num_doors > 0);
     int has_lift_wall_list = (level->lift_wall_list && level->lift_wall_list_offsets && level->num_lifts > 0);
+    int current_stream_has_object_entries = zone_stream_has_entry_type(gfx_data, 4);
+    int other_stream_has_object_entries = zone_stream_has_entry_type(other_gfx_data, 4);
+    int is_multi_floor_zone = (other_gfx_data != NULL);
+    int fallback_object_pass = (!current_stream_has_object_entries && !has_split_water) ? 1 : 0;
 
     /* Read zone number from graphics data (consumed before polyloop) */
     const uint8_t *ptr = gfx_data;
@@ -8642,28 +8668,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
     {
         int8_t prev_update_column_clip = ctx->update_column_clip;
         if (prev_update_column_clip) {
-            int zone_has_object_entries = 0;
-            const uint8_t *scan = ptr;
-            int scan_iter = 500;
-            while (scan_iter-- > 0) {
-                int16_t t = rd16(scan);
-                scan += 2;
-                if (t < 0) break;
-                if (t == 4) {
-                    zone_has_object_entries = 1;
-                    break;
-                }
-                {
-                    size_t skip = zone_gfx_entry_data_skip(t, scan);
-                    if (skip == 0) {
-                        /* Unknown entry: keep clip updates enabled for safety. */
-                        zone_has_object_entries = 1;
-                        break;
-                    }
-                    scan += skip;
-                }
-            }
-            if (!zone_has_object_entries) {
+            if (!current_stream_has_object_entries && !fallback_object_pass) {
                 ctx->update_column_clip = 0;
             }
         }
@@ -9341,10 +9346,13 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                   ((size_t)zone_upper_gfx + 2u <= level->graphics_byte_count));
             int ignore_sky_top_clip = (zone_roof < 0) ? 1 : 0;
             int allow_adjacent_spill = 0;
-            if (obj_clip_mode == 1) {
+            if (!has_split_water) {
+                /* In non-water rooms the before-water/full-room object clips collapse
+                 * to the same vertical section, so adjacent spill must stay enabled
+                 * regardless of the authored clip mode. */
+                allow_adjacent_spill = 1;
+            } else if (obj_clip_mode == 1) {
                 allow_adjacent_spill = 1; /* after-water pass */
-            } else if (obj_clip_mode > 1 && !has_split_water) {
-                allow_adjacent_spill = 1; /* full-room pass in non-watered room */
             }
             draw_zone_objects_ctx(ctx, state, zone_id, obj_top, obj_bot,
                                   is_multi_floor ? use_upper : -1,
@@ -9470,6 +9478,14 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
             /* Unknown type - skip nothing (type word already consumed) */
             break;
         }
+        }
+
+        if (fallback_object_pass) {
+            int ignore_sky_top_clip = (zone_roof < 0) ? 1 : 0;
+            draw_zone_objects_ctx(ctx, state, zone_id, zone_roof, zone_floor,
+                                  is_multi_floor_zone ? (use_upper ? 1 : 0) : -1,
+                                  1,
+                                  ignore_sky_top_clip);
         }
 
         ctx->update_column_clip = prev_update_column_clip;
