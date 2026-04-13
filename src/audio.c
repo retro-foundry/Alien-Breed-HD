@@ -30,8 +30,8 @@
 #define DEFAULT_CHANNELS 1
 #define PLAYBACK_SPEED_DIV 1
 #if defined(__EMSCRIPTEN__)
-/* Web Audio / main thread: larger SDL mix buffer reduces underruns when rAF is busy. */
-#define AUDIO_SAMPLES_DESIRED 2048
+/* Web: slightly larger buffer than desktop to reduce underruns; 2048 was too much latency. */
+#define AUDIO_SAMPLES_DESIRED 1024
 #else
 #define AUDIO_SAMPLES_DESIRED 512
 #endif
