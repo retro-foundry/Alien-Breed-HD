@@ -69,6 +69,12 @@
 #define AB3D_RESTRICT
 #endif
 
+#if defined(__clang__) || defined(__GNUC__)
+#define AB3D_ATTR_UNUSED __attribute__((unused))
+#else
+#define AB3D_ATTR_UNUSED
+#endif
+
 #if defined(_MSC_VER)
 #define AB3D_CACHELINE_ALIGN __declspec(align(64))
 #elif defined(__GNUC__) || defined(__clang__)
@@ -298,6 +304,19 @@ static int g_prof_last_tint_workers = 0;
 static int g_renderer_thread_max_workers = 0; /* 0 = use max available workers */
 #endif
 
+#if defined(__EMSCRIPTEN__) && !defined(AB3D_NO_THREADS)
+#include <emscripten.h>
+/* SDL_GetCPUCount() is often 1 in browsers; use hardwareConcurrency for worker pool sizing. */
+EM_JS(int, renderer_emscripten_hw_concurrency, (void), {
+    if (typeof navigator === 'undefined' || !navigator.hardwareConcurrency)
+        return 4;
+    var n = navigator.hardwareConcurrency | 0;
+    if (n < 2) n = 2;
+    if (n > 64) n = 64;
+    return n;
+});
+#endif
+
 /* -----------------------------------------------------------------------
  * Big-endian read helpers (level data is Amiga big-endian)
  * ----------------------------------------------------------------------- */
@@ -351,6 +370,9 @@ static uint8_t  g_automap_key_bit_valid_mask = 0;
 static const uint16_t k_automap_key_frame_default_c12[4] = {
     0x0FC2u, 0x0F44u, 0x04D6u, 0x048Fu
 };
+
+/* Overlay used to refresh door colors every frame (O(seen * doors)); throttle to ~4 Hz. */
+static uint32_t g_automap_last_door_refresh_ms = 0;
 
 /* Workers run renderer_draw_world_slice in parallel; automap updates must be serialized. */
 static SDL_mutex *g_automap_mutex;
@@ -427,7 +449,7 @@ uint32_t renderer_automap_seen_key_plus1(uint32_t gfx_off,
     return k;
 }
 
-static void automap_reset(LevelState *level)
+static AB3D_ATTR_UNUSED void automap_reset(LevelState *level)
 {
     if (!level) return;
     level->automap_seen_count = 0;
@@ -520,7 +542,7 @@ static uint32_t automap_c12_saturation(uint16_t c12)
 }
 
 /* Sample key art like in-game sprites: brightness-graded .pal + pick saturated texels (not grey metal average). */
-static uint16_t automap_key_frame_representative_c12(const RendererState *r, int frame_idx)
+static AB3D_ATTR_UNUSED uint16_t automap_key_frame_representative_c12(const RendererState *r, int frame_idx)
 {
     if (!r) return 0;
     if (frame_idx < 0 || frame_idx >= 4) return 0;
@@ -1035,6 +1057,12 @@ int renderer_automap_collect_line_segments(GameState *state,
     /* Reserve last 3 slots for the player arrow so overlay draws walls first, player on top. */
     int wall_cap = (max_lines >= 3) ? (max_lines - 3) : max_lines;
 
+    uint32_t now_ms = SDL_GetTicks();
+    int refresh_doors = (g_automap_last_door_refresh_ms == 0u) ||
+        (now_ms - g_automap_last_door_refresh_ms >= 250u);
+    if (refresh_doors)
+        g_automap_last_door_refresh_ms = now_ms;
+
     automap_lock();
     if (level->automap_seen_walls && level->automap_seen_count != 0) {
         automap_refresh_key_bit_colors(level);
@@ -1043,7 +1071,8 @@ int renderer_automap_collect_line_segments(GameState *state,
         AutomapSeenWall *sw = &level->automap_seen_walls[i];
         uint8_t is_door = sw->is_door;
         uint8_t key_id = sw->door_key_id;
-        if (is_door) {
+        /* Door state / key pickup: expensive scan — not every frame (was freezing the game). */
+        if (is_door && refresh_doors) {
             int now_is_door = 0;
             int16_t zone_hint = automap_unpack_zone_hint(sw->reserved);
             uint8_t now_key_id = automap_door_key_for_wall_gfx_off(level, sw->gfx_off,
@@ -1068,16 +1097,11 @@ int renderer_automap_collect_line_segments(GameState *state,
         x1[n] = mx - wx1;
         y1[n] = wy1;
         {
+            /* Internal edge dimming uses metadata from automap_mark_seen only. Per-frame
+             * automap_segment_is_internal_connected here was O(seen * floor_lines) and froze. */
             uint16_t meta = sw->reserved;
-            if (!automap_meta_internal_known(meta)) {
-                int is_internal_now = automap_segment_is_internal_connected(level,
-                                                                            sw->x1, sw->z1,
-                                                                            sw->x2, sw->z2);
-                meta = automap_meta_set_internal(meta, is_internal_now);
-                sw->reserved = meta;
-            }
             c12[n] = automap_color_for(is_door, key_id);
-            if (automap_meta_internal(meta))
+            if (automap_meta_internal_known(meta) && automap_meta_internal(meta))
                 c12[n] = (uint16_t)(c12[n] | RENDERER_AUTOMAP_SEGFLAG_INTERNAL);
         }
         n++;
@@ -1480,6 +1504,16 @@ static void renderer_threads_init(void)
 
     int cpu_count = SDL_GetCPUCount();
     if (cpu_count < 1) cpu_count = 1;
+#if defined(__EMSCRIPTEN__)
+    {
+        int hw = renderer_emscripten_hw_concurrency();
+        if (hw > cpu_count) {
+            printf("[RENDERER] threading: SDL_GetCPUCount()=%d, using %d from navigator.hardwareConcurrency (wasm)\n",
+                   cpu_count, hw);
+            cpu_count = hw;
+        }
+    }
+#endif
     if (cpu_count > RENDERER_MAX_THREADS) cpu_count = RENDERER_MAX_THREADS;
     pool->cpu_count = cpu_count;
 
@@ -1682,25 +1716,6 @@ static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
 #else
 static void renderer_threads_shutdown(void) { }
 static void renderer_threads_init(void) { }
-static int renderer_dispatch_threaded_world(GameState *state,
-                                            const RendererWorldZonePrepass *zone_prepass,
-                                            uint32_t frame_idx,
-                                            int trace_clip, int8_t *out_fill_screen_water,
-                                            RendererWorkloadStats *out_workload_stats)
-{
-    (void)state;
-    (void)zone_prepass;
-    (void)frame_idx;
-    (void)trace_clip;
-    if (out_fill_screen_water) *out_fill_screen_water = 0;
-    if (out_workload_stats) renderer_workload_stats_reset(out_workload_stats);
-    return 0;
-}
-static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
-{
-    (void)fill_screen_water;
-    return 0;
-}
 #endif
 
 /* Water animation / assets (Amiga: watertouse, wtan, wateroff, fillscrnwater). */
@@ -2482,7 +2497,7 @@ static uint32_t s_clear_sky_row[CLEAR_ROW_MAX];
 static uint16_t s_clear_sky_cw_row[CLEAR_ROW_MAX];
 static int s_clear_rows_inited = 0;
 
-static void init_clear_rows(void)
+static AB3D_ATTR_UNUSED void init_clear_rows(void)
 {
     if (s_clear_rows_inited) return;
     for (int i = 0; i < CLEAR_ROW_MAX; i++) {
@@ -2602,7 +2617,7 @@ static inline uint16_t sky_fetch_cw_mode0_uc(int tx, int ty)
     return (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1u]);
 }
 
-static inline uint32_t sky_fetch_argb_mode0(int tx, int ty)
+static AB3D_ATTR_UNUSED inline uint32_t sky_fetch_argb_mode0(int tx, int ty)
 {
     return amiga12_to_argb(sky_fetch_cw_mode0(tx, ty));
 }
@@ -3077,7 +3092,7 @@ void renderer_set_present_size(int w, int h)
 /* -----------------------------------------------------------------------
  * Pixel writing helpers
  * ----------------------------------------------------------------------- */
-static inline void put_pixel(uint8_t *buf, int x, int y, uint8_t color)
+static AB3D_ATTR_UNUSED inline void put_pixel(uint8_t *buf, int x, int y, uint8_t color)
 {
     int w = g_renderer.width, h = g_renderer.height;
     if (x >= 0 && x < w && y >= 0 && y < h) {
@@ -3085,7 +3100,7 @@ static inline void put_pixel(uint8_t *buf, int x, int y, uint8_t color)
     }
 }
 
-static inline void draw_vline(uint8_t *buf, int x, int y_top, int y_bot,
+static AB3D_ATTR_UNUSED inline void draw_vline(uint8_t *buf, int x, int y_top, int y_bot,
                                uint8_t color)
 {
     int w = g_renderer.width, h = g_renderer.height;
@@ -3430,7 +3445,7 @@ static int32_t renderer_column_clip_nearest_z_overlap(const ColumnClip *clip, in
 /* Wall column loop uses inverse-Z in 8.24 (INVZ_ONE). Projecting Y as world_y*K/z with an
  * integer z from z = INVZ_ONE/inv_z truncates twice vs. world_y*K*inv_z/INVZ_ONE (one divide).
  * The latter matches true perspective along the span and reduces stair-steps at floor/ceiling. */
-static int wall_proj_y_screen_invz(int16_t world_y, int64_t inv_z_fp, int32_t proj_y_scale, int height)
+static AB3D_ATTR_UNUSED int wall_proj_y_screen_invz(int16_t world_y, int64_t inv_z_fp, int32_t proj_y_scale, int height)
 {
     const int64_t INVZ_ONE = (1LL << 24);
     if (inv_z_fp <= 0) inv_z_fp = 1;
@@ -3553,9 +3568,6 @@ static void draw_wall_rasterize_segment(
         /* Texture column via perspective divide */
         int64_t tex_t_fp64 = ((tex_z_acc >> INTERP_SUB_BITS) * INVZ_ONE) / inv_z_fp;
         int tex_col = ((int32_t)(tex_t_fp64 >> 24) & horand) + fromtile;
-
-        int32_t depth_z = col_z;
-        if (tex_id == SWITCHES_WALL_TEX_ID && col_z > 16) depth_z = col_z - 16;
 
         /* Step interpolators */
         inv_z_acc += inv_z_step_acc;
@@ -7497,7 +7509,7 @@ static int zone_stream_has_matching_roof_polygon(const uint8_t *gfx_data,
 }
 
 /* Returns 1 if this stream has at least one authored type-2 roof polygon. */
-static int zone_stream_has_explicit_roof_polygon(const uint8_t *gfx_data)
+static AB3D_ATTR_UNUSED int zone_stream_has_explicit_roof_polygon(const uint8_t *gfx_data)
 {
     if (!gfx_data) return 0;
 

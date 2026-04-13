@@ -10,6 +10,8 @@
 #ifndef GAME_STATE_H
 #define GAME_STATE_H
 
+#include <stddef.h>
+
 #include "game_types.h"
 
 #define PLAYER_SHOT_SLOT_COUNT 20

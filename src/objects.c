@@ -243,8 +243,6 @@ static int32_t robot_track_target(GameObject *obj, const EnemyParams *params,
 static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
                                    GameState *state, int player_num,
                                    bool apply_translation);
-static bool enemy_is_facing_player_cone(GameObject *obj, GameState *state,
-                                        int player_num, int16_t min_cos_q14);
 
 /* Keep sprite source decode dimensions in sync with the original per-enemy
  * setup writes to 14(a0). Without this, wide/tall enemy sheets (e.g. worm)
@@ -373,17 +371,6 @@ static GameObject *find_free_shot_slot(uint8_t *shots, int16_t *saved_cid)
         }
     }
     return NULL;
-}
-
-static int count_used_shot_slots(const uint8_t *shots, int shot_slots)
-{
-    int used = 0;
-    if (!shots || shot_slots <= 0) return 0;
-    for (int i = 0; i < shot_slots; i++) {
-        const GameObject *candidate = (const GameObject *)(shots + (size_t)i * OBJECT_SIZE);
-        if (OBJ_ZONE(candidate) >= 0) used++;
-    }
-    return used;
 }
 
 /* Amiga Noisevol (sfx importance / channel mix) → PC mixer 0–255 (see SoundPlayer.s). */
@@ -2503,29 +2490,6 @@ static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
 {
     return enemy_track_target_with_turn(obj, params, state, player_num,
                                         apply_translation, 120);
-}
-
-/* True when the enemy is facing within a cone toward the target player.
- * min_cos_q14 uses the same scale as sin/cos lookup (16384 = 1.0). */
-static bool enemy_is_facing_player_cone(GameObject *obj, GameState *state,
-                                        int player_num, int16_t min_cos_q14)
-{
-    PlayerState *plr = (player_num == 1) ? &state->plr1 : &state->plr2;
-    int16_t obj_x = 0, obj_z = 0;
-    get_object_pos(&state->level, (int)OBJ_CID(obj), &obj_x, &obj_z);
-
-    int32_t dx = (int32_t)plr->p_xoff - (int32_t)obj_x;
-    int32_t dz = (int32_t)plr->p_zoff - (int32_t)obj_z;
-    int32_t dist = calc_dist_approx(dx, dz);
-    if (dist <= 0) return true;
-
-    int16_t facing = NASTY_FACING(*obj);
-    int32_t sf = sin_lookup(facing);
-    int32_t cf = cos_lookup(facing);
-    int64_t fwd = (int64_t)dx * sf + (int64_t)dz * cf;
-    if (fwd <= 0) return false;
-
-    return fwd >= (int64_t)dist * (int64_t)min_cos_q14;
 }
 
 static void marine_hitscan_burst(GameObject *obj, GameState *state,

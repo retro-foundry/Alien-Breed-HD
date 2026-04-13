@@ -253,7 +253,6 @@ static int clip_polygon_to_near(const PolyVertex *in, int in_count,
 static int poly_textures_ready(void);
 static uint8_t sample_poly_texel_index(uint16_t tex_map_word,
                                        int32_t u_fixed, int32_t v_fixed);
-static uint32_t sample_poly_palette(uint8_t pal_idx, int shade_level);
 static void draw_textured_polygon(const int *sx, const int *sy,
                                   const int32_t *sz,
                                   const int32_t *u, const int32_t *v,
@@ -783,11 +782,6 @@ static uint16_t sample_poly_palette_cw(uint8_t pal_idx, int shade_level)
     if (pal_off + 1u >= g_poly_tex_pal_size) return 0;
     return (uint16_t)(((uint16_t)g_poly_tex_pal[pal_off] << 8) |
                        (uint16_t)g_poly_tex_pal[pal_off + 1u]);
-}
-
-static uint32_t sample_poly_palette(uint8_t pal_idx, int shade_level)
-{
-    return amiga12_to_argb_local(sample_poly_palette_cw(pal_idx, shade_level));
 }
 
 static inline int poly_pixel_behind_wall(int x, int y, int32_t z_view)

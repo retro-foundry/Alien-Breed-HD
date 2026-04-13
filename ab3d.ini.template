@@ -65,6 +65,7 @@ supersampling=1
 
 # 1 = split each zone across column slices (one SDL thread per slice, up to SDL_GetCPUCount).
 # 0 = single-threaded raster (also used if the build has threads disabled: AB3D_NO_THREADS).
+# WebAssembly: default build is single-threaded wasm; threaded build needs pthread + COOP/COEP (see tools/serve_emscripten.py, README Web).
 render_threads=1
 
 # Worker strip cap for threaded renderer:

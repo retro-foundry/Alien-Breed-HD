@@ -1,0 +1,35 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "emscripten-release",
+      "displayName": "Emscripten Release (default web)",
+      "description": "Single-threaded wasm (no SharedArrayBuffer). Works on GitHub Pages and ordinary https hosting.",
+      "binaryDir": "${sourceDir}/build/emscripten-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "AB3D_NO_THREADS": "ON"
+      }
+    },
+    {
+      "name": "emscripten-threaded-release",
+      "displayName": "Emscripten Release (threaded)",
+      "description": "Pthread renderer + SharedArrayBuffer. Needs COOP/COEP (e.g. Cloudflare Pages _headers).",
+      "binaryDir": "${sourceDir}/build/emscripten-threaded-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "AB3D_NO_THREADS": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "emscripten-release",
+      "configurePreset": "emscripten-release"
+    },
+    {
+      "name": "emscripten-threaded-release",
+      "configurePreset": "emscripten-threaded-release"
+    }
+  ]
+}

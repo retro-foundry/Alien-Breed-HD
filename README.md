@@ -1,4 +1,4 @@
-﻿# Alien Breed 3D I (PC Port)
+# Alien Breed 3D I (PC Port)
 
 A C port of Alien Breed 3D I (Amiga), translating the original 68000 assembly into C and rendering with SDL2 on Windows, Linux, and macOS.
 
@@ -84,6 +84,56 @@ Typical outputs:
 
 - Windows: `build/Release/ab3d1.exe`
 - Linux/macOS: `build/ab3d1`
+
+### Web (Emscripten)
+
+Requires [Emscripten](https://emscripten.org/) (e.g. `emsdk`) on your PATH so `emcmake` / `emcc` are available.
+
+**Default web build (single-threaded):** For Emscripten, CMake defaults to **`AB3D_NO_THREADS=ON`** so the wasm build runs on ordinary **`https://`** hosting (no **SharedArrayBuffer** / COOP/COEP). Native desktop builds still default to **threaded** rendering (`AB3D_NO_THREADS=OFF`). The **`emscripten-release`** preset matches the default web build. The link line includes **`-sSHARED_MEMORY=0`** so the Wasm module does not use shared memory.
+
+Chrome **DevTools → Issues** may still list a generic note about SharedArrayBuffer and cross-origin isolation (browser security text). That does not necessarily mean this build is using SAB—extensions, iframes, or other tabs can contribute. After a clean single-threaded configure, the CMake status line should include **`single-threaded build; -sSHARED_MEMORY=0`**.
+
+With [CMake presets](https://cmake.org/cmake/help/latest/manual/cmake-presets.7.html) (CMake 3.19+):
+
+```bash
+emcmake cmake --preset emscripten-release
+cmake --build --preset emscripten-release
+```
+
+Output is under `build/emscripten-release/`.
+
+Manual configure (same defaults as above—**single-threaded** wasm; no `-DAB3D_NO_THREADS` needed on a **fresh** build directory):
+
+```bash
+mkdir build-web
+cd build-web
+emcmake cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake --build .
+```
+
+If this directory was configured earlier as a **threaded** web build, CMake keeps **`AB3D_NO_THREADS=OFF`** in `CMakeCache.txt`—**`option()` does not change an existing cache value.** You will still see `pthread renderer workers enabled` until you clear that entry, for example:
+
+```bash
+emcmake cmake -UAB3D_NO_THREADS .. -DCMAKE_BUILD_TYPE=Release
+```
+
+(or delete the whole build directory), then **`cmake --build .`** again.
+
+**Threaded web build (optional):** The renderer can use pthread workers. That requires **SharedArrayBuffer**, which browsers only enable when the page is **cross-origin isolated**. Your HTTP server must send **`Cross-Origin-Opener-Policy`** and **`Cross-Origin-Embedder-Policy`** (or equivalent) so `crossOriginIsolated` is true. For local testing, use `python tools/serve_emscripten.py` from the build output directory so those headers are applied. If those headers are missing, the page shows “Can’t start the game” and wasm will not run—**there is nothing wrong with the console in that case**.
+
+Use preset **`emscripten-threaded-release`**, or **`emcmake cmake .. -DAB3D_NO_THREADS=OFF`**.
+
+**Cloudflare Pages** can send those headers using a plain-text **`_headers`** file in the deployed static root (same folder as `index.html`). This repository includes `deployment/cloudflare/_headers`; **CMake copies it to the Emscripten output directory automatically** when you build the **threaded** web target (`AB3D_NO_THREADS` off). Deploy the build output folder (containing `index.html`, `index.js`, `index.wasm`, **`_headers`**, and assets) to [Cloudflare Pages](https://developers.cloudflare.com/pages/configuration/headers/). After deploy, open DevTools → Console and confirm `crossOriginIsolated` is `true`. If a subresource fails to load, it may need to be same-origin or marked with an appropriate cross-origin policy; a self-contained wasm+preload bundle usually works as-is.
+
+The linker emits `index.html`, `index.js`, and `index.wasm` in the build directory (plus packaged assets). Game data is staged into `build-web/em_preload/` at build time and embedded with `--preload-file` so the browser MEMFS layout matches the desktop layout (`/data/...`, `ab3d.ini` at `/`).
+
+Serve the build folder over HTTP (local file URLs will not load WASM reliably), for example:
+
+```bash
+npx --yes serve .
+```
+
+Then open the URL shown for `index.html`. Audio may stay muted until you click or tap the page (browser autoplay policy).
 
 ---
 

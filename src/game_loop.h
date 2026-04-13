@@ -29,6 +29,22 @@
 
 #include "game_state.h"
 
+#include <SDL.h>
+
+/* Persistent state for one in-level session (VBlank accums, FPS meter, etc.) */
+typedef struct GameLoopCtx {
+    int frame_count;
+    int logic_count;
+    Uint32 last_ticks;
+    int pending_vblanks;
+    Uint32 vblank_remainder_ms;
+    Uint32 fps_log_start_ms;
+    int fps_frames_in_period;
+} GameLoopCtx;
+
+void game_loop_ctx_init(GameLoopCtx *ctx, GameState *state);
+void game_loop_tick(GameState *state, GameLoopCtx *ctx);
+
 /* Run the main game loop until level ends, player dies, or quit */
 void game_loop(GameState *state);
 

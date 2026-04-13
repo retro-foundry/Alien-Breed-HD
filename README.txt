@@ -35,5 +35,5 @@ GAME / UI
   - Otherwise, exits the game
 
 MOUSE CAPTURE
-- Fullscreen starts with mouse capture enabled.
-- In windowed mode, double-click inside the game window to capture the mouse.
+- The mouse pointer is visible until you left-click inside the game window to capture it (windowed or fullscreen).
+- Press Esc while captured to release capture and show the pointer again.

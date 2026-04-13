@@ -17,8 +17,10 @@
 #include <windows.h>
 #endif
 
+#if !defined(__EMSCRIPTEN__)
 static FILE *g_log_stdout = NULL;
 static FILE *g_log_stderr = NULL;
+#endif
 static int g_log_ready = 0;
 static char g_log_path[1024] = "ab3d.log";
 
@@ -34,6 +36,7 @@ static int ab3d_log_is_suppressed(const char *fmt)
     return 0;
 }
 
+#if !defined(__EMSCRIPTEN__)
 static void ab3d_log_build_path(void)
 {
     char *base = SDL_GetBasePath();
@@ -46,10 +49,20 @@ static void ab3d_log_build_path(void)
     snprintf(g_log_path, sizeof(g_log_path), "%sab3d.log", base);
     SDL_free(base);
 }
+#endif
 
 int ab3d_log_init_file(void)
 {
     if (g_log_ready) return 1;
+
+#if defined(__EMSCRIPTEN__)
+    /* Keep stdout/stderr on Emscripten's default streams so output reaches Module.print / console. */
+    snprintf(g_log_path, sizeof(g_log_path), "(browser console)");
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    g_log_ready = 1;
+    return 1;
+#else
 
     ab3d_log_build_path();
 
@@ -74,6 +87,7 @@ int ab3d_log_init_file(void)
     g_log_ready = 1;
     fprintf(stdout, "[LOG] Writing output to: %s\n", g_log_path);
     return 1;
+#endif
 }
 
 void ab3d_log_shutdown(void)

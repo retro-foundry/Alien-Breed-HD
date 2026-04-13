@@ -118,25 +118,11 @@ static void apply_zone_order_workaround_level8_zone49(GameState *state, const Pl
     }
 }
 
-/*
- * game_loop - The main per-frame game loop
- *
- * Runs until one of:
- *   - ESC pressed (quit to menu)
- *   - Player energy <= 0 (death)
- *   - Player reaches end zone (level complete)
- *   - Both players quitting (multiplayer)
- */
-void game_loop(GameState *state)
+void game_loop_ctx_init(GameLoopCtx *ctx, GameState *state)
 {
-    int frame_count = 0;
-    int logic_count = 0;
-
-    /* VBlank accumulator: tracks how many 50Hz VBlanks have elapsed.
-     * Game logic only runs when pending_vblanks >= GAME_TICK_VBLANKS. */
-    Uint32 last_ticks = SDL_GetTicks();
-    int pending_vblanks = 0;
-    Uint32 vblank_remainder_ms = 0;
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->last_ticks = SDL_GetTicks();
+    ctx->fps_log_start_ms = ctx->last_ticks;
 
     /* Allocate the previous-tick snapshot buffer used for render interpolation.
      * Initialise it to the current positions so the first frame blends cleanly. */
@@ -150,16 +136,23 @@ void game_loop(GameState *state)
         }
     }
     state->obj_interp_alpha = 0.0f;
+}
 
-    Uint32 fps_log_start_ms = SDL_GetTicks();
-    int fps_frames_in_period = 0;
+/*
+ * game_loop_tick - One display frame of the main game loop (Emscripten calls this
+ * from the browser main loop; native game_loop wraps it in a while).
+ */
+void game_loop_tick(GameState *state, GameLoopCtx *ctx)
+{
+    if (!state->running) return;
 
-    while (state->running) {
-
-        /* ================================================================
-         * Always: Poll input every display frame for responsiveness
-         * ================================================================ */
+    /* ================================================================
+     * Always: Poll input every display frame for responsiveness
+     * ================================================================ */
         input_update(state->key_map, &state->last_pressed);
+#if defined(__EMSCRIPTEN__)
+        display_emscripten_frame_resize_poll();
+#endif
         bool f2_pick_log_requested = input_f2_pick_log_requested();
         if (input_f5_save_requested())
             player_save_position(state);
@@ -186,6 +179,8 @@ void game_loop(GameState *state)
             renderer_automap_adjust_scale(-1); /* zoom in: fewer world units per pixel */
         if (input_automap_pgdn_requested())
             renderer_automap_adjust_scale(1);  /* zoom out */
+        if (input_fullscreen_toggle_requested())
+            display_toggle_fullscreen();
 
         /* ================================================================
          * Frame timing: accumulate 50Hz VBlanks from real elapsed time
@@ -193,16 +188,16 @@ void game_loop(GameState *state)
         {
             Uint32 now = SDL_GetTicks();
             state->current_ticks_ms = (uint32_t)now;
-            Uint32 elapsed = now - last_ticks;
-            last_ticks = now;
+            Uint32 elapsed = now - ctx->last_ticks;
+            ctx->last_ticks = now;
 
             /* Clamp to prevent spiral-of-death after alt-tab etc. */
             if (elapsed > 200) elapsed = 200;
 
             /* Accumulate VBlanks at 50Hz (20ms per VBlank) */
-            vblank_remainder_ms += elapsed;
-            pending_vblanks += (int)(vblank_remainder_ms / 20);
-            vblank_remainder_ms %= 20;
+            ctx->vblank_remainder_ms += elapsed;
+            ctx->pending_vblanks += (int)(ctx->vblank_remainder_ms / 20);
+            ctx->vblank_remainder_ms %= 20;
 
             /* Keep water phase moving every display frame; average speed stays 50Hz. */
             renderer_step_water_anim_ms(elapsed);
@@ -210,7 +205,7 @@ void game_loop(GameState *state)
 
         /* Track how far we are into the current 50Hz tick (0=just ticked, 1=about to tick).
          * Used by the renderer to interpolate enemy positions between logic ticks. */
-        state->obj_interp_alpha = (float)vblank_remainder_ms / 20.0f;
+        state->obj_interp_alpha = (float)ctx->vblank_remainder_ms / 20.0f;
         if (state->obj_interp_alpha > 1.0f) state->obj_interp_alpha = 1.0f;
 
         /* ================================================================
@@ -220,10 +215,10 @@ void game_loop(GameState *state)
          * is latched once per main-loop iteration (clamped) and a single
          * ObjMoveAnim-style logic pass runs with that TempFrames value.
          * ================================================================ */
-        if (pending_vblanks >= GAME_TICK_VBLANKS) {
-            int ticks = pending_vblanks;
+        if (ctx->pending_vblanks >= GAME_TICK_VBLANKS) {
+            int ticks = ctx->pending_vblanks;
             if (ticks > MAX_TEMP_FRAMES) ticks = MAX_TEMP_FRAMES;
-            pending_vblanks = 0;
+            ctx->pending_vblanks = 0;
 
             state->frames_to_draw = (int16_t)ticks;
             state->temp_frames = (int16_t)ticks;
@@ -450,7 +445,7 @@ void game_loop(GameState *state)
                 state->plr2.energy = PLAYER_MAX_ENERGY;
             }
 
-            logic_count++;
+            ctx->logic_count++;
 
         } /* end if (run_logic) */
 
@@ -480,19 +475,19 @@ void game_loop(GameState *state)
             level_log_zone_full(&state->level, looking_zone, "looking");
         }
 
-        fps_frames_in_period++;
+        ctx->fps_frames_in_period++;
         {
             Uint32 fps_now = SDL_GetTicks();
-            Uint32 fps_dt = fps_now - fps_log_start_ms;
+            Uint32 fps_dt = fps_now - ctx->fps_log_start_ms;
             if (fps_dt >= 1000u) {
                 double sec = fps_dt / 1000.0;
-                double fps = (double)fps_frames_in_period / sec;
+                double fps = (double)ctx->fps_frames_in_period / sec;
                 int rounded = (int)(fps + 0.5);
                 if (rounded < 0) rounded = 0;
                 if (rounded > 9999) rounded = 9999;
                 state->fps_display = (uint16_t)rounded;
-                fps_log_start_ms = fps_now;
-                fps_frames_in_period = 0;
+                ctx->fps_log_start_ms = fps_now;
+                ctx->fps_frames_in_period = 0;
             }
         }
 
@@ -503,7 +498,7 @@ void game_loop(GameState *state)
             if (state->mode == MODE_SINGLE) {
                 printf("[LOOP] ESC pressed - exiting to menu\n");
                 state->finished_level = 0;
-                break;
+                state->running = false;
             } else if (state->mode == MODE_SLAVE) {
                 state->slave_quitting = true;
             } else if (state->mode == MODE_MASTER) {
@@ -512,7 +507,7 @@ void game_loop(GameState *state)
         }
 
         if (state->master_quitting && state->slave_quitting) {
-            break;
+            state->running = false;
         }
 
         if (state->mode == MODE_SINGLE || state->mp_mode == 1) {
@@ -524,35 +519,51 @@ void game_loop(GameState *state)
                 if (state->current_level < MAX_LEVELS - 1) {
                     state->max_level = state->current_level + 1;
                 }
-                break;
+                state->running = false;
             }
         }
 
         if (state->plr1.energy <= 0) {
             state->finished_level = 0;
-            break;
+            state->running = false;
         }
         if (state->plr2.energy <= 0 && state->mode != MODE_SINGLE) {
             state->finished_level = 0;
-            break;
+            state->running = false;
         }
 
         /* ================================================================
          * Frame counter
          * ================================================================ */
-        frame_count++;
+        ctx->frame_count++;
 
         /* Auto-exit (only if STUB_MAX_FRAMES > 0) */
 #if STUB_MAX_FRAMES > 0
-        if (frame_count >= STUB_MAX_FRAMES) {
+        if (ctx->frame_count >= STUB_MAX_FRAMES) {
             printf("[LOOP] Auto-exit after %d frames\n", STUB_MAX_FRAMES);
-            break;
+            state->running = false;
         }
 #endif
+}
 
-    } /* end main loop */
+/*
+ * game_loop - The main per-frame game loop
+ *
+ * Runs until one of:
+ *   - ESC pressed (quit to menu)
+ *   - Player energy <= 0 (death)
+ *   - Player reaches end zone (level complete)
+ *   - Both players quitting (multiplayer)
+ */
+void game_loop(GameState *state)
+{
+    GameLoopCtx ctx;
+    game_loop_ctx_init(&ctx, state);
+    while (state->running) {
+        game_loop_tick(state, &ctx);
+    }
 
     printf("[LOOP] Exited: %d display frames, %d logic ticks (avg temp_frames=%d)\n",
-           frame_count, logic_count,
-           logic_count > 0 ? (frame_count * 5 / 6) / logic_count : 0);
+           ctx.frame_count, ctx.logic_count,
+           ctx.logic_count > 0 ? (ctx.frame_count * 5 / 6) / ctx.logic_count : 0);
 }

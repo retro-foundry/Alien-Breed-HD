@@ -16,6 +16,9 @@
 void display_init(GameState *state);
 void display_shutdown(void);
 int display_is_fullscreen(void);  /* non-zero if window is fullscreen */
+void display_toggle_fullscreen(void); /* borderless ini fullscreen or windowed <-> desktop fullscreen */
+/* Emscripten: poll after canvas fullscreen (no-op on native). */
+void display_emscripten_frame_resize_poll(void);
 void display_on_resize(int w, int h);  /* call on window resize to resize framebuffer */
 void display_handle_resize(void);      /* query renderer output size and resize (use on SDL_WINDOWEVENT_RESIZED) */
 

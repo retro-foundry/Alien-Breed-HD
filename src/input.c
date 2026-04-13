@@ -99,6 +99,74 @@ static bool g_f2_pick_log_requested = false;
 static bool g_automap_toggle_requested = false;
 static bool g_automap_pgup_requested = false;
 static bool g_automap_pgdn_requested = false;
+static bool g_fullscreen_toggle_requested = false;
+
+/* True after we successfully enable relative mode (click-to-play). The browser may
+ * exit pointer lock before SDL_KEYDOWN(Escape) is delivered, so SDL_GetRelativeMouseMode()
+ * can already be false when handling Esc — we still must clear keys and show the cursor. */
+static SDL_bool g_input_capture_active = SDL_FALSE;
+
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+EM_JS(void, input_emscripten_canvas_cursor_default, (void), {
+    var c = Module['canvas'];
+    if (c) c.style.cursor = 'default';
+});
+/* Browser exits pointer lock on Esc before SDL may see KEYDOWN; sync release here. */
+EM_JS(void, input_emscripten_install_pointer_lock_listener, (void), {
+    Module['ab3dPointerLockLost'] = 0;
+    document.addEventListener('pointerlockchange', function() {
+        if (!document.pointerLockElement && Module['canvas']) {
+            Module['ab3dPointerLockLost'] = 1;
+        }
+    });
+});
+#else
+static void input_emscripten_canvas_cursor_default(void) { }
+static void input_emscripten_install_pointer_lock_listener(void) { }
+#endif
+
+/* Unwind SDL's cursor hide stack (ShowCursor is reference-counted). */
+static void input_force_cursor_visible(void)
+{
+    int n = 0;
+    while (SDL_ShowCursor(SDL_QUERY) == SDL_DISABLE && n++ < 16) {
+        SDL_ShowCursor(SDL_ENABLE);
+    }
+}
+
+/* Relative mode hides the OS cursor; when not captured, keep the pointer visible.
+ * Releasing capture clears mouse state and the full key_map (if provided) so movement
+ * and fire keys do not stay latched after Esc or focus loss. */
+static void input_apply_relative_mouse(SDL_bool want_capture, uint8_t *key_map)
+{
+    if (SDL_SetRelativeMouseMode(want_capture) != 0 && want_capture) {
+        static int logged_fail = 0;
+        if (!logged_fail) {
+            printf("[INPUT] SDL_SetRelativeMouseMode(1) failed: %s\n", SDL_GetError());
+            logged_fail = 1;
+        }
+        want_capture = SDL_FALSE;
+    }
+    if (!want_capture) {
+        g_mouse.left_button = false;
+        g_mouse.right_button = false;
+        g_mouse.wheel_y = 0;
+        g_mouse.dx = 0;
+        g_mouse.dy = 0;
+        if (key_map) {
+            memset(key_map, 0, 128);
+        }
+        SDL_CaptureMouse(SDL_FALSE);
+        g_input_capture_active = SDL_FALSE;
+        SDL_ShowCursor(SDL_ENABLE);
+        input_force_cursor_visible();
+        input_emscripten_canvas_cursor_default();
+    } else {
+        g_input_capture_active = SDL_TRUE;
+        SDL_ShowCursor(SDL_DISABLE);
+    }
+}
 
 /* -----------------------------------------------------------------------
  * Lifecycle
@@ -109,15 +177,14 @@ void input_init(void)
     g_quit_requested = false;
     g_f7_spill_visualize_requested = false;
     g_f2_pick_log_requested = false;
-    /* In fullscreen, capture mouse from the start; in windowed, user double-clicks to capture. */
-    if (display_is_fullscreen()) {
-        SDL_SetRelativeMouseMode(SDL_TRUE);
-    }
+    /* Pointer visible until user clicks in the window to capture (fullscreen or windowed). */
+    input_apply_relative_mouse(SDL_FALSE, NULL);
+    input_emscripten_install_pointer_lock_listener();
 }
 
 void input_shutdown(void)
 {
-    SDL_SetRelativeMouseMode(SDL_FALSE);
+    input_apply_relative_mouse(SDL_FALSE, NULL);
     printf("[INPUT] SDL2 input shutdown\n");
 }
 
@@ -130,6 +197,20 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
     g_mouse.dx = 0;
     g_mouse.dy = 0;
     g_mouse.wheel_y = 0;
+
+#if defined(__EMSCRIPTEN__)
+    /* Pointer lock often ends here before SDL gets KEYDOWN(Escape). */
+    {
+        int lost = EM_ASM_INT({
+            var v = Module['ab3dPointerLockLost'] | 0;
+            Module['ab3dPointerLockLost'] = 0;
+            return v;
+        });
+        if (lost) {
+            input_apply_relative_mouse(SDL_FALSE, key_map);
+        }
+    }
+#endif
 
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
@@ -145,6 +226,19 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
             if (ev.key.repeat) {
                 break;
             }
+            if (ev.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+                /* One Esc always: release relative mode, clear keyboard, show pointer.
+                 * (Browser often drops pointer lock before SDL_GetRelativeMouseMode() is
+                 * false here — do not branch on that.) */
+                SDL_bool had_capture = g_input_capture_active || SDL_GetRelativeMouseMode();
+                input_apply_relative_mouse(SDL_FALSE, key_map);
+                /* Quit to menu only when Esc was not releasing in-game capture */
+                if (!had_capture && key_map) {
+                    key_map[AMIGA_KEY_ESC] = 1;
+                    if (last_pressed) *last_pressed = AMIGA_KEY_ESC;
+                }
+                break;
+            }
             if (ev.key.keysym.scancode == SDL_SCANCODE_F2) {
                 g_f2_pick_log_requested = true;
             } else if (ev.key.keysym.scancode == SDL_SCANCODE_F5) {
@@ -155,6 +249,12 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
                 g_f6_gouraud_visualize_requested = true;
             } else if (ev.key.keysym.scancode == SDL_SCANCODE_F7) {
                 g_f7_spill_visualize_requested = true;
+#if !defined(__EMSCRIPTEN__)
+            } else if (ev.key.keysym.scancode == SDL_SCANCODE_F11 ||
+                       ev.key.keysym.scancode == SDL_SCANCODE_F12) {
+                /* Browser: F11 is handled in display.c (Fullscreen API); SDL often never sees it. */
+                g_fullscreen_toggle_requested = true;
+#endif
             } else if (ev.key.keysym.scancode == SDL_SCANCODE_TAB) {
                 g_automap_toggle_requested = true;
             } else if (ev.key.keysym.scancode == SDL_SCANCODE_PAGEUP) {
@@ -163,11 +263,7 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
                 g_automap_pgdn_requested = true;
             }
             uint8_t amiga = sdl_to_amiga(ev.key.keysym.scancode);
-            /* In windowed mode, Escape releases mouse capture and is not sent to the game */
-            if (ev.key.keysym.scancode == SDL_SCANCODE_ESCAPE && SDL_GetRelativeMouseMode()) {
-                SDL_SetRelativeMouseMode(SDL_FALSE);
-                /* Consume key so game doesn't quit */
-            } else if (amiga != 0xFF && key_map) {
+            if (amiga != 0xFF && key_map) {
                 key_map[amiga] = 1;
                 if (last_pressed) *last_pressed = amiga;
             }
@@ -176,6 +272,12 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
 
         case SDL_KEYUP:
         {
+            /* Same PollEvent batch often has KEYDOWN(Esc) then KEYUP(Esc); clearing ESC here
+             * undoes quit in one frame. Release-capture path memset on KEYDOWN; never need
+             * KEYUP to clear Esc in key_map. */
+            if (ev.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+                break;
+            }
             uint8_t amiga = sdl_to_amiga(ev.key.keysym.scancode);
             if (amiga != 0xFF && key_map) {
                 key_map[amiga] = 0;
@@ -192,17 +294,21 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
             break;
 
         case SDL_MOUSEBUTTONDOWN:
-            /* Double-click in window enables relative mouse mode (capture) */
-            if (ev.button.clicks == 2) {
-                SDL_SetRelativeMouseMode(SDL_TRUE);
+            /* First left-click captures; that click is not treated as fire/jump */
+            if (!SDL_GetRelativeMouseMode()) {
+                if (ev.button.button == SDL_BUTTON_LEFT) {
+                    input_apply_relative_mouse(SDL_TRUE, NULL);
+                }
+                break;
             }
+            /* Mouse buttons only affect gameplay while captured */
             if (ev.button.button == SDL_BUTTON_LEFT) {
                 g_mouse.left_button = true;
-                if (SDL_GetRelativeMouseMode() && key_map) key_map[AMIGA_KEY_RALT] = 1;
+                if (key_map) key_map[AMIGA_KEY_RALT] = 1;
             }
             if (ev.button.button == SDL_BUTTON_RIGHT) {
                 g_mouse.right_button = true;
-                if (SDL_GetRelativeMouseMode() && key_map) key_map[AMIGA_KEY_SPACE] = 1;
+                if (key_map) key_map[AMIGA_KEY_SPACE] = 1;
             }
             break;
 
@@ -218,21 +324,39 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
             break;
 
         case SDL_MOUSEWHEEL:
-        {
-            int16_t wheel_y = (int16_t)ev.wheel.y;
-            if (ev.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
-                wheel_y = (int16_t)-wheel_y;
+            if (!SDL_GetRelativeMouseMode()) break;
+            {
+                int16_t wheel_y = (int16_t)ev.wheel.y;
+                if (ev.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
+                    wheel_y = (int16_t)-wheel_y;
+                }
+                g_mouse.wheel_y = (int16_t)(g_mouse.wheel_y + wheel_y);
             }
-            g_mouse.wheel_y = (int16_t)(g_mouse.wheel_y + wheel_y);
             break;
-        }
 
         case SDL_WINDOWEVENT:
-            if (ev.window.event == SDL_WINDOWEVENT_RESIZED) {
+            switch (ev.window.event) {
+            case SDL_WINDOWEVENT_RESIZED:
                 display_handle_resize();  /* use renderer output size, not window logical size */
+                break;
+            case SDL_WINDOWEVENT_FOCUS_LOST:
+                /* Same as Esc: always sync release (lock may already be gone). */
+                input_apply_relative_mouse(SDL_FALSE, key_map);
+                break;
+            default:
+                break;
             }
             break;
         }
+    }
+    /* Pointer lock can drop before SDL_KEYDOWN(Escape); sync state next frame. */
+    if (g_input_capture_active && !SDL_GetRelativeMouseMode()) {
+        input_apply_relative_mouse(SDL_FALSE, key_map);
+    }
+    /* No gameplay from mouse while uncaptured (belt-and-suspenders vs stale buttons). */
+    if (!SDL_GetRelativeMouseMode()) {
+        g_mouse.left_button = false;
+        g_mouse.right_button = false;
     }
 }
 
@@ -315,5 +439,12 @@ bool input_automap_pgdn_requested(void)
 {
     if (!g_automap_pgdn_requested) return false;
     g_automap_pgdn_requested = false;
+    return true;
+}
+
+bool input_fullscreen_toggle_requested(void)
+{
+    if (!g_fullscreen_toggle_requested) return false;
+    g_fullscreen_toggle_requested = false;
     return true;
 }

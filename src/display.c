@@ -9,6 +9,10 @@
  * Base window size comes from ab3d.ini (render_width/render_height).
  * Internal render size is base size multiplied by supersampling.
  * The final image is letterboxed, centered, aspect preserved.
+ *
+ * Emscripten: internal resolution defaults from ab3d.ini, then (unless AB3D_WEB_USE_INI_RES=1)
+ * is overridden to a preset matching the physical screen aspect (nearest of 16:9, 16:10, …).
+ * The SDL canvas is created at the base size; letterboxing scales to the drawable area.
  */
 
 #include "display.h"
@@ -23,6 +27,81 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+
+/* SDL_SetWindowFullscreen is unreliable with the HTML5 canvas; use the Fullscreen API and
+ * sync letterboxing when the canvas size changes. F11 often does not reach SDL (browser). */
+EM_JS(void, display_emscripten_install_fullscreen_listeners, (void), {
+    function ab3dToggleCanvasFullscreen() {
+        var c = Module['canvas'];
+        if (!c) return;
+        var el = document.fullscreenElement || document.webkitFullscreenElement ||
+                 document.mozFullScreenElement || document.msFullscreenElement;
+        if (el === c) {
+            var ex = document.exitFullscreen || document.webkitExitFullscreen ||
+                     document.mozCancelFullScreen || document.msExitFullscreen;
+            if (ex) ex.call(document);
+        } else {
+            var req = c.requestFullscreen || c.webkitRequestFullscreen ||
+                      c.mozRequestFullScreen || c.msRequestFullscreen;
+            if (req) req.call(c).catch(function() {});
+        }
+    }
+    Module['ab3dToggleCanvasFullscreen'] = ab3dToggleCanvasFullscreen;
+    Module['ab3dFullscreenResizePending'] = 0;
+    var mark = function() { Module['ab3dFullscreenResizePending'] = 1; };
+    document.addEventListener('fullscreenchange', mark, false);
+    document.addEventListener('webkitfullscreenchange', mark, false);
+    window.addEventListener('keydown', function(e) {
+        if (e.code !== 'F11' && e.key !== 'F11' && e.keyCode !== 122) return;
+        e.preventDefault();
+        e.stopPropagation();
+        ab3dToggleCanvasFullscreen();
+    }, true);
+});
+
+EM_JS(void, display_emscripten_canvas_fullscreen_toggle, (void), {
+    if (Module['ab3dToggleCanvasFullscreen']) Module['ab3dToggleCanvasFullscreen']();
+});
+
+/* Pick render_width/height from the nearest common aspect to screen.width/screen.height. */
+EM_JS(void, display_emscripten_apply_screen_aspect_resolution, (int *out_w, int *out_h), {
+    var screenW = screen.width;
+    var screenH = screen.height;
+    if (screenW < 1 || screenH < 1) {
+        screenW = window.innerWidth || 1920;
+        screenH = window.innerHeight || 1080;
+    }
+    var measured = screenW / screenH;
+    var common = [[16, 9], [16, 10], [3, 2], [4, 3], [21, 9], [32, 9]];
+    var bestIdx = 0;
+    var bestDiff = 1e9;
+    for (var i = 0; i < common.length; i++) {
+        var cw = common[i][0], ch = common[i][1];
+        var diff = Math.abs(measured - (cw / ch));
+        if (diff < bestDiff) {
+            bestDiff = diff;
+            bestIdx = i;
+        }
+    }
+    /* Preset pixel sizes (same aspect as common[bestIdx]); clamped later in C if needed. */
+    var res = [
+        [1920, 1080],
+        [1920, 1200],
+        [1920, 1280],
+        [1920, 1440],
+        [2560, 1080],
+        [3840, 1080]
+    ];
+    var tw = res[bestIdx][0];
+    var th = res[bestIdx][1];
+    var h32 = (typeof HEAP32 !== 'undefined') ? HEAP32 : Module['HEAP32'];
+    h32[out_w >> 2] = tw;
+    h32[out_h >> 2] = th;
+});
+#endif
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -77,7 +156,7 @@ static SDL_Texture *g_key_hud_tex[4];
 static uintptr_t    g_key_hud_tex_tag;
 static void display_key_hud_free_textures(void);
 
-/* HUD digit strips: 0 = health %, 1 = ammo count (fonts/*_digits.png). */
+/* HUD digit strips: 0 = health %, 1 = ammo count (fonts, e.g. health_digits.png). */
 static SDL_Texture *g_hud_digit_tex[2];
 static int          g_hud_digit_tex_w[2];
 static int          g_hud_digit_tex_h[2];
@@ -90,7 +169,6 @@ static int g_present_height = 0;
 static SDL_Rect g_present_dst_rect;
 static int g_internal_w = RENDER_WIDTH;
 static int g_internal_h = RENDER_HEIGHT;
-static int g_use_fixed_renderer_size = 1;
 static int g_release_borderless_desktop = 0;
 static int g_screen_tint_enabled = 0;
 static Uint8 g_screen_tint_r = 0;
@@ -219,6 +297,7 @@ typedef void   (APIENTRY *DisplayGlUniform1iFn)(GLint location, GLint v0);
 typedef void   (APIENTRY *DisplayGlUseProgramFn)(GLuint program);
 typedef void   (APIENTRY *DisplayGlVertexAttribPointerFn)(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer);
 typedef void   (APIENTRY *DisplayGlViewportFn)(GLint x, GLint y, GLsizei width, GLsizei height);
+typedef void   (APIENTRY *DisplayGlGetIntegervFn)(GLenum pname, GLint *params);
 typedef GLuint (APIENTRY *DisplayGlCreateProgramFn)(void);
 typedef GLuint (APIENTRY *DisplayGlCreateShaderFn)(GLenum type);
 typedef void   (APIENTRY *DisplayGlAttachShaderFn)(GLuint program, GLuint shader);
@@ -228,6 +307,7 @@ typedef void   (APIENTRY *DisplayGlEnableFn)(GLenum cap);
 typedef void   (APIENTRY *DisplayGlDisableFn)(GLenum cap);
 typedef void   (APIENTRY *DisplayGlBlendFuncFn)(GLenum sfactor, GLenum dfactor);
 typedef void   (APIENTRY *DisplayGlUniform4fFn)(GLint location, GLfloat x, GLfloat y, GLfloat z, GLfloat w);
+typedef void   (APIENTRY *DisplayGlUniform1fFn)(GLint location, GLfloat v0);
 typedef void   (APIENTRY *DisplayGlDisableVertexAttribArrayFn)(GLuint index);
 
 #ifndef GL_BLEND
@@ -266,6 +346,9 @@ typedef void   (APIENTRY *DisplayGlDisableVertexAttribArrayFn)(GLuint index);
 #ifndef GL_UNSIGNED_BYTE
 #define GL_UNSIGNED_BYTE 0x1401
 #endif
+#ifndef GL_MAX_TEXTURE_SIZE
+#define GL_MAX_TEXTURE_SIZE 0x0D33
+#endif
 #ifndef GL_DST_COLOR
 #define GL_DST_COLOR 0x0306
 #endif
@@ -293,6 +376,7 @@ static GLuint g_gl_hud_vao_solid;
 static GLuint g_gl_hud_vbo;
 static GLint g_gl_hud_loc_tex;
 static GLint g_gl_hud_loc_color_tex;
+static GLint g_gl_hud_loc_rb_swap;
 static GLint g_gl_hud_loc_color_solid;
 static int g_gl_overlay_win_w;
 static int g_gl_overlay_win_h;
@@ -300,8 +384,10 @@ static DisplayGlEnableFn                   g_gl_enable;
 static DisplayGlDisableFn                  g_gl_disable;
 static DisplayGlBlendFuncFn                g_gl_blend_func;
 static DisplayGlUniform4fFn                g_gl_uniform4f;
+static DisplayGlUniform1fFn                g_gl_uniform1f;
 static DisplayGlDisableVertexAttribArrayFn g_gl_disable_vertex_attrib_array;
 
+static DisplayGlGetIntegervFn              g_gl_get_integerv;
 static DisplayGlActiveTextureFn            g_gl_active_texture;
 static DisplayGlBindBufferFn               g_gl_bind_buffer;
 static DisplayGlBindTextureFn              g_gl_bind_texture;
@@ -341,6 +427,38 @@ static DisplayGlAttachShaderFn             g_gl_attach_shader;
 static DisplayGlCompileShaderFn            g_gl_compile_shader;
 static DisplayGlGetProgramInfoLogFn       g_gl_get_program_info_log;
 
+#if defined(__EMSCRIPTEN__)
+static const char display_gl_vs_src[] =
+    "#version 300 es\n"
+    "precision highp float;\n"
+    "layout(location = 0) in vec2 a_pos;\n"
+    "layout(location = 1) in vec2 a_uv;\n"
+    "out vec2 v_uv;\n"
+    "void main() {\n"
+    "  v_uv = a_uv;\n"
+    "  gl_Position = vec4(a_pos, 0.0, 1.0);\n"
+    "}\n";
+
+static const char display_gl_fs_src[] =
+    "#version 300 es\n"
+    "precision highp float;\n"
+    "precision highp int;\n"
+    "uniform highp usampler2D u_cw;\n"
+    "in highp vec2 v_uv;\n"
+    "out highp vec4 o_col;\n"
+    "void main() {\n"
+    "  highp vec2 uv = v_uv;\n"
+    "  highp uint w = texture(u_cw, uv).r;\n"
+    "  highp uint c = w & 0xFFFu;\n"
+    "  highp uint r4 = (c >> 8) & 0xFu;\n"
+    "  highp uint g4 = (c >> 4) & 0xFu;\n"
+    "  highp uint b4 = c & 0xFu;\n"
+    "  float r = float(r4) * (1.0 / 15.0);\n"
+    "  float g = float(g4) * (1.0 / 15.0);\n"
+    "  float b = float(b4) * (1.0 / 15.0);\n"
+    "  o_col = vec4(r, g, b, 1.0);\n"
+    "}\n";
+#else
 static const char display_gl_vs_src[] =
     "#version 330 core\n"
     "layout(location = 0) in vec2 a_pos;\n"
@@ -369,6 +487,7 @@ static const char display_gl_fs_src[] =
     "  float b = float(b4) * (1.0 / 15.0);\n"
     "  o_col = vec4(r, g, b, 1.0);\n"
     "}\n";
+#endif
 
 static int display_gl_load_procs(void)
 {
@@ -410,6 +529,7 @@ static int display_gl_load_procs(void)
     g_gl_attach_shader = (DisplayGlAttachShaderFn)SDL_GL_GetProcAddress("glAttachShader");
     g_gl_compile_shader = (DisplayGlCompileShaderFn)SDL_GL_GetProcAddress("glCompileShader");
     g_gl_get_program_info_log = (DisplayGlGetProgramInfoLogFn)SDL_GL_GetProcAddress("glGetProgramInfoLog");
+    g_gl_get_integerv = (DisplayGlGetIntegervFn)SDL_GL_GetProcAddress("glGetIntegerv");
 
     return (g_gl_active_texture && g_gl_bind_buffer && g_gl_bind_texture && g_gl_bind_vertex_array &&
             g_gl_buffer_data && g_gl_clear && g_gl_clear_color && g_gl_delete_buffers && g_gl_delete_program &&
@@ -456,6 +576,45 @@ static void display_gl_output_size(int *out_w, int *out_h)
     if (*out_h < 1) *out_h = 1;
 }
 
+#if defined(__EMSCRIPTEN__)
+static const char hud_tex_vs_src[] =
+    "#version 300 es\n"
+    "precision highp float;\n"
+    "layout(location=0) in vec2 a_pos;\n"
+    "layout(location=1) in vec2 a_uv;\n"
+    "out vec2 v_uv;\n"
+    "void main() {\n"
+    "  gl_Position = vec4(a_pos, 0.0, 1.0);\n"
+    "  v_uv = a_uv;\n"
+    "}\n";
+
+static const char hud_tex_fs_src[] =
+    "#version 300 es\n"
+    "precision mediump float;\n"
+    "uniform sampler2D u_tex;\n"
+    "uniform vec4 u_color;\n"
+    "uniform float u_rb_swap;\n"
+    "in vec2 v_uv;\n"
+    "out vec4 o_col;\n"
+    "void main() {\n"
+    "  vec4 s = texture(u_tex, v_uv);\n"
+    "  vec4 t = mix(s, vec4(s.b, s.g, s.r, s.a), u_rb_swap);\n"
+    "  o_col = t * u_color;\n"
+    "}\n";
+
+static const char hud_solid_vs_src[] =
+    "#version 300 es\n"
+    "precision highp float;\n"
+    "layout(location=0) in vec2 a_pos;\n"
+    "void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }\n";
+
+static const char hud_solid_fs_src[] =
+    "#version 300 es\n"
+    "precision mediump float;\n"
+    "uniform vec4 u_color;\n"
+    "out vec4 o_col;\n"
+    "void main() { o_col = u_color; }\n";
+#else
 static const char hud_tex_vs_src[] =
     "#version 330 core\n"
     "layout(location=0) in vec2 a_pos;\n"
@@ -470,10 +629,13 @@ static const char hud_tex_fs_src[] =
     "#version 330 core\n"
     "uniform sampler2D u_tex;\n"
     "uniform vec4 u_color;\n"
+    "uniform float u_rb_swap;\n"
     "in vec2 v_uv;\n"
     "out vec4 o_col;\n"
     "void main() {\n"
-    "  o_col = texture(u_tex, v_uv) * u_color;\n"
+    "  vec4 s = texture(u_tex, v_uv);\n"
+    "  vec4 t = mix(s, vec4(s.b, s.g, s.r, s.a), u_rb_swap);\n"
+    "  o_col = t * u_color;\n"
     "}\n";
 
 static const char hud_solid_vs_src[] =
@@ -486,6 +648,7 @@ static const char hud_solid_fs_src[] =
     "uniform vec4 u_color;\n"
     "out vec4 o_col;\n"
     "void main() { o_col = u_color; }\n";
+#endif
 
 static void display_gl_wnd_ndc(float x, float y, int win_w, int win_h, float *nx, float *ny)
 {
@@ -518,8 +681,10 @@ static int display_gl_hud_try_init(void)
     g_gl_disable = (DisplayGlDisableFn)SDL_GL_GetProcAddress("glDisable");
     g_gl_blend_func = (DisplayGlBlendFuncFn)SDL_GL_GetProcAddress("glBlendFunc");
     g_gl_uniform4f = (DisplayGlUniform4fFn)SDL_GL_GetProcAddress("glUniform4f");
+    g_gl_uniform1f = (DisplayGlUniform1fFn)SDL_GL_GetProcAddress("glUniform1f");
     g_gl_disable_vertex_attrib_array = (DisplayGlDisableVertexAttribArrayFn)SDL_GL_GetProcAddress("glDisableVertexAttribArray");
-    if (!g_gl_enable || !g_gl_disable || !g_gl_blend_func || !g_gl_uniform4f || !g_gl_disable_vertex_attrib_array)
+    if (!g_gl_enable || !g_gl_disable || !g_gl_blend_func || !g_gl_uniform4f || !g_gl_uniform1f ||
+        !g_gl_disable_vertex_attrib_array)
         return 0;
 
     GLuint v1 = display_gl_compile_shader(GL_VERTEX_SHADER, hud_tex_vs_src);
@@ -553,6 +718,7 @@ static int display_gl_hud_try_init(void)
     }
     g_gl_hud_loc_tex = g_gl_get_uniform_location(g_gl_prog_hud_tex, "u_tex");
     g_gl_hud_loc_color_tex = g_gl_get_uniform_location(g_gl_prog_hud_tex, "u_color");
+    g_gl_hud_loc_rb_swap = g_gl_get_uniform_location(g_gl_prog_hud_tex, "u_rb_swap");
 
     v1 = display_gl_compile_shader(GL_VERTEX_SHADER, hud_solid_vs_src);
     f1 = display_gl_compile_shader(GL_FRAGMENT_SHADER, hud_solid_fs_src);
@@ -683,6 +849,7 @@ static void display_gl_gun_quad(int frame_slot, const SDL_Rect *dst)
     g_gl_use_program(g_gl_prog_hud_tex);
     if (g_gl_hud_loc_tex >= 0)        g_gl_uniform1i(g_gl_hud_loc_tex, 0);
     if (g_gl_hud_loc_color_tex >= 0)  g_gl_uniform4f(g_gl_hud_loc_color_tex, 1.0f, 1.0f, 1.0f, 1.0f);
+    if (g_gl_hud_loc_rb_swap >= 0)    g_gl_uniform1f(g_gl_hud_loc_rb_swap, 0.0f);
     g_gl_active_texture(GL_TEXTURE0);
     g_gl_bind_texture(0x0DE1, g_gun_gl_frames[frame_slot]);
     g_gl_bind_vertex_array(g_gl_hud_vao_tex);
@@ -810,6 +977,12 @@ static void display_gl_texture_blit(SDL_Texture *tex, const SDL_Rect *src_opt, c
     g_gl_use_program(g_gl_prog_hud_tex);
     if (g_gl_hud_loc_tex >= 0) g_gl_uniform1i(g_gl_hud_loc_tex, 0);
     if (g_gl_hud_loc_color_tex >= 0) g_gl_uniform4f(g_gl_hud_loc_color_tex, fr, fg, fb, fa);
+#if defined(__EMSCRIPTEN__)
+    /* SDL_GL_BindTexture + WebGL: SDL's texture bytes are BGRA vs our GL_RGBA gun path. */
+    if (g_gl_hud_loc_rb_swap >= 0) g_gl_uniform1f(g_gl_hud_loc_rb_swap, 1.0f);
+#else
+    if (g_gl_hud_loc_rb_swap >= 0) g_gl_uniform1f(g_gl_hud_loc_rb_swap, 0.0f);
+#endif
     g_gl_active_texture(GL_TEXTURE0);
     g_gl_bind_vertex_array(g_gl_hud_vao_tex);
     g_gl_bind_buffer(0x8892, g_gl_hud_vbo);
@@ -915,9 +1088,8 @@ static void display_automap_line_stroked_gl(int ax0, int ay0, int ax1, int ay1,
     if (len < 1e-6) return;
     double px = -dy / len;
     double py = dx / len;
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-    SDL_RenderFlush(g_sdl_ren);
-#endif
+    /* Do not SDL_RenderFlush here: automap draws thousands of stroked lines; per-line flush
+     * stalls the WebGL main thread (tab freeze). Flush once in display_automap_sdl_overlay. */
     if (black_k_max < 0) black_k_max = 0;
     if (fg_k_max < 0) fg_k_max = 0;
     for (int k = -black_k_max; k <= black_k_max; k++) {
@@ -1037,7 +1209,7 @@ static int display_gl_try_init_unpack(void)
 static void display_gl_reset_client_pixel_unpack(void)
 {
     if (g_gl_bind_buffer)
-        g_gl_bind_buffer(0x0EC0 /* GL_PIXEL_UNPACK_BUFFER */, 0);
+        g_gl_bind_buffer(0x88EC /* GL_PIXEL_UNPACK_BUFFER */, 0);
     if (g_gl_pixel_storei) {
         g_gl_pixel_storei(0x0CF5 /* GL_UNPACK_ALIGNMENT */, 2);
         g_gl_pixel_storei(0x0CF2 /* GL_UNPACK_ROW_LENGTH */, 0);
@@ -1281,6 +1453,24 @@ static int display_use_fullscreen_desktop(const GameState *state)
 #endif
 }
 
+#if defined(__EMSCRIPTEN__)
+/* Scale down so both dimensions stay <= max_dim (aspect preserved). Avoids WebGL tex limits + WASM OOM. */
+static void emscripten_clamp_dims_aspect(int *w, int *h, int max_dim)
+{
+    if (!w || !h || max_dim < 96) return;
+    if (*w < 1 || *h < 1) return;
+    if (*w <= max_dim && *h <= max_dim) return;
+    double sx = (double)max_dim / (double)*w;
+    double sy = (double)max_dim / (double)*h;
+    double s = (sx < sy) ? sx : sy;
+    *w = (int)((double)*w * s + 0.5);
+    *h = (int)((double)*h * s + 0.5);
+    if (*w < 96) *w = 96;
+    if (*h < 80) *h = 80;
+}
+
+#endif
+
 /* -----------------------------------------------------------------------
  * Lifecycle
  * ----------------------------------------------------------------------- */
@@ -1294,7 +1484,31 @@ void display_init(GameState *state)
     if (state) {
         base_rw = (int)state->cfg_render_width;
         base_rh = (int)state->cfg_render_height;
+#if defined(__EMSCRIPTEN__)
+        {
+            const char *use_ini = SDL_getenv("AB3D_WEB_USE_INI_RES");
+            if (!use_ini || use_ini[0] == '\0' ||
+                (use_ini[0] != '1' && use_ini[0] != 'y' && use_ini[0] != 'Y')) {
+                int aw = 0, ah = 0;
+                display_emscripten_apply_screen_aspect_resolution(&aw, &ah);
+                if (aw >= 96 && ah >= 80 && aw <= RENDER_INTERNAL_MAX_DIM && ah <= RENDER_INTERNAL_MAX_DIM) {
+                    state->cfg_render_width = (int16_t)aw;
+                    state->cfg_render_height = (int16_t)ah;
+                    base_rw = aw;
+                    base_rh = ah;
+                    printf("[DISPLAY] Web: screen aspect → preset %dx%d (set AB3D_WEB_USE_INI_RES=1 to keep ab3d.ini)\n",
+                           aw, ah);
+                }
+            }
+        }
+#endif
         supersampling = (int)state->cfg_supersampling;
+    }
+    if (!SDL_WasInit(SDL_INIT_VIDEO)) {
+        if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+            printf("[DISPLAY] SDL_Init failed: %s\n", SDL_GetError());
+            return;
+        }
     }
     fullscreen_desktop = display_use_fullscreen_desktop(state);
     if (base_rw < 96) base_rw = 96;
@@ -1321,15 +1535,25 @@ void display_init(GameState *state)
         if (rh > RENDER_INTERNAL_MAX_DIM) rh = RENDER_INTERNAL_MAX_DIM;
     }
 
+#if defined(__EMSCRIPTEN__)
+    /* Supersampling can push rw/rh past 4096 even when base is clamped; WebGL + heap need this. */
+    {
+        int rw0 = rw, rh0 = rh;
+        emscripten_clamp_dims_aspect(&rw, &rh, 4096);
+        if (rw != rw0 || rh != rh0) {
+            if (state) {
+                state->cfg_render_width = (int16_t)rw;
+                state->cfg_render_height = (int16_t)rh;
+                state->cfg_supersampling = 1;
+            }
+            printf("[DISPLAY] Web: supersampled size clamped to %dx%d (GPU/heap safe)\n", rw, rh);
+        }
+    }
+#endif
+
     g_internal_w = rw;
     g_internal_h = rh;
 
-    if (!SDL_WasInit(SDL_INIT_VIDEO)) {
-        if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-            printf("[DISPLAY] SDL_Init failed: %s\n", SDL_GetError());
-            return;
-        }
-    }
     display_log_display_mode_snapshot("startup-before-window");
 
     /* Request GL 3.0+ so integer textures (GL_R16UI) work when using the OpenGL render driver.
@@ -1340,21 +1564,32 @@ void display_init(GameState *state)
      * *core* context removes those entry points, which breaks mixing SDL_Renderer with our
      * custom GL unpack pass and corrupts the framebuffer. macOS only exposes core profiles
      * for GL 3.2+, so we keep core there. */
-#if defined(__APPLE__)
+#if defined(__EMSCRIPTEN__)
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#elif defined(__APPLE__)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 #else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
 #endif
+#ifndef __EMSCRIPTEN__
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
     if (fullscreen_desktop) {
         printf("[DISPLAY] SDL2 init (display_mode=fullscreen: desktop-sized window, base=%dx%d, internal render=%dx%d, supersampling=%d)\n",
                base_rw, base_rh, g_internal_w, g_internal_h, supersampling);
     } else {
+#if defined(__EMSCRIPTEN__)
+        printf("[DISPLAY] SDL2 init (display_mode=windowed, window %dx%d, internal render %dx%d, supersampling=%d; letterbox to fit)\n",
+               base_rw, base_rh, g_internal_w, g_internal_h, supersampling);
+#else
         printf("[DISPLAY] SDL2 init (display_mode=windowed, window %dx%d, internal render %dx%d, supersampling=%d; resize to letterbox)\n",
                base_rw, base_rh, g_internal_w, g_internal_h, supersampling);
+#endif
     }
 
     renderer_init();
@@ -1431,10 +1666,15 @@ void display_init(GameState *state)
             driver_try[driver_try_count++] = "";
         } else if (prefer_gpu_unpack) {
             /* OpenGL first: enables GL_R16UI present (no SDL CPU blit for the 3D buffer). */
+#if defined(__EMSCRIPTEN__)
+            driver_try[driver_try_count++] = "opengles2";
+            driver_try[driver_try_count++] = "";
+#else
             driver_try[driver_try_count++] = "opengl";
             driver_try[driver_try_count++] = "direct3d11";
             driver_try[driver_try_count++] = "direct3d";
             driver_try[driver_try_count++] = "";
+#endif
         } else {
             driver_try[driver_try_count++] = "direct3d11";
             driver_try[driver_try_count++] = "direct3d";
@@ -1472,6 +1712,29 @@ void display_init(GameState *state)
                "try AB3D_RENDER_DRIVER=opengl or install updated GPU drivers. "
                "To force D3D+texture: set AB3D_DISABLE_GL_UNPACK=1\n");
     }
+#if defined(__EMSCRIPTEN__)
+    /* GL_R16UI texture must be <= GL_MAX_TEXTURE_SIZE (often 4096 on WebGL); also sync cfg. */
+    if (g_gl_unpack_ok) {
+        int max_tex = 4096;
+        if (g_gl_get_integerv) {
+            GLint m = 0;
+            g_gl_get_integerv(GL_MAX_TEXTURE_SIZE, &m);
+            if (m > 0 && m < max_tex) max_tex = (int)m;
+        }
+        if (rw > max_tex || rh > max_tex) {
+            emscripten_clamp_dims_aspect(&rw, &rh, max_tex);
+            g_internal_w = rw;
+            g_internal_h = rh;
+            if (state) {
+                state->cfg_render_width = (int16_t)rw;
+                state->cfg_render_height = (int16_t)rh;
+                state->cfg_supersampling = 1;
+            }
+            printf("[DISPLAY] Web: clamped internal render to %dx%d (GPU texture limit %d)\n",
+                   rw, rh, max_tex);
+        }
+    }
+#endif
     display_set_renderer_target_size(rw, rh);
 
     int out_w = window_w;
@@ -1491,6 +1754,12 @@ void display_init(GameState *state)
            g_present_dst_rect.w, g_present_dst_rect.h,
            g_present_dst_rect.x, g_present_dst_rect.y);
     display_log_display_mode_snapshot("startup-after-window");
+#if defined(__EMSCRIPTEN__)
+    /* Canvas backing store may settle after layout; refresh letterbox once. */
+    SDL_PumpEvents();
+    display_handle_resize();
+    display_emscripten_install_fullscreen_listeners();
+#endif
 }
 
 void display_on_resize(int w, int h)
@@ -1515,11 +1784,56 @@ void display_handle_resize(void)
     g_present_height = out_h;
 }
 
+void display_emscripten_frame_resize_poll(void)
+{
+#if defined(__EMSCRIPTEN__)
+    if (!g_sdl_ren) return;
+    int pending = EM_ASM_INT({
+        var v = Module['ab3dFullscreenResizePending'] | 0;
+        Module['ab3dFullscreenResizePending'] = 0;
+        return v;
+    });
+    if (pending) {
+        SDL_PumpEvents();
+        display_handle_resize();
+    }
+#endif
+}
+
 int display_is_fullscreen(void)
 {
     if (!g_window) return 0;
     if (g_release_borderless_desktop) return 1;
     return (SDL_GetWindowFlags(g_window) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != 0;
+}
+
+void display_toggle_fullscreen(void)
+{
+    if (!g_window) return;
+
+#if defined(__EMSCRIPTEN__)
+    display_emscripten_canvas_fullscreen_toggle();
+    SDL_PumpEvents();
+    display_handle_resize();
+    return;
+#endif
+
+    Uint32 wf = SDL_GetWindowFlags(g_window);
+    int sdl_fs = (wf & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != 0;
+
+    if (sdl_fs) {
+        SDL_SetWindowFullscreen(g_window, 0);
+    } else if (g_release_borderless_desktop) {
+        /* display_mode=fullscreen at startup: borderless desktop-sized window (no SDL fullscreen API). */
+        g_release_borderless_desktop = 0;
+        SDL_SetWindowSize(g_window, 1280, 720);
+        SDL_SetWindowPosition(g_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    } else {
+        SDL_SetWindowFullscreen(g_window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    }
+
+    SDL_PumpEvents();
+    display_handle_resize();
 }
 
 void display_shutdown(void)
@@ -1650,20 +1964,6 @@ static void display_automap_player_arrow_fill(int axb, int ayb, int axl, int ayl
         SDL_RenderGeometry(g_sdl_ren, NULL, v, 6, NULL, 0);
     }
 #endif
-}
-
-/* Map internal render pixel rect to SDL output coordinates (letterboxed). */
-static void display_map_internal_rect(int ix, int iy, int irw, int irh, SDL_Rect *out)
-{
-    int rw = renderer_get_width();
-    int rh = renderer_get_height();
-    int ax0, ay0, ax1, ay1;
-    display_automap_map_pt(ix, iy, rw, rh, &ax0, &ay0);
-    display_automap_map_pt(ix + irw, iy + irh, rw, rh, &ax1, &ay1);
-    out->x = ax0;
-    out->y = ay0;
-    out->w = ax1 - ax0;
-    out->h = ay1 - ay0;
 }
 
 /* Letterbox-relative coords (same space as hud_key_row_layout). */
@@ -2148,25 +2448,35 @@ static void display_automap_sdl_overlay(GameState *state)
 {
     if (!state || !state->automap_visible || !g_sdl_ren) return;
 
-    int ix0[DISPLAY_AUTOMAP_MAX_SEGS], iy0[DISPLAY_AUTOMAP_MAX_SEGS];
-    int ix1[DISPLAY_AUTOMAP_MAX_SEGS], iy1[DISPLAY_AUTOMAP_MAX_SEGS];
-    uint16_t c12[DISPLAY_AUTOMAP_MAX_SEGS];
-    int n = renderer_automap_collect_line_segments(state, ix0, iy0, ix1, iy1, c12,
+    /* ~264 KiB: must not live on the stack — Emscripten default stack is 64 KiB and overflow
+     * here caused a solid tab freeze when opening the map on web. */
+    static int s_ix0[DISPLAY_AUTOMAP_MAX_SEGS];
+    static int s_iy0[DISPLAY_AUTOMAP_MAX_SEGS];
+    static int s_ix1[DISPLAY_AUTOMAP_MAX_SEGS];
+    static int s_iy1[DISPLAY_AUTOMAP_MAX_SEGS];
+    static uint16_t s_c12[DISPLAY_AUTOMAP_MAX_SEGS];
+
+    int n = renderer_automap_collect_line_segments(state, s_ix0, s_iy0, s_ix1, s_iy1, s_c12,
                                                    DISPLAY_AUTOMAP_MAX_SEGS);
     if (n <= 0) return;
+
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+    if (g_gl_unpack_ok && g_gl_hud_ok)
+        SDL_RenderFlush(g_sdl_ren);
+#endif
 
     int iw = renderer_get_width();
     int ih = renderer_get_height();
 
     int wall_end = n;
-    if (n >= 3 && (c12[n - 3] & RENDERER_AUTOMAP_SEGFLAG_PLAYER))
+    if (n >= 3 && (s_c12[n - 3] & RENDERER_AUTOMAP_SEGFLAG_PLAYER))
         wall_end = n - 3;
 
     for (int i = 0; i < wall_end; i++) {
         int ax0, ay0, ax1, ay1;
-        display_automap_map_pt(ix0[i], iy0[i], iw, ih, &ax0, &ay0);
-        display_automap_map_pt(ix1[i], iy1[i], iw, ih, &ax1, &ay1);
-        uint16_t seg = c12[i];
+        display_automap_map_pt(s_ix0[i], s_iy0[i], iw, ih, &ax0, &ay0);
+        display_automap_map_pt(s_ix1[i], s_iy1[i], iw, ih, &ax1, &ay1);
+        uint16_t seg = s_c12[i];
         Uint8 alpha = (seg & RENDERER_AUTOMAP_SEGFLAG_INTERNAL) ? (Uint8)128 : (Uint8)255;
         Uint8 fr, fg, fb;
         display_automap_amiga12_to_rgb(seg, &fr, &fg, &fb);
@@ -2175,16 +2485,16 @@ static void display_automap_sdl_overlay(GameState *state)
 
     if (wall_end < n) {
         int axb, ayb, axt, ayt, axl, ayl, axr, ayr;
-        display_automap_map_pt(ix0[n - 3], iy0[n - 3], iw, ih, &axb, &ayb);
-        display_automap_map_pt(ix1[n - 3], iy1[n - 3], iw, ih, &axt, &ayt);
-        display_automap_map_pt(ix1[n - 2], iy1[n - 2], iw, ih, &axl, &ayl);
-        display_automap_map_pt(ix1[n - 1], iy1[n - 1], iw, ih, &axr, &ayr);
+        display_automap_map_pt(s_ix0[n - 3], s_iy0[n - 3], iw, ih, &axb, &ayb);
+        display_automap_map_pt(s_ix1[n - 3], s_iy1[n - 3], iw, ih, &axt, &ayt);
+        display_automap_map_pt(s_ix1[n - 2], s_iy1[n - 2], iw, ih, &axl, &ayl);
+        display_automap_map_pt(s_ix1[n - 1], s_iy1[n - 1], iw, ih, &axr, &ayr);
         display_automap_player_arrow_fill(axb, ayb, axl, ayl, axt, ayt, axr, ayr);
 
         for (int i = wall_end; i < n; i++) {
             int ax0, ay0, ax1, ay1;
-            display_automap_map_pt(ix0[i], iy0[i], iw, ih, &ax0, &ay0);
-            display_automap_map_pt(ix1[i], iy1[i], iw, ih, &ax1, &ay1);
+            display_automap_map_pt(s_ix0[i], s_iy0[i], iw, ih, &ax0, &ay0);
+            display_automap_map_pt(s_ix1[i], s_iy1[i], iw, ih, &ax1, &ay1);
             Uint8 fr = 255, fg = 252, fb = 235;
             display_automap_draw_line_outlined(g_sdl_ren, ax0, ay0, ax1, ay1, fr, fg, fb, 255, 4, 2);
         }
@@ -2216,13 +2526,22 @@ static void display_present_cw_frame(GameState *state)
                     int frame_slot, ix, iy, iw, ih;
                     if (renderer_get_gun_draw_info(state, &frame_slot, &ix, &iy, &iw, &ih)) {
                         int rw = renderer_get_width(), rh = renderer_get_height();
+                        SDL_Rect r = g_present_dst_rect;
+                        /* Map top-left from (ix,iy) and size from (ix+iw,iy+ih) so bottom/right
+                         * match the framebuffer edges after integer scale. Using iw*pw/rw and
+                         * ih*ph/rh alone can lose 1px vs (exclusive end)*(dim)/dim - (start)*(dim)/dim
+                         * when the window is smaller than internal res (gap under the weapon). */
+                        int64_t px0 = (int64_t)r.x + (int64_t)ix * (int64_t)r.w / (int64_t)rw;
+                        int64_t py0 = (int64_t)r.y + (int64_t)iy * (int64_t)r.h / (int64_t)rh;
+                        int64_t px1 = (int64_t)r.x + (int64_t)(ix + iw) * (int64_t)r.w / (int64_t)rw;
+                        int64_t py1 = (int64_t)r.y + (int64_t)(iy + ih) * (int64_t)r.h / (int64_t)rh;
                         SDL_Rect gun_dst;
-                        gun_dst.x = g_present_dst_rect.x
-                                    + (int)((int64_t)ix * g_present_dst_rect.w / rw);
-                        gun_dst.y = g_present_dst_rect.y
-                                    + (int)((int64_t)iy * g_present_dst_rect.h / rh);
-                        gun_dst.w = (int)((int64_t)iw * g_present_dst_rect.w / rw);
-                        gun_dst.h = (int)((int64_t)ih * g_present_dst_rect.h / rh);
+                        gun_dst.x = (int)px0;
+                        gun_dst.y = (int)py0;
+                        gun_dst.w = (int)(px1 - px0);
+                        gun_dst.h = (int)(py1 - py0);
+                        if (gun_dst.w < 1) gun_dst.w = 1;
+                        if (gun_dst.h < 1) gun_dst.h = 1;
                         display_gl_gun_quad(frame_slot, &gun_dst);
                     }
                 }

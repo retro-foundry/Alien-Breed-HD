@@ -12,6 +12,7 @@
 #include "game_types.h"
 #include "sprite_palettes.h"
 #include <SDL.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +25,12 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #define MKDIR(path) mkdir(path, 0755)
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+#define AB3D_IO_UNUSED_STATIC __attribute__((unused))
+#else
+#define AB3D_IO_UNUSED_STATIC
 #endif
 
 /* -----------------------------------------------------------------------
@@ -169,6 +176,7 @@ static inline void wr32(uint8_t *p, int32_t v) {
  */
 #define NUM_POINTS 9
 
+AB3D_IO_UNUSED_STATIC
 static void build_test_level_data(LevelState *level)
 {
     /* Calculate buffer sizes */
@@ -441,6 +449,7 @@ static void build_test_level_data(LevelState *level)
            NUM_ZONES, NUM_POINTS, NUM_FLINES, total);
 }
 
+AB3D_IO_UNUSED_STATIC
 static void build_test_level_graphics(LevelState *level)
 {
     /* Graphics data layout:
@@ -578,6 +587,7 @@ static void build_test_level_graphics(LevelState *level)
            off_lgr, off_gfx_data, off_bright);
 }
 
+AB3D_IO_UNUSED_STATIC
 static void build_test_level_clips(LevelState *level)
 {
     /* Minimal clips: just an empty clip list */
@@ -1224,6 +1234,16 @@ void io_load_floor(void)
                               g_water_brighten_data, g_water_brighten_size);
 }
 
+/* Lowercase the filename segment only (MEMFS / Linux are case-sensitive; Amiga dumps use mixed case). */
+static void io_path_filename_to_lower(char *path)
+{
+    char *p = strrchr(path, '/');
+    char *b = strrchr(path, '\\');
+    if (b && (!p || b > p)) p = b;
+    if (p) p++; else p = path;
+    for (; *p; p++) *p = (char)tolower((unsigned char)*p);
+}
+
 /* Amiga AB3DI.s BackPicture: incbin "data/gfx/backfile" — 16-bit BE color words, 432x38, column-major
  * (32832 bytes). Palette is in the pixels; copper chunky uses the same 0x0RGB words (no backpal file). */
 void io_load_sky(void)
@@ -1233,24 +1253,50 @@ void io_load_sky(void)
     g_sky_file_data = NULL;
 
     char path[512];
+    char sky_path[512];
     FILE *f = NULL;
+    /* Repo ships Amiga-style names (e.g. BackFile); try those after canonical lowercase paths. */
     static const char *sky_data[] = {
         "gfx/backfile",
+        "gfx/BackFile",
         NULL
     };
+    sky_path[0] = '\0';
     for (int i = 0; sky_data[i] && !f; i++) {
         make_data_path(path, sizeof(path), sky_data[i]);
+        snprintf(sky_path, sizeof(sky_path), "%s", path);
         f = fopen(path, "rb");
+        if (!f) {
+            char alt[512];
+            snprintf(alt, sizeof(alt), "%s", path);
+            io_path_filename_to_lower(alt);
+            if (strcmp(alt, path) != 0) {
+                f = fopen(alt, "rb");
+                if (f) snprintf(sky_path, sizeof(sky_path), "%s", alt);
+            }
+        }
     }
 
     static uint8_t sky_pal[768];
     const uint8_t *pal_ptr = NULL;
     {
         FILE *pf = NULL;
-        static const char *pal_data[] = { "gfx/backpal", NULL };
+        char palpath[512];
+        static const char *pal_data[] = {
+            "gfx/backpal",
+            "gfx/BackPal",
+            NULL
+        };
         for (int i = 0; pal_data[i] && !pf; i++) {
-            make_data_path(path, sizeof(path), pal_data[i]);
-            pf = fopen(path, "rb");
+            make_data_path(palpath, sizeof(palpath), pal_data[i]);
+            pf = fopen(palpath, "rb");
+            if (!pf) {
+                char alt[512];
+                snprintf(alt, sizeof(alt), "%s", palpath);
+                io_path_filename_to_lower(alt);
+                if (strcmp(alt, palpath) != 0)
+                    pf = fopen(alt, "rb");
+            }
         }
         if (pf) {
             if (fread(sky_pal, 1, 768, pf) == 768)
@@ -1260,7 +1306,7 @@ void io_load_sky(void)
     }
 
     if (!f) {
-        io_fatal_missing("sky backfile", path);
+        io_fatal_missing("sky backfile", sky_path[0] ? sky_path : path);
     }
 
     fseek(f, 0, SEEK_END);
@@ -1308,15 +1354,50 @@ void io_load_sky(void)
 /* Try opening a file from executable-local data/ via subpath. */
 static FILE *open_gun_file(const char *subpath, const char *filename, char *path_out, size_t path_size)
 {
+    FILE *f = NULL;
     if (filename && filename[0]) {
         char replacement_subpath[256];
         snprintf(replacement_subpath, sizeof(replacement_subpath), "replacements/weapons/%s", filename);
         make_data_path(path_out, path_size, replacement_subpath);
-        FILE *f = fopen(path_out, "rb");
+        f = fopen(path_out, "rb");
         if (f) return f;
     }
     make_data_path(path_out, path_size, subpath);
-    return fopen(path_out, "rb");
+    f = fopen(path_out, "rb");
+    if (f) return f;
+    {
+        char alt[512];
+        snprintf(alt, sizeof(alt), "%s", path_out);
+        io_path_filename_to_lower(alt);
+        if (strcmp(alt, path_out) != 0) {
+            f = fopen(alt, "rb");
+            if (f) {
+                snprintf(path_out, path_size, "%s", alt);
+                return f;
+            }
+        }
+    }
+    /* MEMFS is case-sensitive; Amiga / Windows trees may use NewGunsInHand.* */
+    if (filename && strcmp(filename, "newgunsinhand.pal") == 0) {
+        static const char *pal_alts[] = {
+            "pal/NewGunsInHand.pal",
+            "includes/NewGunsInHand.pal",
+        };
+        for (size_t i = 0; i < sizeof(pal_alts) / sizeof(pal_alts[0]); i++) {
+            make_data_path(path_out, path_size, pal_alts[i]);
+            f = fopen(path_out, "rb");
+            if (f) return f;
+        }
+    } else if (filename && strcmp(filename, "newgunsinhand.wad") == 0) {
+        make_data_path(path_out, path_size, "includes/NewGunsInHand.wad");
+        f = fopen(path_out, "rb");
+        if (f) return f;
+    } else if (filename && strcmp(filename, "newgunsinhand.ptr") == 0) {
+        make_data_path(path_out, path_size, "includes/NewGunsInHand.ptr");
+        f = fopen(path_out, "rb");
+        if (f) return f;
+    }
+    return NULL;
 }
 
 /* -----------------------------------------------------------------------
@@ -1701,6 +1782,7 @@ static int load_sprite_file(const char *name, const char *prefix,
                             uint8_t **out_data, size_t *out_size)
 {
     char subpath[256], path[512];
+    char stem[256], ext[32];
     *out_data = NULL;
     *out_size = 0;
 
@@ -1709,6 +1791,24 @@ static int load_sprite_file(const char *name, const char *prefix,
     make_data_path(path, sizeof(path), subpath);
     if (sb_load_file(path, out_data, out_size) == 0 && *out_data && *out_size > 0)
         return 1;
+    {
+        char alt[512];
+        snprintf(alt, sizeof(alt), "%s", path);
+        io_path_filename_to_lower(alt);
+        if (strcmp(alt, path) != 0) {
+            if (sb_load_file(alt, out_data, out_size) == 0 && *out_data && *out_size > 0)
+                return 1;
+        }
+    }
+    /* MEMFS: try UPPERCASE stem (e.g. includes/ROCKETS.wad) */
+    if (sscanf(name, "%255[^.].%31s", stem, ext) == 2) {
+        for (char *s = stem; *s; s++)
+            *s = (char)toupper((unsigned char)*s);
+        snprintf(subpath, sizeof(subpath), "includes/%s.%s", stem, ext);
+        make_data_path(path, sizeof(path), subpath);
+        if (sb_load_file(path, out_data, out_size) == 0 && *out_data && *out_size > 0)
+            return 1;
+    }
 
     /* Try <prefix>/<name> (e.g. pal/alien2.pal) */
     if (prefix) {
@@ -1716,6 +1816,23 @@ static int load_sprite_file(const char *name, const char *prefix,
         make_data_path(path, sizeof(path), subpath);
         if (sb_load_file(path, out_data, out_size) == 0 && *out_data && *out_size > 0)
             return 1;
+        {
+            char alt[512];
+            snprintf(alt, sizeof(alt), "%s", path);
+            io_path_filename_to_lower(alt);
+            if (strcmp(alt, path) != 0) {
+                if (sb_load_file(alt, out_data, out_size) == 0 && *out_data && *out_size > 0)
+                    return 1;
+            }
+        }
+        if (sscanf(name, "%255[^.].%31s", stem, ext) == 2) {
+            for (char *s = stem; *s; s++)
+                *s = (char)toupper((unsigned char)*s);
+            snprintf(subpath, sizeof(subpath), "%s/%s.%s", prefix, stem, ext);
+            make_data_path(path, sizeof(path), subpath);
+            if (sb_load_file(path, out_data, out_size) == 0 && *out_data && *out_size > 0)
+                return 1;
+        }
     }
 
     return 0;

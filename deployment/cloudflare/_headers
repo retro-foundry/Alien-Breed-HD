@@ -1,0 +1,6 @@
+# Cross-origin isolation for the default (pthread) Emscripten build.
+# Cloudflare Pages reads this file from the static asset root (next to index.html).
+# See README → Web (Emscripten) → Cloudflare Pages.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp

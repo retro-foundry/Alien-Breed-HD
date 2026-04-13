@@ -42,6 +42,10 @@
 #include "renderer_3dobj.h"
 #include "settings.h"
 
+#if defined(__EMSCRIPTEN__)
+#include "emscripten_loop.h"
+#endif
+
 /*
  * setup_game - Initialize all subsystems
  *
@@ -95,7 +99,7 @@ static void setup_game(GameState *state)
  *   - Close libraries
  *   - Release all allocated memory
  */
-static void tear_down_game(GameState *state)
+void tear_down_game(GameState *state)
 {
     printf("\nTearDownGame\n");
 
@@ -149,6 +153,11 @@ int main(int argc, char *argv[])
     }
 
     setup_game(&g_state);
+#if defined(__EMSCRIPTEN__)
+    emscripten_run_game(&g_state);
+    /* Game runs in emscripten_set_main_loop; tear_down + log shutdown happen when the loop ends. */
+    return 0;
+#else
     play_game(&g_state);
     tear_down_game(&g_state);
 
@@ -157,4 +166,5 @@ int main(int argc, char *argv[])
     printf("\n=== Exit (code 0) ===\n");
     ab3d_log_shutdown();
     return 0;
+#endif
 }

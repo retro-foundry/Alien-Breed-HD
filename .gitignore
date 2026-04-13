@@ -1,4 +1,6 @@
 
 *.o
 build
+build-web
+build-native-test
 /data/

@@ -59,5 +59,7 @@ bool input_automap_toggle_requested(void);
 /* PgUp/PgDn: automap zoom (once per key press). */
 bool input_automap_pgup_requested(void);
 bool input_automap_pgdn_requested(void);
+/* F12 (and F11): toggle fullscreen desktop (once per key press). */
+bool input_fullscreen_toggle_requested(void);
 
 #endif /* INPUT_H */

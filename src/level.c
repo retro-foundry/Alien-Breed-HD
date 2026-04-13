@@ -14,6 +14,12 @@
 #include "logging.h"
 #define printf ab3d_log_printf
 
+#if defined(__clang__) || defined(__GNUC__)
+#define AB3D_ATTR_UNUSED __attribute__((unused))
+#else
+#define AB3D_ATTR_UNUSED
+#endif
+
 /* Helper to read big-endian 16-bit word from buffer */
 static int16_t read_word(const uint8_t *p)
 {
@@ -147,7 +153,7 @@ static int zone_file_to_index(const uint8_t *ld, const uint8_t *zone_adds, int n
  * Wall list at 18: (wall_number(w), ptr(l), graphic(l)) until wall_number < 0, then +2.
  * wall_number = floor line index; ptr = offset into LEVELGRAPHICS for wall record (patch at +24 = door height).
  */
-static const uint8_t *skip_amiga_wall_list(const uint8_t *p)
+static AB3D_ATTR_UNUSED const uint8_t *skip_amiga_wall_list(const uint8_t *p)
 {
     while (read_word(p) >= 0)
         p += 2 + 4 + 4;
@@ -1478,7 +1484,7 @@ static int level_l4_adjacent_door_wall_match(int16_t p1, int16_t p2, int16_t tex
     return 0;
 }
 
-static int level_patch_zone_wall_yoff(LevelState *level,
+static AB3D_ATTR_UNUSED int level_patch_zone_wall_yoff(LevelState *level,
                                       int16_t zone_id_word,
                                       int16_t yoff_delta,
                                       int (*wall_match)(int16_t p1, int16_t p2, int16_t tex_id),
@@ -1538,7 +1544,7 @@ static int level_patch_zone_wall_yoff(LevelState *level,
     return patched;
 }
 
-static int level_patch_all_lower_zone_walls_yoff(LevelState *level,
+static AB3D_ATTR_UNUSED int level_patch_all_lower_zone_walls_yoff(LevelState *level,
                                                  int16_t yoff_delta,
                                                  int (*wall_match)(int16_t p1, int16_t p2, int16_t tex_id),
                                                  const char *log_label,
@@ -1616,7 +1622,7 @@ static int level_patch_all_lower_zone_walls_yoff(LevelState *level,
     return patched_total;
 }
 
-static int level_patch_l4_door_wall_list_scroll_base(LevelState *level, int16_t scroll_delta)
+static AB3D_ATTR_UNUSED int level_patch_l4_door_wall_list_scroll_base(LevelState *level, int16_t scroll_delta)
 {
     if (!level || !level->door_wall_list || !level->door_wall_list_offsets || !level->graphics)
         return 0;

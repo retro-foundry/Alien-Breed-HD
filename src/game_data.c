@@ -328,7 +328,7 @@ static const BulletAnimFrame anim_bul1[] = {
     { 17, 17,  6,  9, 0 },
     { 15, 20,  6, 10, 0 },
     { 17, 17,  6, 11, 0 },
-    { -1 }
+    { .width = -1 }
 };
 
 /* Bul2Anim: gun 1 (plasma gun) - uses vect 2 (bigbullet), frames 0-7 */
@@ -341,7 +341,7 @@ static const BulletAnimFrame anim_bul2[] = {
     { 25, 25,  2,  5, 0 },
     { 25, 25,  2,  6, 0 },
     { 25, 25,  2,  7, 0 },
-    { -1 }
+    { .width = -1 }
 };
 
 /* RockAnim: gun 2 (rocket) - uses vect 6 (rockets), frames 0-3 */
@@ -350,7 +350,7 @@ static const BulletAnimFrame anim_rock[] = {
     { 16, 16,  6,  1, 0 },
     { 16, 16,  6,  2, 0 },
     { 16, 16,  6,  3, 0 },
-    { -1 }
+    { .width = -1 }
 };
 
 /* FlameAnim: gun 3 (flamethrower) - uses vect 8, full 18-frame growth sequence. */
@@ -374,7 +374,7 @@ static const BulletAnimFrame anim_flame[] = {
     { 87, 87,  8, 8, 0 },
     { 95, 95,  8, 8, 0 },
     { 103,103,  8, 8, 0 },
-    { -1 }
+    { .width = -1 }
 };
 
 /* grenAnim: gun 4 (grenade) - uses vect 1 (alien sheet), frames 21-24 */
@@ -383,7 +383,7 @@ static const BulletAnimFrame anim_gren[] = {
     { 25, 25,  1, 22, 0 },
     { 25, 25,  1, 23, 0 },
     { 25, 25,  1, 24, 0 },
-    { -1 }
+    { .width = -1 }
 };
 
 /* Bul4Anim: gun 5 (worm spit) - uses vect 6, frames 4-7 */
@@ -392,7 +392,7 @@ static const BulletAnimFrame anim_bul4[] = {
     { 25, 25,  6,  5, 0 },
     { 25, 25,  6,  6, 0 },
     { 25, 25,  6,  7, 0 },
-    { -1 }
+    { .width = -1 }
 };
 
 /* Bul5Anim: gun 6 (marine shot) - uses vect 6, frames 4-7, small */
@@ -401,7 +401,7 @@ static const BulletAnimFrame anim_bul5[] = {
     { 10, 10,  6,  5, 0 },
     { 10, 10,  6,  6, 0 },
     { 10, 10,  6,  7, 0 },
-    { -1 }
+    { .width = -1 }
 };
 
 /* Explode anim tables: used by gibs (SHOT_SIZE 50-53).
@@ -412,28 +412,28 @@ static const BulletAnimFrame anim_explode1[] = {
     { 25, 25,  0, 17, 0 },
     { 25, 25,  0, 18, 0 },
     { 25, 25,  0, 19, 0 },
-    { -1 }
+    { .width = -1 }
 };
 static const BulletAnimFrame anim_explode2[] = {
     { 20, 20,  0, 20, 0 },
     { 20, 20,  0, 21, 0 },
     { 20, 20,  0, 22, 0 },
     { 20, 20,  0, 23, 0 },
-    { -1 }
+    { .width = -1 }
 };
 static const BulletAnimFrame anim_explode3[] = {
     { 20, 20,  0, 24, 0 },
     { 20, 20,  0, 25, 0 },
     { 20, 20,  0, 26, 0 },
     { 20, 20,  0, 27, 0 },
-    { -1 }
+    { .width = -1 }
 };
 static const BulletAnimFrame anim_explode4[] = {
     { 30, 30,  0, 28, 0 },
     { 30, 30,  0, 29, 0 },
     { 30, 30,  0, 30, 0 },
     { 30, 30,  0, 31, 0 },
-    { -1 }
+    { .width = -1 }
 };
 
 /* -----------------------------------------------------------------------
@@ -454,7 +454,7 @@ static const BulletAnimFrame pop_bul1[] = {
     { 25, 25, 1, 14, -4 },
     { 25, 25, 1, 15, -4 },
     { 25, 25, 1, 16, -4 },
-    { -1 }
+    { .width = -1 }
 };
 
 static const BulletAnimFrame pop_bul2[] = {
@@ -470,7 +470,7 @@ static const BulletAnimFrame pop_bul2[] = {
     { 61, 61, 2, 17, -4 },
     { 65, 65, 2, 18, -4 },
     { 69, 69, 2, 19, -4 },
-    { -1 }
+    { .width = -1 }
 };
 
 static const BulletAnimFrame pop_rock[] = {
@@ -488,7 +488,7 @@ static const BulletAnimFrame pop_rock[] = {
     { 210, 210, 8, 7, -4 },
     { 220, 220, 8, 8, -4 },
     { 230, 230, 8, 8, -4 },
-    { -1 }
+    { .width = -1 }
 };
 
 static const BulletAnimFrame pop_flame[] = {
@@ -498,7 +498,7 @@ static const BulletAnimFrame pop_flame[] = {
     { 152, 152, 8, 8, 0 },
     { 156, 156, 8, 8, 0 },
     { 160, 160, 8, 8, 0 },
-    { -1 }
+    { .width = -1 }
 };
 
 static const BulletAnimFrame pop_bul4[] = {
@@ -506,14 +506,14 @@ static const BulletAnimFrame pop_bul4[] = {
     { 15, 15, 6, 5, 0 },
     { 10, 10, 6, 6, 0 },
     {  5,  5, 6, 7, 0 },
-    { -1 }
+    { .width = -1 }
 };
 
 static const BulletAnimFrame pop_bul5[] = {
     { 8, 8, 6, 4, 0 },
     { 6, 6, 6, 5, 0 },
     { 4, 4, 6, 6, 0 },
-    { -1 }
+    { .width = -1 }
 };
 
 static const BulletAnimFrame pop_explode1[] = {
@@ -528,7 +528,7 @@ static const BulletAnimFrame pop_explode1[] = {
     { 17, 17, 0, 16, 1 },
     { 13, 13, 0, 16, 1 },
     {  9,  9, 0, 16, 1 },
-    { -1 }
+    { .width = -1 }
 };
 
 static const BulletAnimFrame pop_explode2[] = {
@@ -543,7 +543,7 @@ static const BulletAnimFrame pop_explode2[] = {
     { 17, 17, 0, 20, 1 },
     { 13, 13, 0, 20, 1 },
     {  9,  9, 0, 20, 1 },
-    { -1 }
+    { .width = -1 }
 };
 
 static const BulletAnimFrame pop_explode3[] = {
@@ -557,7 +557,7 @@ static const BulletAnimFrame pop_explode3[] = {
     { 17, 17, 0, 24, 1 },
     { 13, 13, 0, 24, 1 },
     {  9,  9, 0, 24, 1 },
-    { -1 }
+    { .width = -1 }
 };
 
 static const BulletAnimFrame pop_explode4[] = {
@@ -572,7 +572,7 @@ static const BulletAnimFrame pop_explode4[] = {
     { 17, 17, 0, 28, 1 },
     { 13, 13, 0, 28, 1 },
     {  9,  9, 0, 28, 1 },
-    { -1 }
+    { .width = -1 }
 };
 
 /* Indexed by SHOT_SIZE.

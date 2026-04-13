@@ -17,6 +17,23 @@
 
 #include "game_state.h"
 
+#include <stdbool.h>
+
+/* Shared asset load used by play_game and the Emscripten browser driver. */
+void play_game_load_shared_assets(GameState *state);
+
+/* One inner iteration of PlayTheGame (level load + conditions); used by Emscripten main loop. */
+void play_the_game_prepare_level(GameState *state, bool *copper_screen_ready);
+
+/* After game_loop returns: 1 = F9 reload (caller runs another prepare), 0 = level session done. */
+int play_the_game_after_game_loop(GameState *state);
+
+/* Cleanup at end of play_the_game (copper screen, level mem, flags). */
+void play_the_game_finalize_session(GameState *state);
+
+/* After a full play_the_game: 1 = continue play_game outer loop, 0 = exit to panel release. */
+int play_game_outer_should_continue(GameState *state);
+
 /* PlayGame - the top-level game loop (ControlLoop.s: PlayGame) */
 void play_game(GameState *state);
 
