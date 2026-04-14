@@ -6854,11 +6854,17 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     /* --- Vertical clipping (invariant across columns) --- */
     int draw_top = sy;
     int draw_bot = sy + height - 1;
+    const int have_plane_clip = (clip_top_sy < clip_bot_sy);
     if (draw_top < 0) draw_top = 0;
     if (draw_bot >= rh) draw_bot = rh - 1;
-    if (draw_top < (int)ctx->top_clip) draw_top = (int)ctx->top_clip;
-    if (draw_bot > (int)ctx->bot_clip) draw_bot = (int)ctx->bot_clip;
-    if (clip_top_sy < clip_bot_sy) {
+    if (!have_plane_clip) {
+        if (draw_top < (int)ctx->top_clip) draw_top = (int)ctx->top_clip;
+        if (draw_bot > (int)ctx->bot_clip) draw_bot = (int)ctx->bot_clip;
+    }
+    if (have_plane_clip) {
+        /* Split-zone object passes already have an exact per-sprite room-plane clip.
+         * Reapplying the coarse pass band here can wrongly cull distant billboards
+         * when the fixed split line does not match the sprite's true projection. */
         if (draw_top < (int)clip_top_sy) draw_top = (int)clip_top_sy;
         if (draw_bot > (int)clip_bot_sy) draw_bot = (int)clip_bot_sy;
     }
@@ -8305,6 +8311,12 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
     int num_pts = level->num_object_points;
     if (num_pts > MAX_OBJ_POINTS) num_pts = MAX_OBJ_POINTS;
 
+    /* Object/shot layout keeps the logical upper/lower section flag at byte 63.
+     * For sprites in their own zone, prefer that stable gameplay-side section state
+     * over a renderer-estimated vertical overlap test; overlap remains useful for
+     * adjacent spill across stair/split boundaries. */
+    const int obj_off_in_top = 63;
+
     /* Iterate by object index; each object has point number at offset 0 (ObjDraw: move.w (a0)+,d0).
      * Use that to look up ObjRotated[pt_num] so keys and other pickups use correct position/z. */
     for (int obj_idx = 0; obj_idx < RENDERER_OBJECT_SLOT_SCAN_CAP && obj_count < max_draw_entries; obj_idx++) {
@@ -8324,6 +8336,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int32_t half_h = renderer_billboard_half_height_world_fp(spill_world_h);
         int overlaps_current_section = renderer_world_span_overlaps_room(obj_world_y, half_h,
                                                                          top_of_room, bot_of_room);
+        int obj_on_upper = (obj[obj_off_in_top] != 0);
         if (!in_this_zone) {
             adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, obj_zone);
             if (adj_slot < 0) continue;
@@ -8331,11 +8344,14 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 continue;
         }
 
-        /* Multi-floor sprite spill must follow actual vertical overlap with the
-         * current section, not only the object's anchor floor flag. This lets
-         * billboards cross stair splits while clip_top/clip_bot keep pixels in-band. */
-        if (level_filter >= 0 && !overlaps_current_section) {
-            continue;
+        if (level_filter >= 0) {
+            if (in_this_zone) {
+                if ((level_filter == 1 && !obj_on_upper) ||
+                    (level_filter == 0 && obj_on_upper))
+                    continue;
+            } else if (!overlaps_current_section) {
+                continue;
+            }
         }
 
         int16_t draw_clip_left = 0, draw_clip_right = 0;
@@ -8452,14 +8468,21 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             int32_t half_h = renderer_billboard_half_height_world_fp(spill_world_h);
             int overlaps_current_section = renderer_world_span_overlaps_room(shot_world_y, half_h,
                                                                              top_of_room, bot_of_room);
+            int shot_on_upper = (obj[obj_off_in_top] != 0);
             if (!in_this_zone) {
                 adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, shot_zone);
                 if (adj_slot < 0) continue;
                 if (!overlaps_current_section)
                     continue;
             }
-            if (level_filter >= 0 && !overlaps_current_section) {
-                continue;
+            if (level_filter >= 0) {
+                if (in_this_zone) {
+                    if ((level_filter == 1 && !shot_on_upper) ||
+                        (level_filter == 0 && shot_on_upper))
+                        continue;
+                } else if (!overlaps_current_section) {
+                    continue;
+                }
             }
 
             int16_t draw_clip_left = 0, draw_clip_right = 0;
@@ -8559,6 +8582,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             int expl_h_est = 100;
             int32_t half_h;
             int overlaps_current_section;
+            int expl_on_upper = (state->explosions[ei].in_top != 0);
             renderer_get_explosion_frame_and_world_size(state, ei, NULL, NULL, &expl_h_est);
             half_h = renderer_billboard_half_height_world_fp(expl_h_est);
             overlaps_current_section = renderer_world_span_overlaps_room(state->explosions[ei].y_floor,
@@ -8572,8 +8596,14 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             }
             if (state->explosions[ei].start_delay > 0) continue;
             if ((int)state->explosions[ei].frame >= 9) continue;
-            if (level_filter >= 0 && !overlaps_current_section) {
-                continue;
+            if (level_filter >= 0) {
+                if (in_this_zone) {
+                    if ((level_filter == 1 && !expl_on_upper) ||
+                        (level_filter == 0 && expl_on_upper))
+                        continue;
+                } else if (!overlaps_current_section) {
+                    continue;
+                }
             }
 
             int16_t draw_clip_left = 0, draw_clip_right = 0;
