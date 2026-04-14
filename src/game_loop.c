@@ -52,9 +52,21 @@
 #define STUB_MAX_FRAMES 0
 
 static int g_zone_log_initialized = 0;
+static int g_zone_log_env_initialized = 0;
+static int g_zone_log_enabled = 0;
 static int16_t g_zone_log_last_level = -1;
 static int16_t g_zone_log_last_zone[2] = { -32768, -32768 };
 static int32_t g_zone_log_last_roompt[2] = { -1, -1 };
+
+static int game_zone_log_enabled(void)
+{
+    if (!g_zone_log_env_initialized) {
+        const char *env = getenv("AB3D_ZONE_ENTER_LOG");
+        g_zone_log_enabled = (env && *env && atoi(env) > 0) ? 1 : 0;
+        g_zone_log_env_initialized = 1;
+    }
+    return g_zone_log_enabled;
+}
 
 static void game_log_zone_changes(const GameState *state)
 {
@@ -62,6 +74,7 @@ static void game_log_zone_changes(const GameState *state)
     int view_player_index = 0;
 
     if (!state) return;
+    if (!game_zone_log_enabled()) return;
 
     plrs[0] = &state->plr1;
     plrs[1] = &state->plr2;

@@ -282,6 +282,7 @@ typedef struct {
     uint64_t floor_fast_pixels;
     uint64_t water_pixels;
     uint64_t ticks_floor;
+    uint64_t ticks_water;
     uint64_t sprite_calls;
     uint64_t sprite_columns;
     uint64_t sprite_pixels_visible;
@@ -308,6 +309,12 @@ typedef struct {
     uint64_t wall_clip_cover_pixels;
     uint64_t same_output_pixels;
     uint64_t changed_output_pixels;
+    uint64_t water_fast_path_pixels;
+    uint64_t water_fallback_pixels;
+    uint64_t water_blend_pixels;
+    uint64_t water_single_pixels;
+    uint64_t water_backbuf0_pixels;
+    uint64_t water_backbuf1_pixels;
     uint8_t *before_tags;
     uint16_t *before_cw;
     size_t before_count;
@@ -1286,6 +1293,8 @@ typedef AB3D_CACHELINE_ALIGN struct {
     int16_t strip_right;
     int16_t wall_top_clip;
     int16_t wall_bot_clip;
+    const int16_t *foreground_floor_occlude_top;
+    RendererZoneTraceFloorStats *active_floor_trace_stats;
     int16_t slice_left;
     int16_t slice_right;
     int16_t pick_zone_id;
@@ -1319,6 +1328,8 @@ static void render_slice_context_reset(RenderSliceContext *ctx,
     ctx->bot_clip = bot;
     ctx->wall_top_clip = -1;
     ctx->wall_bot_clip = -1;
+    ctx->foreground_floor_occlude_top = NULL;
+    ctx->active_floor_trace_stats = NULL;
     ctx->slice_left = left;
     ctx->slice_right = right;
     ctx->pick_zone_id = -1;
@@ -1818,7 +1829,10 @@ static void renderer_threads_init(void) { }
 static uint16_t g_water_wtan = 0;
 static uint8_t g_water_off = 0;
 static uint8_t g_water_anim_cursor = 0;
+static uint8_t g_water_src_phase = 0;
 static uint16_t g_water_src_off = 0;
+#define WATER_BRIGHTEN_ROW_BYTES 512u
+#define WATER_BRIGHTEN_ROW_COUNT 22u
 /* Interpolated per-display-frame refraction phase (smooths 50Hz step on 60Hz+ displays). */
 static uint16_t g_water_wtan_draw = 0;
 /* Millisecond remainder used to keep average animation speed at exactly 50Hz. */
@@ -1828,8 +1842,12 @@ static uint32_t g_water_speed_ms_remainder = 0;
 static const uint8_t *g_water_file = NULL;
 static size_t g_water_file_size = 0;
 static uint8_t g_water_file_level_max = 0;
+static uint8_t g_water_level_phase_lut[8][64 * 64];
+static int g_water_level_phase_lut_ready = 0;
 static const uint8_t *g_water_brighten = NULL;
 static size_t g_water_brighten_size = 0;
+static uint16_t g_water_brighten_cw_lut[WATER_BRIGHTEN_ROW_COUNT][256];
+static int g_water_brighten_cw_lut_ready = 0;
 static const uint16_t g_water_src_offsets[8] = { 0, 2, 256, 258, 512, 514, 768, 770 };
 /* Debug view: show floor/ceiling Gouraud term without distance attenuation. */
 static int g_debug_floor_gouraud_only = 0;
@@ -1840,10 +1858,46 @@ static int g_debug_spill_visualize = 0;
  *   watertouse = *waterpt++;
  *   if (waterpt == end) waterpt = start;
  *   wtan += 640 (mod 8192), wateroff++ (mod 64). */
+static void renderer_build_water_level_phase_lut(const uint8_t *water_file, size_t water_file_size)
+{
+    g_water_level_phase_lut_ready = 0;
+    if (!water_file || water_file_size < 65536u) return;
+
+    for (int phase = 0; phase < 8; phase++) {
+        size_t phase_off = (size_t)g_water_src_offsets[phase];
+        for (int v = 0; v < 64; v++) {
+            for (int u = 0; u < 64; u++) {
+                uint16_t d5 = (uint16_t)(((uint16_t)v << 8) | (uint16_t)u);
+                size_t wi = ((size_t)d5 << 2) + phase_off;
+                g_water_level_phase_lut[phase][(v << 6) | u] = (wi < water_file_size) ? water_file[wi] : 0;
+            }
+        }
+    }
+
+    g_water_level_phase_lut_ready = 1;
+}
+
+static void renderer_build_water_brighten_cw_lut(const uint8_t *water_brighten, size_t water_brighten_size)
+{
+    g_water_brighten_cw_lut_ready = 0;
+    if (!water_brighten || water_brighten_size < (WATER_BRIGHTEN_ROW_COUNT * WATER_BRIGHTEN_ROW_BYTES)) return;
+
+    for (size_t row = 0; row < WATER_BRIGHTEN_ROW_COUNT; row++) {
+        const uint8_t *src = water_brighten + row * WATER_BRIGHTEN_ROW_BYTES;
+        for (int sample = 0; sample < 256; sample++) {
+            size_t idx = (size_t)sample * 2u;
+            g_water_brighten_cw_lut[row][sample] = (uint16_t)((src[idx] << 8) | src[idx + 1u]);
+        }
+    }
+
+    g_water_brighten_cw_lut_ready = 1;
+}
+
 static void renderer_advance_water_anim(void)
 {
-    g_water_src_off = g_water_src_offsets[g_water_anim_cursor & 7u];
-    g_water_anim_cursor = (uint8_t)((g_water_anim_cursor + 1u) & 7u);
+    g_water_src_phase = (uint8_t)(g_water_anim_cursor & 7u);
+    g_water_src_off = g_water_src_offsets[g_water_src_phase];
+    g_water_anim_cursor = (uint8_t)((g_water_src_phase + 1u) & 7u);
     g_water_wtan = (uint16_t)((g_water_wtan + 640u) & 8191u);
     g_water_off = (uint8_t)((g_water_off + 1u) & 63u);
 }
@@ -1929,6 +1983,9 @@ void renderer_automap_adjust_scale(int delta_steps)
 static uint32_t amiga12_lut[4096];
 /* Rounded 8-bit channel -> 4-bit nibble: exactly matches (v+8)/17 clamp. */
 static uint8_t byte_to_nibble_lut[256];
+/* Exact 4-bit channel blend for alpha 0..255 and packed (bg<<4)|fg nibble pairs. */
+static uint8_t amiga12_blend_nibble_lut[256][256];
+static int amiga12_blend_nibble_lut_ready = 0;
 /* Full RGB24 -> Amiga12 lookup table (16,777,216 entries, ~32 MiB). */
 static uint16_t *argb24_to_amiga12_lut = NULL;
 static int argb24_to_amiga12_lut_ready = 0;
@@ -1970,6 +2027,7 @@ static void renderer_workload_stats_add(RendererWorkloadStats *dst, const Render
     dst->floor_fast_pixels += src->floor_fast_pixels;
     dst->water_pixels += src->water_pixels;
     dst->ticks_floor += src->ticks_floor;
+    dst->ticks_water += src->ticks_water;
     dst->sprite_calls += src->sprite_calls;
     dst->sprite_columns += src->sprite_columns;
     dst->sprite_pixels_visible += src->sprite_pixels_visible;
@@ -1999,6 +2057,7 @@ static void renderer_workload_stats_diff(RendererWorkloadStats *dst,
     dst->floor_fast_pixels = after->floor_fast_pixels - before->floor_fast_pixels;
     dst->water_pixels = after->water_pixels - before->water_pixels;
     dst->ticks_floor = after->ticks_floor - before->ticks_floor;
+    dst->ticks_water = after->ticks_water - before->ticks_water;
     dst->sprite_calls = after->sprite_calls - before->sprite_calls;
     dst->sprite_columns = after->sprite_columns - before->sprite_columns;
     dst->sprite_pixels_visible = after->sprite_pixels_visible - before->sprite_pixels_visible;
@@ -2576,9 +2635,12 @@ static void renderer_log_world_zone_draw(uint32_t frame_idx,
     double zone_ms = 0.0;
     double wall_ms = 0.0;
     double floor_ms = 0.0;
+    double water_ms = 0.0;
+    double dry_floor_ms = 0.0;
     double sprite_ms = 0.0;
     uint64_t writes = renderer_workload_estimated_writes(delta);
     uint64_t wall_px = 0;
+    uint64_t dry_floor_px = 0;
     uint64_t freq = 0;
 
     if (!delta) return;
@@ -2588,9 +2650,15 @@ static void renderer_log_world_zone_draw(uint32_t frame_idx,
     zone_ms = ((double)zone_ticks * 1000.0) / (double)freq;
     wall_ms = ((double)delta->ticks_wall * 1000.0) / (double)freq;
     floor_ms = ((double)delta->ticks_floor * 1000.0) / (double)freq;
+    water_ms = ((double)delta->ticks_water * 1000.0) / (double)freq;
+    dry_floor_ms = floor_ms - water_ms;
+    if (dry_floor_ms < 0.0) dry_floor_ms = 0.0;
     sprite_ms = ((double)delta->ticks_sprite * 1000.0) / (double)freq;
+    dry_floor_px = (delta->floor_pixels >= delta->water_pixels)
+        ? (delta->floor_pixels - delta->water_pixels)
+        : 0;
 
-    printf("[ZONEVIS][frame %u] draw[%02d] zone=%d clip=[%d,%d) passes=%s order=%s ms=%.3f wall_ms=%.3f floor_ms=%.3f sprite_ms=%.3f writes=%llu wall_px=%llu floor_px=%llu water_px=%llu sprite_draw=%llu sprite_test=%llu\n",
+    printf("[ZONEVIS][frame %u] draw[%02d] zone=%d clip=[%d,%d) passes=%s order=%s ms=%.3f wall_ms=%.3f floor_ms=%.3f dry_floor_ms=%.3f water_ms=%.3f sprite_ms=%.3f writes=%llu wall_px=%llu floor_px=%llu dry_floor_px=%llu water_px=%llu sprite_draw=%llu sprite_test=%llu\n",
            (unsigned)frame_idx, order_idx, (int)zone_id,
            left_clip_px, right_clip_px,
            drew_upper ? "upper+lower" : "lower",
@@ -2598,10 +2666,13 @@ static void renderer_log_world_zone_draw(uint32_t frame_idx,
            zone_ms,
            wall_ms,
            floor_ms,
+           dry_floor_ms,
+           water_ms,
            sprite_ms,
            (unsigned long long)writes,
            (unsigned long long)wall_px,
            (unsigned long long)delta->floor_pixels,
+           (unsigned long long)dry_floor_px,
            (unsigned long long)delta->water_pixels,
            (unsigned long long)delta->sprite_pixels_drawn,
            (unsigned long long)delta->sprite_pixels_tested);
@@ -2692,6 +2763,20 @@ static void build_amiga12_lut(void)
     for (unsigned i = 0; i <= DIV255_LUT_MAX; i++) {
         div255_lut[i] = (uint16_t)(i / 255u);
     }
+    amiga12_blend_nibble_lut_ready = 0;
+    for (unsigned alpha = 0; alpha < 256u; alpha++) {
+        unsigned inv = 255u - alpha;
+        uint8_t *alpha_lut = amiga12_blend_nibble_lut[alpha];
+        for (unsigned bg4 = 0; bg4 < 16u; bg4++) {
+            unsigned bg8 = bg4 * 0x11u;
+            for (unsigned fg4 = 0; fg4 < 16u; fg4++) {
+                unsigned fg8 = fg4 * 0x11u;
+                unsigned pair = (bg4 << 4) | fg4;
+                alpha_lut[pair] = byte_to_nibble_lut[div255_lut[bg8 * inv + fg8 * alpha]];
+            }
+        }
+    }
+    amiga12_blend_nibble_lut_ready = 1;
     build_argb24_to_amiga12_lut();
 }
 
@@ -2737,6 +2822,13 @@ static inline uint16_t blend_amiga12(uint16_t bg, uint16_t fg, uint32_t alpha_fg
 {
     if (alpha_fg >= 255u) return (uint16_t)(fg & 0x0FFFu);
     if (alpha_fg == 0u) return (uint16_t)(bg & 0x0FFFu);
+    if (amiga12_blend_nibble_lut_ready) {
+        const uint8_t *blend_lut = amiga12_blend_nibble_lut[alpha_fg & 0xFFu];
+        uint16_t r4 = blend_lut[((((uint32_t)bg >> 8) & 0xFu) << 4) | (((uint32_t)fg >> 8) & 0xFu)];
+        uint16_t g4 = blend_lut[((((uint32_t)bg >> 4) & 0xFu) << 4) | (((uint32_t)fg >> 4) & 0xFu)];
+        uint16_t b4 = blend_lut[(((uint32_t)bg & 0xFu) << 4) | ((uint32_t)fg & 0xFu)];
+        return (uint16_t)((r4 << 8) | (g4 << 4) | b4);
+    }
     uint32_t inv = 255u - alpha_fg;
 
     uint32_t br = (((uint32_t)bg >> 8) & 0xFu) * 0x11u;
@@ -2815,16 +2907,23 @@ void renderer_set_water_assets(const uint8_t *water_file, size_t water_file_size
     g_water_file = water_file;
     g_water_file_size = water_file_size;
     g_water_file_level_max = 0;
+    g_water_level_phase_lut_ready = 0;
+    g_water_brighten_cw_lut_ready = 0;
     if (water_file && water_file_size > 0) {
         uint8_t level_max = 0;
         for (size_t i = 0; i < water_file_size; i++) {
             if (water_file[i] > level_max) level_max = water_file[i];
         }
         g_water_file_level_max = level_max;
+        renderer_build_water_level_phase_lut(water_file, water_file_size);
     }
     g_water_brighten = water_brighten;
     g_water_brighten_size = water_brighten_size;
+    if (g_water_file_level_max <= 9u) {
+        renderer_build_water_brighten_cw_lut(water_brighten, water_brighten_size);
+    }
     g_water_anim_cursor = 0;
+    g_water_src_phase = 0;
     g_water_src_off = 0;
     g_water_ms_remainder = 0;
     g_water_speed_ms_remainder = 0;
@@ -3969,6 +4068,42 @@ static void renderer_zone_trace_floor_stats_init(RendererZoneTraceFloorStats *st
     stats->before_cw = NULL;
 }
 
+static inline void renderer_zone_trace_floor_stats_note_water_span(RendererZoneTraceFloorStats *stats,
+                                                                   uint64_t pixel_count,
+                                                                   int used_fast_path,
+                                                                   int used_blend)
+{
+    if (!stats || !stats->active || !stats->is_water || pixel_count == 0) return;
+    if (used_fast_path) stats->water_fast_path_pixels += pixel_count;
+    else stats->water_fallback_pixels += pixel_count;
+    if (used_blend) stats->water_blend_pixels += pixel_count;
+    else stats->water_single_pixels += pixel_count;
+}
+
+static inline void renderer_zone_trace_floor_stats_note_water_sample0(RendererZoneTraceFloorStats *stats,
+                                                                      int used_back_buffer)
+{
+    if (!stats || !stats->active || !stats->is_water || !used_back_buffer) return;
+    stats->water_backbuf0_pixels++;
+}
+
+static inline void renderer_zone_trace_floor_stats_note_water_sample1(RendererZoneTraceFloorStats *stats,
+                                                                      int used_back_buffer)
+{
+    if (!stats || !stats->active || !stats->is_water || !used_back_buffer) return;
+    stats->water_backbuf1_pixels++;
+}
+
+static inline int renderer_water_span_needs_back_buffer(const uint8_t *tags, int span_len)
+{
+    if (!tags || span_len <= 0) return 0;
+    for (int i = 0; i < span_len; i++) {
+        uint8_t tag = tags[i];
+        if (tag == 0 || tag == 4) return 1;
+    }
+    return 0;
+}
+
 static void renderer_zone_trace_floor_stats_accumulate_edges(RendererZoneTraceFloorStats *stats,
                                                              const RenderSliceContext *ctx,
                                                              const int16_t *left_edge,
@@ -4120,6 +4255,13 @@ static void renderer_zone_trace_floor_stats_log(const RendererZoneTraceFloorStat
     double wall_clip_pct;
     double same_output_pct;
     double changed_output_pct;
+    uint64_t water_drawn_pixels;
+    double water_fast_path_pct;
+    double water_fallback_pct;
+    double water_blend_pct;
+    double water_single_pct;
+    double water_backbuf0_pct;
+    double water_backbuf1_pct;
 
     if (!stats || !stats->active) return;
 
@@ -4138,28 +4280,84 @@ static void renderer_zone_trace_floor_stats_log(const RendererZoneTraceFloorStat
     changed_output_pct = (stats->submitted_pixels > 0)
         ? (100.0 * (double)stats->changed_output_pixels / (double)stats->submitted_pixels)
         : 0.0;
+    water_drawn_pixels = stats->water_fast_path_pixels + stats->water_fallback_pixels;
+    water_fast_path_pct = (water_drawn_pixels > 0)
+        ? (100.0 * (double)stats->water_fast_path_pixels / (double)water_drawn_pixels)
+        : 0.0;
+    water_fallback_pct = (water_drawn_pixels > 0)
+        ? (100.0 * (double)stats->water_fallback_pixels / (double)water_drawn_pixels)
+        : 0.0;
+    water_blend_pct = (water_drawn_pixels > 0)
+        ? (100.0 * (double)stats->water_blend_pixels / (double)water_drawn_pixels)
+        : 0.0;
+    water_single_pct = (water_drawn_pixels > 0)
+        ? (100.0 * (double)stats->water_single_pixels / (double)water_drawn_pixels)
+        : 0.0;
+    water_backbuf0_pct = (water_drawn_pixels > 0)
+        ? (100.0 * (double)stats->water_backbuf0_pixels / (double)water_drawn_pixels)
+        : 0.0;
+    water_backbuf1_pct = (stats->water_blend_pixels > 0)
+        ? (100.0 * (double)stats->water_backbuf1_pixels / (double)stats->water_blend_pixels)
+        : 0.0;
 
-    printf("[ZONEFLOOR][frame %u] zone=%d entry[%02d] type=%d water=%d rows=[%d,%d] cols=[%d,%d] submitted=%llu first_claim=%llu(%.1f%%) prefilled=%llu(%.1f%%) same_out=%llu(%.1f%%) changed_out=%llu(%.1f%%) wall_clip_cover=%llu(%.1f%%)\n",
-           (unsigned)g_renderer_zone_trace_frame_idx,
-           stats->zone_id,
-           stats->entry_index,
-           stats->entry_type,
-           stats->is_water,
-           (stats->row_min == INT_MAX) ? -1 : stats->row_min,
-           (stats->row_max == INT_MIN) ? -1 : stats->row_max,
-           (stats->col_min == INT_MAX) ? -1 : stats->col_min,
-           (stats->col_max == INT_MIN) ? -1 : stats->col_max,
-           (unsigned long long)stats->submitted_pixels,
-           (unsigned long long)stats->first_claim_pixels,
-           first_claim_pct,
-           (unsigned long long)stats->prefilled_pixels,
-           prefilled_pct,
-           (unsigned long long)stats->same_output_pixels,
-           same_output_pct,
-           (unsigned long long)stats->changed_output_pixels,
-           changed_output_pct,
-           (unsigned long long)stats->wall_clip_cover_pixels,
-           wall_clip_pct);
+    if (stats->is_water) {
+        printf("[ZONEFLOOR][frame %u] zone=%d entry[%02d] type=%d water=%d rows=[%d,%d] cols=[%d,%d] submitted=%llu first_claim=%llu(%.1f%%) prefilled=%llu(%.1f%%) same_out=%llu(%.1f%%) changed_out=%llu(%.1f%%) wall_clip_cover=%llu(%.1f%%) water_drawn=%llu fast=%llu(%.1f%%) fallback=%llu(%.1f%%) blend=%llu(%.1f%%) single=%llu(%.1f%%) backbuf0=%llu(%.1f%%) backbuf1=%llu(%.1f%% of blend)\n",
+               (unsigned)g_renderer_zone_trace_frame_idx,
+               stats->zone_id,
+               stats->entry_index,
+               stats->entry_type,
+               stats->is_water,
+               (stats->row_min == INT_MAX) ? -1 : stats->row_min,
+               (stats->row_max == INT_MIN) ? -1 : stats->row_max,
+               (stats->col_min == INT_MAX) ? -1 : stats->col_min,
+               (stats->col_max == INT_MIN) ? -1 : stats->col_max,
+               (unsigned long long)stats->submitted_pixels,
+               (unsigned long long)stats->first_claim_pixels,
+               first_claim_pct,
+               (unsigned long long)stats->prefilled_pixels,
+               prefilled_pct,
+               (unsigned long long)stats->same_output_pixels,
+               same_output_pct,
+               (unsigned long long)stats->changed_output_pixels,
+               changed_output_pct,
+               (unsigned long long)stats->wall_clip_cover_pixels,
+               wall_clip_pct,
+               (unsigned long long)water_drawn_pixels,
+               (unsigned long long)stats->water_fast_path_pixels,
+               water_fast_path_pct,
+               (unsigned long long)stats->water_fallback_pixels,
+               water_fallback_pct,
+               (unsigned long long)stats->water_blend_pixels,
+               water_blend_pct,
+               (unsigned long long)stats->water_single_pixels,
+               water_single_pct,
+               (unsigned long long)stats->water_backbuf0_pixels,
+               water_backbuf0_pct,
+               (unsigned long long)stats->water_backbuf1_pixels,
+               water_backbuf1_pct);
+    } else {
+        printf("[ZONEFLOOR][frame %u] zone=%d entry[%02d] type=%d water=%d rows=[%d,%d] cols=[%d,%d] submitted=%llu first_claim=%llu(%.1f%%) prefilled=%llu(%.1f%%) same_out=%llu(%.1f%%) changed_out=%llu(%.1f%%) wall_clip_cover=%llu(%.1f%%)\n",
+               (unsigned)g_renderer_zone_trace_frame_idx,
+               stats->zone_id,
+               stats->entry_index,
+               stats->entry_type,
+               stats->is_water,
+               (stats->row_min == INT_MAX) ? -1 : stats->row_min,
+               (stats->row_max == INT_MIN) ? -1 : stats->row_max,
+               (stats->col_min == INT_MAX) ? -1 : stats->col_min,
+               (stats->col_max == INT_MIN) ? -1 : stats->col_max,
+               (unsigned long long)stats->submitted_pixels,
+               (unsigned long long)stats->first_claim_pixels,
+               first_claim_pct,
+               (unsigned long long)stats->prefilled_pixels,
+               prefilled_pct,
+               (unsigned long long)stats->same_output_pixels,
+               same_output_pct,
+               (unsigned long long)stats->changed_output_pixels,
+               changed_output_pct,
+               (unsigned long long)stats->wall_clip_cover_pixels,
+               wall_clip_pct);
+    }
 }
 
 /* Wall column loop uses inverse-Z in 8.24 (INVZ_ONE). Projecting Y as world_y*K/z with an
@@ -4222,6 +4420,7 @@ static void draw_wall_rasterize_segment(
     const int top_clip_val = (int)ctx->top_clip;
     const int bot_clip_val = (int)ctx->bot_clip;
     const int update_column_clip = (ctx->update_column_clip != 0);
+    const int16_t *foreground_floor_occlude_top = ctx->foreground_floor_occlude_top;
     const int pick_capture_active = (g_pick_capture_active != 0);
 
     /* Precompute projection factors: top/bot * proj_y_scale * RENDER_SCALE */
@@ -4304,6 +4503,15 @@ static void draw_wall_rasterize_segment(
         if (yb <= yt) yb = yt + 1;
         int ct = (yt < effective_top) ? effective_top : yt;
         int cb = (yb > effective_bot) ? effective_bot : yb;
+        int floor_occluded_bot = 0;
+        if (foreground_floor_occlude_top) {
+            int occ_top = (int)foreground_floor_occlude_top[x];
+            if (occ_top <= cb) {
+                if (occ_top <= ct) continue;
+                cb = occ_top - 1;
+                floor_occluded_bot = 1;
+            }
+        }
         if (ct > cb) continue;
 
         /* Palette cache */
@@ -4355,7 +4563,7 @@ static void draw_wall_rasterize_segment(
             if (do_ext_l) ctx->workload_stats.wall_pixels_side_ext += run;
             if (do_ext_r) ctx->workload_stats.wall_pixels_side_ext += run;
             if (ct > top_clip_val) ctx->workload_stats.wall_pixels_cap_ext++;
-            if (cb + 1 <= bot_clip_val) ctx->workload_stats.wall_pixels_cap_ext++;
+            if (!floor_occluded_bot && cb + 1 <= bot_clip_val) ctx->workload_stats.wall_pixels_cap_ext++;
         }
 
         size_t pix = (size_t)ct * wstride + (size_t)x;
@@ -4555,7 +4763,7 @@ static void draw_wall_rasterize_segment(
                 cw[first_pix_cw - cw_step_y] = cw[first_pix_cw];
                 if (expand) rgb[up] = rgb[first_pix];
             }
-            if (cb + 1 <= bot_clip_val) {
+            if (!floor_occluded_bot && cb + 1 <= bot_clip_val) {
                 size_t dn = last_pix + wstride;
                 buf[dn] = 2;
                 cw[last_pix_cw + cw_step_y] = cw[last_pix_cw];
@@ -4566,7 +4774,7 @@ static void draw_wall_rasterize_segment(
             renderer_pick_mark_wall_column(ctx, x, ct, cb,
                                            do_ext_l, do_ext_r,
                                            (ct > top_clip_val),
-                                           (cb + 1 <= bot_clip_val));
+                                           (!floor_occluded_bot && (cb + 1 <= bot_clip_val)));
         }
 
         /* Column clip update.
@@ -4918,6 +5126,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
  * ----------------------------------------------------------------------- */
 static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                          int16_t y, int16_t x_left, int16_t x_right,
+                                         int16_t shade_x_left, int16_t shade_x_right,
                                          int32_t floor_height, const uint8_t *texture, const uint8_t *floor_pal,
                                          int16_t brightness, int16_t left_brightness, int16_t right_brightness,
                                          int16_t use_gouraud,
@@ -4949,6 +5158,35 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     int xl = (x_left < ctx->left_clip) ? ctx->left_clip : x_left;
     int xr = (x_right >= ctx->right_clip) ? ctx->right_clip - 1 : x_right;
     if (xl > xr) return;
+
+    if (ctx->foreground_floor_occlude_top) {
+        const int16_t *foreground_floor_occlude_top = ctx->foreground_floor_occlude_top;
+        int seg_start = -1;
+
+        for (int x = xl; x <= xr + 1; x++) {
+            int visible = 0;
+            if (x <= xr) {
+                int occ_top = (int)foreground_floor_occlude_top[x];
+                visible = (y < occ_top);
+            }
+
+            if (visible) {
+                if (seg_start < 0) seg_start = x;
+            } else if (seg_start >= 0) {
+                const int16_t *saved_occlude = ctx->foreground_floor_occlude_top;
+                ctx->foreground_floor_occlude_top = NULL;
+                renderer_draw_floor_span_ctx(ctx, y, (int16_t)seg_start, (int16_t)(x - 1),
+                                             shade_x_left, shade_x_right,
+                                             floor_height, texture, floor_pal,
+                                             brightness, left_brightness, right_brightness,
+                                             use_gouraud, scaleval, is_water, water_rows_left);
+                ctx->foreground_floor_occlude_top = saved_occlude;
+                seg_start = -1;
+            }
+        }
+        return;
+    }
+
     renderer_pick_mark_row_span(ctx, y, xl, xr, renderer_pick_zone_encode(ctx->pick_zone_id));
 
     const int expand = g_renderer_rgb_raster_expand;
@@ -5379,6 +5617,11 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     }
 
     if (is_water) {
+        RendererZoneTraceFloorStats *water_trace_stats = (ctx && ctx->active_floor_trace_stats &&
+                                  ctx->active_floor_trace_stats->active &&
+                                  ctx->active_floor_trace_stats->is_water)
+            ? ctx->active_floor_trace_stats
+            : NULL;
         uint8_t *p8 = row8;
         uint32_t *p32 = row32;
         uint16_t *p16 = row16;
@@ -5389,55 +5632,250 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         size_t bg_cw_i1 = water_refr_cw_base1;
         const int water_has_file = (g_water_file && g_water_file_size >= 65536u);
         const int water_has_brighten = (g_water_brighten && g_water_brighten_size >= 512u);
+        const int water_has_brighten_cw_lut = (g_water_brighten_cw_lut_ready && g_water_file_level_max <= 9u);
+        const uint8_t *water_phase_lut = g_water_level_phase_lut_ready
+            ? g_water_level_phase_lut[g_water_src_phase & 7u]
+            : NULL;
+        const uint8_t *water_blend_nibble_lut = amiga12_blend_nibble_lut_ready
+            ? amiga12_blend_nibble_lut[water_refr_frac & 0xFFu]
+            : NULL;
         uint32_t dist_off = (((uint32_t)dist) & 0xFF00u) << 1;
         if (dist_off > (uint32_t)(12 * 512)) dist_off = (uint32_t)(12 * 512);
 
         if (!expand && water_has_file && water_has_brighten) {
             size_t water_file_lookup_span = (size_t)g_water_src_off + 65536u;
             size_t water_brighten_lookup_span = (size_t)dist_off + ((size_t)g_water_file_level_max << 9) + 512u;
-            if (g_water_file_size >= water_file_lookup_span &&
-                g_water_brighten_size >= water_brighten_lookup_span) {
-                const uint8_t *water_file = g_water_file + (size_t)g_water_src_off;
+            if ((water_phase_lut || g_water_file_size >= water_file_lookup_span) &&
+                (water_has_brighten_cw_lut || g_water_brighten_size >= water_brighten_lookup_span)) {
+                const uint8_t *water_file = water_phase_lut ? NULL : (g_water_file + (size_t)g_water_src_off);
                 const uint8_t *water_brighten = g_water_brighten + (size_t)dist_off;
+                const int water_brighten_row_base = (int)(dist_off >> 9);
+                const int sample0_needs_back_buffer = water_has_back_buffers
+                    ? renderer_water_span_needs_back_buffer(buf + bg_i0, span_len)
+                    : 0;
+                const int sample1_needs_back_buffer = (water_has_back_buffers && water_has_next_refr)
+                    ? renderer_water_span_needs_back_buffer(buf + bg_i1, span_len)
+                    : 0;
+                renderer_zone_trace_floor_stats_note_water_span(water_trace_stats,
+                                                                (uint64_t)span_len,
+                                                                1,
+                                                                water_has_next_refr);
 
                 /* Common stock-data path: every WaterFile/Brighten lookup is in-range,
                  * so avoid the per-pixel bounds checks and RGB-side bookkeeping. */
-                for (int i = 0; i < span_len; i++, bg_i0++, bg_i1++, bg_cw_i0 += cw_step_x, bg_cw_i1 += cw_step_x) {
-                    uint8_t u8 = (uint8_t)((u_fp >> 16) & 0xFFu);
-                    uint8_t v8 = (uint8_t)((v_fp >> 16) & 0xFFu);
-                    u_fp += (uint32_t)u_step;
-                    v_fp += (uint32_t)v_step;
+                if (!water_has_next_refr) {
+                    if (!sample0_needs_back_buffer) {
+                        if (water_phase_lut && water_has_brighten_cw_lut) {
+                            for (int i = 0; i < span_len; i++, bg_i0++, bg_i1++, bg_cw_i0 += cw_step_x, bg_cw_i1 += cw_step_x) {
+                                uint8_t u8 = (uint8_t)((u_fp >> 16) & 0xFFu);
+                                uint8_t v8 = (uint8_t)((v_fp >> 16) & 0xFFu);
+                                u_fp += (uint32_t)u_step;
+                                v_fp += (uint32_t)v_step;
 
-                    uint16_t d5_word = (uint16_t)(((uint16_t)v8 << 8) | (uint16_t)u8);
-                    uint16_t water_d5 = (uint16_t)(d5_word + (uint16_t)g_water_off);
-                    water_d5 &= 0x3F3Fu;
-                    uint8_t water_level = water_file[(size_t)water_d5 << 2];
+                                uint16_t d5_word = (uint16_t)(((uint16_t)v8 << 8) | (uint16_t)u8);
+                                uint16_t water_d5 = (uint16_t)(d5_word + (uint16_t)g_water_off);
+                                water_d5 &= 0x3F3Fu;
+                                uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
+                                uint8_t water_level = water_phase_lut[water_idx];
+                                uint16_t out_cw = g_water_brighten_cw_lut[water_brighten_row_base + water_level][cwbuf[bg_cw_i0] & 0xFFu];
 
-                    uint16_t bg_cw0 = cwbuf[bg_cw_i0];
-                    if ((buf[bg_i0] == 0 || buf[bg_i0] == 4) && water_has_back_buffers) {
-                        bg_cw0 = rs->cw_back_buffer[bg_cw_i0];
-                    }
-                    size_t bi0 = ((size_t)water_level << 9) + (size_t)(bg_cw0 & 0xFFu) * 2u;
-                    uint16_t out_cw0 = (uint16_t)((water_brighten[bi0] << 8) | water_brighten[bi0 + 1u]);
-                    uint16_t out_cw = out_cw0;
+                                *p8++ = 4;
+                                p32++;
+                                FLOOR_CW_STORE_P16(out_cw);
+                            }
+                        } else {
+                            for (int i = 0; i < span_len; i++, bg_i0++, bg_i1++, bg_cw_i0 += cw_step_x, bg_cw_i1 += cw_step_x) {
+                                uint8_t u8 = (uint8_t)((u_fp >> 16) & 0xFFu);
+                                uint8_t v8 = (uint8_t)((v_fp >> 16) & 0xFFu);
+                                u_fp += (uint32_t)u_step;
+                                v_fp += (uint32_t)v_step;
 
-                    if (water_has_next_refr) {
-                        uint16_t bg_cw1 = cwbuf[bg_cw_i1];
-                        if ((buf[bg_i1] == 0 || buf[bg_i1] == 4) && water_has_back_buffers) {
-                            bg_cw1 = rs->cw_back_buffer[bg_cw_i1];
+                                uint16_t d5_word = (uint16_t)(((uint16_t)v8 << 8) | (uint16_t)u8);
+                                uint16_t water_d5 = (uint16_t)(d5_word + (uint16_t)g_water_off);
+                                water_d5 &= 0x3F3Fu;
+                                uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
+                                uint8_t water_level = water_phase_lut
+                                    ? water_phase_lut[water_idx]
+                                    : water_file[(size_t)water_d5 << 2];
+
+                                uint16_t bg_cw0 = cwbuf[bg_cw_i0];
+                                uint16_t out_cw;
+                                if (water_has_brighten_cw_lut) {
+                                    out_cw = g_water_brighten_cw_lut[water_brighten_row_base + water_level][bg_cw0 & 0xFFu];
+                                } else {
+                                    size_t bi0 = ((size_t)water_level << 9) + (size_t)(bg_cw0 & 0xFFu) * 2u;
+                                    out_cw = (uint16_t)((water_brighten[bi0] << 8) | water_brighten[bi0 + 1u]);
+                                }
+
+                                *p8++ = 4;
+                                p32++;
+                                FLOOR_CW_STORE_P16(out_cw);
+                            }
                         }
-                        size_t bi1 = ((size_t)water_level << 9) + (size_t)(bg_cw1 & 0xFFu) * 2u;
-                        uint16_t out_cw1 = (uint16_t)((water_brighten[bi1] << 8) | water_brighten[bi1 + 1u]);
-                        out_cw = blend_amiga12(out_cw0, out_cw1, (uint32_t)water_refr_frac);
-                    }
+                    } else {
+                        for (int i = 0; i < span_len; i++, bg_i0++, bg_i1++, bg_cw_i0 += cw_step_x, bg_cw_i1 += cw_step_x) {
+                            uint8_t u8 = (uint8_t)((u_fp >> 16) & 0xFFu);
+                            uint8_t v8 = (uint8_t)((v_fp >> 16) & 0xFFu);
+                            u_fp += (uint32_t)u_step;
+                            v_fp += (uint32_t)v_step;
 
-                    *p8++ = 4;
-                    p32++;
-                    FLOOR_CW_STORE_P16(out_cw);
+                            uint16_t d5_word = (uint16_t)(((uint16_t)v8 << 8) | (uint16_t)u8);
+                            uint16_t water_d5 = (uint16_t)(d5_word + (uint16_t)g_water_off);
+                            water_d5 &= 0x3F3Fu;
+                            uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
+                            uint8_t water_level = water_phase_lut
+                                ? water_phase_lut[water_idx]
+                                : water_file[(size_t)water_d5 << 2];
+
+                            uint16_t bg_cw0 = cwbuf[bg_cw_i0];
+                            int sample0_back_buffer = ((buf[bg_i0] == 0 || buf[bg_i0] == 4) && water_has_back_buffers);
+                            if (sample0_back_buffer) {
+                                bg_cw0 = rs->cw_back_buffer[bg_cw_i0];
+                            }
+                            renderer_zone_trace_floor_stats_note_water_sample0(water_trace_stats, sample0_back_buffer);
+
+                            uint16_t out_cw;
+                            if (water_has_brighten_cw_lut) {
+                                out_cw = g_water_brighten_cw_lut[water_brighten_row_base + water_level][bg_cw0 & 0xFFu];
+                            } else {
+                                size_t bi0 = ((size_t)water_level << 9) + (size_t)(bg_cw0 & 0xFFu) * 2u;
+                                out_cw = (uint16_t)((water_brighten[bi0] << 8) | water_brighten[bi0 + 1u]);
+                            }
+
+                            *p8++ = 4;
+                            p32++;
+                            FLOOR_CW_STORE_P16(out_cw);
+                        }
+                    }
+                } else {
+                    if (!sample0_needs_back_buffer && !sample1_needs_back_buffer) {
+                        if (water_phase_lut && water_has_brighten_cw_lut && water_blend_nibble_lut) {
+                            for (int i = 0; i < span_len; i++, bg_i0++, bg_i1++, bg_cw_i0 += cw_step_x, bg_cw_i1 += cw_step_x) {
+                                uint8_t u8 = (uint8_t)((u_fp >> 16) & 0xFFu);
+                                uint8_t v8 = (uint8_t)((v_fp >> 16) & 0xFFu);
+                                u_fp += (uint32_t)u_step;
+                                v_fp += (uint32_t)v_step;
+
+                                uint16_t d5_word = (uint16_t)(((uint16_t)v8 << 8) | (uint16_t)u8);
+                                uint16_t water_d5 = (uint16_t)(d5_word + (uint16_t)g_water_off);
+                                water_d5 &= 0x3F3Fu;
+                                uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
+                                uint8_t water_level = water_phase_lut[water_idx];
+                                const uint16_t *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
+                                uint16_t out_cw0 = brighten_row[cwbuf[bg_cw_i0] & 0xFFu];
+                                uint16_t out_cw1 = brighten_row[cwbuf[bg_cw_i1] & 0xFFu];
+                                uint16_t r4 = water_blend_nibble_lut[((((uint32_t)out_cw0 >> 8) & 0xFu) << 4) | (((uint32_t)out_cw1 >> 8) & 0xFu)];
+                                uint16_t g4 = water_blend_nibble_lut[((((uint32_t)out_cw0 >> 4) & 0xFu) << 4) | (((uint32_t)out_cw1 >> 4) & 0xFu)];
+                                uint16_t b4 = water_blend_nibble_lut[(((uint32_t)out_cw0 & 0xFu) << 4) | ((uint32_t)out_cw1 & 0xFu)];
+
+                                *p8++ = 4;
+                                p32++;
+                                FLOOR_CW_STORE_P16((uint16_t)((r4 << 8) | (g4 << 4) | b4));
+                            }
+                        } else {
+                            for (int i = 0; i < span_len; i++, bg_i0++, bg_i1++, bg_cw_i0 += cw_step_x, bg_cw_i1 += cw_step_x) {
+                                uint8_t u8 = (uint8_t)((u_fp >> 16) & 0xFFu);
+                                uint8_t v8 = (uint8_t)((v_fp >> 16) & 0xFFu);
+                                u_fp += (uint32_t)u_step;
+                                v_fp += (uint32_t)v_step;
+
+                                uint16_t d5_word = (uint16_t)(((uint16_t)v8 << 8) | (uint16_t)u8);
+                                uint16_t water_d5 = (uint16_t)(d5_word + (uint16_t)g_water_off);
+                                water_d5 &= 0x3F3Fu;
+                                uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
+                                uint8_t water_level = water_phase_lut
+                                    ? water_phase_lut[water_idx]
+                                    : water_file[(size_t)water_d5 << 2];
+
+                                uint16_t bg_cw0 = cwbuf[bg_cw_i0];
+                                uint16_t bg_cw1 = cwbuf[bg_cw_i1];
+                                uint16_t out_cw0;
+                                uint16_t out_cw1;
+                                if (water_has_brighten_cw_lut) {
+                                    const uint16_t *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
+                                    out_cw0 = brighten_row[bg_cw0 & 0xFFu];
+                                    out_cw1 = brighten_row[bg_cw1 & 0xFFu];
+                                } else {
+                                    size_t bi0 = ((size_t)water_level << 9) + (size_t)(bg_cw0 & 0xFFu) * 2u;
+                                    size_t bi1 = ((size_t)water_level << 9) + (size_t)(bg_cw1 & 0xFFu) * 2u;
+                                    out_cw0 = (uint16_t)((water_brighten[bi0] << 8) | water_brighten[bi0 + 1u]);
+                                    out_cw1 = (uint16_t)((water_brighten[bi1] << 8) | water_brighten[bi1 + 1u]);
+                                }
+
+                                *p8++ = 4;
+                                p32++;
+                                if (water_blend_nibble_lut) {
+                                    uint16_t r4 = water_blend_nibble_lut[((((uint32_t)out_cw0 >> 8) & 0xFu) << 4) | (((uint32_t)out_cw1 >> 8) & 0xFu)];
+                                    uint16_t g4 = water_blend_nibble_lut[((((uint32_t)out_cw0 >> 4) & 0xFu) << 4) | (((uint32_t)out_cw1 >> 4) & 0xFu)];
+                                    uint16_t b4 = water_blend_nibble_lut[(((uint32_t)out_cw0 & 0xFu) << 4) | ((uint32_t)out_cw1 & 0xFu)];
+                                    FLOOR_CW_STORE_P16((uint16_t)((r4 << 8) | (g4 << 4) | b4));
+                                } else {
+                                    FLOOR_CW_STORE_P16(blend_amiga12(out_cw0, out_cw1, (uint32_t)water_refr_frac));
+                                }
+                            }
+                        }
+                    } else {
+                        for (int i = 0; i < span_len; i++, bg_i0++, bg_i1++, bg_cw_i0 += cw_step_x, bg_cw_i1 += cw_step_x) {
+                            uint8_t u8 = (uint8_t)((u_fp >> 16) & 0xFFu);
+                            uint8_t v8 = (uint8_t)((v_fp >> 16) & 0xFFu);
+                            u_fp += (uint32_t)u_step;
+                            v_fp += (uint32_t)v_step;
+
+                            uint16_t d5_word = (uint16_t)(((uint16_t)v8 << 8) | (uint16_t)u8);
+                            uint16_t water_d5 = (uint16_t)(d5_word + (uint16_t)g_water_off);
+                            water_d5 &= 0x3F3Fu;
+                            uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
+                            uint8_t water_level = water_phase_lut
+                                ? water_phase_lut[water_idx]
+                                : water_file[(size_t)water_d5 << 2];
+
+                            uint16_t bg_cw0 = cwbuf[bg_cw_i0];
+                            int sample0_back_buffer = ((buf[bg_i0] == 0 || buf[bg_i0] == 4) && water_has_back_buffers);
+                            if (sample0_back_buffer) {
+                                bg_cw0 = rs->cw_back_buffer[bg_cw_i0];
+                            }
+                            renderer_zone_trace_floor_stats_note_water_sample0(water_trace_stats, sample0_back_buffer);
+                            uint16_t bg_cw1 = cwbuf[bg_cw_i1];
+                            int sample1_back_buffer = ((buf[bg_i1] == 0 || buf[bg_i1] == 4) && water_has_back_buffers);
+                            if (sample1_back_buffer) {
+                                bg_cw1 = rs->cw_back_buffer[bg_cw_i1];
+                            }
+                            renderer_zone_trace_floor_stats_note_water_sample1(water_trace_stats, sample1_back_buffer);
+
+                            uint16_t out_cw0;
+                            uint16_t out_cw1;
+                            if (water_has_brighten_cw_lut) {
+                                const uint16_t *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
+                                out_cw0 = brighten_row[bg_cw0 & 0xFFu];
+                                out_cw1 = brighten_row[bg_cw1 & 0xFFu];
+                            } else {
+                                size_t bi0 = ((size_t)water_level << 9) + (size_t)(bg_cw0 & 0xFFu) * 2u;
+                                size_t bi1 = ((size_t)water_level << 9) + (size_t)(bg_cw1 & 0xFFu) * 2u;
+                                out_cw0 = (uint16_t)((water_brighten[bi0] << 8) | water_brighten[bi0 + 1u]);
+                                out_cw1 = (uint16_t)((water_brighten[bi1] << 8) | water_brighten[bi1 + 1u]);
+                            }
+
+                            *p8++ = 4;
+                            p32++;
+                            if (water_blend_nibble_lut) {
+                                uint16_t r4 = water_blend_nibble_lut[((((uint32_t)out_cw0 >> 8) & 0xFu) << 4) | (((uint32_t)out_cw1 >> 8) & 0xFu)];
+                                uint16_t g4 = water_blend_nibble_lut[((((uint32_t)out_cw0 >> 4) & 0xFu) << 4) | (((uint32_t)out_cw1 >> 4) & 0xFu)];
+                                uint16_t b4 = water_blend_nibble_lut[(((uint32_t)out_cw0 & 0xFu) << 4) | ((uint32_t)out_cw1 & 0xFu)];
+                                FLOOR_CW_STORE_P16((uint16_t)((r4 << 8) | (g4 << 4) | b4));
+                            } else {
+                                FLOOR_CW_STORE_P16(blend_amiga12(out_cw0, out_cw1, (uint32_t)water_refr_frac));
+                            }
+                        }
+                    }
                 }
                 return;
             }
         }
+
+        renderer_zone_trace_floor_stats_note_water_span(water_trace_stats,
+                                                        (uint64_t)span_len,
+                                                        0,
+                                                        water_has_next_refr);
 
         for (int i = 0; i < span_len; i++, bg_i0++, bg_i1++, bg_cw_i0 += cw_step_x, bg_cw_i1 += cw_step_x) {
             uint8_t u8 = (uint8_t)((u_fp >> 16) & 0xFFu);
@@ -5449,12 +5887,17 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             uint16_t d5_word = (uint16_t)(((uint16_t)v8 << 8) | (uint16_t)u8);
             uint16_t water_d5 = (uint16_t)(d5_word + (uint16_t)g_water_off);
             water_d5 &= 0x3F3Fu;
+            uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
             uint8_t water_level = 0;
 
             if (water_has_file) {
-                size_t wi = ((size_t)water_d5 << 2) + (size_t)g_water_src_off;
-                if (wi < g_water_file_size) {
-                    water_level = g_water_file[wi];
+                if (water_phase_lut) {
+                    water_level = water_phase_lut[water_idx];
+                } else {
+                    size_t wi = ((size_t)water_d5 << 2) + (size_t)g_water_src_off;
+                    if (wi < g_water_file_size) {
+                        water_level = g_water_file[wi];
+                    }
                 }
             } else if (texture) {
                 uint32_t tex_idx = (((uint32_t)v8 & 63u) << 10) | (((uint32_t)water_d5 & 63u) << 2);
@@ -5474,6 +5917,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 bg_cw0 = rs->cw_back_buffer[bg_cw_i0];
                 if (expand)
                     bg0 = rs->rgb_back_buffer[bg_i0];
+                renderer_zone_trace_floor_stats_note_water_sample0(water_trace_stats, 1);
             }
             uint8_t bg_sample0 = (uint8_t)(bg_cw0 & 0xFFu);
 
@@ -5488,6 +5932,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     bg_cw1 = rs->cw_back_buffer[bg_cw_i1];
                     if (expand)
                         bg1 = rs->rgb_back_buffer[bg_i1];
+                    renderer_zone_trace_floor_stats_note_water_sample1(water_trace_stats, 1);
                 }
                 bg_sample1 = (uint8_t)(bg_cw1 & 0xFFu);
             }
@@ -5598,7 +6043,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
          * advance to the clipped draw start xl.  Using the clipped width (xr-xl) here
          * was the column-strip shading artifact: strips with a clipped left edge would
          * start at the wrong brightness and step at the wrong rate. */
-        int full_span_w = (int)x_right - (int)x_left;
+        int full_span_w = (int)shade_x_right - (int)shade_x_left;
         int left_level = left_brightness + dist_add;
         int right_level = right_brightness + dist_add;
         if (left_level < 0) left_level = 0;
@@ -5609,7 +6054,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         if (right_level > 14) right_level = 14;
         gour_level_step  = (full_span_w > 0) ? (int32_t)(((int64_t)(right_level      - left_level)      << 16) / full_span_w) : 0;
         /* Advance from the polygon's left edge to the clipped draw start. */
-        int clip_advance = xl - (int)x_left;
+        int clip_advance = xl - (int)shade_x_left;
         gour_level_fp  = ((int32_t)left_level      << 16) + (int32_t)((int64_t)gour_level_step  * clip_advance);
         if (need_gour_bright) {
             gour_bright_step = (full_span_w > 0) ? (int32_t)(((int64_t)(right_brightness - left_brightness) << 16) / full_span_w) : 0;
@@ -5880,7 +6325,7 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
     RenderSliceContext ctx;
     render_slice_context_init(&ctx, g_renderer.left_clip, g_renderer.right_clip,
                               g_renderer.top_clip, g_renderer.bot_clip);
-    renderer_draw_floor_span_ctx(&ctx, y, x_left, x_right, floor_height, texture, floor_pal,
+    renderer_draw_floor_span_ctx(&ctx, y, x_left, x_right, x_left, x_right, floor_height, texture, floor_pal,
                                  brightness, left_brightness, right_brightness, use_gouraud,
                                  scaleval, is_water, water_rows_left);
 }
@@ -8652,6 +9097,244 @@ static size_t zone_gfx_entry_data_skip(int16_t entry_type, const uint8_t *data)
     }
 }
 
+static int renderer_build_viewer_split_floor_occluder(const GameState *state,
+                                                      int16_t viewer_zone,
+                                                      int16_t col_start,
+                                                      int16_t col_end,
+                                                      int16_t *out_top)
+{
+    const LevelState *level;
+    const uint8_t *zone_data;
+    const uint8_t *zgraph;
+    const uint8_t *gfx_data;
+    const RendererState *r = &g_renderer;
+    int32_t zone_off;
+    int32_t gfx_off;
+    int32_t zone_floor;
+    int32_t zone_roof;
+    int32_t zone_water;
+    int32_t y_off;
+    int w;
+    int h;
+    int half_h;
+    int active = 0;
+    int16_t *left_edge = NULL;
+    int16_t *right_edge = NULL;
+
+    if (!state || !out_top) return 0;
+    level = &state->level;
+    if (!level->data || !level->zone_adds || !level->zone_graph_adds || !level->graphics) return 0;
+
+    w = g_renderer.width;
+    h = g_renderer.height;
+    if (w <= 0 || h <= 0) return 0;
+    for (int x = 0; x < w; x++) out_top[x] = (int16_t)h;
+
+    if (viewer_zone < 0 || viewer_zone >= level_zone_slot_count(level)) return 0;
+    if (level->num_zone_graph_entries > 0 && viewer_zone >= level->num_zone_graph_entries) return 0;
+
+    zone_off = rd32(level->zone_adds + viewer_zone * 4);
+    if (zone_off < 0) return 0;
+    if (level->data_byte_count > 0 && ((size_t)zone_off + 48u > level->data_byte_count)) return 0;
+    zone_data = level->data + zone_off;
+
+    zone_floor = rd32(zone_data + 2);
+    zone_roof = rd32(zone_data + 6);
+    zone_water = rd32(zone_data + 18);
+    if (!(zone_water > zone_roof && zone_water < zone_floor)) return 0;
+
+    zgraph = level->zone_graph_adds + viewer_zone * 8;
+    gfx_off = rd32(zgraph);
+    if (gfx_off <= 0) return 0;
+    if (level->graphics_byte_count > 0 && ((size_t)gfx_off + 2u > level->graphics_byte_count)) return 0;
+    gfx_data = level->graphics + (size_t)gfx_off;
+
+    y_off = r->yoff;
+    half_h = h / 2;
+    if (col_start < 0) col_start = 0;
+    if (col_end > w) col_end = (int16_t)w;
+    if (col_start >= col_end) return 0;
+
+    left_edge = (int16_t *)malloc((size_t)h * sizeof(*left_edge));
+    right_edge = (int16_t *)malloc((size_t)h * sizeof(*right_edge));
+    if (!left_edge || !right_edge) {
+        free(left_edge);
+        free(right_edge);
+        return 0;
+    }
+
+    {
+        const uint8_t *ptr = gfx_data + 2;
+        int max_iter = 500;
+
+        while (max_iter-- > 0) {
+            int16_t entry_type = rd16(ptr);
+            ptr += 2;
+            if (entry_type < 0) break;
+
+            if (entry_type != 1) {
+                size_t skip = zone_gfx_entry_data_skip(entry_type, ptr);
+                if (skip == 0) {
+                    if (entry_type != 3 && entry_type != 12) break;
+                } else {
+                    ptr += skip;
+                }
+                continue;
+            }
+
+            int16_t ypos = rd16(ptr);
+            (void)ypos;
+            ptr += 2;
+            int16_t num_sides_m1 = rd16(ptr);
+            ptr += 2;
+            int sides = num_sides_m1 + 1;
+            int16_t pt_indices[100];
+            if (sides < 0) sides = 0;
+            if (sides > 100) sides = 100;
+            for (int s = 0; s < sides; s++) {
+                pt_indices[s] = rd16(ptr);
+                ptr += 2;
+            }
+            ptr += 8;
+
+            {
+                int32_t draw_h_world = zone_floor;
+                int32_t floor_y_dist = draw_h_world - y_off;
+                int poly_top = h;
+                int poly_bot = -1;
+                int y_min_clamp = half_h;
+                int y_max_clamp = h - 1;
+
+                if (draw_h_world < zone_roof || draw_h_world > zone_floor) continue;
+                if (floor_y_dist <= 0) continue;
+
+                for (int row = 0; row < h; row++) {
+                    left_edge[row] = renderer_clamp_edge_x_i16(w);
+                    right_edge[row] = -1;
+                }
+
+                const int32_t rel_h = draw_h_world - y_off;
+                const int32_t FLOOR_NEAR = ROT_Z_FROM_INT(1);
+                for (int s = 0; s < sides; s++) {
+                    int i1 = pt_indices[s];
+                    int i2 = pt_indices[(s + 1) % sides];
+                    if (i1 < 0 || i1 >= MAX_POINTS || i2 < 0 || i2 >= MAX_POINTS) continue;
+
+                    int32_t z1 = r->rotated[i1].z;
+                    int32_t z2 = r->rotated[i2].z;
+                    int32_t rx1 = r->rotated[i1].x;
+                    int32_t rx2 = r->rotated[i2].x;
+
+                    if (z1 < FLOOR_NEAR && z2 < FLOOR_NEAR) continue;
+
+                    int32_t ez1 = z1, ez2 = z2;
+                    int32_t ex1 = rx1, ex2 = rx2;
+                    if (ez1 < FLOOR_NEAR) {
+                        int32_t dz = ez2 - ez1;
+                        if (dz != 0) {
+                            int32_t t = (int32_t)((int64_t)(FLOOR_NEAR - ez1) * 65536 / dz);
+                            ex1 = rx1 + (int32_t)((int64_t)(rx2 - rx1) * t / 65536);
+                        } else {
+                            ex1 = (rx1 + rx2) / 2;
+                        }
+                        ez1 = FLOOR_NEAR;
+                    }
+                    if (ez2 < FLOOR_NEAR) {
+                        int32_t dz = ez1 - ez2;
+                        if (dz != 0) {
+                            int32_t t = (int32_t)((int64_t)(FLOOR_NEAR - ez2) * 65536 / dz);
+                            ex2 = rx2 + (int32_t)((int64_t)(rx1 - rx2) * t / 65536);
+                        } else {
+                            ex2 = (rx1 + rx2) / 2;
+                        }
+                        ez2 = FLOOR_NEAR;
+                    }
+
+                    int sx1 = project_x_to_pixels(ex1, ez1);
+                    int sx2 = project_x_to_pixels(ex2, ez2);
+                    int32_t rel_h_8 = rel_h >> WORLD_Y_FRAC_BITS;
+                    int sy1_raw = project_y_to_pixels_round(rel_h_8, ez1, r->proj_y_scale, half_h);
+                    int sy2_raw = project_y_to_pixels_round(rel_h_8, ez2, r->proj_y_scale, half_h);
+
+                    int sy1 = sy1_raw;
+                    int sy2 = sy2_raw;
+                    if (sy1 < y_min_clamp) sy1 = y_min_clamp;
+                    if (sy1 > y_max_clamp) sy1 = y_max_clamp;
+                    if (sy2 < y_min_clamp) sy2 = y_min_clamp;
+                    if (sy2 > y_max_clamp) sy2 = y_max_clamp;
+
+                    int dy_raw = sy2_raw - sy1_raw;
+                    if (dy_raw == 0) {
+                        int row = sy1;
+                        if (row >= y_min_clamp && row <= y_max_clamp) {
+                            int lo = sx1 < sx2 ? sx1 : sx2;
+                            int hi = sx1 > sx2 ? sx1 : sx2;
+                            if (lo < left_edge[row]) left_edge[row] = renderer_clamp_edge_x_i16(lo);
+                            if (hi > right_edge[row]) right_edge[row] = renderer_clamp_edge_x_i16(hi);
+                            if (row < poly_top) poly_top = row;
+                            if (row > poly_bot) poly_bot = row;
+                        }
+                        continue;
+                    }
+
+                    int row_start = (sy1_raw < sy2_raw) ? sy1_raw : sy2_raw;
+                    int row_end = (sy1_raw > sy2_raw) ? sy1_raw : sy2_raw;
+                    if (row_start < y_min_clamp) row_start = y_min_clamp;
+                    if (row_end > y_max_clamp) row_end = y_max_clamp;
+
+                    int64_t x_fp = (int64_t)sx1 << 16;
+                    int64_t dx_fp = ((int64_t)(sx2 - sx1) << 16) / dy_raw;
+
+                    if (sy1_raw < sy2_raw) {
+                        x_fp += dx_fp * (row_start - sy1_raw);
+                    } else {
+                        x_fp = (int64_t)sx2 << 16;
+                        dx_fp = ((int64_t)(sx1 - sx2) << 16) / (-dy_raw);
+                        x_fp += dx_fp * (row_start - sy2_raw);
+                    }
+
+                    for (int row = row_start; row <= row_end; row++) {
+                        if (row < 0 || row >= h) {
+                            x_fp += dx_fp;
+                            continue;
+                        }
+                        int left_x = renderer_fp16_x_floor_px(x_fp);
+                        int right_x = renderer_fp16_x_ceil_px(x_fp);
+                        if (left_x < left_edge[row]) left_edge[row] = renderer_clamp_edge_x_i16(left_x);
+                        if (right_x > right_edge[row]) right_edge[row] = renderer_clamp_edge_x_i16(right_x);
+                        if (row < poly_top) poly_top = row;
+                        if (row > poly_bot) poly_bot = row;
+                        x_fp += dx_fp;
+                    }
+                }
+
+                if (poly_top < y_min_clamp) poly_top = y_min_clamp;
+                if (poly_top >= h) poly_top = h - 1;
+                if (poly_bot > y_max_clamp) poly_bot = y_max_clamp;
+                if (poly_bot >= h) poly_bot = h - 1;
+                if (poly_bot < 0) continue;
+
+                for (int row = poly_top; row <= poly_bot; row++) {
+                    int cle = left_edge[row];
+                    int cre = right_edge[row];
+                    if (cle >= w || cre < 0) continue;
+                    if (cle < col_start) cle = col_start;
+                    if (cre >= col_end) cre = col_end - 1;
+                    if (cle > cre) continue;
+                    for (int x = cle; x <= cre; x++) {
+                        if (row < out_top[x]) out_top[x] = (int16_t)row;
+                    }
+                    active = 1;
+                }
+            }
+        }
+    }
+
+    free(left_edge);
+    free(right_edge);
+    return active;
+}
+
 static void zone_poly_sort_indices(int16_t *vals, int count)
 {
     for (int i = 1; i < count; i++) {
@@ -9787,6 +10470,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
              * ASM: move.w (a0)+,d6 / add.w ZoneBright,d6 */
             int16_t bright = zone_bright + floor_bright_off;
             RendererZoneTraceFloorStats floor_trace_stats;
+            RendererZoneTraceFloorStats *saved_floor_trace_stats = ctx->active_floor_trace_stats;
             renderer_zone_trace_floor_stats_init(&floor_trace_stats,
                                                  trace_floor_zone && floor_y_dist > 0,
                                                  zone_id,
@@ -9799,6 +10483,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                              right_edge_tab,
                                                              poly_top,
                                                              poly_bot);
+            ctx->active_floor_trace_stats = floor_trace_stats.active ? &floor_trace_stats : NULL;
 
             if (AB3D_ENABLE_FLOOR_COL_FAST && AB3D_CW_COL_MAJOR && entry_type != 7 && floor_tex && floor_pal) {
                 if (ctx->profile_collect_stats) {
@@ -9809,7 +10494,10 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                          rel_h, floor_tex, floor_pal,
                                                          bright, use_gour_floor,
                                                          scaleval);
-                    ctx->workload_stats.ticks_floor += SDL_GetPerformanceCounter() - floor_t0;
+                    {
+                        uint64_t floor_ticks = SDL_GetPerformanceCounter() - floor_t0;
+                        ctx->workload_stats.ticks_floor += floor_ticks;
+                    }
                 } else {
                     renderer_draw_floor_columns_ctx_fast(ctx, left_edge, right_edge_tab,
                                                          left_bright_tab, right_bright_tab,
@@ -9824,6 +10512,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                          right_edge_tab,
                                                          poly_top,
                                                          poly_bot);
+                ctx->active_floor_trace_stats = saved_floor_trace_stats;
                 renderer_zone_trace_floor_stats_log(&floor_trace_stats);
                 free(left_edge);
                 free(right_edge_tab);
@@ -9885,13 +10574,19 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 if (ctx->profile_collect_stats) {
                     uint64_t floor_t0 = SDL_GetPerformanceCounter();
                     renderer_draw_floor_span_ctx(ctx, (int16_t)row, le, re,
+                                                 le, re,
                                                  rel_h, floor_tex, floor_pal,
                                                  bright, row_bright_l, row_bright_r, row_use_gour,
                                                  scaleval, (entry_type == 7) ? 1 : 0,
                                                  water_rows_left);
-                    ctx->workload_stats.ticks_floor += SDL_GetPerformanceCounter() - floor_t0;
+                    {
+                        uint64_t floor_ticks = SDL_GetPerformanceCounter() - floor_t0;
+                        ctx->workload_stats.ticks_floor += floor_ticks;
+                        if (entry_type == 7) ctx->workload_stats.ticks_water += floor_ticks;
+                    }
                 } else {
                     renderer_draw_floor_span_ctx(ctx, (int16_t)row, le, re,
+                                                 le, re,
                                                  rel_h, floor_tex, floor_pal,
                                                  bright, row_bright_l, row_bright_r, row_use_gour,
                                                  scaleval, (entry_type == 7) ? 1 : 0,
@@ -9904,6 +10599,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                      right_edge_tab,
                                                      poly_top,
                                                      poly_bot);
+            ctx->active_floor_trace_stats = saved_floor_trace_stats;
             renderer_zone_trace_floor_stats_log(&floor_trace_stats);
             free(left_edge);
             free(right_edge_tab);
@@ -10369,6 +11065,8 @@ static void renderer_draw_world_slice(GameState *state,
                                       RendererWorkloadStats *out_workload_stats)
 {
     RenderSliceContext frame_ctx;
+    int16_t *viewer_floor_occlude_top = NULL;
+    int have_viewer_floor_occlude = 0;
     if (out_workload_stats) renderer_workload_stats_reset(out_workload_stats);
     if (!state || !zone_prepass || col_start >= col_end) {
         if (out_fill_screen_water) *out_fill_screen_water = 0;
@@ -10400,6 +11098,13 @@ static void renderer_draw_world_slice(GameState *state,
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
     const int trace_zone = (g_renderer_zone_trace_active && cs == 0 && ce == w) ? 1 : 0;
 
+    viewer_floor_occlude_top = (int16_t *)malloc((size_t)w * sizeof(*viewer_floor_occlude_top));
+    if (viewer_floor_occlude_top) {
+        have_viewer_floor_occlude = renderer_build_viewer_split_floor_occluder(state, plr->zone,
+                                                                               (int16_t)cs, (int16_t)ce,
+                                                                               viewer_floor_occlude_top);
+    }
+
     int zone_count = zone_prepass->count;
     if (zone_count < 0) zone_count = 0;
     if (zone_count > RENDERER_MAX_ZONE_ORDER) zone_count = RENDERER_MAX_ZONE_ORDER;
@@ -10429,6 +11134,8 @@ static void renderer_draw_world_slice(GameState *state,
 
         frame_ctx.left_clip = (int16_t)left_clip_px;
         frame_ctx.right_clip = (int16_t)right_clip_px;
+        frame_ctx.foreground_floor_occlude_top =
+            (have_viewer_floor_occlude && zone_id != plr->zone) ? viewer_floor_occlude_top : NULL;
         if (trace_clip) {
             printf("[CLIP][frame %u] zone=%d slice_clip_px=[%d,%d)\n",
                    (unsigned)frame_idx, (int)zone_id, left_clip_px, right_clip_px);
@@ -10495,6 +11202,7 @@ static void renderer_draw_world_slice(GameState *state,
 
     if (out_fill_screen_water) *out_fill_screen_water = frame_ctx.fill_screen_water;
     if (out_workload_stats) *out_workload_stats = frame_ctx.workload_stats;
+    free(viewer_floor_occlude_top);
 }
 
 static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
