@@ -2977,16 +2977,6 @@ static void renderer_apply_zone_section_clip(RenderSliceContext *ctx,
     ctx->wall_bot_clip = clip->wall_bot_clip;
 }
 
-static int renderer_project_zone_split_y(int32_t split_height_world)
-{
-    int center_y = g_renderer.height / 2;
-    int32_t rel_h_8 = (split_height_world - g_renderer.yoff) >> WORLD_Y_FRAC_BITS;
-    return project_y_to_pixels_round(rel_h_8,
-                                     ROT_Z_FROM_INT(TWO_LEVEL_SPLIT_REF_Z),
-                                     g_renderer.proj_y_scale,
-                                     center_y);
-}
-
 static void renderer_build_zone_section_clips(GameState *state, int16_t zone_id,
                                               RendererZoneSectionClip *out_lower,
                                               RendererZoneSectionClip *out_upper,
@@ -3028,10 +3018,6 @@ static void renderer_build_zone_section_clips(GameState *state, int16_t zone_id,
         int32_t zone_off = rd32(state->level.zone_adds + zone_id * 4);
         const uint8_t *zd;
         int32_t split_height;
-        int split_y;
-        int upper_top = 0;
-        int upper_bot;
-        int lower_top;
 
         if (zone_off < 0) {
             *out_lower = full;
@@ -3046,27 +3032,12 @@ static void renderer_build_zone_section_clips(GameState *state, int16_t zone_id,
         split_height = rd32(zd + ZONE_OFF_ROOF);
         if (out_draw_upper_first) *out_draw_upper_first = (plr->yoff >= split_height) ? 1u : 0u;
 
-        split_y = renderer_project_zone_split_y(split_height);
-
-        upper_bot = split_y - 1;
-        if (upper_bot >= 0) {
-            if (upper_bot >= h) upper_bot = h - 1;
-            out_upper->top_clip = (int16_t)upper_top;
-            out_upper->bot_clip = (int16_t)upper_bot;
-            out_upper->wall_top_clip = -1;
-            out_upper->wall_bot_clip = (split_y >= 0 && split_y < h) ? (int16_t)split_y : -1;
-            out_upper->valid = 1;
-        }
-
-        lower_top = split_y;
-        if (lower_top < 0) lower_top = 0;
-        if (lower_top < h) {
-            out_lower->top_clip = (int16_t)lower_top;
-            out_lower->bot_clip = (int16_t)(h - 1);
-            out_lower->wall_top_clip = 0;
-            out_lower->wall_bot_clip = -1;
-            out_lower->valid = 1;
-        }
+        /* A single flat split line in screen space is not perspective-correct
+         * for two-level rooms viewed through angled/distant portals and can
+         * drop valid upper geometry. Keep both passes full-room and let the
+         * existing in-zone clipping paths handle final visibility. */
+        *out_upper = full;
+        *out_lower = full;
     }
 }
 
