@@ -14,7 +14,7 @@ else()
 endif()
 option(AB3D_NO_THREADS "Build without renderer threading support (render_threads is ignored at runtime)" ${_AB3D_NO_THREADS_DEFAULT})
 unset(_AB3D_NO_THREADS_DEFAULT)
-option(AB3D_ENABLE_FLOOR_COL_FAST "Enable experimental column-major floor fast path for profiling/tuning" OFF)
+option(AB3D_ENABLE_FLOOR_COL_FAST "Enable column-major floor fast path" ON)
 
 # -----------------------------------------------------------------------
 # Data staging (build/data)

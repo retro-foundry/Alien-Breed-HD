@@ -6492,6 +6492,99 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
             uint32_t v_pf = v_fp + (uint32_t)v_step * 8u;
 
+            /* Exact fast lane: if Gouraud level does not change across the span,
+             * run the same constant-level texture loop as non-Gouraud. */
+            if (gour_level_step == 0) {
+                int level = (int)(gour_level_fp >> 16);
+                const uint16_t *span_cw;
+                const uint32_t *span_rgb;
+
+                if (level < 0) level = 0;
+                if (level >= FLOOR_PAL_LEVEL_COUNT) level = FLOOR_PAL_LEVEL_COUNT - 1;
+                span_cw = gour_cw_levels[level];
+                span_rgb = gour_rgb_levels[level];
+
+                if (expand) {
+                    int i = 0;
+                    for (; i <= span_len - 4; i += 4) {
+                        if (i + 8 < span_len) {
+                            AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
+                        }
+
+                        uint8_t t0 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                        u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                        uint8_t t1 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                        u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                        uint8_t t2 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                        u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                        uint8_t t3 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                        u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                        u_pf += (uint32_t)u_step * 4u;
+                        v_pf += (uint32_t)v_step * 4u;
+
+                        *p8++ = 1; *p32++ = span_rgb[t0]; FLOOR_CW_STORE_P16(span_cw[t0]);
+                        *p8++ = 1; *p32++ = span_rgb[t1]; FLOOR_CW_STORE_P16(span_cw[t1]);
+                        *p8++ = 1; *p32++ = span_rgb[t2]; FLOOR_CW_STORE_P16(span_cw[t2]);
+                        *p8++ = 1; *p32++ = span_rgb[t3]; FLOOR_CW_STORE_P16(span_cw[t3]);
+                    }
+
+                    for (; i < span_len; i++) {
+                        if (i + 8 < span_len) {
+                            AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
+                        }
+
+                        uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                        u_fp += (uint32_t)u_step;
+                        v_fp += (uint32_t)v_step;
+                        u_pf += (uint32_t)u_step;
+                        v_pf += (uint32_t)v_step;
+
+                        *p8++ = 1;
+                        *p32++ = span_rgb[texel];
+                        FLOOR_CW_STORE_P16(span_cw[texel]);
+                    }
+                } else {
+                    int i = 0;
+                    for (; i <= span_len - 4; i += 4) {
+                        if (i + 8 < span_len) {
+                            AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
+                        }
+
+                        uint8_t t0 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                        u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                        uint8_t t1 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                        u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                        uint8_t t2 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                        u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                        uint8_t t3 = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                        u_fp += (uint32_t)u_step; v_fp += (uint32_t)v_step;
+                        u_pf += (uint32_t)u_step * 4u;
+                        v_pf += (uint32_t)v_step * 4u;
+
+                        *p8++ = 1; FLOOR_CW_STORE_P16(span_cw[t0]);
+                        *p8++ = 1; FLOOR_CW_STORE_P16(span_cw[t1]);
+                        *p8++ = 1; FLOOR_CW_STORE_P16(span_cw[t2]);
+                        *p8++ = 1; FLOOR_CW_STORE_P16(span_cw[t3]);
+                    }
+
+                    for (; i < span_len; i++) {
+                        if (i + 8 < span_len) {
+                            AB3D_PREFETCH_READ(&texture[((u_pf >> 14) & 0xFCu) | ((v_pf >> 6) & 0xFC00u)]);
+                        }
+
+                        uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                        u_fp += (uint32_t)u_step;
+                        v_fp += (uint32_t)v_step;
+                        u_pf += (uint32_t)u_step;
+                        v_pf += (uint32_t)v_step;
+
+                        *p8++ = 1;
+                        FLOOR_CW_STORE_P16(span_cw[texel]);
+                    }
+                }
+                return;
+            }
+
             if (expand) {
                 int i = 0;
                 for (; i <= span_len - 4; i += 4) {
@@ -11292,11 +11385,9 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
             int col_x_min = g_renderer.width;
             int col_x_max = -1;
             const int allow_floor_col_fast =
-                (AB3D_ENABLE_FLOOR_COL_FAST && AB3D_CW_COL_MAJOR &&
-                 (!state || !state->cfg_render_threads));
+                (AB3D_ENABLE_FLOOR_COL_FAST && AB3D_CW_COL_MAJOR);
             const int allow_floor_col_fast_poly =
                 (allow_floor_col_fast && entry_type != 7 &&
-                 !use_gour_floor &&
                  (floor_y_dist > 0 || AB3D_FLOOR_COL_FAST_INCLUDE_CEILING));
             const int build_floor_col_bounds =
                 (allow_floor_col_fast_poly && AB3D_FLOOR_FAST_USE_EDGE_BOUNDS);
@@ -11562,7 +11653,22 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                              poly_bot);
             ctx->active_floor_trace_stats = floor_trace_stats.active ? &floor_trace_stats : NULL;
 
-            if (allow_floor_col_fast_poly && floor_tex && floor_pal) {
+            int run_floor_col_fast_poly = allow_floor_col_fast_poly;
+            if (run_floor_col_fast_poly && use_gour_floor &&
+                left_bright_tab && right_bright_tab &&
+                poly_top >= 0 && poly_top <= poly_bot) {
+                int gour_flat = 1;
+                for (int row = poly_top; row <= poly_bot; row++) {
+                    if (left_edge[row] > right_edge_tab[row]) continue;
+                    if (left_bright_tab[row] != right_bright_tab[row]) {
+                        gour_flat = 0;
+                        break;
+                    }
+                }
+                run_floor_col_fast_poly = gour_flat;
+            }
+
+            if (run_floor_col_fast_poly && floor_tex && floor_pal) {
                 if (ctx->profile_collect_stats) {
                     uint64_t floor_t0 = SDL_GetPerformanceCounter();
                     renderer_draw_floor_columns_ctx_fast(ctx, left_edge, right_edge_tab,

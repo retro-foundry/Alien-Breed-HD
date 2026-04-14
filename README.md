@@ -85,14 +85,14 @@ Typical outputs:
 - Windows: `build/Release/ab3d1.exe`
 - Linux/macOS: `build/ab3d1`
 
-Experimental floor-column profiling build:
+Floor column-fast rendering is enabled by default.
+
+Optional troubleshooting build (disable floor column-fast):
 
 ```bash
-cmake -S . -B build -DAB3D_ENABLE_FLOOR_COL_FAST=ON
+cmake -S . -B build -DAB3D_ENABLE_FLOOR_COL_FAST=OFF
 cmake --build build --config Release
 ```
-
-This enables the experimental column-major floor fast path for profiling and tuning. It is off by default.
 
 ### Web (Emscripten)
 
