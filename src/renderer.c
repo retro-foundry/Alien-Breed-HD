@@ -344,6 +344,27 @@ typedef struct {
     uint64_t ticks_sprite;
 } RendererWorkloadStats;
 
+#define RENDERER_F2_MAX_SPRITE_LOG_ENTRIES 768
+#define RENDERER_F2_MAX_ZONE_LIST          64
+
+enum {
+    RENDERER_F2_SPRITE_SOURCE_OBJECT = 0,
+    RENDERER_F2_SPRITE_SOURCE_SHOT = 1,
+    RENDERER_F2_SPRITE_SOURCE_EXPLOSION = 2
+};
+
+typedef struct {
+    uint8_t source_type;
+    int16_t source_slot;
+    int16_t zone_id;
+    uint16_t draw_count;
+    uint16_t spill_draw_count;
+    uint8_t adjacent_count;
+    uint8_t spill_zone_count;
+    int16_t adjacent_zones[RENDERER_F2_MAX_ZONE_LIST];
+    int16_t spill_zones[RENDERER_F2_MAX_ZONE_LIST];
+} RendererF2SpriteSpillEntry;
+
 typedef struct {
     int valid;
     uint32_t frame_idx;
@@ -357,6 +378,9 @@ typedef struct {
     int zones_drawn_upper;
     int zone_draw_order_count;
     int16_t zone_draw_order[RENDERER_MAX_ZONE_ORDER];
+    int sprite_spill_count;
+    uint8_t sprite_spill_overflow;
+    RendererF2SpriteSpillEntry sprite_spill_entries[RENDERER_F2_MAX_SPRITE_LOG_ENTRIES];
     RendererWorkloadStats workload;
 } RendererF2PickSnapshot;
 
@@ -4167,6 +4191,37 @@ static double renderer_percent_u64(uint64_t part, uint64_t whole)
     return ((double)part * 100.0) / (double)whole;
 }
 
+static void renderer_f2_pick_snapshot_clear(RendererF2PickSnapshot *snap)
+{
+    if (!snap) return;
+    memset(snap, 0, sizeof(*snap));
+}
+
+static const char *renderer_f2_sprite_source_name(uint8_t source_type)
+{
+    switch (source_type) {
+    case RENDERER_F2_SPRITE_SOURCE_OBJECT:
+        return "obj";
+    case RENDERER_F2_SPRITE_SOURCE_SHOT:
+        return "shot";
+    case RENDERER_F2_SPRITE_SOURCE_EXPLOSION:
+        return "expl";
+    default:
+        return "unknown";
+    }
+}
+
+static void renderer_f2_log_zone_list(const int16_t *zones, uint8_t count)
+{
+    if (!zones || count == 0) {
+        printf("none");
+        return;
+    }
+    for (int i = 0; i < (int)count; i++) {
+        printf((i == 0) ? "%d" : ",%d", (int)zones[i]);
+    }
+}
+
 void renderer_log_f2_pick_debug(const GameState *state,
                                 int16_t standing_zone,
                                 int16_t looking_zone)
@@ -4285,6 +4340,28 @@ void renderer_log_f2_pick_debug(const GameState *state,
            renderer_percent_u64(snap->workload.sprite_pixels_drawn, writes),
            (unsigned long long)dry_floor_px,
            (unsigned long long)snap->workload.water_pixels);
+
+    if (snap->sprite_spill_count > 0) {
+        printf("[DEBUG][F2] sprite_spill_entries=%d%s\n",
+               snap->sprite_spill_count,
+               snap->sprite_spill_overflow ? " (truncated)" : "");
+        for (int i = 0; i < snap->sprite_spill_count; i++) {
+            const RendererF2SpriteSpillEntry *entry = &snap->sprite_spill_entries[i];
+            printf("[DEBUG][F2] sprite[%s#%d] zone=%d adjacent[%u]={",
+                   renderer_f2_sprite_source_name(entry->source_type),
+                   (int)entry->source_slot,
+                   (int)entry->zone_id,
+                   (unsigned)entry->adjacent_count);
+            renderer_f2_log_zone_list(entry->adjacent_zones, entry->adjacent_count);
+            printf("} spill_zones[%u]={", (unsigned)entry->spill_zone_count);
+            renderer_f2_log_zone_list(entry->spill_zones, entry->spill_zone_count);
+            printf("} draws=%u spill_draws=%u\n",
+                   (unsigned)entry->draw_count,
+                   (unsigned)entry->spill_draw_count);
+        }
+    } else {
+        printf("[DEBUG][F2] sprite_spill_entries=0\n");
+    }
     fflush(stdout);
 }
 
@@ -9381,6 +9458,179 @@ static int renderer_collect_adjacent_zone_sources(const RenderSliceContext *ctx,
     return adj_count;
 }
 
+static int renderer_f2_zone_list_add_unique(int16_t *zones,
+                                            int max_zones,
+                                            uint8_t *io_count,
+                                            int16_t zone_id)
+{
+    if (!zones || !io_count || max_zones <= 0 || zone_id < 0) return 0;
+
+    int count = (int)(*io_count);
+    if (count < 0) count = 0;
+    if (count > max_zones) count = max_zones;
+    for (int i = 0; i < count; i++) {
+        if (zones[i] == zone_id) {
+            return 0;
+        }
+    }
+    if (count >= max_zones) {
+        return 0;
+    }
+
+    zones[count] = zone_id;
+    *io_count = (uint8_t)(count + 1);
+    return 1;
+}
+
+static int renderer_collect_adjacent_zones_for_f2(const LevelState *level,
+                                                  int16_t zone_id,
+                                                  int16_t *out_zones,
+                                                  int max_zones)
+{
+    if (!level || !out_zones || max_zones <= 0 || !level->floor_lines)
+        return 0;
+
+    int zone_slots = level_zone_slot_count(level);
+    if (zone_slots <= 0 || zone_id < 0 || zone_id >= zone_slots)
+        return 0;
+    if (zone_slots > 256)
+        zone_slots = 256;
+
+    int out_count = 0;
+    uint8_t seen[256];
+    memset(seen, 0, sizeof(seen));
+
+    {
+        const uint8_t *cur_list = renderer_zone_exit_list_ptr(level, zone_id);
+        if (cur_list) {
+            for (int i = 0; i < 128; i++) {
+                int16_t entry = rd16(cur_list + (size_t)i * 2u);
+                if (entry < 0) break;
+                if (entry < 0 || (int32_t)entry >= level->num_floor_lines) continue;
+
+                const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)entry * RENDERER_FLINE_SIZE;
+                int16_t connect = rd16(fl + RENDERER_FLINE_CONNECT_OFF);
+                int connect_zone = level_connect_to_zone_index(level, connect);
+                if (connect_zone < 0 || connect_zone >= zone_slots || connect_zone == zone_id)
+                    continue;
+                if (connect_zone >= 256)
+                    continue;
+                if (seen[(uint8_t)connect_zone])
+                    continue;
+
+                seen[(uint8_t)connect_zone] = 1;
+                if (out_count < max_zones) {
+                    out_zones[out_count] = (int16_t)connect_zone;
+                }
+                out_count++;
+            }
+        }
+    }
+
+    for (int src_zone = 0; src_zone < zone_slots; src_zone++) {
+        if (src_zone == zone_id) continue;
+        if (seen[(uint8_t)src_zone]) continue;
+
+        const uint8_t *src_list = renderer_zone_exit_list_ptr(level, (int16_t)src_zone);
+        if (!src_list) continue;
+
+        int points_to_zone = 0;
+        for (int e = 0; e < 128; e++) {
+            int16_t entry = rd16(src_list + (size_t)e * 2u);
+            if (entry < 0) break;
+            if (entry < 0 || (int32_t)entry >= level->num_floor_lines) continue;
+
+            const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)entry * RENDERER_FLINE_SIZE;
+            int16_t connect = rd16(fl + RENDERER_FLINE_CONNECT_OFF);
+            int connect_zone = level_connect_to_zone_index(level, connect);
+            if (connect_zone == zone_id) {
+                points_to_zone = 1;
+                break;
+            }
+        }
+        if (!points_to_zone)
+            continue;
+
+        seen[(uint8_t)src_zone] = 1;
+        if (out_count < max_zones) {
+            out_zones[out_count] = (int16_t)src_zone;
+        }
+        out_count++;
+    }
+
+    if (out_count > max_zones)
+        out_count = max_zones;
+    return out_count;
+}
+
+static RendererF2SpriteSpillEntry *renderer_f2_pick_find_or_add_sprite_entry(const LevelState *level,
+                                                                              int source_type,
+                                                                              int source_slot,
+                                                                              int16_t source_zone)
+{
+    RendererF2PickSnapshot *snap = &g_renderer_f2_pick_snapshot;
+    int16_t source_slot16;
+
+    if (source_slot < -32768) source_slot = -32768;
+    if (source_slot > 32767) source_slot = 32767;
+    source_slot16 = (int16_t)source_slot;
+
+    for (int i = 0; i < snap->sprite_spill_count; i++) {
+        RendererF2SpriteSpillEntry *entry = &snap->sprite_spill_entries[i];
+        if (entry->source_type == (uint8_t)source_type &&
+            entry->source_slot == source_slot16) {
+            return entry;
+        }
+    }
+
+    if (snap->sprite_spill_count >= RENDERER_F2_MAX_SPRITE_LOG_ENTRIES) {
+        snap->sprite_spill_overflow = 1;
+        return NULL;
+    }
+
+    RendererF2SpriteSpillEntry *entry = &snap->sprite_spill_entries[snap->sprite_spill_count++];
+    memset(entry, 0, sizeof(*entry));
+    entry->source_type = (uint8_t)source_type;
+    entry->source_slot = source_slot16;
+    entry->zone_id = source_zone;
+    if (level && source_zone >= 0) {
+        int adj_count = renderer_collect_adjacent_zones_for_f2(level,
+                                                               source_zone,
+                                                               entry->adjacent_zones,
+                                                               RENDERER_F2_MAX_ZONE_LIST);
+        if (adj_count < 0) adj_count = 0;
+        if (adj_count > RENDERER_F2_MAX_ZONE_LIST) adj_count = RENDERER_F2_MAX_ZONE_LIST;
+        entry->adjacent_count = (uint8_t)adj_count;
+    }
+    return entry;
+}
+
+static void renderer_f2_pick_note_sprite_draw(const LevelState *level,
+                                              int source_type,
+                                              int source_slot,
+                                              int16_t source_zone,
+                                              int16_t draw_zone,
+                                              int is_spill)
+{
+    if (!g_pick_capture_active) return;
+
+    RendererF2SpriteSpillEntry *entry =
+        renderer_f2_pick_find_or_add_sprite_entry(level, source_type, source_slot, source_zone);
+    if (!entry) return;
+
+    if (entry->draw_count < 65535u)
+        entry->draw_count++;
+
+    if (is_spill) {
+        if (entry->spill_draw_count < 65535u)
+            entry->spill_draw_count++;
+        renderer_f2_zone_list_add_unique(entry->spill_zones,
+                                         RENDERER_F2_MAX_ZONE_LIST,
+                                         &entry->spill_zone_count,
+                                         draw_zone);
+    }
+}
+
 static int renderer_resolve_sprite_zone_draw_clip(const RenderSliceContext *ctx,
                                                   GameState *state,
                                                   int16_t zone_id,
@@ -9553,9 +9803,9 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
 
     /* Build one depth-sorted list for sprites and particles so painter order is consistent. */
     enum {
-        DRAW_SRC_OBJECT = 0,
-        DRAW_SRC_SHOT = 1,
-        DRAW_SRC_EXPLOSION = 2
+        DRAW_SRC_OBJECT = RENDERER_F2_SPRITE_SOURCE_OBJECT,
+        DRAW_SRC_SHOT = RENDERER_F2_SPRITE_SOURCE_SHOT,
+        DRAW_SRC_EXPLOSION = RENDERER_F2_SPRITE_SOURCE_EXPLOSION
     };
     typedef struct {
         int src;
@@ -9565,6 +9815,8 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int16_t clip_right;
         int32_t zone_top_world;
         int32_t zone_bot_world;
+        int16_t source_zone;
+        int16_t draw_zone;
         uint8_t ignore_top_clip;
         uint8_t is_spill;
     } ObjEntry;
@@ -9720,6 +9972,8 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         objs[obj_count].clip_right = draw_clip_right;
         objs[obj_count].zone_top_world = draw_zone_top;
         objs[obj_count].zone_bot_world = draw_zone_bot;
+        objs[obj_count].source_zone = obj_zone;
+        objs[obj_count].draw_zone = zone_id;
         objs[obj_count].ignore_top_clip = (uint8_t)(draw_ignore_top ? 1 : 0);
         objs[obj_count].is_spill = (uint8_t)(in_this_zone ? 0 : 1);
         obj_count++;
@@ -9843,6 +10097,8 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             objs[obj_count].clip_right = draw_clip_right;
             objs[obj_count].zone_top_world = draw_zone_top;
             objs[obj_count].zone_bot_world = draw_zone_bot;
+            objs[obj_count].source_zone = shot_zone;
+            objs[obj_count].draw_zone = zone_id;
             objs[obj_count].ignore_top_clip = (uint8_t)(draw_ignore_top ? 1 : 0);
             objs[obj_count].is_spill = (uint8_t)(in_this_zone ? 0 : 1);
             obj_count++;
@@ -9982,6 +10238,8 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             objs[obj_count].clip_right = draw_clip_right;
             objs[obj_count].zone_top_world = draw_zone_top;
             objs[obj_count].zone_bot_world = draw_zone_bot;
+            objs[obj_count].source_zone = expl_zone;
+            objs[obj_count].draw_zone = zone_id;
             objs[obj_count].ignore_top_clip = (uint8_t)(draw_ignore_top ? 1 : 0);
             objs[obj_count].is_spill = (uint8_t)(in_this_zone ? 0 : 1);
             obj_count++;
@@ -10090,6 +10348,12 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             {
                 int32_t orp_z_i16 = ROT_Z_INT(orp_z);
                 if (orp_z_i16 > 32767) orp_z_i16 = 32767;
+                renderer_f2_pick_note_sprite_draw(level,
+                                                  entry->src,
+                                                  entry->idx,
+                                                  entry->source_zone,
+                                                  entry->draw_zone,
+                                                  is_spill);
                 ctx->pick_player_id = 0;
                 if (ctx->profile_collect_stats) {
                     uint64_t sprite_t0 = SDL_GetPerformanceCounter();
@@ -10309,6 +10573,12 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         {
             int32_t orp_z_int = ROT_Z_INT(orp->z);
             if (orp_z_int > 32767) orp_z_int = 32767;
+            renderer_f2_pick_note_sprite_draw(level,
+                                              entry->src,
+                                              entry->idx,
+                                              entry->source_zone,
+                                              entry->draw_zone,
+                                              is_spill);
             if (ctx->profile_collect_stats) {
                 uint64_t sprite_t0 = SDL_GetPerformanceCounter();
                 renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
@@ -12895,7 +13165,7 @@ void renderer_draw_display(GameState *state)
     g_pick_capture_armed = 0;
     g_pick_capture_active = pick_this_frame;
     if (pick_this_frame) {
-        g_renderer_f2_pick_snapshot.valid = 0;
+        renderer_f2_pick_snapshot_clear(&g_renderer_f2_pick_snapshot);
     }
     if (!r->buffer) {
         g_renderer_zone_trace_active = 0;
@@ -13085,7 +13355,7 @@ void renderer_draw_display(GameState *state)
     int8_t fill_screen_water = 0;
     int used_threaded_world = 0;
 #ifndef AB3D_NO_THREADS
-    if (state->cfg_render_threads && !zone_trace) {
+    if (state->cfg_render_threads && !zone_trace && !pick_this_frame) {
         used_threaded_world = renderer_dispatch_threaded_world(state, &world_zone_prepass,
                                                                frame_idx, trace_clip,
                                                                &fill_screen_water,
