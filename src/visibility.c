@@ -191,151 +191,84 @@ void order_zones(ZoneOrder *out, const LevelState *level,
                  int viewer_angle,
                  const uint8_t *list_of_graph_rooms)
 {
-    (void)viewer_angle;
     (void)move_dx;
     (void)move_dz;
+    (void)viewer_angle;
     out->count = 0;
 
-    if (!level->data || !level->zone_adds || !level->floor_lines) {
-        return;
-    }
-
-    uint8_t to_draw_tab[256];
-    memset(to_draw_tab, 0, sizeof(to_draw_tab));
-
-    /* WorkSpace[zone_id] = long at offset 4 in list entry (Amiga settodraw). */
-    uint32_t workspace[256];
-    memset(workspace, 0, sizeof(workspace));
-
-    int16_t zone_list[256];
-    int num_zones = 0;
-
-    if (list_of_graph_rooms) {
-        const uint8_t *lgr = list_of_graph_rooms;
-        int zone_slots = level_zone_slot_count(level);
-        while (num_zones < MAX_ORDER_ENTRIES) {
-            int16_t entry_word = read_be16(lgr);
-            int16_t zid = -1;
-            if (entry_word < 0) break;
-            if (resolve_lgr_entry_zone_id(level, entry_word, &zid) &&
-                zid >= 0 && zid < 256 &&
-                (zone_slots <= 0 || zid < zone_slots)) {
-                if (!to_draw_tab[zid]) {
-                    to_draw_tab[zid] = 1;
-                    workspace[zid] = read_be32(lgr + 4);
-                    zone_list[num_zones++] = zid;
-                } else {
-                    /* Multiple graph entries can alias one zone id; preserve any gate bits. */
-                    workspace[zid] |= read_be32(lgr + 4);
-                }
-            }
-            lgr += 8;
+    {
+        if (!level->data || !level->zone_adds || !level->floor_lines) {
+            return;
         }
-    }
-    if (num_zones == 0) return;
 
-    /* Narrow fallback path for the known problematic viewpoint:
-     * when the viewer is in zone 53 and both zones 56/58 are in the visible set.
-     * This keeps the strict geometric reorder from affecting other zones. */
-    int apply_zone53_fallback = 0;
-    if (zone_list[0] == 53 && to_draw_tab[56] && to_draw_tab[58]) {
-        apply_zone53_fallback = 1;
-    }
+        uint8_t to_draw_tab[256];
+        memset(to_draw_tab, 0, sizeof(to_draw_tab));
 
-    /* Linked list by node index: next[i], prev[i], zone_id[i]. Head = 0, tail = num_zones-1. */
-    int next[256], prev[256];
-    int16_t node_zone[256];
-    for (int i = 0; i < num_zones; i++) {
-        node_zone[i] = zone_list[i];
-        prev[i] = i - 1;
-        next[i] = i + 1;
-    }
-    prev[0] = -1;
-    next[num_zones - 1] = -1;
-    int head = 0, tail = num_zones - 1;
+        /* WorkSpace[zone_id] = long at offset 4 in list entry (Amiga settodraw). */
+        uint32_t workspace[256];
+        memset(workspace, 0, sizeof(workspace));
 
-    /* zone_id (0..255) -> linked-list node index; -1 if not in this frame's visible set */
-    int zone_id_to_node[256];
-    for (int zi = 0; zi < 256; zi++)
-        zone_id_to_node[zi] = -1;
-    for (int i = 0; i < num_zones; i++) {
-        int16_t zid = node_zone[i];
-        if (zid >= 0 && zid < 256)
-            zone_id_to_node[zid] = i;
-    }
+        int16_t zone_list[256];
+        int num_zones = 0;
 
-    /* RunThroughList: multiple passes, each pass walk list from tail to head.
-     * Early-exit: if a pass made no reorderings the list is already stable. */
-    enum { k_order_passes = 100 };
-    for (int pass = 0; pass < k_order_passes; pass++) {
-        int moved = 0;
-        int node = tail;
-        while (node >= 0) {
-            int16_t cur_zone = node_zone[node];
-            int32_t zone_off = read_be32(level->zone_adds + (int)cur_zone * 4);
-            if (zone_off != 0) {
-                const uint8_t *zone_data = level->data + zone_off;
-                int16_t exit_rel = read_be16(zone_data + ZONE_EXIT_LIST);
-                if (exit_rel != 0) {
-                    const uint8_t *exit_list = zone_data + exit_rel;
-                    uint32_t d6 = workspace[cur_zone];
-                    for (int ei = 0; ei < 64; ei++) {
-                        int16_t line_idx = read_be16(exit_list + ei * 2);
-                        if (line_idx < 0) break;
-                        int16_t connect = read_be16(level->floor_lines + (int)line_idx * FLINE_SIZE + FLINE_CONNECT);
-                        int connect_index = level_connect_to_zone_index(level, connect);
-                        if (connect_index < 0 || connect_index >= 256 || !to_draw_tab[connect_index]) continue;
-
-                        /* Amiga InsertList bit flow:
-                         *   b   = d7 (indrawlist gate)
-                         *   b+1 = evaluated marker
-                         *   b+2 = cached "mustdo" marker
-                         * d7 advances by 3 per exit; btst/bset are register ops (bit index mod 32).
-                         * WorkSpace=0 fallback: when d6 is 0, still run side test and reorder. */
-                        unsigned int b = (unsigned)(ei * 3);
-                        if (d6 != 0 && !reg_btst32(d6, b)) continue;
-
-                        /* Amiga InsertList: side = dx*word6 - dz*word4; ble PutDone => reorder when side > 0 */
-                        if (!reg_btst32(d6, b + 1u)) {
-                            /* First time: mark evaluated, run side test. */
-                            d6 |= reg_bit32(b + 1u);
-                            const uint8_t *fline = level->floor_lines + (int)line_idx * FLINE_SIZE;
-                            int32_t lx = (int32_t)read_be16(fline + FLINE_X);
-                            int32_t lz = (int32_t)read_be16(fline + FLINE_Z);
-                            int32_t word4 = (int32_t)read_be16(fline + FLINE_WORD4);
-                            int32_t word6 = (int32_t)read_be16(fline + FLINE_WORD6);
-                            int32_t dx = viewer_x - lx, dz = viewer_z - lz;  /* Amiga: move.w xoff/zoff */
-                            int32_t side = dx * word6 - dz * word4;
-                            if (side <= 0) continue;  /* Amiga: ble PutDone */
-                            d6 |= reg_bit32(b + 2u);  /* mustdo */
-                        } else {
-                            if (!reg_btst32(d6, b + 2u)) continue;  /* wealreadyknow: only if mustdo set */
-                        }
-
-                        /* mustdo: connected is further; if it's earlier in list, move current in front of it (Amiga iscloser). */
-                        int conn_node = (connect_index >= 0 && connect_index < 256)
-                                            ? zone_id_to_node[connect_index]
-                                            : -1;
-                        if (conn_node < 0) continue;
-                        if (!node_before(head, conn_node, node, next)) continue;  /* connected not earlier, nothing to do */
-                        if (node == head) head = (next[node] >= 0) ? next[node] : node;
-                        if (node == tail) tail = (prev[node] >= 0) ? prev[node] : node;
-                        move_before(node, conn_node, next, prev);
-                        if (conn_node == head) head = node;
-                        moved = 1;
-                        /* Amiga: bra InsertLoop - no return, so multiple reorders per node per pass */
+        if (list_of_graph_rooms) {
+            const uint8_t *lgr = list_of_graph_rooms;
+            int zone_slots = level_zone_slot_count(level);
+            while (num_zones < MAX_ORDER_ENTRIES) {
+                int16_t entry_word = read_be16(lgr);
+                int16_t zid = -1;
+                if (entry_word < 0) break;
+                if (resolve_lgr_entry_zone_id(level, entry_word, &zid) &&
+                    zid >= 0 && zid < 256 &&
+                    (zone_slots <= 0 || zid < zone_slots)) {
+                    if (!to_draw_tab[zid]) {
+                        to_draw_tab[zid] = 1;
+                        workspace[zid] = read_be32(lgr + 4);
+                        zone_list[num_zones++] = zid;
+                    } else {
+                        /* Multiple graph entries can alias one zone id; preserve any gate bits. */
+                        workspace[zid] |= read_be32(lgr + 4);
                     }
-                    workspace[cur_zone] = d6;  /* Amiga allinlist: move.l d6,(a6) */
                 }
+                lgr += 8;
             }
-            node = prev[node];
         }
-        if (!moved) break;
-    }
+        if (num_zones == 0) return;
 
-    if (apply_zone53_fallback) {
-        enum { k_strict_order_passes = 16 };
-        for (int pass = 0; pass < k_strict_order_passes; pass++) {
+        /* Narrow fallback path for the known problematic viewpoint:
+         * when the viewer is in zone 53 and both zones 56/58 are in the visible set.
+         * This keeps the strict geometric reorder from affecting other zones. */
+        int apply_zone53_fallback = 0;
+        if (zone_list[0] == 53 && to_draw_tab[56] && to_draw_tab[58]) {
+            apply_zone53_fallback = 1;
+        }
+
+        /* Linked list by node index: next[i], prev[i], zone_id[i]. Head = 0, tail = num_zones-1. */
+        int next[256], prev[256];
+        int16_t node_zone[256];
+        for (int i = 0; i < num_zones; i++) {
+            node_zone[i] = zone_list[i];
+            prev[i] = i - 1;
+            next[i] = i + 1;
+        }
+        prev[0] = -1;
+        next[num_zones - 1] = -1;
+        int head = 0, tail = num_zones - 1;
+
+        /* zone_id (0..255) -> linked-list node index; -1 if not in this frame's visible set */
+        int zone_id_to_node[256];
+        for (int zi = 0; zi < 256; zi++)
+            zone_id_to_node[zi] = -1;
+        for (int i = 0; i < num_zones; i++) {
+            int16_t zid = node_zone[i];
+            if (zid >= 0 && zid < 256)
+                zone_id_to_node[zid] = i;
+        }
+
+        /* RunThroughList: multiple passes, each pass walk list from tail to head.
+         * Early-exit: if a pass made no reorderings the list is already stable. */
+        enum { k_order_passes = 100 };
+        for (int pass = 0; pass < k_order_passes; pass++) {
             int moved = 0;
             int node = tail;
             while (node >= 0) {
@@ -346,12 +279,12 @@ void order_zones(ZoneOrder *out, const LevelState *level,
                     int16_t exit_rel = read_be16(zone_data + ZONE_EXIT_LIST);
                     if (exit_rel != 0) {
                         const uint8_t *exit_list = zone_data + exit_rel;
-                        for (int ei = 0; ei < 128; ei++) {
+                        uint32_t d6 = workspace[cur_zone];
+                        for (int ei = 0; ei < 64; ei++) {
                             int16_t line_idx = read_be16(exit_list + ei * 2);
-                            int connect_index, conn_node;
                             const uint8_t *fline;
-                            int32_t lx, lz, word4, word6, dx, dz, side;
-
+                            int32_t lx, lz, word4, word6;
+                            int connect_index;
                             if (line_idx < 0) break;
                             if (line_idx >= level->num_floor_lines) continue;
 
@@ -363,36 +296,114 @@ void order_zones(ZoneOrder *out, const LevelState *level,
                             lz = (int32_t)read_be16(fline + FLINE_Z);
                             word4 = (int32_t)read_be16(fline + FLINE_WORD4);
                             word6 = (int32_t)read_be16(fline + FLINE_WORD6);
-                            dx = viewer_x - lx;
-                            dz = viewer_z - lz;
-                            side = dx * word6 - dz * word4;
-                            if (side <= 0) continue;
 
-                            conn_node = zone_id_to_node[connect_index];
-                            if (conn_node < 0) continue;
-                            if (!node_before(head, conn_node, node, next)) continue;
-                            if (node == head) head = (next[node] >= 0) ? next[node] : node;
-                            if (node == tail) tail = (prev[node] >= 0) ? prev[node] : node;
-                            move_before(node, conn_node, next, prev);
-                            if (conn_node == head) head = node;
-                            moved = 1;
+                            /* Amiga InsertList bit flow:
+                             *   b   = d7 (indrawlist gate)
+                             *   b+1 = evaluated marker
+                             *   b+2 = cached "mustdo" marker
+                             * d7 advances by 3 per exit; btst/bset are register ops (bit index mod 32).
+                             * WorkSpace=0 fallback: when d6 is 0, still run side test and reorder. */
+                            unsigned int b = (unsigned)(ei * 3);
+                            if (d6 != 0 && !reg_btst32(d6, b)) continue;
+
+                            /* Amiga InsertList: side = dx*word6 - dz*word4; ble PutDone => reorder when side > 0 */
+                            if (!reg_btst32(d6, b + 1u)) {
+                                int32_t dx, dz, side;
+                                d6 |= reg_bit32(b + 1u); /* mark evaluated */
+                                dx = viewer_x - lx;
+                                dz = viewer_z - lz;
+                                side = dx * word6 - dz * word4;
+                                if (side <= 0) continue;
+                                d6 |= reg_bit32(b + 2u);  /* mustdo */
+                            } else {
+                                if (!reg_btst32(d6, b + 2u)) continue;
+                            }
+
+                            /* mustdo: connected is further; if it's earlier in list, move current in front of it (Amiga iscloser). */
+                            {
+                                int conn_node = (connect_index >= 0 && connect_index < 256)
+                                                    ? zone_id_to_node[connect_index]
+                                                    : -1;
+                                if (conn_node < 0) continue;
+                                if (!node_before(head, conn_node, node, next)) continue;
+                                if (node == head) head = (next[node] >= 0) ? next[node] : node;
+                                if (node == tail) tail = (prev[node] >= 0) ? prev[node] : node;
+                                move_before(node, conn_node, next, prev);
+                                if (conn_node == head) head = node;
+                                moved = 1;
+                            }
                         }
+                        workspace[cur_zone] = d6;  /* Amiga allinlist: move.l d6,(a6) */
                     }
                 }
                 node = prev[node];
             }
             if (!moved) break;
         }
-    }
 
-    /* Output final order (walk from head) */
-    int n = head;
-    int out_i = 0;
-    while (n >= 0 && out_i < MAX_ORDER_ENTRIES) {
-        out->zones[out_i++] = node_zone[n];
-        n = next[n];
+        if (apply_zone53_fallback) {
+            enum { k_strict_order_passes = 16 };
+            for (int pass = 0; pass < k_strict_order_passes; pass++) {
+                int moved = 0;
+                int node = tail;
+                while (node >= 0) {
+                    int16_t cur_zone = node_zone[node];
+                    int32_t zone_off = read_be32(level->zone_adds + (int)cur_zone * 4);
+                    if (zone_off != 0) {
+                        const uint8_t *zone_data = level->data + zone_off;
+                        int16_t exit_rel = read_be16(zone_data + ZONE_EXIT_LIST);
+                        if (exit_rel != 0) {
+                            const uint8_t *exit_list = zone_data + exit_rel;
+                            for (int ei = 0; ei < 128; ei++) {
+                                int16_t line_idx = read_be16(exit_list + ei * 2);
+                                int connect_index, conn_node;
+                                const uint8_t *fline;
+                                int32_t lx, lz, word4, word6, dx, dz, side;
+
+                                if (line_idx < 0) break;
+                                if (line_idx >= level->num_floor_lines) continue;
+
+                                fline = level->floor_lines + (int)line_idx * FLINE_SIZE;
+                                connect_index = level_connect_to_zone_index(level, read_be16(fline + FLINE_CONNECT));
+                                if (connect_index < 0 || connect_index >= 256 || !to_draw_tab[connect_index]) continue;
+
+                                lx = (int32_t)read_be16(fline + FLINE_X);
+                                lz = (int32_t)read_be16(fline + FLINE_Z);
+                                word4 = (int32_t)read_be16(fline + FLINE_WORD4);
+                                word6 = (int32_t)read_be16(fline + FLINE_WORD6);
+                                dx = viewer_x - lx;
+                                dz = viewer_z - lz;
+                                side = dx * word6 - dz * word4;
+                                if (side <= 0) continue;
+
+                                conn_node = zone_id_to_node[connect_index];
+                                if (conn_node < 0) continue;
+                                if (!node_before(head, conn_node, node, next)) continue;
+                                if (node == head) head = (next[node] >= 0) ? next[node] : node;
+                                if (node == tail) tail = (prev[node] >= 0) ? prev[node] : node;
+                                move_before(node, conn_node, next, prev);
+                                if (conn_node == head) head = node;
+                                moved = 1;
+                            }
+                        }
+                    }
+                    node = prev[node];
+                }
+                if (!moved) break;
+            }
+        }
+
+        /* Output final order (walk from head) */
+        {
+            int n = head;
+            int out_i = 0;
+            while (n >= 0 && out_i < MAX_ORDER_ENTRIES) {
+                out->zones[out_i++] = node_zone[n];
+                n = next[n];
+            }
+            out->count = out_i;
+        }
     }
-    out->count = out_i;
 }
 
 /* -----------------------------------------------------------------------

@@ -7,6 +7,7 @@
 
 #include "level.h"
 #include "game_types.h"
+#include <stdint.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,16 @@
 #define AB3D_ATTR_UNUSED __attribute__((unused))
 #else
 #define AB3D_ATTR_UNUSED
+#endif
+
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+#define AB3D_THREAD_LOCAL _Thread_local
+#elif defined(_MSC_VER)
+#define AB3D_THREAD_LOCAL __declspec(thread)
+#elif defined(__GNUC__) || defined(__clang__)
+#define AB3D_THREAD_LOCAL __thread
+#else
+#define AB3D_THREAD_LOCAL
 #endif
 
 /* Helper to read big-endian 16-bit word from buffer */
@@ -952,32 +963,69 @@ int level_zone_has_upper_layer(const LevelState *level, int16_t zone_id)
 
 int level_connect_to_zone_index(const LevelState *level, int16_t connect)
 {
+    typedef struct {
+        const LevelState *level;
+        const uint8_t *zone_adds;
+        const uint8_t *data;
+        int16_t connect;
+        int16_t zone_slots;
+        int16_t result;
+    } LevelConnectCacheEntry;
+    enum { k_level_connect_cache_size = 1024 };
+    static AB3D_THREAD_LOCAL LevelConnectCacheEntry cache[k_level_connect_cache_size];
+    int result = -1;
+
     if (!level->zone_adds || !level->data || connect < 0)
         return -1;
     int zone_slots = level_zone_slot_count(level);
     if (zone_slots <= 0)
         return -1;
 
-    size_t data_len = level->data_byte_count;
-    for (int z = 0; z < zone_slots; z++) {
-        int32_t zoff = read_long(level->zone_adds + (size_t)z * 4u);
-        if (zoff < 0) continue;
-        if (data_len != 0 && (size_t)zoff + 2u > data_len) continue;
-        const uint8_t *zd = level->data + zoff;
-        if (read_word(zd + 0) == (int16_t)connect)
-            return z;
-    }
     {
-        /* Amiga ObjectMove uses floor-line connect as a direct index into zoneAdds.
-         * Some levels have an extra slot (zone_slots > num_zones), so allow the
-         * full slot range here, not just [0, num_zones). */
-        if (connect >= 0 && connect < zone_slots) {
-            int32_t zoff = read_long(level->zone_adds + (size_t)connect * 4u);
-            if (zoff >= 0 && (data_len == 0 || (size_t)zoff + 2u <= data_len))
-                return (int)connect;
+        uintptr_t mix = ((uintptr_t)level >> 4) ^
+                        ((uintptr_t)level->zone_adds >> 3) ^
+                        ((uintptr_t)(uint16_t)connect * 2654435761u);
+        unsigned int slot = (unsigned int)(mix & (uintptr_t)(k_level_connect_cache_size - 1));
+        LevelConnectCacheEntry *entry = &cache[slot];
+        if (entry->level == level &&
+            entry->zone_adds == level->zone_adds &&
+            entry->data == level->data &&
+            entry->connect == connect &&
+            entry->zone_slots == zone_slots) {
+            return (int)entry->result;
         }
+
+        size_t data_len = level->data_byte_count;
+        for (int z = 0; z < zone_slots; z++) {
+            int32_t zoff = read_long(level->zone_adds + (size_t)z * 4u);
+            if (zoff < 0) continue;
+            if (data_len != 0 && (size_t)zoff + 2u > data_len) continue;
+            const uint8_t *zd = level->data + zoff;
+            if (read_word(zd + 0) == (int16_t)connect) {
+                result = z;
+                break;
+            }
+        }
+        if (result < 0) {
+            /* Amiga ObjectMove uses floor-line connect as a direct index into zoneAdds.
+             * Some levels have an extra slot (zone_slots > num_zones), so allow the
+             * full slot range here, not just [0, num_zones). */
+            if (connect < zone_slots) {
+                int32_t zoff = read_long(level->zone_adds + (size_t)connect * 4u);
+                if (zoff >= 0 && (data_len == 0 || (size_t)zoff + 2u <= data_len))
+                    result = (int)connect;
+            }
+        }
+
+        entry->level = level;
+        entry->zone_adds = level->zone_adds;
+        entry->data = level->data;
+        entry->connect = connect;
+        entry->zone_slots = (int16_t)zone_slots;
+        entry->result = (int16_t)result;
     }
-    return -1;
+
+    return result;
 }
 
 /* Dense map: byte offset into level->data -> first matching zone_adds slot (int16_t -1 = unused). */
