@@ -228,6 +228,7 @@ typedef struct {
     int16_t top;
     int16_t right;
     int16_t bot;
+    int16_t center_x;
     uint8_t is_spill;
 } RendererDebugSpillSpriteRect;
 
@@ -558,6 +559,7 @@ static int renderer_resolve_lgr_entry_zone_id(const LevelState *level, int16_t e
 
 /* Forward decls used by early helpers (defined later). */
 static uint32_t amiga12_to_argb(uint16_t c12);
+static int renderer_zone_contains_point(const LevelState *level, int16_t zone_id, int32_t x, int32_t z);
 
 /* -----------------------------------------------------------------------
  * Automap (seen wall list + raster)
@@ -1993,6 +1995,7 @@ static void renderer_debug_spill_note_sprite_rect(int left,
                                                   int top,
                                                   int right,
                                                   int bot,
+                                                  int center_x,
                                                   int is_spill)
 {
     int w = g_renderer.width;
@@ -2005,6 +2008,8 @@ static void renderer_debug_spill_note_sprite_rect(int left,
     if (top < 0) top = 0;
     if (right >= w) right = w - 1;
     if (bot >= h) bot = h - 1;
+    if (center_x < 0) center_x = 0;
+    if (center_x >= w) center_x = w - 1;
     if (left > right || top > bot) return;
 
     {
@@ -2014,6 +2019,7 @@ static void renderer_debug_spill_note_sprite_rect(int left,
         r->top = (int16_t)top;
         r->right = (int16_t)right;
         r->bot = (int16_t)bot;
+        r->center_x = (int16_t)center_x;
         r->is_spill = (uint8_t)(is_spill ? 1 : 0);
     }
 }
@@ -2142,6 +2148,21 @@ static void renderer_apply_spill_visualize_debug_overlay(const RendererWorldZone
                                              (int)r->bot,
                                              r->is_spill ? spill_c12 : local_c12,
                                              r->is_spill ? spill_c32 : local_c32);
+            if (r->is_spill) {
+                int cx = (int)r->center_x;
+                int top = (int)r->top;
+                int bot = (int)r->bot;
+                const uint16_t center_c12 = 0x00FFu;
+                const uint32_t center_c32 = amiga12_to_argb(center_c12);
+                if (cx < (int)r->left) cx = (int)r->left;
+                if (cx > (int)r->right) cx = (int)r->right;
+                for (int y = top; y <= bot; y++) {
+                    renderer_cw_store_xy(cw, cx, y, w, h, center_c12);
+                    if (g_renderer_rgb_raster_expand && rgb) {
+                        rgb[(size_t)y * (size_t)w + (size_t)cx] = center_c32;
+                    }
+                }
+            }
         }
     }
 }
@@ -8119,7 +8140,14 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                      int16_t clip_left_sx, int16_t clip_right_sx,
                                      int32_t clip_top_world, int32_t clip_bot_world,
                                      int32_t clip_top_sy, int32_t clip_bot_sy,
-                                     int is_spill)
+                                     int is_spill,
+                                     const LevelState *geom_clip_level,
+                                     int16_t geom_clip_zone,
+                                     int32_t billboard_world_x,
+                                     int32_t billboard_world_z,
+                                     int32_t billboard_world_w,
+                                     int16_t billboard_view_right_x,
+                                     int16_t billboard_view_right_z)
 {
     (void)clip_top_world;
     (void)clip_bot_world;
@@ -8186,6 +8214,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                               draw_top,
                                               dbg_right,
                                               draw_bot,
+                                              screen_x,
                                               is_spill);
     }
     const int profile_collect_stats = (ctx && ctx->profile_collect_stats);
@@ -8238,7 +8267,6 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     const size_t rw_stride = (size_t)rw;
     const size_t cw_step_y = renderer_cw_step_y(rw);
     const int down_strip_i = (int)down_strip;
-    const int32_t z32 = (int32_t)z;
     const int spill_visualize = (is_spill && g_debug_spill_visualize) ? 1 : 0;
     const uint16_t spill_vis_cw = 0x0F0Fu;
     const uint32_t spill_vis_rgb = amiga12_to_argb(spill_vis_cw);
@@ -8249,6 +8277,10 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     const int mark_sprite_pick_zone_none = (g_debug_spill_visualize && pick_zone) ? 1 : 0;
     const int fast_common_no_spill =
         (!have_pick) ? 1 : 0;
+    const int have_geometric_zone_clip =
+        (geom_clip_level && geom_clip_zone >= 0 && billboard_world_w > 0 && width > 0) ? 1 : 0;
+    const int64_t billboard_world_w64 = (billboard_world_w > 0) ? (int64_t)billboard_world_w : 1;
+    const int64_t billboard_world_den = (int64_t)width * 2;
 
     /* Fixed-point 16.16 DDA stepping (replaces per-pixel integer division). */
     const int32_t src_col_step = (width > 1)
@@ -8271,22 +8303,36 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
 
     int32_t src_col_fp = (int32_t)dx_start * src_col_step;
 
-    const ColumnClip *wall_clip = &g_renderer.clip;
-    /* Main billboards and spills are both geometry-clipped against wall spans
-     * of the zone currently being drawn. */
-    const int have_wall_clip =
-        (wall_clip->top && wall_clip->bot && wall_clip->z &&
-         wall_clip->top2 && wall_clip->bot2 && wall_clip->z2);
-
     /* --- Column loop --- */
     for (int dx = dx_start; dx < dx_end; dx++) {
         const int screen_col = sx + dx;
 
-        /* Source column via DDA (replaces per-column division). */
+        /* Advance source-column DDA regardless of geometric clip so texture
+         * mapping remains stable across rejected columns. */
         int src_col = src_col_fp >> 16;
         src_col_fp += src_col_step;
         if (src_col >= eff_cols) src_col = eff_cols - 1;
         if ((uint32_t)src_col >= max_ptr_col) src_col = (int)(max_ptr_col - 1);
+
+        if (have_geometric_zone_clip) {
+            int64_t col_num = ((int64_t)dx * 2 + 1 - (int64_t)width) * billboard_world_w64;
+            int64_t lateral_off = (billboard_world_den != 0) ? (col_num / billboard_world_den) : 0;
+            int64_t wx64 = (int64_t)billboard_world_x +
+                           ((int64_t)billboard_view_right_x * lateral_off) / 16384;
+            int64_t wz64 = (int64_t)billboard_world_z +
+                           ((int64_t)billboard_view_right_z * lateral_off) / 16384;
+            if (!renderer_zone_contains_point(geom_clip_level,
+                                              geom_clip_zone,
+                                              (int32_t)wx64,
+                                              (int32_t)wz64)) {
+                if (profile_collect_stats) {
+                    int total_rows = draw_bot - draw_top + 1;
+                    if (total_rows > 0)
+                        sprite_wall_occluded_rows_total += (uint64_t)total_rows;
+                }
+                continue;
+            }
+        }
 
         uint32_t entry_off = ptr_offset + (uint32_t)src_col * 4;
         if (entry_off + 4 > ptr_size) continue;
@@ -8327,73 +8373,10 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
             }
         }
 
-        /* Per-column zone clip: subtract occluder spans so split columns can
-         * render all visible pieces (top/middle/bottom) instead of choosing
-         * only one side of an interior occluder. */
-        int seg_top[3], seg_bot[3], seg_count = 0;
-        if (!have_wall_clip) {
-            seg_top[0] = draw_top;
-            seg_bot[0] = draw_bot;
-            seg_count = 1;
-        } else {
-            int occ_top[2], occ_bot[2], occ_count = 0;
-            int16_t wt0 = wall_clip->top[screen_col];
-            int16_t wb0 = wall_clip->bot[screen_col];
-            int32_t wz0 = wall_clip->z[screen_col];
-            if (wz0 > 0 && wt0 <= wb0 && z32 >= wz0) {
-                int t = (wt0 > draw_top) ? (int)wt0 : draw_top;
-                int b = (wb0 < draw_bot) ? (int)wb0 : draw_bot;
-                if (t <= b) { occ_top[occ_count] = t; occ_bot[occ_count] = b; occ_count++; }
-            }
-            int16_t wt1 = wall_clip->top2[screen_col];
-            int16_t wb1 = wall_clip->bot2[screen_col];
-            int32_t wz1 = wall_clip->z2[screen_col];
-            if (wz1 > 0 && wt1 <= wb1 && z32 >= wz1) {
-                int t = (wt1 > draw_top) ? (int)wt1 : draw_top;
-                int b = (wb1 < draw_bot) ? (int)wb1 : draw_bot;
-                if (t <= b) { occ_top[occ_count] = t; occ_bot[occ_count] = b; occ_count++; }
-            }
-
-            if (occ_count == 0) {
-                seg_top[0] = draw_top;
-                seg_bot[0] = draw_bot;
-                seg_count = 1;
-            } else {
-                if (occ_count == 2) {
-                    if (occ_top[1] < occ_top[0]) {
-                        int t = occ_top[0]; int b = occ_bot[0];
-                        occ_top[0] = occ_top[1]; occ_bot[0] = occ_bot[1];
-                        occ_top[1] = t; occ_bot[1] = b;
-                    }
-                    if (occ_top[1] <= occ_bot[0] + 1) {
-                        if (occ_bot[1] > occ_bot[0]) occ_bot[0] = occ_bot[1];
-                        occ_count = 1;
-                    }
-                }
-
-                /* Build visible segments by subtracting merged occluders from
-                 * [draw_top, draw_bot]. */
-                int scan_top = draw_top;
-                for (int i = 0; i < occ_count; i++) {
-                    int ot = occ_top[i];
-                    int ob = occ_bot[i];
-                    if (ob < scan_top) continue;
-                    if (ot > draw_bot) break;
-                    if (ot > scan_top && seg_count < 3) {
-                        seg_top[seg_count] = scan_top;
-                        seg_bot[seg_count] = ot - 1;
-                        seg_count++;
-                    }
-                    if (ob >= scan_top) scan_top = ob + 1;
-                    if (scan_top > draw_bot) break;
-                }
-                if (scan_top <= draw_bot && seg_count < 3) {
-                    seg_top[seg_count] = scan_top;
-                    seg_bot[seg_count] = draw_bot;
-                    seg_count++;
-                }
-            }
-        }
+        /* Billboards are rendered with geometric zone clipping only (no per-column depth occluders). */
+        int seg_top[1], seg_bot[1], seg_count = 1;
+        seg_top[0] = draw_top;
+        seg_bot[0] = draw_bot;
         if (profile_collect_stats) {
             int total_rows = draw_bot - draw_top + 1;
             int visible_rows = 0;
@@ -8634,7 +8617,10 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                              ptr_offset, down_strip, src_cols, src_rows, brightness,
                              sprite_type, ctx.left_clip, ctx.right_clip,
                              INT32_MIN, INT32_MIN,
-                             clip_top_sy, clip_bot_sy, 0);
+                             clip_top_sy, clip_bot_sy, 0,
+                             NULL, -1,
+                             0, 0, 0,
+                             0, 0);
 }
 
 /* -----------------------------------------------------------------------
@@ -9263,75 +9249,6 @@ static int renderer_find_adj_zone_slot(const RendererAdjZone *adj, int adj_count
     return -1;
 }
 
-static int64_t renderer_point_segment_dist2_i32(int32_t px, int32_t pz,
-                                                int32_t x1, int32_t z1,
-                                                int32_t x2, int32_t z2)
-{
-    int64_t dx = (int64_t)x2 - (int64_t)x1;
-    int64_t dz = (int64_t)z2 - (int64_t)z1;
-    int64_t len2 = dx * dx + dz * dz;
-    if (len2 <= 0) {
-        int64_t ex = (int64_t)px - (int64_t)x1;
-        int64_t ez = (int64_t)pz - (int64_t)z1;
-        return ex * ex + ez * ez;
-    }
-
-    int64_t t_num = ((int64_t)px - (int64_t)x1) * dx + ((int64_t)pz - (int64_t)z1) * dz;
-    int64_t qx, qz;
-    if (t_num <= 0) {
-        qx = x1;
-        qz = z1;
-    } else if (t_num >= len2) {
-        qx = x2;
-        qz = z2;
-    } else {
-        qx = (int64_t)x1 + (dx * t_num) / len2;
-        qz = (int64_t)z1 + (dz * t_num) / len2;
-    }
-
-    {
-        int64_t ex = (int64_t)px - qx;
-        int64_t ez = (int64_t)pz - qz;
-        return ex * ex + ez * ez;
-    }
-}
-
-static int renderer_point_near_adj_lines_xy(const LevelState *level, int32_t px, int32_t pz,
-                                            int32_t near_radius, const int16_t *line_ids, int line_count)
-{
-    if (!level || !level->floor_lines || !line_ids || line_count <= 0) return 0;
-    if (near_radius < 0) near_radius = 0;
-    {
-        int64_t near2 = (int64_t)near_radius * (int64_t)near_radius;
-        for (int i = 0; i < line_count; i++) {
-            int16_t li = line_ids[i];
-            if (li < 0 || (int32_t)li >= level->num_floor_lines) continue;
-            {
-                const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)li * RENDERER_FLINE_SIZE;
-                int32_t x1 = rd16(fl + RENDERER_FLINE_X_OFF);
-                int32_t z1 = rd16(fl + RENDERER_FLINE_Z_OFF);
-                int32_t x2 = x1 + rd16(fl + RENDERER_FLINE_XLEN_OFF);
-                int32_t z2 = z1 + rd16(fl + RENDERER_FLINE_ZLEN_OFF);
-                if (renderer_point_segment_dist2_i32(px, pz, x1, z1, x2, z2) <= near2) {
-                    return 1;
-                }
-            }
-        }
-    }
-    return 0;
-}
-
-static int renderer_object_point_near_adj_lines(const LevelState *level, int16_t pt_num, int32_t near_radius,
-                                                const int16_t *line_ids, int line_count)
-{
-    if (!level || !level->object_points || pt_num < 0 || !line_ids || line_count <= 0) return 0;
-    {
-        int32_t ox = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 0u);
-        int32_t oz = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 4u);
-        return renderer_point_near_adj_lines_xy(level, ox, oz, near_radius, line_ids, line_count);
-    }
-}
-
 static int64_t renderer_orient2d_i64(int32_t ax, int32_t az,
                                      int32_t bx, int32_t bz,
                                      int32_t cx, int32_t cz)
@@ -9351,8 +9268,10 @@ static int renderer_on_segment_i64(int32_t ax, int32_t az,
     return (px >= minx && px <= maxx && pz >= minz && pz <= maxz);
 }
 
-static int renderer_segments_intersect_i32(int32_t a1x, int32_t a1z, int32_t a2x, int32_t a2z,
-                                           int32_t b1x, int32_t b1z, int32_t b2x, int32_t b2z)
+static int renderer_segments_intersect_i32(int32_t a1x, int32_t a1z,
+                                           int32_t a2x, int32_t a2z,
+                                           int32_t b1x, int32_t b1z,
+                                           int32_t b2x, int32_t b2z)
 {
     int64_t o1 = renderer_orient2d_i64(a1x, a1z, a2x, a2z, b1x, b1z);
     int64_t o2 = renderer_orient2d_i64(a1x, a1z, a2x, a2z, b2x, b2z);
@@ -9372,270 +9291,49 @@ static int renderer_segments_intersect_i32(int32_t a1x, int32_t a1z, int32_t a2x
     return 0;
 }
 
-/* Screen-lateral overlap proxy:
- * Build a segment centered on the sprite, oriented perpendicular to camera view,
- * and require that segment to cross an adjacent-zone boundary line. */
-static int renderer_lateral_span_hits_adj_lines(const LevelState *level,
-                                                int32_t px, int32_t pz,
-                                                int32_t half_span_world,
-                                                int16_t view_right_x,
-                                                int16_t view_right_z,
-                                                const int16_t *line_ids,
-                                                int line_count,
-                                                int allow_near_miss)
+/* Spill criterion: use the billboard's world-space lateral segment (sprite plane
+ * facing the player) and require that it intersects a boundary line shared with
+ * the destination zone. */
+static int renderer_billboard_lateral_hits_adj_lines(const LevelState *level,
+                                                     int32_t px, int32_t pz,
+                                                     int32_t half_span_world,
+                                                     int16_t view_right_x,
+                                                     int16_t view_right_z,
+                                                     const int16_t *line_ids,
+                                                     int line_count)
 {
     if (!level || !level->floor_lines || !line_ids || line_count <= 0) return 0;
     if (half_span_world < 1) half_span_world = 1;
 
-    /* Runtime trig values are Q14 (16384 = 1.0). */
-    int64_t off_x64 = ((int64_t)view_right_x * (int64_t)half_span_world) / 16384;
-    int64_t off_z64 = ((int64_t)view_right_z * (int64_t)half_span_world) / 16384;
-    if (off_x64 == 0 && off_z64 == 0) {
-        off_x64 = (view_right_x >= 0) ? 1 : -1;
-    }
-
-    int32_t sx1 = (int32_t)((int64_t)px - off_x64);
-    int32_t sz1 = (int32_t)((int64_t)pz - off_z64);
-    int32_t sx2 = (int32_t)((int64_t)px + off_x64);
-    int32_t sz2 = (int32_t)((int64_t)pz + off_z64);
-    int32_t near_radius = half_span_world + 24;
-    if (near_radius < 16) near_radius = 16;
-    if (near_radius > 1024) near_radius = 1024;
-    int64_t near2 = (int64_t)near_radius * (int64_t)near_radius;
-
-    for (int i = 0; i < line_count; i++) {
-        int16_t li = line_ids[i];
-        if (li < 0 || (int32_t)li >= level->num_floor_lines) continue;
-        const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)li * RENDERER_FLINE_SIZE;
-        int32_t x1 = rd16(fl + RENDERER_FLINE_X_OFF);
-        int32_t z1 = rd16(fl + RENDERER_FLINE_Z_OFF);
-        int32_t x2 = x1 + rd16(fl + RENDERER_FLINE_XLEN_OFF);
-        int32_t z2 = z1 + rd16(fl + RENDERER_FLINE_ZLEN_OFF);
-        if (renderer_segments_intersect_i32(sx1, sz1, sx2, sz2, x1, z1, x2, z2)) {
-            return 1;
-        }
-        /* Optional safety net for near-miss quantization/corner cases at
-         * zone boundaries. Strict mode disables this and requires an actual
-         * lateral segment crossing. */
-        if (allow_near_miss &&
-            renderer_point_segment_dist2_i32(px, pz, x1, z1, x2, z2) <= near2) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static int renderer_project_world_xz_to_screen_x(const RendererState *r,
-                                                 int32_t world_x,
-                                                 int32_t world_z,
-                                                 int *out_screen_x)
-{
-    if (!r || !out_screen_x) return 0;
-
-    int16_t dx = (int16_t)(world_x - (int32_t)r->xoff);
-    int16_t dz = (int16_t)(world_z - (int32_t)r->zoff);
-    int32_t vx = (int32_t)dx * (int32_t)r->cosval - (int32_t)dz * (int32_t)r->sinval;
-    int32_t vz = (int32_t)dx * (int32_t)r->sinval + (int32_t)dz * (int32_t)r->cosval;
-    int32_t vx_fine;
-    int32_t z_fp;
-
-    vx <<= 1;
-    vz <<= 2;
-    vx_fine = (vx >> 9) + r->xwobble;
-    z_fp = vz >> (16 - ROT_Z_FRAC_BITS);
-    if (z_fp <= ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z)) return 0;
-
-    *out_screen_x = project_x_to_pixels(vx_fine, z_fp);
-    return 1;
-}
-
-static int renderer_compute_adj_line_screen_span(const RendererState *r,
-                                                 const LevelState *level,
-                                                 const int16_t *line_ids,
-                                                 int line_count,
-                                                 int16_t *out_left,
-                                                 int16_t *out_right)
-{
-    if (!r || !level || !level->floor_lines || !line_ids || line_count <= 0 || !out_left || !out_right)
-        return 0;
-
-    int left = r->width;
-    int right = -1;
-    int have = 0;
-
-    for (int i = 0; i < line_count; i++) {
-        int16_t li = line_ids[i];
-        if (li < 0 || (int32_t)li >= level->num_floor_lines) continue;
-
-        const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)li * RENDERER_FLINE_SIZE;
-        int32_t x1 = rd16(fl + RENDERER_FLINE_X_OFF);
-        int32_t z1 = rd16(fl + RENDERER_FLINE_Z_OFF);
-        int32_t x2 = x1 + rd16(fl + RENDERER_FLINE_XLEN_OFF);
-        int32_t z2 = z1 + rd16(fl + RENDERER_FLINE_ZLEN_OFF);
-        int sx1 = 0, sx2 = 0;
-        int v1 = renderer_project_world_xz_to_screen_x(r, x1, z1, &sx1);
-        int v2 = renderer_project_world_xz_to_screen_x(r, x2, z2, &sx2);
-
-        if (!v1 && !v2) continue;
-
-        if (v1 && v2) {
-            int l = (sx1 < sx2) ? sx1 : sx2;
-            int rr = (sx1 > sx2) ? sx1 : sx2;
-            if (l < left) left = l;
-            if (rr > right) right = rr;
-            have = 1;
-        } else {
-            int sx = v1 ? sx1 : sx2;
-            if (sx < left) left = sx;
-            if (sx > right) right = sx;
-            have = 1;
-        }
-    }
-
-    if (!have) return 0;
-
-    if (left < 0) left = 0;
-    if (right >= r->width) right = r->width - 1;
-    if (left > right) return 0;
-
-    *out_left = (int16_t)left;
-    *out_right = (int16_t)(right + 1);
-    return 1;
-}
-
-static int renderer_apply_spill_boundary_clip(const RendererState *r,
-                                              const LevelState *level,
-                                              const int16_t *adj_lines,
-                                              int line_start,
-                                              int line_count,
-                                              int16_t *io_left,
-                                              int16_t *io_right)
-{
-    if (!r || !level || !adj_lines || !io_left || !io_right) return 0;
-    if (line_count <= 0) return 1;
-
-    int16_t spill_left = 0, spill_right = 0;
-    if (!renderer_compute_adj_line_screen_span(r, level,
-                                               adj_lines + line_start, line_count,
-                                               &spill_left, &spill_right)) {
-        return 1;
-    }
-
-    if (spill_left > *io_left) *io_left = spill_left;
-    if (spill_right < *io_right) *io_right = spill_right;
-    return (*io_left < *io_right) ? 1 : 0;
-}
-
-static int renderer_should_suppress_local_draw_for_nearer_adj(const RenderSliceContext *ctx,
-                                                              const RendererState *r,
-                                                              const GameState *state,
-                                                              const LevelState *level,
-                                                              const RendererAdjZone *adj_zones,
-                                                              int adj_zone_count,
-                                                              const int16_t *adj_lines,
-                                                              int cur_zone_order,
-                                                              int32_t px,
-                                                              int32_t pz,
-                                                              int32_t half_span_world,
-                                                              int32_t near_radius)
-{
-    if (!ctx || !r || !state || !level || !adj_zones || adj_zone_count <= 0 || !adj_lines)
-        return 0;
-    if (cur_zone_order <= 0)
-        return 0;
-
-    if (half_span_world < 1) half_span_world = 1;
-    if (near_radius < 0) near_radius = 0;
-
-    /* Keep local suppression strict: only hand off to one clear nearer zone.
-     * If multiple/ambiguous/unknown neighbors are also boundary-near, keep
-     * local draw to avoid fragmented multi-zone spill artifacts. */
-    int nearer_handoff_hits = 0;
-    int non_nearer_hits = 0;
-
-    for (int ai = 0; ai < adj_zone_count; ai++) {
-        int16_t adj_zone = adj_zones[ai].zone_id;
-        int adj_order = renderer_zone_order_index(state, adj_zone);
-
-        {
-            int16_t adj_left = 0, adj_right = 0;
-            int have_adj_clip = renderer_lookup_zone_prepass_clip_span(ctx, adj_zone,
-                                                                       &adj_left, &adj_right);
-            if (!have_adj_clip) {
-                have_adj_clip = renderer_compute_zone_clip_span((GameState *)state,
-                                                                adj_zone,
-                                                                0u,
-                                                                0,
-                                                                &adj_left,
-                                                                &adj_right);
-            }
-            if (have_adj_clip) {
-                int l = (adj_left > ctx->left_clip) ? adj_left : ctx->left_clip;
-                int rr = (adj_right < ctx->right_clip) ? adj_right : ctx->right_clip;
-                if (l >= rr)
-                    continue;
-            }
+    {
+        int64_t off_x64 = ((int64_t)view_right_x * (int64_t)half_span_world) / 16384;
+        int64_t off_z64 = ((int64_t)view_right_z * (int64_t)half_span_world) / 16384;
+        if (off_x64 == 0 && off_z64 == 0) {
+            off_x64 = (view_right_x >= 0) ? 1 : -1;
         }
 
-        int line_start = adj_zones[ai].line_start;
-        int line_count = adj_zones[ai].line_count;
-        if (line_count <= 0)
-            continue;
+        int32_t sx1 = (int32_t)((int64_t)px - off_x64);
+        int32_t sz1 = (int32_t)((int64_t)pz - off_z64);
+        int32_t sx2 = (int32_t)((int64_t)px + off_x64);
+        int32_t sz2 = (int32_t)((int64_t)pz + off_z64);
 
-        {
-            int near_exit = renderer_lateral_span_hits_adj_lines(level,
-                                                                 px,
-                                                                 pz,
-                                                                 half_span_world,
-                                                                 r->cosval,
-                                                                 (int16_t)-r->sinval,
-                                                                 adj_lines + line_start,
-                                                                 line_count,
-                                                                 1);
-            if (!near_exit && near_radius > 0) {
-                near_exit = renderer_point_near_adj_lines_xy(level,
-                                                             px,
-                                                             pz,
-                                                             near_radius,
-                                                             adj_lines + line_start,
-                                                             line_count);
-            }
-            if (!near_exit)
-                continue;
-
-            if (adj_order < 0 || adj_order >= cur_zone_order) {
-                non_nearer_hits++;
-                continue;
-            }
-
-            if (adj_zones[ai].ambiguous) {
-                non_nearer_hits++;
-                continue;
-            }
-
+        for (int i = 0; i < line_count; i++) {
+            int16_t li = line_ids[i];
+            if (li < 0 || (int32_t)li >= level->num_floor_lines) continue;
             {
-                int strict_exit = renderer_lateral_span_hits_adj_lines(level,
-                                                                       px,
-                                                                       pz,
-                                                                       half_span_world,
-                                                                       r->cosval,
-                                                                       (int16_t)-r->sinval,
-                                                                       adj_lines + line_start,
-                                                                       line_count,
-                                                                       0);
-                if (!strict_exit) {
-                    non_nearer_hits++;
-                    continue;
+                const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)li * RENDERER_FLINE_SIZE;
+                int32_t x1 = rd16(fl + RENDERER_FLINE_X_OFF);
+                int32_t z1 = rd16(fl + RENDERER_FLINE_Z_OFF);
+                int32_t x2 = x1 + rd16(fl + RENDERER_FLINE_XLEN_OFF);
+                int32_t z2 = z1 + rd16(fl + RENDERER_FLINE_ZLEN_OFF);
+                if (renderer_segments_intersect_i32(sx1, sz1, sx2, sz2, x1, z1, x2, z2)) {
+                    return 1;
                 }
             }
-
-            nearer_handoff_hits++;
-            if (nearer_handoff_hits > 1)
-                return 0;
         }
     }
 
-    return (nearer_handoff_hits == 1 && non_nearer_hits == 0) ? 1 : 0;
+    return 0;
 }
 
 static const uint8_t *renderer_zone_exit_list_ptr(const LevelState *level, int16_t zone_id)
@@ -9657,6 +9355,80 @@ static const uint8_t *renderer_zone_exit_list_ptr(const LevelState *level, int16
     if (list_abs < 0) return NULL;
     if (level->data_byte_count > 0 && (size_t)list_abs + 2u > level->data_byte_count) return NULL;
     return level->data + (size_t)list_abs;
+}
+
+static int renderer_point_on_segment_i32(int32_t px, int32_t pz,
+                                         int32_t x1, int32_t z1,
+                                         int32_t x2, int32_t z2)
+{
+    int64_t cross = (int64_t)(px - x1) * (int64_t)(z2 - z1) -
+                    (int64_t)(pz - z1) * (int64_t)(x2 - x1);
+    if (cross != 0) return 0;
+    if (px < ((x1 < x2) ? x1 : x2) || px > ((x1 > x2) ? x1 : x2)) return 0;
+    if (pz < ((z1 < z2) ? z1 : z2) || pz > ((z1 > z2) ? z1 : z2)) return 0;
+    return 1;
+}
+
+static int renderer_zone_contains_point(const LevelState *level, int16_t zone_id, int32_t x, int32_t z)
+{
+    if (!level || !level->data || !level->zone_adds || !level->floor_lines)
+        return 0;
+
+    {
+        int zone_slots = level_zone_slot_count(level);
+        if (zone_slots <= 0 || zone_id < 0 || zone_id >= zone_slots)
+            return 0;
+    }
+
+    {
+        const uint8_t *list = renderer_zone_exit_list_ptr(level, zone_id);
+        size_t data_len = level->data_byte_count;
+        int inside = 0;
+        int edges = 0;
+
+        if (!list) return 0;
+
+        for (int i = 0; i < 256; i++) {
+            if (data_len != 0) {
+                size_t list_off = (size_t)(list - level->data) + (size_t)i * 2u;
+                if (list_off + 2u > data_len)
+                    break;
+            }
+
+            {
+                int16_t entry = rd16(list + (size_t)i * 2u);
+                if (entry == -2)
+                    break;
+                if (entry < 0)
+                    continue; /* -1 separates exits and wall list */
+                if ((int32_t)entry >= level->num_floor_lines)
+                    continue;
+
+                {
+                    const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)entry * RENDERER_FLINE_SIZE;
+                    int32_t x1 = rd16(fl + RENDERER_FLINE_X_OFF);
+                    int32_t z1 = rd16(fl + RENDERER_FLINE_Z_OFF);
+                    int32_t x2 = x1 + rd16(fl + RENDERER_FLINE_XLEN_OFF);
+                    int32_t z2 = z1 + rd16(fl + RENDERER_FLINE_ZLEN_OFF);
+                    edges++;
+
+                    if (renderer_point_on_segment_i32(x, z, x1, z1, x2, z2))
+                        return 1;
+
+                    if ((z1 > z) != (z2 > z)) {
+                        int64_t dz = (int64_t)z2 - (int64_t)z1;
+                        int64_t lhs = (int64_t)(x - x1) * dz;
+                        int64_t rhs = (int64_t)(x2 - x1) * (int64_t)(z - z1);
+                        if ((dz > 0 && lhs < rhs) || (dz < 0 && lhs > rhs))
+                            inside ^= 1;
+                    }
+                }
+            }
+        }
+
+        if (edges == 0) return 0;
+        return inside;
+    }
 }
 
 static void renderer_append_boundary_lines_between_zones(const LevelState *level,
@@ -10133,10 +9905,8 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
     if (!level->object_data || !level->object_points) return;
 
     int32_t y_off = r->yoff;
-    int cur_zone_order = renderer_zone_order_index(state, zone_id);
     const int sprite_scale_x_for_estimate = renderer_sprite_scale_x_for_state(r, state);
     const int explosion_sprite_scale_x_for_estimate = renderer_sprite_scale_x_for_state(r, state);
-    const int use_billboard_enhancement = state->cfg_billboard_sprite_rendering_enhancement ? 1 : 0;
     RendererAdjZone adj_zones[RENDERER_MAX_ADJ_ZONES];
     int16_t adj_lines[RENDERER_MAX_ADJ_LINES];
     int adj_zone_count = 0;
@@ -10162,6 +9932,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int32_t zone_bot_world;
         int16_t source_zone;
         int16_t draw_zone;
+        int16_t geom_clip_zone;
         uint8_t ignore_top_clip;
         uint8_t is_spill;
     } ObjEntry;
@@ -10249,103 +10020,27 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             if (z_for_size < 1) z_for_size = 1;
             int sprite_w_est = (int)((int32_t)world_w * sprite_scale_x_for_estimate / z_for_size) * SPRITE_SIZE_MULTIPLIER;
             if (sprite_w_est < 1) sprite_w_est = 1;
+            if (!in_this_zone) {
+                int line_start = adj_zones[adj_slot].line_start;
+                int line_count = adj_zones[adj_slot].line_count;
+                int32_t ox = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 0u);
+                int32_t oz = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 4u);
+                int32_t half_span = world_w / 2;
+                if (line_count <= 0) continue;
+                if (half_span < 1) half_span = 1;
+                if (!renderer_billboard_lateral_hits_adj_lines(level,
+                                                               ox, oz,
+                                                               half_span,
+                                                               r->cosval, (int16_t)-r->sinval,
+                                                               adj_lines + line_start,
+                                                               line_count)) {
+                    continue;
+                }
+            }
             int scr_x_est = project_x_to_pixels(orp->x_fine, orp->z);
             int spr_l = scr_x_est - sprite_w_est / 2;
             int spr_r = spr_l + sprite_w_est;
             if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
-
-            if (!in_this_zone) {
-                int line_start = adj_zones[adj_slot].line_start;
-                int line_count = adj_zones[adj_slot].line_count;
-                int allow_no_line_fallback =
-                    (line_count <= 0 && adj_zones[adj_slot].ambiguous) ? 1 : 0;
-                int src_farther = 0;
-                int near_exit = 0;
-                if (!allow_no_line_fallback) {
-                    if (cur_zone_order >= 0) {
-                        int src_order = renderer_zone_order_index(state, obj_zone);
-                        src_farther = (src_order >= 0 && src_order > cur_zone_order) ? 1 : 0;
-                    }
-                    if (use_billboard_enhancement) {
-                        int32_t ox = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 0u);
-                        int32_t oz = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 4u);
-                        int32_t half_span = world_w / 2;
-                        if (half_span < 16) half_span = 16;
-                        if (half_span > 512) half_span = 512;
-                        near_exit = renderer_lateral_span_hits_adj_lines(level,
-                                                                         ox, oz,
-                                                                         half_span,
-                                                                         r->cosval, (int16_t)-r->sinval,
-                                                                         adj_lines + line_start, line_count,
-                                                                         1);
-                        if (!near_exit) {
-                            int32_t near_r = ((int32_t)world_w << 2) + 96;
-                            if (near_r < 128) near_r = 128;
-                            if (near_r > 1536) near_r = 1536;
-                            near_exit = renderer_object_point_near_adj_lines(level, pt_num, near_r,
-                                                                              adj_lines + line_start, line_count);
-                        }
-                        if (src_farther && !adj_zones[adj_slot].ambiguous) {
-                            int strict_exit = renderer_lateral_span_hits_adj_lines(level,
-                                                                                   ox, oz,
-                                                                                   half_span,
-                                                                                   r->cosval, (int16_t)-r->sinval,
-                                                                                   adj_lines + line_start, line_count,
-                                                                                   0);
-                            if (!strict_exit && !near_exit) continue;
-                        } else {
-                            if (!near_exit) continue;
-                        }
-                    } else {
-                        int32_t near_r = ((int32_t)world_w << 2) + 96;
-                        if (near_r < 128) near_r = 128;
-                        if (near_r > 1536) near_r = 1536;
-                        near_exit = renderer_object_point_near_adj_lines(level, pt_num, near_r,
-                                                                          adj_lines + line_start, line_count);
-                        if (src_farther && !adj_zones[adj_slot].ambiguous) {
-                            if (!near_exit) continue;
-                        } else {
-                            if (!near_exit) continue;
-                        }
-                    }
-
-                    if (!renderer_apply_spill_boundary_clip(r, level,
-                                                            adj_lines,
-                                                            line_start,
-                                                            line_count,
-                                                            &draw_clip_left,
-                                                            &draw_clip_right)) {
-                        continue;
-                    }
-                }
-            } else if (allow_adjacent_spill) {
-                int32_t ox = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 0u);
-                int32_t oz = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 4u);
-                int32_t half_span = world_w / 2;
-                int32_t near_r = ((int32_t)world_w << 2) + 96;
-                if (half_span < 16) half_span = 16;
-                if (half_span > 512) half_span = 512;
-                if (near_r < 128) near_r = 128;
-                if (near_r > 1536) near_r = 1536;
-                if (renderer_should_suppress_local_draw_for_nearer_adj(ctx,
-                                                                       r,
-                                                                       state,
-                                                                       level,
-                                                                       adj_zones,
-                                                                       adj_zone_count,
-                                                                       adj_lines,
-                                                                       cur_zone_order,
-                                                                       ox,
-                                                                       oz,
-                                                                       half_span,
-                                                                       near_r)) {
-                    renderer_f2_pick_note_sprite_local_suppressed(level,
-                                                                   DRAW_SRC_OBJECT,
-                                                                   obj_idx,
-                                                                   obj_zone);
-                    continue;
-                }
-            }
         }
 
         objs[obj_count].src = DRAW_SRC_OBJECT;
@@ -10359,6 +10054,11 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         objs[obj_count].zone_bot_world = draw_zone_bot;
         objs[obj_count].source_zone = obj_zone;
         objs[obj_count].draw_zone = zone_id;
+        {
+            int16_t geom_zone = in_this_zone ? obj_zone : zone_id;
+            if (geom_zone < 0) geom_zone = zone_id;
+            objs[obj_count].geom_clip_zone = geom_zone;
+        }
         objs[obj_count].ignore_top_clip = (uint8_t)(draw_ignore_top ? 1 : 0);
         objs[obj_count].is_spill = (uint8_t)(in_this_zone ? 0 : 1);
         obj_count++;
@@ -10417,103 +10117,27 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 if (z_for_size < 1) z_for_size = 1;
                 int sprite_w_est = (int)((int32_t)world_w * sprite_scale_x_for_estimate / z_for_size) * SPRITE_SIZE_MULTIPLIER;
                 if (sprite_w_est < 1) sprite_w_est = 1;
+                if (!in_this_zone) {
+                    int line_start = adj_zones[adj_slot].line_start;
+                    int line_count = adj_zones[adj_slot].line_count;
+                    int32_t ox = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 0u);
+                    int32_t oz = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 4u);
+                    int32_t half_span = world_w / 2;
+                    if (line_count <= 0) continue;
+                    if (half_span < 1) half_span = 1;
+                    if (!renderer_billboard_lateral_hits_adj_lines(level,
+                                                                   ox, oz,
+                                                                   half_span,
+                                                                   r->cosval, (int16_t)-r->sinval,
+                                                                   adj_lines + line_start,
+                                                                   line_count)) {
+                        continue;
+                    }
+                }
                 int scr_x_est = project_x_to_pixels(orp->x_fine, orp->z);
                 int spr_l = scr_x_est - sprite_w_est / 2;
                 int spr_r = spr_l + sprite_w_est;
                 if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
-
-                if (!in_this_zone) {
-                    int line_start = adj_zones[adj_slot].line_start;
-                    int line_count = adj_zones[adj_slot].line_count;
-                    int allow_no_line_fallback =
-                        (line_count <= 0 && adj_zones[adj_slot].ambiguous) ? 1 : 0;
-                    int src_farther = 0;
-                    int near_exit = 0;
-                    if (!allow_no_line_fallback) {
-                        if (cur_zone_order >= 0) {
-                            int src_order = renderer_zone_order_index(state, shot_zone);
-                            src_farther = (src_order >= 0 && src_order > cur_zone_order) ? 1 : 0;
-                        }
-                        if (use_billboard_enhancement) {
-                            int32_t ox = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 0u);
-                            int32_t oz = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 4u);
-                            int32_t half_span = world_w / 2;
-                            if (half_span < 16) half_span = 16;
-                            if (half_span > 512) half_span = 512;
-                            near_exit = renderer_lateral_span_hits_adj_lines(level,
-                                                                             ox, oz,
-                                                                             half_span,
-                                                                             r->cosval, (int16_t)-r->sinval,
-                                                                             adj_lines + line_start, line_count,
-                                                                             1);
-                            if (!near_exit) {
-                                int32_t near_r = ((int32_t)world_w << 2) + 96;
-                                if (near_r < 128) near_r = 128;
-                                if (near_r > 1536) near_r = 1536;
-                                near_exit = renderer_object_point_near_adj_lines(level, pt_num, near_r,
-                                                                                  adj_lines + line_start, line_count);
-                            }
-                            if (src_farther && !adj_zones[adj_slot].ambiguous) {
-                                int strict_exit = renderer_lateral_span_hits_adj_lines(level,
-                                                                                       ox, oz,
-                                                                                       half_span,
-                                                                                       r->cosval, (int16_t)-r->sinval,
-                                                                                       adj_lines + line_start, line_count,
-                                                                                       0);
-                                if (!strict_exit && !near_exit) continue;
-                            } else {
-                                if (!near_exit) continue;
-                            }
-                        } else {
-                            int32_t near_r = ((int32_t)world_w << 2) + 96;
-                            if (near_r < 128) near_r = 128;
-                            if (near_r > 1536) near_r = 1536;
-                            near_exit = renderer_object_point_near_adj_lines(level, pt_num, near_r,
-                                                                              adj_lines + line_start, line_count);
-                            if (src_farther && !adj_zones[adj_slot].ambiguous) {
-                                if (!near_exit) continue;
-                            } else {
-                                if (!near_exit) continue;
-                            }
-                        }
-
-                        if (!renderer_apply_spill_boundary_clip(r, level,
-                                                                adj_lines,
-                                                                line_start,
-                                                                line_count,
-                                                                &draw_clip_left,
-                                                                &draw_clip_right)) {
-                            continue;
-                        }
-                    }
-                } else if (allow_adjacent_spill) {
-                    int32_t ox = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 0u);
-                    int32_t oz = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 4u);
-                    int32_t half_span = world_w / 2;
-                    int32_t near_r = ((int32_t)world_w << 2) + 96;
-                    if (half_span < 16) half_span = 16;
-                    if (half_span > 512) half_span = 512;
-                    if (near_r < 128) near_r = 128;
-                    if (near_r > 1536) near_r = 1536;
-                    if (renderer_should_suppress_local_draw_for_nearer_adj(ctx,
-                                                                           r,
-                                                                           state,
-                                                                           level,
-                                                                           adj_zones,
-                                                                           adj_zone_count,
-                                                                           adj_lines,
-                                                                           cur_zone_order,
-                                                                           ox,
-                                                                           oz,
-                                                                           half_span,
-                                                                           near_r)) {
-                        renderer_f2_pick_note_sprite_local_suppressed(level,
-                                                                       DRAW_SRC_SHOT,
-                                                                       slot + ((pool == 0) ? 0 : NASTY_SHOT_SLOT_COUNT),
-                                                                       shot_zone);
-                        continue;
-                    }
-                }
             }
             objs[obj_count].src = DRAW_SRC_SHOT;
             objs[obj_count].idx = slot + ((pool == 0) ? 0 : NASTY_SHOT_SLOT_COUNT);
@@ -10524,6 +10148,11 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             objs[obj_count].zone_bot_world = draw_zone_bot;
             objs[obj_count].source_zone = shot_zone;
             objs[obj_count].draw_zone = zone_id;
+            {
+                int16_t geom_zone = in_this_zone ? shot_zone : zone_id;
+                if (geom_zone < 0) geom_zone = zone_id;
+                objs[obj_count].geom_clip_zone = geom_zone;
+            }
             objs[obj_count].ignore_top_clip = (uint8_t)(draw_ignore_top ? 1 : 0);
             objs[obj_count].is_spill = (uint8_t)(in_this_zone ? 0 : 1);
             obj_count++;
@@ -10584,9 +10213,26 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 if (z_for_size < 1) z_for_size = 1;
                 int expl_w_est = 100;
                 renderer_get_explosion_frame_and_world_size(state, ei, NULL, &expl_w_est, NULL);
-                int sprite_w_est = (int)((int32_t)expl_w_est * explosion_sprite_scale_x_for_estimate / z_for_size) * SPRITE_SIZE_MULTIPLIER;
-                sprite_w_est *= EXPLOSION_SIZE_CORRECTION;
+                int world_w = expl_w_est * EXPLOSION_SIZE_CORRECTION;
+                if (world_w < 1) world_w = 1;
+                int sprite_w_est = (int)((int32_t)world_w * explosion_sprite_scale_x_for_estimate / z_for_size) * SPRITE_SIZE_MULTIPLIER;
                 if (sprite_w_est < 1) sprite_w_est = 1;
+                if (!in_this_zone) {
+                    int line_start = adj_zones[adj_slot].line_start;
+                    int line_count = adj_zones[adj_slot].line_count;
+                    int32_t half_span = world_w / 2;
+                    if (line_count <= 0) continue;
+                    if (half_span < 1) half_span = 1;
+                    if (!renderer_billboard_lateral_hits_adj_lines(level,
+                                                                   (int32_t)state->explosions[ei].x,
+                                                                   (int32_t)state->explosions[ei].z,
+                                                                   half_span,
+                                                                   r->cosval, (int16_t)-r->sinval,
+                                                                   adj_lines + line_start,
+                                                                   line_count)) {
+                        continue;
+                    }
+                }
                 int32_t vx = (int32_t)dx * cos_v - (int32_t)dz * sin_v;
                 vx <<= 1;
                 int32_t vx_fine = (vx >> 9) + r->xwobble;
@@ -10594,103 +10240,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 int spr_l = scr_x_est - sprite_w_est / 2;
                 int spr_r = spr_l + sprite_w_est;
                 if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
-
-                if (!in_this_zone) {
-                    int line_start = adj_zones[adj_slot].line_start;
-                    int line_count = adj_zones[adj_slot].line_count;
-                    int allow_no_line_fallback =
-                        (line_count <= 0 && adj_zones[adj_slot].ambiguous) ? 1 : 0;
-                    int src_farther = 0;
-                    int near_exit = 0;
-                    if (!allow_no_line_fallback) {
-                        if (cur_zone_order >= 0) {
-                            int src_order = renderer_zone_order_index(state, expl_zone);
-                            src_farther = (src_order >= 0 && src_order > cur_zone_order) ? 1 : 0;
-                        }
-                        if (use_billboard_enhancement) {
-                            int32_t half_span = expl_w_est / 2;
-                            if (half_span < 16) half_span = 16;
-                            if (half_span > 512) half_span = 512;
-                            near_exit = renderer_lateral_span_hits_adj_lines(level,
-                                                                             (int32_t)state->explosions[ei].x,
-                                                                             (int32_t)state->explosions[ei].z,
-                                                                             half_span,
-                                                                             r->cosval, (int16_t)-r->sinval,
-                                                                             adj_lines + line_start, line_count,
-                                                                             1);
-                            if (!near_exit) {
-                                int32_t near_r = (expl_w_est << 1) + 128;
-                                if (near_r < 160) near_r = 160;
-                                if (near_r > 2048) near_r = 2048;
-                                near_exit = renderer_point_near_adj_lines_xy(level,
-                                                                             (int32_t)state->explosions[ei].x,
-                                                                             (int32_t)state->explosions[ei].z,
-                                                                             near_r,
-                                                                             adj_lines + line_start, line_count);
-                            }
-                            if (src_farther && !adj_zones[adj_slot].ambiguous) {
-                                int strict_exit = renderer_lateral_span_hits_adj_lines(level,
-                                                                                       (int32_t)state->explosions[ei].x,
-                                                                                       (int32_t)state->explosions[ei].z,
-                                                                                       half_span,
-                                                                                       r->cosval, (int16_t)-r->sinval,
-                                                                                       adj_lines + line_start, line_count,
-                                                                                       0);
-                                if (!strict_exit && !near_exit) continue;
-                            } else {
-                                if (!near_exit) continue;
-                            }
-                        } else {
-                            int32_t near_r = (expl_w_est << 1) + 128;
-                            if (near_r < 160) near_r = 160;
-                            if (near_r > 2048) near_r = 2048;
-                            near_exit = renderer_point_near_adj_lines_xy(level,
-                                                                         (int32_t)state->explosions[ei].x,
-                                                                         (int32_t)state->explosions[ei].z,
-                                                                         near_r,
-                                                                         adj_lines + line_start, line_count);
-                            if (src_farther && !adj_zones[adj_slot].ambiguous) {
-                                if (!near_exit) continue;
-                            } else {
-                                if (!near_exit) continue;
-                            }
-                        }
-
-                        if (!renderer_apply_spill_boundary_clip(r, level,
-                                                                adj_lines,
-                                                                line_start,
-                                                                line_count,
-                                                                &draw_clip_left,
-                                                                &draw_clip_right)) {
-                            continue;
-                        }
-                    }
-                } else if (allow_adjacent_spill) {
-                    int32_t half_span = expl_w_est / 2;
-                    int32_t near_r = (expl_w_est << 1) + 128;
-                    if (half_span < 16) half_span = 16;
-                    if (half_span > 512) half_span = 512;
-                    if (near_r < 160) near_r = 160;
-                    if (near_r > 2048) near_r = 2048;
-                    if (renderer_should_suppress_local_draw_for_nearer_adj(ctx,
-                                                                           r,
-                                                                           state,
-                                                                           level,
-                                                                           adj_zones,
-                                                                           adj_zone_count,
-                                                                           adj_lines,
-                                                                           cur_zone_order,
-                                                                           (int32_t)state->explosions[ei].x,
-                                                                           (int32_t)state->explosions[ei].z,
-                                                                           half_span,
-                                                                           near_r)) {
-                        renderer_f2_pick_note_sprite_local_suppressed(level,
-                                                                       DRAW_SRC_EXPLOSION,
-                                                                       ei,
-                                                                       expl_zone);
-                        continue;
-                    }
-                }
             }
 
             objs[obj_count].src = DRAW_SRC_EXPLOSION;
@@ -10702,6 +10251,11 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             objs[obj_count].zone_bot_world = draw_zone_bot;
             objs[obj_count].source_zone = expl_zone;
             objs[obj_count].draw_zone = zone_id;
+            {
+                int16_t geom_zone = in_this_zone ? expl_zone : zone_id;
+                if (geom_zone < 0) geom_zone = zone_id;
+                objs[obj_count].geom_clip_zone = geom_zone;
+            }
             objs[obj_count].ignore_top_clip = (uint8_t)(draw_ignore_top ? 1 : 0);
             objs[obj_count].is_spill = (uint8_t)(in_this_zone ? 0 : 1);
             obj_count++;
@@ -10747,6 +10301,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int entry_src = entry->src;
         int16_t draw_clip_left = entry->clip_left;
         int16_t draw_clip_right = entry->clip_right;
+        int16_t geom_clip_zone = entry->geom_clip_zone;
         int is_spill = (entry->is_spill != 0);
         if (draw_clip_left >= draw_clip_right) continue;
 
@@ -10786,6 +10341,8 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             sprite_h *= EXPLOSION_SIZE_CORRECTION;
             if (sprite_w < 1) sprite_w = 1;
             if (sprite_h < 1) sprite_h = 1;
+            int32_t geom_world_w = expl_w * EXPLOSION_SIZE_CORRECTION;
+            if (geom_world_w < 1) geom_world_w = 1;
 
             uint32_t ptr_off = 0;
             uint16_t down_strip = 0;
@@ -10831,7 +10388,14 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                              draw_clip_left, draw_clip_right,
                                              entry->zone_top_world, entry->zone_bot_world,
                                              clip_top_y, clip_bot_y,
-                                             is_spill);
+                                             is_spill,
+                                             level,
+                                             geom_clip_zone,
+                                             (int32_t)state->explosions[ei].x,
+                                             (int32_t)state->explosions[ei].z,
+                                             geom_world_w,
+                                             r->cosval,
+                                             (int16_t)-r->sinval);
                     ctx->workload_stats.ticks_sprite += SDL_GetPerformanceCounter() - sprite_t0;
                 } else {
                     renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
@@ -10846,7 +10410,14 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                              draw_clip_left, draw_clip_right,
                                              entry->zone_top_world, entry->zone_bot_world,
                                              clip_top_y, clip_bot_y,
-                                             is_spill);
+                                             is_spill,
+                                             level,
+                                             geom_clip_zone,
+                                             (int32_t)state->explosions[ei].x,
+                                             (int32_t)state->explosions[ei].z,
+                                             geom_world_w,
+                                             r->cosval,
+                                             (int16_t)-r->sinval);
                 }
             }
             continue;
@@ -10879,6 +10450,8 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int16_t pt_num = rd16(obj);
         if ((unsigned)pt_num >= (unsigned)num_pts) continue;
         ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
+        int32_t geom_world_x = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 0u);
+        int32_t geom_world_z = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 4u);
 
         /* Use actual view Z for size so sprites scale at all distances. Guard only vs div-by-zero. */
         int32_t z_for_size = ROT_Z_INT(orp->z);
@@ -11055,7 +10628,14 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                          draw_clip_left, draw_clip_right,
                                          entry->zone_top_world, entry->zone_bot_world,
                                          clip_top_y, clip_bot_y,
-                                         is_spill);
+                                         is_spill,
+                                         level,
+                                         geom_clip_zone,
+                                         geom_world_x,
+                                         geom_world_z,
+                                         world_w,
+                                         r->cosval,
+                                         (int16_t)-r->sinval);
                 ctx->workload_stats.ticks_sprite += SDL_GetPerformanceCounter() - sprite_t0;
             } else {
                 renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
@@ -11070,7 +10650,14 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                          draw_clip_left, draw_clip_right,
                                          entry->zone_top_world, entry->zone_bot_world,
                                          clip_top_y, clip_bot_y,
-                                         is_spill);
+                                         is_spill,
+                                         level,
+                                         geom_clip_zone,
+                                         geom_world_x,
+                                         geom_world_z,
+                                         world_w,
+                                         r->cosval,
+                                         (int16_t)-r->sinval);
             }
         }
     }
