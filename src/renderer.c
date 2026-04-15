@@ -9683,31 +9683,6 @@ static int renderer_resolve_sprite_zone_draw_clip(const RenderSliceContext *ctx,
     return 1;
 }
 
-static int renderer_world_span_overlaps_room(int32_t center_world_y,
-                                             int32_t half_span_world,
-                                             int32_t room_top_world,
-                                             int32_t room_bot_world)
-{
-    int32_t y0, y1;
-    int32_t t = room_top_world;
-    int32_t b = room_bot_world;
-    if (t > b) {
-        int32_t tmp = t;
-        t = b;
-        b = tmp;
-    }
-    if (half_span_world < 0) half_span_world = 0;
-    y0 = center_world_y - half_span_world;
-    y1 = center_world_y + half_span_world;
-    return !(y1 < t || y0 > b);
-}
-
-static inline int32_t renderer_billboard_half_height_world_fp(int world_h)
-{
-    if (world_h <= 0) world_h = 32;
-    return (int32_t)world_h << (WORLD_Y_FRAC_BITS - 1);
-}
-
 static void renderer_get_explosion_frame_and_world_size(const GameState *state,
                                                         int explosion_index,
                                                         int *out_frame_num,
@@ -9856,16 +9831,10 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int16_t obj_zone = rd16(obj + 12);
         int in_this_zone = (obj_zone >= 0 && obj_zone == (int16_t)zone_id);
         int adj_slot = -1;
-        int32_t obj_world_y = ((int32_t)rd16(obj + 4)) << WORLD_Y_FRAC_BITS;
-        int32_t half_h = renderer_billboard_half_height_world_fp(spill_world_h);
-        int overlaps_current_section = renderer_world_span_overlaps_room(obj_world_y, half_h,
-                                                                         top_of_room, bot_of_room);
         int obj_on_upper = (obj[obj_off_in_top] != 0);
         if (!in_this_zone) {
             adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, obj_zone);
             if (adj_slot < 0) continue;
-            if (!overlaps_current_section)
-                continue;
         }
 
         if (level_filter >= 0) {
@@ -9873,8 +9842,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 if ((level_filter == 1 && !obj_on_upper) ||
                     (level_filter == 0 && obj_on_upper))
                     continue;
-            } else if (!overlaps_current_section) {
-                continue;
             }
         }
 
@@ -9996,24 +9963,16 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             renderer_resolve_billboard_world_size_for_spill(obj, 1, &spill_world_w, &spill_world_h);
             int in_this_zone = (shot_zone == (int16_t)zone_id);
             int adj_slot = -1;
-            int32_t shot_world_y = ((int32_t)rd16(obj + 4)) << WORLD_Y_FRAC_BITS;
-            int32_t half_h = renderer_billboard_half_height_world_fp(spill_world_h);
-            int overlaps_current_section = renderer_world_span_overlaps_room(shot_world_y, half_h,
-                                                                             top_of_room, bot_of_room);
             int shot_on_upper = (obj[obj_off_in_top] != 0);
             if (!in_this_zone) {
                 adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, shot_zone);
                 if (adj_slot < 0) continue;
-                if (!overlaps_current_section)
-                    continue;
             }
             if (level_filter >= 0) {
                 if (in_this_zone) {
                     if ((level_filter == 1 && !shot_on_upper) ||
                         (level_filter == 0 && shot_on_upper))
                         continue;
-                } else if (!overlaps_current_section) {
-                    continue;
                 }
             }
 
@@ -10117,20 +10076,10 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             int16_t expl_zone = state->explosions[ei].zone;
             int in_this_zone = (expl_zone == (int16_t)zone_id);
             int adj_slot = -1;
-            int expl_h_est = 100;
-            int32_t half_h;
-            int overlaps_current_section;
             int expl_on_upper = (state->explosions[ei].in_top != 0);
-            renderer_get_explosion_frame_and_world_size(state, ei, NULL, NULL, &expl_h_est);
-            half_h = renderer_billboard_half_height_world_fp(expl_h_est);
-            overlaps_current_section = renderer_world_span_overlaps_room(state->explosions[ei].y_floor,
-                                                                         half_h,
-                                                                         top_of_room, bot_of_room);
             if (!in_this_zone) {
                 adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, expl_zone);
                 if (adj_slot < 0) continue;
-                if (!overlaps_current_section)
-                    continue;
             }
             if (state->explosions[ei].start_delay > 0) continue;
             if ((int)state->explosions[ei].frame >= 9) continue;
@@ -10139,8 +10088,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                     if ((level_filter == 1 && !expl_on_upper) ||
                         (level_filter == 0 && expl_on_upper))
                         continue;
-                } else if (!overlaps_current_section) {
-                    continue;
                 }
             }
 
