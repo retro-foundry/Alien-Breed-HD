@@ -10211,7 +10211,7 @@ static void renderer_project_zone_world_clip_y(const RendererState *r,
 /* level_filter: -1 = draw all (single-level zone), 0 = lower floor only, 1 = upper floor only (multi-floor). */
 static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int16_t zone_id,
                                   int32_t top_of_room, int32_t bot_of_room,
-                                  int level_filter, int allow_adjacent_spill,
+                                  int level_filter,
                                   int ignore_sky_top_clip)
 {
     RendererState *r = &g_renderer;
@@ -10221,21 +10221,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
     int32_t y_off = r->yoff;
     const int sprite_scale_x_for_estimate = renderer_sprite_scale_x_for_state(r, state);
     const int explosion_sprite_scale_x_for_estimate = renderer_sprite_scale_x_for_state(r, state);
-    RendererAdjZone adj_zones[RENDERER_MAX_ADJ_ZONES];
-    int16_t adj_lines[RENDERER_MAX_ADJ_LINES];
-    int adj_zone_count = 0;
-    int adj_line_total = 0;
-    if (allow_adjacent_spill) {
-        adj_zone_count = renderer_collect_adjacent_zone_sources(ctx, state, zone_id,
-                                                                adj_zones, RENDERER_MAX_ADJ_ZONES,
-                                                                adj_lines, RENDERER_MAX_ADJ_LINES);
-        if (adj_zone_count > 0) {
-            int last = adj_zone_count - 1;
-            adj_line_total = adj_zones[last].line_start + adj_zones[last].line_count;
-            if (adj_line_total < 0) adj_line_total = 0;
-            if (adj_line_total > RENDERER_MAX_ADJ_LINES) adj_line_total = RENDERER_MAX_ADJ_LINES;
-        }
-    }
 
     /* Build one depth-sorted list for sprites and particles so painter order is consistent. */
     enum {
@@ -10251,11 +10236,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int16_t clip_right;
         int32_t zone_top_world;
         int32_t zone_bot_world;
-        int16_t source_zone;
-        int16_t draw_zone;
-        int16_t geom_clip_zone;
         uint8_t ignore_top_clip;
-        uint8_t is_spill;
     } ObjEntry;
     enum {
         /* Level object table is CID-terminated but physically 256 slots in level data.
@@ -10291,20 +10272,13 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
 
         /* Only draw objects that are currently in this zone (obj_zone is updated by movement). */
         int16_t obj_zone = rd16(obj + 12);
-        int in_this_zone = (obj_zone >= 0 && obj_zone == (int16_t)zone_id);
-        int adj_slot = -1;
         int obj_on_upper = (obj[obj_off_in_top] != 0);
-        if (!in_this_zone) {
-            adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, obj_zone);
-            if (adj_slot < 0) continue;
-        }
+        if (obj_zone < 0 || obj_zone != (int16_t)zone_id) continue;
 
         if (level_filter >= 0) {
-            if (in_this_zone) {
-                if ((level_filter == 1 && !obj_on_upper) ||
-                    (level_filter == 0 && obj_on_upper))
-                    continue;
-            }
+            if ((level_filter == 1 && !obj_on_upper) ||
+                (level_filter == 0 && obj_on_upper))
+                continue;
         }
 
         int16_t draw_clip_left = 0, draw_clip_right = 0;
@@ -10318,12 +10292,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                                     &draw_ignore_top)) {
             continue;
         }
-        if (!in_this_zone && level_filter == 0 && obj_on_upper) {
-            /* Lower-pass spill can legitimately show upper neighbors through openings.
-             * Keep top plane open for this cross-section spill path only. */
-            draw_ignore_top = 1;
-        }
-
         ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
         int is_poly_object = ((uint8_t)obj[6] == (uint8_t)OBJ_3D_SPRITE);
         {
@@ -10341,23 +10309,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             if (z_for_size < 1) z_for_size = 1;
             int sprite_w_est = (int)((int32_t)world_w * sprite_scale_x_for_estimate / z_for_size) * SPRITE_SIZE_MULTIPLIER;
             if (sprite_w_est < 1) sprite_w_est = 1;
-            if (!in_this_zone) {
-                int line_start = adj_zones[adj_slot].line_start;
-                int line_count = adj_zones[adj_slot].line_count;
-                int32_t ox = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 0u);
-                int32_t oz = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 4u);
-                int32_t half_span = world_w / 2;
-                if (line_count <= 0) continue;
-                if (half_span < 1) half_span = 1;
-                if (!renderer_billboard_lateral_hits_adj_lines(level,
-                                                               ox, oz,
-                                                               half_span,
-                                                               r->cosval, (int16_t)-r->sinval,
-                                                               adj_lines + line_start,
-                                                               line_count)) {
-                    continue;
-                }
-            }
             int scr_x_est = project_x_to_pixels(orp->x_fine, orp->z);
             int spr_l = scr_x_est - sprite_w_est / 2;
             int spr_r = spr_l + sprite_w_est;
@@ -10373,29 +10324,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         objs[obj_count].clip_right = draw_clip_right;
         objs[obj_count].zone_top_world = draw_zone_top;
         objs[obj_count].zone_bot_world = draw_zone_bot;
-        objs[obj_count].source_zone = obj_zone;
-        objs[obj_count].draw_zone = zone_id;
-        {
-            int16_t geom_zone = in_this_zone ? -1 : zone_id;
-            if (in_this_zone) {
-                int32_t ox = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 0u);
-                int32_t oz = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 4u);
-                int32_t half_span = spill_world_w / 2;
-                if (half_span < 1) half_span = 1;
-                if (adj_line_total > 0 &&
-                    renderer_billboard_lateral_hits_adj_lines(level,
-                                                               ox, oz,
-                                                               half_span,
-                                                               r->cosval, (int16_t)-r->sinval,
-                                                               adj_lines,
-                                                               adj_line_total)) {
-                    geom_zone = obj_zone;
-                }
-            }
-            objs[obj_count].geom_clip_zone = geom_zone;
-        }
         objs[obj_count].ignore_top_clip = (uint8_t)(draw_ignore_top ? 1 : 0);
-        objs[obj_count].is_spill = (uint8_t)(in_this_zone ? 0 : 1);
         obj_count++;
     }
 
@@ -10414,19 +10343,12 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             if (pt_num < 0 || (unsigned)pt_num >= (unsigned)num_pts) continue;
             int spill_world_w = 32, spill_world_h = 32;
             renderer_resolve_billboard_world_size_for_spill(obj, 1, &spill_world_w, &spill_world_h);
-            int in_this_zone = (shot_zone == (int16_t)zone_id);
-            int adj_slot = -1;
+            if (shot_zone != (int16_t)zone_id) continue;
             int shot_on_upper = (obj[obj_off_in_top] != 0);
-            if (!in_this_zone) {
-                adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, shot_zone);
-                if (adj_slot < 0) continue;
-            }
             if (level_filter >= 0) {
-                if (in_this_zone) {
-                    if ((level_filter == 1 && !shot_on_upper) ||
-                        (level_filter == 0 && shot_on_upper))
-                        continue;
-                }
+                if ((level_filter == 1 && !shot_on_upper) ||
+                    (level_filter == 0 && shot_on_upper))
+                    continue;
             }
 
             int16_t draw_clip_left = 0, draw_clip_right = 0;
@@ -10440,9 +10362,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                                         &draw_ignore_top)) {
                 continue;
             }
-            if (!in_this_zone && level_filter == 0 && shot_on_upper) {
-                draw_ignore_top = 1;
-            }
             ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
             if (orp->z <= ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z)) continue;
 
@@ -10452,23 +10371,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 if (z_for_size < 1) z_for_size = 1;
                 int sprite_w_est = (int)((int32_t)world_w * sprite_scale_x_for_estimate / z_for_size) * SPRITE_SIZE_MULTIPLIER;
                 if (sprite_w_est < 1) sprite_w_est = 1;
-                if (!in_this_zone) {
-                    int line_start = adj_zones[adj_slot].line_start;
-                    int line_count = adj_zones[adj_slot].line_count;
-                    int32_t ox = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 0u);
-                    int32_t oz = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 4u);
-                    int32_t half_span = world_w / 2;
-                    if (line_count <= 0) continue;
-                    if (half_span < 1) half_span = 1;
-                    if (!renderer_billboard_lateral_hits_adj_lines(level,
-                                                                   ox, oz,
-                                                                   half_span,
-                                                                   r->cosval, (int16_t)-r->sinval,
-                                                                   adj_lines + line_start,
-                                                                   line_count)) {
-                        continue;
-                    }
-                }
                 int scr_x_est = project_x_to_pixels(orp->x_fine, orp->z);
                 int spr_l = scr_x_est - sprite_w_est / 2;
                 int spr_r = spr_l + sprite_w_est;
@@ -10481,29 +10383,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             objs[obj_count].clip_right = draw_clip_right;
             objs[obj_count].zone_top_world = draw_zone_top;
             objs[obj_count].zone_bot_world = draw_zone_bot;
-            objs[obj_count].source_zone = shot_zone;
-            objs[obj_count].draw_zone = zone_id;
-            {
-                int16_t geom_zone = in_this_zone ? -1 : zone_id;
-                if (in_this_zone) {
-                    int32_t ox = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 0u);
-                    int32_t oz = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 4u);
-                    int32_t half_span = spill_world_w / 2;
-                    if (half_span < 1) half_span = 1;
-                    if (adj_line_total > 0 &&
-                        renderer_billboard_lateral_hits_adj_lines(level,
-                                                                   ox, oz,
-                                                                   half_span,
-                                                                   r->cosval, (int16_t)-r->sinval,
-                                                                   adj_lines,
-                                                                   adj_line_total)) {
-                        geom_zone = shot_zone;
-                    }
-                }
-                objs[obj_count].geom_clip_zone = geom_zone;
-            }
             objs[obj_count].ignore_top_clip = (uint8_t)(draw_ignore_top ? 1 : 0);
-            objs[obj_count].is_spill = (uint8_t)(in_this_zone ? 0 : 1);
             obj_count++;
         }
     }
@@ -10518,21 +10398,14 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
 
         for (int ei = 0; ei < state->num_explosions && obj_count < max_draw_entries; ei++) {
             int16_t expl_zone = state->explosions[ei].zone;
-            int in_this_zone = (expl_zone == (int16_t)zone_id);
-            int adj_slot = -1;
+            if (expl_zone != (int16_t)zone_id) continue;
             int expl_on_upper = (state->explosions[ei].in_top != 0);
-            if (!in_this_zone) {
-                adj_slot = renderer_find_adj_zone_slot(adj_zones, adj_zone_count, expl_zone);
-                if (adj_slot < 0) continue;
-            }
             if (state->explosions[ei].start_delay > 0) continue;
             if ((int)state->explosions[ei].frame >= 9) continue;
             if (level_filter >= 0) {
-                if (in_this_zone) {
-                    if ((level_filter == 1 && !expl_on_upper) ||
-                        (level_filter == 0 && expl_on_upper))
-                        continue;
-                }
+                if ((level_filter == 1 && !expl_on_upper) ||
+                    (level_filter == 0 && expl_on_upper))
+                    continue;
             }
 
             int16_t draw_clip_left = 0, draw_clip_right = 0;
@@ -10546,10 +10419,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                                         &draw_ignore_top)) {
                 continue;
             }
-            if (!in_this_zone && level_filter == 0 && expl_on_upper) {
-                draw_ignore_top = 1;
-            }
-
             int16_t dx = (int16_t)(state->explosions[ei].x - cam_x);
             int16_t dz = (int16_t)(state->explosions[ei].z - cam_z);
             int32_t vz = (int32_t)dx * sin_v + (int32_t)dz * cos_v;
@@ -10566,22 +10435,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 if (world_w < 1) world_w = 1;
                 int sprite_w_est = (int)((int32_t)world_w * explosion_sprite_scale_x_for_estimate / z_for_size) * SPRITE_SIZE_MULTIPLIER;
                 if (sprite_w_est < 1) sprite_w_est = 1;
-                if (!in_this_zone) {
-                    int line_start = adj_zones[adj_slot].line_start;
-                    int line_count = adj_zones[adj_slot].line_count;
-                    int32_t half_span = world_w / 2;
-                    if (line_count <= 0) continue;
-                    if (half_span < 1) half_span = 1;
-                    if (!renderer_billboard_lateral_hits_adj_lines(level,
-                                                                   (int32_t)state->explosions[ei].x,
-                                                                   (int32_t)state->explosions[ei].z,
-                                                                   half_span,
-                                                                   r->cosval, (int16_t)-r->sinval,
-                                                                   adj_lines + line_start,
-                                                                   line_count)) {
-                        continue;
-                    }
-                }
                 int32_t vx = (int32_t)dx * cos_v - (int32_t)dz * sin_v;
                 vx <<= 1;
                 int32_t vx_fine = (vx >> 9) + r->xwobble;
@@ -10598,46 +10451,16 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             objs[obj_count].clip_right = draw_clip_right;
             objs[obj_count].zone_top_world = draw_zone_top;
             objs[obj_count].zone_bot_world = draw_zone_bot;
-            objs[obj_count].source_zone = expl_zone;
-            objs[obj_count].draw_zone = zone_id;
-            {
-                int16_t geom_zone = in_this_zone ? -1 : zone_id;
-                if (in_this_zone) {
-                    int local_expl_w = 100;
-                    int32_t half_span;
-                    renderer_get_explosion_frame_and_world_size(state, ei, NULL, &local_expl_w, NULL);
-                    half_span = (local_expl_w * EXPLOSION_SIZE_CORRECTION) / 2;
-                    if (half_span < 1) half_span = 1;
-                    if (adj_line_total > 0 &&
-                        renderer_billboard_lateral_hits_adj_lines(level,
-                                                                   (int32_t)state->explosions[ei].x,
-                                                                   (int32_t)state->explosions[ei].z,
-                                                                   half_span,
-                                                                   r->cosval, (int16_t)-r->sinval,
-                                                                   adj_lines,
-                                                                   adj_line_total)) {
-                        geom_zone = expl_zone;
-                    }
-                }
-                objs[obj_count].geom_clip_zone = geom_zone;
-            }
             objs[obj_count].ignore_top_clip = (uint8_t)(draw_ignore_top ? 1 : 0);
-            objs[obj_count].is_spill = (uint8_t)(in_this_zone ? 0 : 1);
             obj_count++;
         }
     }
 
-    /* Insertion sort by Z descending (farthest first - painter's algorithm).
-     * Tie-breaker: spill entries (adjacent-zone) are treated as farther than
-     * in-zone entries at equal depth so local-zone billboards win over spills.
-     * Within the same class, keep reverse-input tie behavior for parity. */
+    /* Insertion sort by Z descending (farthest first - painter's algorithm). */
     for (int i = 1; i < obj_count; i++) {
         ObjEntry key = objs[i];
         int j = i - 1;
-        while (j >= 0 &&
-                (objs[j].z < key.z ||
-                (objs[j].z == key.z &&
-                 objs[j].is_spill <= key.is_spill))) {
+        while (j >= 0 && objs[j].z < key.z) {
             objs[j + 1] = objs[j];
             j--;
         }
@@ -10666,8 +10489,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int entry_src = entry->src;
         int16_t draw_clip_left = entry->clip_left;
         int16_t draw_clip_right = entry->clip_right;
-        int16_t geom_clip_zone = entry->geom_clip_zone;
-        int is_spill = (entry->is_spill != 0);
         if (draw_clip_left >= draw_clip_right) continue;
 
         if (entry_src == DRAW_SRC_EXPLOSION) {
@@ -10706,8 +10527,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             sprite_h *= EXPLOSION_SIZE_CORRECTION;
             if (sprite_w < 1) sprite_w = 1;
             if (sprite_h < 1) sprite_h = 1;
-            int32_t geom_world_w = expl_w * EXPLOSION_SIZE_CORRECTION;
-            if (geom_world_w < 1) geom_world_w = 1;
 
             uint32_t ptr_off = 0;
             uint16_t down_strip = 0;
@@ -10732,12 +10551,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             {
                 int32_t orp_z_i16 = ROT_Z_INT(orp_z);
                 if (orp_z_i16 > 32767) orp_z_i16 = 32767;
-                renderer_f2_pick_note_sprite_draw(level,
-                                                  entry->src,
-                                                  entry->idx,
-                                                  entry->source_zone,
-                                                  entry->draw_zone,
-                                                  is_spill);
                 ctx->pick_player_id = 0;
                 if (ctx->profile_collect_stats) {
                     uint64_t sprite_t0 = SDL_GetPerformanceCounter();
@@ -10753,14 +10566,11 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                              draw_clip_left, draw_clip_right,
                                              entry->zone_top_world, entry->zone_bot_world,
                                              clip_top_y, clip_bot_y,
-                                             is_spill,
+                                             0,
                                              level,
-                                             geom_clip_zone,
-                                             (int32_t)state->explosions[ei].x,
-                                             (int32_t)state->explosions[ei].z,
-                                             geom_world_w,
-                                             r->cosval,
-                                             (int16_t)-r->sinval);
+                                             -1,
+                                             0, 0, 0,
+                                             0, 0);
                     ctx->workload_stats.ticks_sprite += SDL_GetPerformanceCounter() - sprite_t0;
                 } else {
                     renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
@@ -10775,14 +10585,11 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                              draw_clip_left, draw_clip_right,
                                              entry->zone_top_world, entry->zone_bot_world,
                                              clip_top_y, clip_bot_y,
-                                             is_spill,
+                                             0,
                                              level,
-                                             geom_clip_zone,
-                                             (int32_t)state->explosions[ei].x,
-                                             (int32_t)state->explosions[ei].z,
-                                             geom_world_w,
-                                             r->cosval,
-                                             (int16_t)-r->sinval);
+                                             -1,
+                                             0, 0, 0,
+                                             0, 0);
                 }
             }
             continue;
@@ -10815,8 +10622,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int16_t pt_num = rd16(obj);
         if ((unsigned)pt_num >= (unsigned)num_pts) continue;
         ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
-        int32_t geom_world_x = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 0u);
-        int32_t geom_world_z = rd16(level->object_points + (size_t)(uint16_t)pt_num * 8u + 4u);
 
         /* Use actual view Z for size so sprites scale at all distances. Guard only vs div-by-zero. */
         int32_t z_for_size = ROT_Z_INT(orp->z);
@@ -10973,12 +10778,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         {
             int32_t orp_z_int = ROT_Z_INT(orp->z);
             if (orp_z_int > 32767) orp_z_int = 32767;
-            renderer_f2_pick_note_sprite_draw(level,
-                                              entry->src,
-                                              entry->idx,
-                                              entry->source_zone,
-                                              entry->draw_zone,
-                                              is_spill);
             if (ctx->profile_collect_stats) {
                 uint64_t sprite_t0 = SDL_GetPerformanceCounter();
                 renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
@@ -10993,14 +10792,11 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                          draw_clip_left, draw_clip_right,
                                          entry->zone_top_world, entry->zone_bot_world,
                                          clip_top_y, clip_bot_y,
-                                         is_spill,
+                                         0,
                                          level,
-                                         geom_clip_zone,
-                                         geom_world_x,
-                                         geom_world_z,
-                                         world_w,
-                                         r->cosval,
-                                         (int16_t)-r->sinval);
+                                         -1,
+                                         0, 0, 0,
+                                         0, 0);
                 ctx->workload_stats.ticks_sprite += SDL_GetPerformanceCounter() - sprite_t0;
             } else {
                 renderer_draw_sprite_ctx(ctx, (int16_t)scr_x, (int16_t)scr_y,
@@ -11015,14 +10811,11 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                          draw_clip_left, draw_clip_right,
                                          entry->zone_top_world, entry->zone_bot_world,
                                          clip_top_y, clip_bot_y,
-                                         is_spill,
+                                         0,
                                          level,
-                                         geom_clip_zone,
-                                         geom_world_x,
-                                         geom_world_z,
-                                         world_w,
-                                         r->cosval,
-                                         (int16_t)-r->sinval);
+                                         -1,
+                                         0, 0, 0,
+                                         0, 0);
             }
         }
     }
@@ -12917,18 +12710,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                  (level->graphics_byte_count == 0 ||
                                   ((size_t)zone_upper_gfx + 2u <= level->graphics_byte_count));
             int ignore_sky_top_clip = (zone_open_sky && obj_top == zone_roof) ? 1 : 0;
-            int allow_adjacent_spill = 0;
-            if (!has_split_water) {
-                /* In non-water rooms the before-water/full-room object clips collapse
-                 * to the same vertical section, so adjacent spill must stay enabled
-                 * regardless of the authored clip mode. */
-                allow_adjacent_spill = 1;
-            } else if (obj_clip_mode == 1) {
-                allow_adjacent_spill = 1; /* after-water pass */
-            }
             draw_zone_objects_ctx(ctx, state, zone_id, obj_top, obj_bot,
                                   is_multi_floor ? use_upper : -1,
-                                  allow_adjacent_spill,
                                   ignore_sky_top_clip);
             break;
         }
@@ -13057,7 +12840,6 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
             int ignore_sky_top_clip = zone_open_sky;
             draw_zone_objects_ctx(ctx, state, zone_id, zone_roof, zone_floor,
                                   is_multi_floor_zone ? (use_upper ? 1 : 0) : -1,
-                                  1,
                                   ignore_sky_top_clip);
         }
 
