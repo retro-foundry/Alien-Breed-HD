@@ -9550,6 +9550,16 @@ static int renderer_resolve_zone_section_world_bounds(const LevelState *level,
                                                       int level_filter,
                                                       int32_t *out_top_world,
                                                       int32_t *out_bot_world);
+static int renderer_billboard_crosses_zone_portal_mode(const LevelState *level,
+                                                       int16_t from_zone,
+                                                       int16_t to_zone,
+                                                       int32_t world_x,
+                                                       int32_t world_z,
+                                                       int32_t half_span_world,
+                                                       int16_t view_right_x,
+                                                       int16_t view_right_z,
+                                                       int allow_ambiguous,
+                                                       int allow_near_fallback);
 
 static int renderer_zone_order_index(const GameState *state, int16_t zone_id)
 {
