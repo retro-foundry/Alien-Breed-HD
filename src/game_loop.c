@@ -42,10 +42,15 @@
 #define MAX_TEMP_FRAMES 15
 
 /* Minimum VBlanks to accumulate before running a game logic tick.
- * 1 VBlank = 20ms → 50Hz logic, matching the original game's simulation
- * rate. Running logic at 50Hz avoids large per-tick jumps that make the
- * player feel sluggish and can skip/tunnel through collision edges. */
-#define GAME_TICK_VBLANKS 1
+ * The Amiga main loop ran at ~20-25fps, so TempFrames was typically 2-3.
+ * All integer movement and collision math (wall-slide formulas, sin*speed/16384)
+ * rely on step sizes of at least 2 units to produce non-zero results after
+ * integer division. With GAME_TICK_VBLANKS=1 (50Hz, TempFrames=1), those
+ * divisions often truncate to zero, leaving enemies stuck against walls or
+ * producing zero wall-slide corrections. Using 2 VBlanks (40ms, ~25Hz logic)
+ * matches the typical Amiga cadence and keeps all integer math working.
+ * Render interpolation still runs at display frame rate for smooth visuals. */
+#define GAME_TICK_VBLANKS 2
 
 /* Number of frames to run in stub mode before auto-exiting */
 /* Max frames before auto-exit (0 = disabled, relies on ESC key) */
@@ -275,10 +280,16 @@ void game_loop_tick(GameState *state, GameLoopCtx *ctx)
             renderer_step_water_anim_ms(elapsed);
         }
 
-        /* Track how far we are into the current 50Hz tick (0=just ticked, 1=about to tick).
-         * Used by the renderer to interpolate enemy positions between logic ticks. */
-        state->obj_interp_alpha = (float)ctx->vblank_remainder_ms / 20.0f;
-        if (state->obj_interp_alpha > 1.0f) state->obj_interp_alpha = 1.0f;
+        /* Track how far we are into the current logic tick (0=just ticked, 1=about to tick).
+         * Used by the renderer to interpolate enemy positions between logic ticks.
+         * With GAME_TICK_VBLANKS>1 the tick period spans multiple VBlanks, so the
+         * alpha must cover the full period (pending_vblanks*20 + remainder). */
+        {
+            float time_since_tick_ms = (float)(ctx->pending_vblanks * 20 + ctx->vblank_remainder_ms);
+            float tick_period_ms = (float)(GAME_TICK_VBLANKS * 20);
+            state->obj_interp_alpha = time_since_tick_ms / tick_period_ms;
+            if (state->obj_interp_alpha > 1.0f) state->obj_interp_alpha = 1.0f;
+        }
 
         /* ================================================================
          * Game logic: Amiga-style cadence.
