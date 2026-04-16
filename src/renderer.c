@@ -8326,9 +8326,8 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     const int mark_sprite_pick_zone_none = (g_debug_spill_visualize && pick_zone) ? 1 : 0;
     const int fast_common_no_spill =
         (!have_pick) ? 1 : 0;
-    const int geometry_clip_enabled = 0;
     const int have_geometric_zone_clip =
-        (geometry_clip_enabled && geom_clip_level && geom_clip_zone >= 0 && billboard_world_w > 0 && width > 0) ? 1 : 0;
+        (geom_clip_level && geom_clip_zone >= 0 && billboard_world_w > 0 && width > 0) ? 1 : 0;
     int geom_dx_starts[RENDERER_GEOM_CLIP_MAX_SPANS];
     int geom_dx_ends[RENDERER_GEOM_CLIP_MAX_SPANS];
     int geom_dx_count = 1;
@@ -8374,11 +8373,11 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                                                 geom_dx_ends,
                                                                 RENDERER_GEOM_CLIP_MAX_SPANS);
         if (geom_dx_count <= 0) {
-            /* Fail-open: when geometric clip finds no spans, keep the normal
-             * screen-span draw so billboards do not disappear entirely. */
-            geom_dx_count = 1;
-            geom_dx_starts[0] = dx_start;
-            geom_dx_ends[0] = dx_end;
+            if (profile_collect_stats) {
+                ctx->workload_stats.sprite_pixels_wall_occluded +=
+                    (uint64_t)(dx_end - dx_start) * (uint64_t)draw_row_count;
+            }
+            return;
         }
 
         /* Post-clip margin expansion: apply after geometric clipping so
@@ -8445,12 +8444,11 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
             }
             geom_dx_count = sliced_count;
             if (geom_dx_count <= 0) {
-                /* Fail-open after slice intersection as well: if geometric
-                 * ownership ranges collapse, keep drawing the normal screen
-                 * span instead of culling the sprite. */
-                geom_dx_count = 1;
-                geom_dx_starts[0] = dx_start;
-                geom_dx_ends[0] = dx_end;
+                if (profile_collect_stats) {
+                    ctx->workload_stats.sprite_pixels_wall_occluded +=
+                        (uint64_t)(dx_end - dx_start) * (uint64_t)draw_row_count;
+                }
+                return;
             }
         }
     }
@@ -11003,9 +11001,11 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             int16_t spill_zones[RENDERER_F2_MAX_ZONE_LIST];
             int spill_zone_count = 0;
             const int entry_is_spill = (entry->source_zone != zone_id) ? 1 : 0;
+            int16_t geom_clip_zone = entry_is_spill ? zone_id : entry->source_zone;
             int sprite_left = scr_x - sprite_w / 2;
             int sprite_right = sprite_left + sprite_w;
             if (expl_world_w < 1) expl_world_w = 1;
+            if (geom_clip_zone < 0) geom_clip_zone = zone_id;
             {
                 int32_t orp_z_i16 = ROT_Z_INT(orp_z);
                 if (orp_z_i16 > 32767) orp_z_i16 = 32767;
@@ -11048,13 +11048,13 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                                entry->zone_top_world, entry->zone_bot_world,
                                                clip_top_y, clip_bot_y,
                                                entry_is_spill,
-                                               (enhancement_enabled && !entry_is_spill) ? level : NULL,
-                                               (enhancement_enabled && !entry_is_spill) ? entry->source_zone : -1,
-                                               (enhancement_enabled && !entry_is_spill) ? (int32_t)state->explosions[ei].x : 0,
-                                               (enhancement_enabled && !entry_is_spill) ? (int32_t)state->explosions[ei].z : 0,
-                                               (enhancement_enabled && !entry_is_spill) ? expl_world_w : 0,
-                                               (enhancement_enabled && !entry_is_spill) ? billboard_view_right_x : 0,
-                                               (enhancement_enabled && !entry_is_spill) ? billboard_view_right_z : 0);
+                                               level,
+                                               geom_clip_zone,
+                                               (int32_t)state->explosions[ei].x,
+                                               (int32_t)state->explosions[ei].z,
+                                               expl_world_w,
+                                               billboard_view_right_x,
+                                               billboard_view_right_z);
 
                 if (enhancement_enabled && !entry_is_spill && spill_zone_count > 0) {
                     for (int si = 0; si < spill_zone_count; si++) {
@@ -11124,13 +11124,13 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                                        spill_clip_top_world, spill_clip_bot_world,
                                                        spill_clip_top_y, spill_clip_bot_y,
                                                        1,
-                                                       NULL,
-                                                       -1,
-                                                       0,
-                                                       0,
-                                                       0,
-                                                       0,
-                                                       0);
+                                                       level,
+                                                       spill_zone,
+                                                       (int32_t)state->explosions[ei].x,
+                                                       (int32_t)state->explosions[ei].z,
+                                                       expl_world_w,
+                                                       billboard_view_right_x,
+                                                       billboard_view_right_z);
                     }
                 }
             }
@@ -11327,8 +11327,10 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             int16_t spill_zones[RENDERER_F2_MAX_ZONE_LIST];
             int spill_zone_count = 0;
             const int entry_is_spill = (entry->source_zone != zone_id) ? 1 : 0;
+            int16_t geom_clip_zone = entry_is_spill ? zone_id : entry->source_zone;
 
             if (orp_z_int > 32767) orp_z_int = 32767;
+            if (geom_clip_zone < 0) geom_clip_zone = zone_id;
 
             if (level->object_points && pt_num >= 0 && pt_num < num_pts) {
                 const uint8_t *pt_ptr = level->object_points + (size_t)(uint16_t)pt_num * 8u;
@@ -11373,13 +11375,13 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                            entry->zone_top_world, entry->zone_bot_world,
                                            clip_top_y, clip_bot_y,
                                            entry_is_spill,
-                                           (enhancement_enabled && !entry_is_spill) ? level : NULL,
-                                           (enhancement_enabled && !entry_is_spill) ? entry->source_zone : -1,
-                                           (enhancement_enabled && !entry_is_spill) ? billboard_world_x : 0,
-                                           (enhancement_enabled && !entry_is_spill) ? billboard_world_z : 0,
-                                           (enhancement_enabled && !entry_is_spill) ? world_w : 0,
-                                           (enhancement_enabled && !entry_is_spill) ? billboard_view_right_x : 0,
-                                           (enhancement_enabled && !entry_is_spill) ? billboard_view_right_z : 0);
+                                           level,
+                                           geom_clip_zone,
+                                           billboard_world_x,
+                                           billboard_world_z,
+                                           world_w,
+                                           billboard_view_right_x,
+                                           billboard_view_right_z);
 
             if (enhancement_enabled && !entry_is_spill && spill_zone_count > 0) {
                 for (int si = 0; si < spill_zone_count; si++) {
@@ -11449,13 +11451,13 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                                    spill_clip_top_world, spill_clip_bot_world,
                                                    spill_clip_top_y, spill_clip_bot_y,
                                                    1,
-                                                   NULL,
-                                                   -1,
-                                                   0,
-                                                   0,
-                                                   0,
-                                                   0,
-                                                   0);
+                                                   level,
+                                                   spill_zone,
+                                                   billboard_world_x,
+                                                   billboard_world_z,
+                                                   world_w,
+                                                   billboard_view_right_x,
+                                                   billboard_view_right_z);
                 }
             }
         }
