@@ -7359,6 +7359,10 @@ static AB3D_THREAD_LOCAL int *g_floor_fast_cov_diff_scratch = NULL;
 static AB3D_THREAD_LOCAL int g_floor_fast_col_capacity = 0;
 static AB3D_THREAD_LOCAL int16_t *g_viewer_floor_occlude_scratch = NULL;
 static AB3D_THREAD_LOCAL int g_viewer_floor_occlude_capacity = 0;
+static AB3D_THREAD_LOCAL int g_renderer_slice_prewarm_w = 0;
+static AB3D_THREAD_LOCAL int g_renderer_slice_prewarm_h = 0;
+static int g_renderer_main_prewarm_w = 0;
+static int g_renderer_main_prewarm_h = 0;
 
 /* Thread-local scanline edge tables for floor/ceiling/sky polygon rasterization.
  * Shared by renderer_draw_zone_ctx, renderer_tessellate_sky_ceiling_ctx, and
@@ -7530,6 +7534,32 @@ static int renderer_floor_fast_ensure_cols_capacity(int col_count)
     return 1;
 }
 
+static void renderer_prewarm_slice_tls_scratch(int w, int h)
+{
+    if (w <= 0 || h <= 0) return;
+    if (g_renderer_slice_prewarm_w == w && g_renderer_slice_prewarm_h == h) return;
+
+    (void)renderer_viewer_floor_occlude_get_scratch(w);
+    (void)renderer_poly_edge_ensure_h(h);
+    (void)renderer_poly_col_ensure_w(w);
+    (void)renderer_floor_fast_ensure_rows_capacity(h);
+    (void)renderer_floor_fast_ensure_cols_capacity(w);
+
+    g_renderer_slice_prewarm_w = w;
+    g_renderer_slice_prewarm_h = h;
+}
+
+static void renderer_prewarm_main_thread_scratch(int w, int h)
+{
+    if (w <= 0 || h <= 0) return;
+    if (g_renderer_main_prewarm_w == w && g_renderer_main_prewarm_h == h) return;
+
+    (void)renderer_zone_trace_ensure_before_capacity((size_t)w * (size_t)h);
+
+    g_renderer_main_prewarm_w = w;
+    g_renderer_main_prewarm_h = h;
+}
+
 static void renderer_floor_fast_release_scratch(void)
 {
     free(g_zone_trace_before_tags_scratch);
@@ -7573,6 +7603,11 @@ static void renderer_floor_fast_release_scratch(void)
     free(g_poly_col_bot_scratch);
     g_poly_col_bot_scratch = NULL;
     g_poly_col_w_capacity = 0;
+
+    g_renderer_slice_prewarm_w = 0;
+    g_renderer_slice_prewarm_h = 0;
+    g_renderer_main_prewarm_w = 0;
+    g_renderer_main_prewarm_h = 0;
 }
 
 static void renderer_floor_fast_seed_rows(FloorRowFast *rows,
@@ -14624,6 +14659,7 @@ static void renderer_draw_world_slice(GameState *state,
         if (out_fill_screen_water) *out_fill_screen_water = 0;
         return;
     }
+    renderer_prewarm_slice_tls_scratch(w, h);
 
     int cs = (int)col_start;
     int ce = (int)col_end;
@@ -14900,6 +14936,7 @@ void renderer_draw_display(GameState *state)
         r->floor_uv_dist_max = (int32_t)(((int64_t)30000 * (int64_t)ypct + 50) / 100);
         r->floor_uv_dist_near = (int32_t)(((int64_t)32000 * (int64_t)ypct + 50) / 100);
     }
+    renderer_prewarm_main_thread_scratch(w, h);
     renderer_floor_prepare_row_recip_table(h);
 
     /* 2. Setup view transform (from AB3DI.s DrawDisplay lines 3399-3438) */
