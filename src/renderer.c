@@ -325,6 +325,7 @@ typedef struct {
 
 typedef struct {
     int count;
+    int16_t index_by_zone_id[RENDERER_MAX_ZONE_ORDER];
     int16_t zone_ids[RENDERER_MAX_ZONE_ORDER];
     int16_t left_px[RENDERER_MAX_ZONE_ORDER];
     int16_t right_px[RENDERER_MAX_ZONE_ORDER];
@@ -447,6 +448,12 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
 static int renderer_compute_zone_clip_span(GameState *state, int16_t zone_id,
                                            uint32_t frame_idx, int trace_clip,
                                            int16_t *out_left_px, int16_t *out_right_px);
+static int renderer_compute_zone_clip_span_from_lgr_entry(GameState *state, int16_t zone_id,
+                                                          const uint8_t *lgr_entry,
+                                                          uint32_t frame_idx, int trace_clip,
+                                                          int16_t *out_left_px, int16_t *out_right_px);
+static void renderer_build_lgr_first_entry_lookup(const GameState *state,
+                                                  const uint8_t **out_entries);
 static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
                                                   int16_t row_start, int16_t row_end,
                                                   int16_t col_start, int16_t col_end,
@@ -2889,6 +2896,31 @@ static const uint8_t *renderer_find_lgr_entry_for_zone(const GameState *state,
     }
 
     return NULL;
+}
+
+static void renderer_build_lgr_first_entry_lookup(const GameState *state,
+                                                  const uint8_t **out_entries)
+{
+    if (!out_entries) return;
+
+    for (int i = 0; i < RENDERER_MAX_ZONE_ORDER; i++) {
+        out_entries[i] = NULL;
+    }
+
+    const uint8_t *lgr = state ? state->view_list_of_graph_rooms : NULL;
+    if (!state || !lgr) return;
+
+    int zone_slots = level_zone_slot_count(&state->level);
+    while (rd16(lgr) >= 0) {
+        int16_t entry_zone = -1;
+        if (renderer_resolve_lgr_entry_zone_id(&state->level, rd16(lgr), &entry_zone) &&
+            entry_zone >= 0 && entry_zone < RENDERER_MAX_ZONE_ORDER &&
+            (zone_slots <= 0 || entry_zone < zone_slots) &&
+            !out_entries[(uint16_t)entry_zone]) {
+            out_entries[(uint16_t)entry_zone] = lgr;
+        }
+        lgr += 8;
+    }
 }
 
 static int renderer_count_lgr_entries(const GameState *state)
@@ -9437,6 +9469,15 @@ static int renderer_lookup_zone_prepass_clip_span(const RenderSliceContext *ctx,
     if (count < 0) count = 0;
     if (count > RENDERER_MAX_ZONE_ORDER) count = RENDERER_MAX_ZONE_ORDER;
 
+    if ((uint16_t)zone_id < RENDERER_MAX_ZONE_ORDER) {
+        int idx = (int)prepass->index_by_zone_id[(uint16_t)zone_id];
+        if (idx >= 0 && idx < count && prepass->valid[idx] && prepass->zone_ids[idx] == zone_id) {
+            *out_left = prepass->left_px[idx];
+            *out_right = prepass->right_px[idx];
+            return 1;
+        }
+    }
+
     for (int i = 0; i < count; i++) {
         if (prepass->zone_ids[i] != zone_id) continue;
         if (!prepass->valid[i]) continue;
@@ -13479,22 +13520,22 @@ static int renderer_compute_zone_clip_span(GameState *state, int16_t zone_id,
                                            uint32_t frame_idx, int trace_clip,
                                            int16_t *out_left_px, int16_t *out_right_px)
 {
+    const uint8_t *lgr_entry = renderer_find_lgr_entry_for_zone(state, zone_id, NULL, NULL);
+
+    return renderer_compute_zone_clip_span_from_lgr_entry(state, zone_id, lgr_entry,
+                                                          frame_idx, trace_clip,
+                                                          out_left_px, out_right_px);
+}
+
+static int renderer_compute_zone_clip_span_from_lgr_entry(GameState *state, int16_t zone_id,
+                                                          const uint8_t *lgr_entry,
+                                                          uint32_t frame_idx, int trace_clip,
+                                                          int16_t *out_left_px, int16_t *out_right_px)
+{
     RendererState *r = &g_renderer;
     if (!state || !out_left_px || !out_right_px) return 0;
 
-    const uint8_t *lgr = state->view_list_of_graph_rooms;
-    if (!lgr || !state->level.clips) return 0;
-
-    const uint8_t *lgr_entry = NULL;
-    while (rd16(lgr) >= 0) {
-        int16_t entry_zone = -1;
-        if (renderer_resolve_lgr_entry_zone_id(&state->level, rd16(lgr), &entry_zone) &&
-            entry_zone == zone_id) {
-            lgr_entry = lgr;
-            break;
-        }
-        lgr += 8;
-    }
+    if (!state->level.clips) return 0;
 
     if (!lgr_entry) {
         if (trace_clip) {
@@ -13712,9 +13753,13 @@ static void renderer_build_world_zone_prepass(GameState *state, uint32_t frame_i
 {
     if (!out) return;
     memset(out, 0, sizeof(*out));
+    memset(out->index_by_zone_id, 0xFF, sizeof(out->index_by_zone_id));
     if (!state) return;
 
     PlayerState *view_plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
+    const uint8_t *lgr_entry_by_zone[RENDERER_MAX_ZONE_ORDER];
+
+    renderer_build_lgr_first_entry_lookup(state, lgr_entry_by_zone);
 
     int count = state->zone_order_count;
     if (count < 0) count = 0;
@@ -13728,8 +13773,20 @@ static void renderer_build_world_zone_prepass(GameState *state, uint32_t frame_i
 
         int16_t left_px = 0;
         int16_t right_px = (int16_t)g_renderer.width;
-        if (renderer_compute_zone_clip_span(state, zone_id, frame_idx, trace_clip,
-                                            &left_px, &right_px)) {
+        const uint8_t *lgr_entry = NULL;
+        int have_clip = 0;
+        if ((uint16_t)zone_id < RENDERER_MAX_ZONE_ORDER) {
+            lgr_entry = lgr_entry_by_zone[(uint16_t)zone_id];
+        }
+        if (lgr_entry) {
+            have_clip = renderer_compute_zone_clip_span_from_lgr_entry(state, zone_id, lgr_entry,
+                                                                       frame_idx, trace_clip,
+                                                                       &left_px, &right_px);
+        } else {
+            have_clip = renderer_compute_zone_clip_span(state, zone_id, frame_idx, trace_clip,
+                                                        &left_px, &right_px);
+        }
+        if (have_clip) {
             RendererZoneSectionClip lower_clip;
             RendererZoneSectionClip upper_clip;
             RendererZoneSectionClip full_clip = renderer_make_zone_section_clip_full(g_renderer.height);
@@ -13759,6 +13816,10 @@ static void renderer_build_world_zone_prepass(GameState *state, uint32_t frame_i
                 out->valid[i] = 1;
                 out->left_px[i] = left_px;
                 out->right_px[i] = right_px;
+                if ((uint16_t)zone_id < RENDERER_MAX_ZONE_ORDER &&
+                    out->index_by_zone_id[(uint16_t)zone_id] < 0) {
+                    out->index_by_zone_id[(uint16_t)zone_id] = (int16_t)i;
+                }
             }
         }
     }
