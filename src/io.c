@@ -1770,6 +1770,41 @@ static uint8_t *g_sprite_data[MAX_SPRITE_TYPES];
 static uint8_t *g_sprite_ptr_data[MAX_SPRITE_TYPES];
 static uint8_t *g_sprite_pal_store[MAX_SPRITE_TYPES];
 
+static void io_sprite_clear_texel(uint8_t *wad, size_t wad_size,
+                                  const uint8_t *ptr_data, size_t ptr_size,
+                                  uint32_t ptr_offset, int row)
+{
+    if (!wad || !ptr_data || row < 0) return;
+    if (ptr_offset + 4u > ptr_size) return;
+
+    const uint8_t *entry = ptr_data + ptr_offset;
+    uint32_t mode = (uint32_t)entry[0];
+    uint32_t wad_off = ((uint32_t)entry[1] << 16)
+                     | ((uint32_t)entry[2] << 8)
+                     | (uint32_t)entry[3];
+    if (mode > 2u) return;
+
+    wad_off += (uint32_t)row * 2u;
+    if (wad_off + 1u >= wad_size) return;
+
+    uint16_t word = (uint16_t)(((uint16_t)wad[wad_off] << 8) | (uint16_t)wad[wad_off + 1u]);
+    word = (uint16_t)(word & (uint16_t)~(0x1Fu << (mode * 5u)));
+    wad[wad_off] = (uint8_t)(word >> 8);
+    wad[wad_off + 1u] = (uint8_t)word;
+}
+
+static void io_apply_sprite_asset_fixes(int slot, uint8_t *wad, size_t wad_size,
+                                        const uint8_t *ptr_data, size_t ptr_size)
+{
+    if (!wad || !ptr_data) return;
+
+    if (slot == 14) {
+        /* bigclaws frame 0: clear the lone red texel that protrudes at the top-left
+         * of the small red enemy death animation. */
+        io_sprite_clear_texel(wad, wad_size, ptr_data, ptr_size, (uint32_t)(20 * 4), 0);
+    }
+}
+
 /* Some legacy sprite slots are referenced by code paths but have no standalone
  * WAD/PTR assets in this data set. Keep them non-fatal in strict mode. */
 static int sprite_slot_required(int slot)
@@ -1885,6 +1920,12 @@ void io_load_objects(void)
                     io_fatal_missing("sprite PTR", path);
                 }
             }
+        }
+
+        if (g_sprite_data[i] && g_sprite_ptr_data[i]) {
+            io_apply_sprite_asset_fixes(i,
+                                        g_sprite_data[i], g_renderer.sprite_wad_size[i],
+                                        g_sprite_ptr_data[i], g_renderer.sprite_ptr_size[i]);
         }
 
         /* .pal: embedded tables only (from data/pal via sprite_palettes_data.h). No runtime load. */
