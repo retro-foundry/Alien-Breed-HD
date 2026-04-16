@@ -2842,7 +2842,10 @@ void object_handle_gas_pipe(GameObject *obj, GameState *state)
 {
     enum {
         /* Defs.i: SecTimer=40 (td+22), ThirdTimer=52 (td+34), FourthTimer=54 (td+36). */
-        GAS_PIPE_SEC_TIMER_OFF = 22
+        GAS_PIPE_SEC_TIMER_OFF = 22,
+        /* Fixed 50 Hz logic makes the stock 10-tick burst gap read slightly hotter
+         * than on original hardware. One extra tick restores the older feel. */
+        GAS_PIPE_BURST_GAP_TICKS = 11
     };
 
     obj->obj.worry = 0;
@@ -2857,7 +2860,7 @@ void object_handle_gas_pipe(GameObject *obj, GameState *state)
     if (third > 0) {
         OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, (int16_t)(third - tf));
         OBJ_SET_TD_W(obj, GAS_PIPE_SEC_TIMER_OFF, 5);
-        OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, 10);
+        OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, GAS_PIPE_BURST_GAP_TICKS);
         return;
     }
 
@@ -2867,7 +2870,7 @@ void object_handle_gas_pipe(GameObject *obj, GameState *state)
     OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, fourth);
     if (fourth >= 0) return;
 
-    OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, 10);
+    OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, GAS_PIPE_BURST_GAP_TICKS);
 
     int16_t sec = OBJ_TD_W(obj, GAS_PIPE_SEC_TIMER_OFF);
     sec = (int16_t)(sec - 1);
@@ -4268,8 +4271,25 @@ void switch_routine(GameState *state)
 {
     if (!state->level.switch_data) return;
 
-    int ticks = (int)state->temp_frames;
-    if (ticks < 1) ticks = 1;
+    /* Timed switches were tuned around the port's older batched update cadence.
+     * Drive the byte countdown from elapsed 50 Hz wall-clock time and keep the
+     * slower 2-units-per-tick decay so two-switch puzzles remain solvable. */
+    static const uint8_t *s_last_switch_data = NULL;
+    static uint32_t s_last_switch_tick_ms = 0;
+    static uint32_t s_switch_vblank_remainder_ms = 0;
+    uint32_t now_ms = state->current_ticks_ms;
+    if (state->level.switch_data != s_last_switch_data) {
+        s_last_switch_data = state->level.switch_data;
+        s_last_switch_tick_ms = now_ms;
+        s_switch_vblank_remainder_ms = 0;
+    }
+    uint32_t elapsed_ms = now_ms - s_last_switch_tick_ms;
+    s_last_switch_tick_ms = now_ms;
+    if (elapsed_ms > 200u) elapsed_ms = 200u;
+    s_switch_vblank_remainder_ms += elapsed_ms;
+    int auto_vblanks = (int)(s_switch_vblank_remainder_ms / 20u);
+    s_switch_vblank_remainder_ms %= 20u;
+    int8_t auto_dec = (int8_t)(auto_vblanks * 2);
 
     const int32_t switch_dist_sq = 60 * 60;
     uint8_t *sw = state->level.switch_data;
@@ -4284,25 +4304,23 @@ void switch_routine(GameState *state)
         uint16_t bit_mask = (uint16_t)(1u << bit_num);
         int32_t gfx_off = (int32_t)be32(sw + 6);
 
-        /* Auto-reset branch (backtoend/nobutt): emulate Amiga's byte timer
-         * by applying sub.b #4 once per 50Hz tick. */
+        /* Auto-reset branch (backtoend/nobutt): keep the fixed-update countdown
+         * stable in real time instead of tying it to the current render cadence. */
         if (sw[2] != 0 && sw[10] != 0) {
-            for (int t = 0; t < ticks; t++) {
-                /* Amiga: sub.b #4,3(a0) each 50Hz tick, then beq to auto-off. */
-                sw[3] = (uint8_t)(sw[3] - 4u);
-                if (sw[3] != 0) continue;
-
-                sw[10] = 0;
-                if (state->level.graphics && gfx_off >= 0) {
-                    uint8_t *wall_ptr = state->level.graphics + (uint32_t)gfx_off;
-                    write_be16(wall_ptr + 4, 11);
-                    int16_t w = be16(wall_ptr);
-                    w = (int16_t)(w & 0x007C);
-                    write_be16(wall_ptr, w);
+            if (auto_dec != 0) {
+                sw[3] = (uint8_t)((int8_t)sw[3] - auto_dec);
+                if ((int8_t)sw[3] == 0) {
+                    sw[10] = 0;
+                    if (state->level.graphics && gfx_off >= 0) {
+                        uint8_t *wall_ptr = state->level.graphics + (uint32_t)gfx_off;
+                        write_be16(wall_ptr + 4, 11);
+                        int16_t w = be16(wall_ptr);
+                        w = (int16_t)(w & 0x007C);
+                        write_be16(wall_ptr, w);
+                    }
+                    game_conditions = (int16_t)((uint16_t)game_conditions & (uint16_t)~bit_mask);
+                    audio_play_sample(10, 50);
                 }
-                game_conditions = (int16_t)((uint16_t)game_conditions & (uint16_t)~bit_mask);
-                audio_play_sample(10, 50);
-                break;
             }
         }
 
