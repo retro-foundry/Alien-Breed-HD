@@ -1079,6 +1079,10 @@ static void enemy_apply_step_limits(const GameObject *obj,
     if (!flying) {
         if (step_up < step_up_min) step_up = step_up_min;
         if (step_down < step_down_min) step_down = step_down_min;
+
+        if (obj && obj->obj.number == OBJ_NBR_SMALL_RED_THING && step_up > step_down) {
+            step_up = step_down;
+        }
     }
 
     ctx->step_up_val = step_up;
