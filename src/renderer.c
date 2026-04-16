@@ -430,6 +430,45 @@ typedef struct {
     int before_ready;
 } RendererZoneTraceFloorStats;
 
+static AB3D_THREAD_LOCAL uint8_t *g_zone_trace_before_tags_scratch = NULL;
+static AB3D_THREAD_LOCAL uint16_t *g_zone_trace_before_cw_scratch = NULL;
+static AB3D_THREAD_LOCAL size_t g_zone_trace_before_capacity = 0;
+
+static int renderer_zone_trace_ensure_before_capacity(size_t want)
+{
+    size_t new_cap;
+    uint8_t *new_tags;
+    uint16_t *new_cw;
+
+    if (want == 0) return 1;
+    if (g_zone_trace_before_tags_scratch && g_zone_trace_before_cw_scratch &&
+        want <= g_zone_trace_before_capacity) {
+        return 1;
+    }
+
+    new_cap = (g_zone_trace_before_capacity > 0) ? g_zone_trace_before_capacity : 1024u;
+    while (new_cap < want) {
+        if (new_cap > SIZE_MAX / 2u) {
+            new_cap = want;
+            break;
+        }
+        new_cap *= 2u;
+    }
+
+    new_tags = (uint8_t *)realloc(g_zone_trace_before_tags_scratch,
+                                  new_cap * sizeof(*new_tags));
+    if (!new_tags) return 0;
+    g_zone_trace_before_tags_scratch = new_tags;
+
+    new_cw = (uint16_t *)realloc(g_zone_trace_before_cw_scratch,
+                                 new_cap * sizeof(*new_cw));
+    if (!new_cw) return 0;
+    g_zone_trace_before_cw_scratch = new_cw;
+
+    g_zone_trace_before_capacity = new_cap;
+    return 1;
+}
+
 static void renderer_workload_stats_reset(RendererWorkloadStats *stats);
 static void renderer_workload_stats_add(RendererWorkloadStats *dst, const RendererWorkloadStats *src);
 static uint64_t renderer_workload_estimated_writes(const RendererWorkloadStats *stats);
@@ -1085,14 +1124,30 @@ static void automap_mark_seen(LevelState *level,
                               int16_t x1, int16_t z1, int16_t x2, int16_t z2,
                               uint8_t is_door, uint8_t door_key_id)
 {
+    uint32_t reserve_walls;
+    uint32_t reserve_hash;
+
     if (!level) return;
     if (!level->graphics || level->graphics_byte_count == 0) return;
     if (gfx_off == 0 || gfx_off >= level->graphics_byte_count) return;
 
     automap_lock();
 
-    /* Lazy init structures. */
-    if (!automap_ensure_hash(level, 2048u)) {
+    /* One-time reservation based on level topology so first exploration does not
+     * trigger repeated realloc/calloc growth in the render loop. */
+    reserve_walls = (level->num_floor_lines > 0) ? (uint32_t)level->num_floor_lines : 256u;
+    if (reserve_walls < 256u) reserve_walls = 256u;
+    if (reserve_walls > 262144u) reserve_walls = 262144u;
+    reserve_walls *= 2u;
+
+    reserve_hash = reserve_walls * 2u;
+    if (reserve_hash < 2048u) reserve_hash = 2048u;
+
+    if (!automap_ensure_walls(level, reserve_walls)) {
+        automap_unlock();
+        return;
+    }
+    if (!automap_ensure_hash(level, reserve_hash)) {
         automap_unlock();
         return;
     }
@@ -5098,15 +5153,13 @@ static void renderer_zone_trace_floor_stats_accumulate_edges(RendererZoneTraceFl
 
     if (!cw || stats->submitted_pixels == 0) return;
 
-    stats->before_tags = (uint8_t *)malloc((size_t)stats->submitted_pixels * sizeof(*stats->before_tags));
-    stats->before_cw = (uint16_t *)malloc((size_t)stats->submitted_pixels * sizeof(*stats->before_cw));
-    if (!stats->before_tags || !stats->before_cw) {
-        free(stats->before_tags);
-        free(stats->before_cw);
+    if (!renderer_zone_trace_ensure_before_capacity((size_t)stats->submitted_pixels)) {
         stats->before_tags = NULL;
         stats->before_cw = NULL;
         return;
     }
+    stats->before_tags = g_zone_trace_before_tags_scratch;
+    stats->before_cw = g_zone_trace_before_cw_scratch;
 
     {
         size_t idx = 0;
@@ -5134,8 +5187,6 @@ static void renderer_zone_trace_floor_stats_accumulate_edges(RendererZoneTraceFl
         stats->before_count = idx;
         stats->before_ready = (idx == (size_t)stats->submitted_pixels) ? 1 : 0;
         if (!stats->before_ready) {
-            free(stats->before_tags);
-            free(stats->before_cw);
             stats->before_tags = NULL;
             stats->before_cw = NULL;
             stats->before_count = 0;
@@ -5187,8 +5238,6 @@ static void renderer_zone_trace_floor_stats_finalize(RendererZoneTraceFloorStats
         }
     }
 
-    free(stats->before_tags);
-    free(stats->before_cw);
     stats->before_tags = NULL;
     stats->before_cw = NULL;
     stats->before_count = 0;
@@ -7483,6 +7532,12 @@ static int renderer_floor_fast_ensure_cols_capacity(int col_count)
 
 static void renderer_floor_fast_release_scratch(void)
 {
+    free(g_zone_trace_before_tags_scratch);
+    g_zone_trace_before_tags_scratch = NULL;
+    free(g_zone_trace_before_cw_scratch);
+    g_zone_trace_before_cw_scratch = NULL;
+    g_zone_trace_before_capacity = 0;
+
     free(g_floor_fast_rows_scratch);
     g_floor_fast_rows_scratch = NULL;
     g_floor_fast_rows_capacity = 0;
@@ -7498,6 +7553,26 @@ static void renderer_floor_fast_release_scratch(void)
     free(g_floor_fast_cov_diff_scratch);
     g_floor_fast_cov_diff_scratch = NULL;
     g_floor_fast_col_capacity = 0;
+
+    free(g_viewer_floor_occlude_scratch);
+    g_viewer_floor_occlude_scratch = NULL;
+    g_viewer_floor_occlude_capacity = 0;
+
+    free(g_poly_edge_left_scratch);
+    g_poly_edge_left_scratch = NULL;
+    free(g_poly_edge_right_scratch);
+    g_poly_edge_right_scratch = NULL;
+    free(g_poly_bright_left_scratch);
+    g_poly_bright_left_scratch = NULL;
+    free(g_poly_bright_right_scratch);
+    g_poly_bright_right_scratch = NULL;
+    g_poly_edge_h_capacity = 0;
+
+    free(g_poly_col_top_scratch);
+    g_poly_col_top_scratch = NULL;
+    free(g_poly_col_bot_scratch);
+    g_poly_col_bot_scratch = NULL;
+    g_poly_col_w_capacity = 0;
 }
 
 static void renderer_floor_fast_seed_rows(FloorRowFast *rows,
