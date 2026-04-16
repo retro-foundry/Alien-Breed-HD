@@ -578,6 +578,8 @@ static int renderer_zone_clip_segment_to_dx_ranges(const LevelState *level,
                                                    int clip_dx_end,
                                                    int *out_dx_start,
                                                    int *out_dx_end,
+                                                   double *out_t_start,
+                                                   double *out_t_end,
                                                    int max_ranges);
 
 #define RENDERER_GEOM_CLIP_MAX_T_VALUES 1024
@@ -8330,12 +8332,20 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
         (geom_clip_level && geom_clip_zone >= 0 && billboard_world_w > 0 && width > 0) ? 1 : 0;
     int geom_dx_starts[RENDERER_GEOM_CLIP_MAX_SPANS];
     int geom_dx_ends[RENDERER_GEOM_CLIP_MAX_SPANS];
+    double geom_t_starts[RENDERER_GEOM_CLIP_MAX_SPANS];
+    double geom_t_ends[RENDERER_GEOM_CLIP_MAX_SPANS];
     int geom_dx_count = 1;
     int geom_dx_idx = 0;
+    int geom_src_col_span = -1;
+    int64_t geom_src_col_fp = 0;
+    int64_t geom_src_col_step = 0;
 
     geom_dx_starts[0] = dx_start;
     geom_dx_ends[0] = dx_end;
+    geom_t_starts[0] = (width > 0) ? ((double)dx_start / (double)width) : 0.0;
+    geom_t_ends[0] = (width > 0) ? ((double)dx_end / (double)width) : 1.0;
     if (have_geometric_zone_clip) {
+        const double inv_width = 1.0 / (double)width;
         int32_t half_span_world = billboard_world_w / 2;
         int64_t off_x64;
         int64_t off_z64;
@@ -8371,6 +8381,8 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                                                 width,
                                                                 geom_dx_starts,
                                                                 geom_dx_ends,
+                                                                geom_t_starts,
+                                                                geom_t_ends,
                                                                 RENDERER_GEOM_CLIP_MAX_SPANS);
         if (geom_dx_count <= 0) {
             if (profile_collect_stats) {
@@ -8388,17 +8400,27 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
             for (int gi = 0; gi < geom_dx_count; gi++) {
                 int s = geom_dx_starts[gi];
                 int e = geom_dx_ends[gi];
+                double ts = geom_t_starts[gi];
+                double te = geom_t_ends[gi];
                 if (s < dx_start) s = dx_start;
                 if (e > dx_end) e = dx_end;
+                if (ts < (double)s * inv_width) ts = (double)s * inv_width;
+                if (te > (double)e * inv_width) te = (double)e * inv_width;
+                if (te <= ts) continue;
                 if (e <= s) continue;
 
                 if (sliced_count > 0 && s <= geom_dx_ends[sliced_count - 1]) {
                     if (e > geom_dx_ends[sliced_count - 1]) {
                         geom_dx_ends[sliced_count - 1] = e;
                     }
+                    if (te > geom_t_ends[sliced_count - 1]) {
+                        geom_t_ends[sliced_count - 1] = te;
+                    }
                 } else {
                     geom_dx_starts[sliced_count] = s;
                     geom_dx_ends[sliced_count] = e;
+                    geom_t_starts[sliced_count] = ts;
+                    geom_t_ends[sliced_count] = te;
                     sliced_count++;
                 }
             }
@@ -8437,13 +8459,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     /* --- Column loop --- */
     for (int dx = dx_start; dx < dx_end; dx++) {
         const int screen_col = sx + dx;
-
-        /* Advance source-column DDA regardless of geometric clip so texture
-         * mapping remains stable across rejected columns. */
-        int src_col = src_col_fp >> 16;
-        src_col_fp += src_col_step;
-        if (src_col >= eff_cols) src_col = eff_cols - 1;
-        if ((uint32_t)src_col >= max_ptr_col) src_col = (int)(max_ptr_col - 1);
+        int src_col;
 
         if (have_geometric_zone_clip) {
             while (geom_dx_idx < geom_dx_count && dx >= geom_dx_ends[geom_dx_idx]) {
@@ -8457,7 +8473,29 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                 }
                 continue;
             }
+
+            if (geom_src_col_span != geom_dx_idx) {
+                int span_width = geom_dx_ends[geom_dx_idx] - geom_dx_starts[geom_dx_idx];
+                double span_t0 = geom_t_starts[geom_dx_idx];
+                double span_t1 = geom_t_ends[geom_dx_idx];
+                double eff_cols_d = (double)eff_cols;
+
+                geom_src_col_fp = (int64_t)llround(span_t0 * eff_cols_d * 65536.0);
+                geom_src_col_step = (span_width > 0)
+                    ? (int64_t)llround(((span_t1 - span_t0) * eff_cols_d * 65536.0) / (double)span_width)
+                    : 0;
+                geom_src_col_span = geom_dx_idx;
+            }
+
+            src_col = (int)(geom_src_col_fp >> 16);
+            geom_src_col_fp += geom_src_col_step;
+        } else {
+            src_col = src_col_fp >> 16;
+            src_col_fp += src_col_step;
         }
+
+        if (src_col >= eff_cols) src_col = eff_cols - 1;
+        if ((uint32_t)src_col >= max_ptr_col) src_col = (int)(max_ptr_col - 1);
 
         uint32_t entry_off = ptr_offset + (uint32_t)src_col * 4;
         if (entry_off + 4 > ptr_size) continue;
@@ -9702,6 +9740,8 @@ static int renderer_zone_clip_segment_to_dx_ranges(const LevelState *level,
                                                    int clip_dx_end,
                                                    int *out_dx_start,
                                                    int *out_dx_end,
+                                                   double *out_t_start,
+                                                   double *out_t_end,
                                                    int max_ranges)
 {
     const double eps = 1e-9;
@@ -9839,6 +9879,8 @@ static int renderer_zone_clip_segment_to_dx_ranges(const LevelState *level,
         if (out_count > 0 && sx <= out_dx_end[out_count - 1]) {
             if (ex > out_dx_end[out_count - 1])
                 out_dx_end[out_count - 1] = ex;
+            if (out_t_end && b > out_t_end[out_count - 1])
+                out_t_end[out_count - 1] = b;
             continue;
         }
 
@@ -9847,6 +9889,8 @@ static int renderer_zone_clip_segment_to_dx_ranges(const LevelState *level,
         }
         out_dx_start[out_count] = sx;
         out_dx_end[out_count] = ex;
+        if (out_t_start) out_t_start[out_count] = a;
+        if (out_t_end) out_t_end[out_count] = b;
         out_count++;
     }
 
