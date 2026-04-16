@@ -7311,6 +7311,71 @@ static AB3D_THREAD_LOCAL int g_floor_fast_col_capacity = 0;
 static AB3D_THREAD_LOCAL int16_t *g_viewer_floor_occlude_scratch = NULL;
 static AB3D_THREAD_LOCAL int g_viewer_floor_occlude_capacity = 0;
 
+/* Thread-local scanline edge tables for floor/ceiling/sky polygon rasterization.
+ * Shared by renderer_draw_zone_ctx, renderer_tessellate_sky_ceiling_ctx, and
+ * renderer_build_viewer_split_floor_occluder — each caller finishes before the
+ * next one starts, so a single set of buffers covers all three. */
+static AB3D_THREAD_LOCAL int16_t *g_poly_edge_left_scratch    = NULL;
+static AB3D_THREAD_LOCAL int16_t *g_poly_edge_right_scratch   = NULL;
+static AB3D_THREAD_LOCAL int16_t *g_poly_bright_left_scratch  = NULL;
+static AB3D_THREAD_LOCAL int16_t *g_poly_bright_right_scratch = NULL;
+static AB3D_THREAD_LOCAL int      g_poly_edge_h_capacity      = 0;
+static AB3D_THREAD_LOCAL int16_t *g_poly_col_top_scratch      = NULL;
+static AB3D_THREAD_LOCAL int16_t *g_poly_col_bot_scratch      = NULL;
+static AB3D_THREAD_LOCAL int      g_poly_col_w_capacity       = 0;
+
+/* Ensure all four h-row edge/bright scratch buffers are at least h entries wide.
+ * Returns 1 on success, 0 on allocation failure. */
+static int renderer_poly_edge_ensure_h(int h)
+{
+    int16_t *p;
+    int new_cap;
+    if (h <= 0) return 0;
+    if (g_poly_edge_left_scratch && h <= g_poly_edge_h_capacity) return 1;
+    new_cap = (g_poly_edge_h_capacity > 0) ? g_poly_edge_h_capacity : 64;
+    while (new_cap < h) {
+        if (new_cap > INT_MAX / 2) { new_cap = h; break; }
+        new_cap *= 2;
+    }
+    p = (int16_t *)realloc(g_poly_edge_left_scratch,    (size_t)new_cap * sizeof(*p));
+    if (!p) return 0;
+    g_poly_edge_left_scratch    = p;
+    p = (int16_t *)realloc(g_poly_edge_right_scratch,   (size_t)new_cap * sizeof(*p));
+    if (!p) return 0;
+    g_poly_edge_right_scratch   = p;
+    p = (int16_t *)realloc(g_poly_bright_left_scratch,  (size_t)new_cap * sizeof(*p));
+    if (!p) return 0;
+    g_poly_bright_left_scratch  = p;
+    p = (int16_t *)realloc(g_poly_bright_right_scratch, (size_t)new_cap * sizeof(*p));
+    if (!p) return 0;
+    g_poly_bright_right_scratch = p;
+    g_poly_edge_h_capacity = new_cap;
+    return 1;
+}
+
+/* Ensure both w-column col-bounds scratch buffers are at least w entries wide.
+ * Returns 1 on success, 0 on allocation failure. */
+static int renderer_poly_col_ensure_w(int w)
+{
+    int16_t *p;
+    int new_cap;
+    if (w <= 0) return 0;
+    if (g_poly_col_top_scratch && w <= g_poly_col_w_capacity) return 1;
+    new_cap = (g_poly_col_w_capacity > 0) ? g_poly_col_w_capacity : 64;
+    while (new_cap < w) {
+        if (new_cap > INT_MAX / 2) { new_cap = w; break; }
+        new_cap *= 2;
+    }
+    p = (int16_t *)realloc(g_poly_col_top_scratch, (size_t)new_cap * sizeof(*p));
+    if (!p) return 0;
+    g_poly_col_top_scratch = p;
+    p = (int16_t *)realloc(g_poly_col_bot_scratch, (size_t)new_cap * sizeof(*p));
+    if (!p) return 0;
+    g_poly_col_bot_scratch = p;
+    g_poly_col_w_capacity = new_cap;
+    return 1;
+}
+
 static int16_t *renderer_viewer_floor_occlude_get_scratch(int width)
 {
     int new_cap;
@@ -12435,13 +12500,9 @@ static int renderer_build_viewer_split_floor_occluder(const GameState *state,
     y_off = r->yoff;
     half_h = h / 2;
 
-    left_edge = (int16_t *)malloc((size_t)h * sizeof(*left_edge));
-    right_edge = (int16_t *)malloc((size_t)h * sizeof(*right_edge));
-    if (!left_edge || !right_edge) {
-        free(left_edge);
-        free(right_edge);
-        return 0;
-    }
+    if (!renderer_poly_edge_ensure_h(h)) return 0;
+    left_edge  = g_poly_edge_left_scratch;
+    right_edge = g_poly_edge_right_scratch;
 
     {
         const uint8_t *ptr = gfx_data + 2;
@@ -12610,8 +12671,6 @@ static int renderer_build_viewer_split_floor_occluder(const GameState *state,
         }
     }
 
-    free(left_edge);
-    free(right_edge);
     return active;
 }
 
@@ -12861,9 +12920,9 @@ static void renderer_tessellate_sky_ceiling_ctx(RenderSliceContext *ctx,
     int32_t rel_h = zone_roof - y_off;
     if (rel_h >= 0) return; /* ceiling must be above camera eye */
 
-    int16_t *left_edge  = (int16_t*)malloc((size_t)h * sizeof(int16_t));
-    int16_t *right_edge = (int16_t*)malloc((size_t)h * sizeof(int16_t));
-    if (!left_edge || !right_edge) { free(left_edge); free(right_edge); return; }
+    if (!renderer_poly_edge_ensure_h(h)) return;
+    int16_t *left_edge  = g_poly_edge_left_scratch;
+    int16_t *right_edge = g_poly_edge_right_scratch;
 
     for (int i = 0; i < h; i++) {
         left_edge[i]  = renderer_clamp_edge_x_i16(r->width);
@@ -12963,8 +13022,6 @@ static void renderer_tessellate_sky_ceiling_ctx(RenderSliceContext *ctx,
         renderer_draw_sky_ceiling_span_ctx(ctx, (int16_t)row, le, re);
     }
 
-    free(left_edge);
-    free(right_edge);
 }
 
 static void renderer_build_zone_stream_backdrop_sky_cache(int use_upper,
@@ -13585,14 +13642,6 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
              */
             int h = g_renderer.height;
             int center = h / 2;  /* Match wall projection center */
-            int16_t *left_edge = (int16_t*)malloc((size_t)h * sizeof(int16_t));
-            int16_t *right_edge_tab = (int16_t*)malloc((size_t)h * sizeof(int16_t));
-            int16_t *col_top_tab = NULL;
-            int16_t *col_bot_tab = NULL;
-            int16_t *left_bright_tab = NULL;
-            int16_t *right_bright_tab = NULL;
-            int col_x_min = g_renderer.width;
-            int col_x_max = -1;
             const int allow_floor_col_fast =
                 (AB3D_ENABLE_FLOOR_COL_FAST && AB3D_CW_COL_MAJOR);
             const int allow_floor_col_fast_poly =
@@ -13600,24 +13649,19 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                  (floor_y_dist > 0 || AB3D_FLOOR_COL_FAST_INCLUDE_CEILING));
             const int build_floor_col_bounds =
                 (allow_floor_col_fast_poly && AB3D_FLOOR_FAST_USE_EDGE_BOUNDS);
+            if (!renderer_poly_edge_ensure_h(h)) break;
+            int16_t *left_edge      = g_poly_edge_left_scratch;
+            int16_t *right_edge_tab = g_poly_edge_right_scratch;
+            int16_t *left_bright_tab  = use_gour_floor ? g_poly_bright_left_scratch  : NULL;
+            int16_t *right_bright_tab = use_gour_floor ? g_poly_bright_right_scratch : NULL;
+            int16_t *col_top_tab = NULL;
+            int16_t *col_bot_tab = NULL;
+            int col_x_min = g_renderer.width;
+            int col_x_max = -1;
             if (build_floor_col_bounds) {
-                col_top_tab = (int16_t*)malloc((size_t)g_renderer.width * sizeof(int16_t));
-                col_bot_tab = (int16_t*)malloc((size_t)g_renderer.width * sizeof(int16_t));
-            }
-            if (use_gour_floor) {
-                left_bright_tab = (int16_t*)malloc((size_t)h * sizeof(int16_t));
-                right_bright_tab = (int16_t*)malloc((size_t)h * sizeof(int16_t));
-            }
-            if (!left_edge || !right_edge_tab ||
-                (build_floor_col_bounds && (!col_top_tab || !col_bot_tab)) ||
-                (use_gour_floor && (!left_bright_tab || !right_bright_tab))) {
-                free(left_edge);
-                free(right_edge_tab);
-                free(col_top_tab);
-                free(col_bot_tab);
-                free(left_bright_tab);
-                free(right_bright_tab);
-                break;
+                if (!renderer_poly_col_ensure_w(g_renderer.width)) break;
+                col_top_tab = g_poly_col_top_scratch;
+                col_bot_tab = g_poly_col_bot_scratch;
             }
             for (int i = 0; i < h; i++) {
                 left_edge[i] = renderer_clamp_edge_x_i16(g_renderer.width);
@@ -13910,12 +13954,6 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                          poly_bot);
                 ctx->active_floor_trace_stats = saved_floor_trace_stats;
                 renderer_zone_trace_floor_stats_log(&floor_trace_stats);
-                free(left_edge);
-                free(right_edge_tab);
-                free(col_top_tab);
-                free(col_bot_tab);
-                free(left_bright_tab);
-                free(right_bright_tab);
                 break;
             }
 
@@ -13999,12 +14037,6 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                      poly_bot);
             ctx->active_floor_trace_stats = saved_floor_trace_stats;
             renderer_zone_trace_floor_stats_log(&floor_trace_stats);
-            free(left_edge);
-            free(right_edge_tab);
-            free(col_top_tab);
-            free(col_bot_tab);
-            free(left_bright_tab);
-            free(right_bright_tab);
             break;
         }
 
