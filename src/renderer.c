@@ -2203,12 +2203,15 @@ static int renderer_thread_worker_main(void *userdata)
 {
     RendererThreadWorker *worker = (RendererThreadWorker*)userdata;
     RendererThreadPool *pool = &g_renderer_thread_pool;
+    int last_job_generation = 0;
     if (!worker) return 0;
 
     if (worker->index < 0 || worker->index >= pool->worker_count ||
         !pool->worker_sems[worker->index] || !pool->done_sem) {
         return 0;
     }
+
+    last_job_generation = SDL_AtomicGet(&pool->job_generation);
 
     for (;;) {
         SDL_SemWait(pool->worker_sems[worker->index]);
@@ -2217,6 +2220,16 @@ static int renderer_thread_worker_main(void *userdata)
             renderer_floor_fast_release_scratch();
             renderer_zone_trace_floor_stats_release_scratch();
             return 0;
+        }
+
+        {
+            int job_generation = SDL_AtomicGet(&pool->job_generation);
+            if (job_generation == last_job_generation) {
+                /* Ignore duplicate/stale wakeups; each worker runs at most once per dispatch. */
+                continue;
+            }
+            SDL_MemoryBarrierAcquire();
+            last_job_generation = job_generation;
         }
 
         const int active = (worker->index < pool->active_workers);
@@ -2476,7 +2489,7 @@ static int renderer_dispatch_threaded_world(GameState *state,
     SDL_AtomicSet(&pool->pending_workers, active_workers);
     SDL_AtomicAdd(&pool->job_generation, 1);
     SDL_MemoryBarrierRelease();
-    for (int i = 0; i < pool->worker_count; i++) {
+    for (int i = 0; i < active_workers; i++) {
         SDL_SemPost(pool->worker_sems[i]);
     }
 
@@ -2529,7 +2542,7 @@ static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
     SDL_AtomicSet(&pool->pending_workers, active_workers);
     SDL_AtomicAdd(&pool->job_generation, 1);
     SDL_MemoryBarrierRelease();
-    for (int i = 0; i < pool->worker_count; i++) {
+    for (int i = 0; i < active_workers; i++) {
         SDL_SemPost(pool->worker_sems[i]);
     }
 
