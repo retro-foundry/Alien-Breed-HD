@@ -1064,6 +1064,91 @@ static void display_gl_line(int x0, int y0, int x1, int y1, Uint8 r, Uint8 g, Ui
     g_gl_draw_arrays(GL_LINES, 0, 2);
 }
 
+static void display_gl_lines_xy(const float *xy, int nverts, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+{
+    if (!g_gl_hud_ok || g_gl_overlay_win_w < 1 || !xy || nverts < 2 || (nverts & 1) != 0) return;
+
+    int wx = g_gl_overlay_win_w;
+    int wy = g_gl_overlay_win_h;
+    float fr = r / 255.0f;
+    float fg = g / 255.0f;
+    float fb = b / 255.0f;
+    float fa = a / 255.0f;
+    float *buf = (float *)malloc((size_t)nverts * 2u * sizeof(float));
+    if (!buf) return;
+
+    for (int i = 0; i < nverts; i++) {
+        float nx, ny;
+        display_gl_wnd_ndc(xy[i * 2], xy[i * 2 + 1], wx, wy, &nx, &ny);
+        buf[i * 2] = nx;
+        buf[i * 2 + 1] = ny;
+    }
+
+    g_gl_use_program(g_gl_prog_hud_solid);
+    if (g_gl_hud_loc_color_solid >= 0) g_gl_uniform4f(g_gl_hud_loc_color_solid, fr, fg, fb, fa);
+    g_gl_bind_vertex_array(g_gl_hud_vao_solid);
+    g_gl_bind_buffer(0x8892, g_gl_hud_vbo);
+    g_gl_buffer_data(0x8892, (ptrdiff_t)((size_t)nverts * 2u * sizeof(float)), buf, GL_STREAM_DRAW);
+    g_gl_draw_arrays(GL_LINES, 0, nverts);
+    free(buf);
+}
+
+typedef struct DisplayAutomapGlLineBucket {
+    Uint8 r;
+    Uint8 g;
+    Uint8 b;
+    Uint8 a;
+    int begin;
+    int count;
+    int write;
+} DisplayAutomapGlLineBucket;
+
+static int display_automap_gl_find_bucket(DisplayAutomapGlLineBucket *buckets, int *bucket_count,
+                                          int bucket_cap, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+{
+    if (!buckets || !bucket_count || bucket_cap < 1) return -1;
+    for (int i = 0; i < *bucket_count; i++) {
+        DisplayAutomapGlLineBucket *bucket = &buckets[i];
+        if (bucket->r == r && bucket->g == g && bucket->b == b && bucket->a == a)
+            return i;
+    }
+    if (*bucket_count >= bucket_cap) return -1;
+    {
+        DisplayAutomapGlLineBucket *bucket = &buckets[*bucket_count];
+        bucket->r = r;
+        bucket->g = g;
+        bucket->b = b;
+        bucket->a = a;
+        bucket->begin = 0;
+        bucket->count = 0;
+        bucket->write = 0;
+    }
+    (*bucket_count)++;
+    return *bucket_count - 1;
+}
+
+static void display_automap_gl_append_bucket_line(float *xy, int max_floats,
+                                                  DisplayAutomapGlLineBucket *bucket,
+                                                  float x0, float y0, float x1, float y1)
+{
+    if (!xy || !bucket) return;
+    if (bucket->write > max_floats - 4) return;
+    xy[bucket->write++] = x0;
+    xy[bucket->write++] = y0;
+    xy[bucket->write++] = x1;
+    xy[bucket->write++] = y1;
+}
+
+static void display_automap_gl_prepare_buckets(DisplayAutomapGlLineBucket *buckets, int bucket_count)
+{
+    int offset = 0;
+    for (int i = 0; i < bucket_count; i++) {
+        buckets[i].begin = offset;
+        buckets[i].write = offset;
+        offset += buckets[i].count;
+    }
+}
+
 /* Window-pixel triangles (solid HUD shader). nverts: 3 or 6 (one or two triangles). */
 static void display_gl_solid_triangles_xy(const float *xy, int nverts, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
@@ -1956,6 +2041,37 @@ static void display_automap_line_stroked_sdl(SDL_Renderer *ren,
     }
 }
 
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+static int display_automap_append_stroke_quad(SDL_Vertex *verts, int max_verts, int *vert_count,
+                                              int ax0, int ay0, int ax1, int ay1,
+                                              Uint8 r, Uint8 g, Uint8 b, Uint8 a,
+                                              float half_width)
+{
+    if (!verts || !vert_count || half_width <= 0.0f) return 1;
+    if (*vert_count > max_verts - 6) return 0;
+
+    float dx = (float)(ax1 - ax0);
+    float dy = (float)(ay1 - ay0);
+    float len_sq = dx * dx + dy * dy;
+    if (len_sq < 1e-6f) return 1;
+
+    float inv_len = 1.0f / SDL_sqrtf(len_sq);
+    float ox = -dy * inv_len * half_width;
+    float oy = dx * inv_len * half_width;
+    SDL_Color color = { r, g, b, a };
+
+    SDL_Vertex *v = &verts[*vert_count];
+    v[0].position.x = (float)ax0 + ox; v[0].position.y = (float)ay0 + oy; v[0].color = color; v[0].tex_coord.x = 0.0f; v[0].tex_coord.y = 0.0f;
+    v[1].position.x = (float)ax1 + ox; v[1].position.y = (float)ay1 + oy; v[1].color = color; v[1].tex_coord.x = 0.0f; v[1].tex_coord.y = 0.0f;
+    v[2].position.x = (float)ax1 - ox; v[2].position.y = (float)ay1 - oy; v[2].color = color; v[2].tex_coord.x = 0.0f; v[2].tex_coord.y = 0.0f;
+    v[3].position.x = (float)ax0 + ox; v[3].position.y = (float)ay0 + oy; v[3].color = color; v[3].tex_coord.x = 0.0f; v[3].tex_coord.y = 0.0f;
+    v[4].position.x = (float)ax1 - ox; v[4].position.y = (float)ay1 - oy; v[4].color = color; v[4].tex_coord.x = 0.0f; v[4].tex_coord.y = 0.0f;
+    v[5].position.x = (float)ax0 - ox; v[5].position.y = (float)ay0 - oy; v[5].color = color; v[5].tex_coord.x = 0.0f; v[5].tex_coord.y = 0.0f;
+    *vert_count += 6;
+    return 1;
+}
+#endif
+
 /* Parallel-offset stroke: black_k_max / fg_k_max are inclusive half-widths in pixels. */
 static void display_automap_draw_line_outlined(SDL_Renderer *ren,
                                                int ax0, int ay0, int ax1, int ay1,
@@ -2508,15 +2624,195 @@ static void display_automap_sdl_overlay(GameState *state)
     if (n >= 3 && (s_c12[n - 3] & RENDERER_AUTOMAP_SEGFLAG_PLAYER))
         wall_end = n - 3;
 
-    for (int i = 0; i < wall_end; i++) {
-        int ax0, ay0, ax1, ay1;
-        display_automap_map_pt(s_ix0[i], s_iy0[i], iw, ih, &ax0, &ay0);
-        display_automap_map_pt(s_ix1[i], s_iy1[i], iw, ih, &ax1, &ay1);
-        uint16_t seg = s_c12[i];
-        Uint8 alpha = (seg & RENDERER_AUTOMAP_SEGFLAG_INTERNAL) ? (Uint8)128 : (Uint8)255;
-        Uint8 fr, fg, fb;
-        display_automap_amiga12_to_rgb(seg, &fr, &fg, &fb);
-        display_automap_draw_line_outlined(g_sdl_ren, ax0, ay0, ax1, ay1, fr, fg, fb, alpha, 3, 1);
+    if (g_gl_unpack_ok && g_gl_hud_ok) {
+        enum { DISPLAY_AUTOMAP_GL_MAX_BUCKETS = 16 };
+        static float s_black_xy[DISPLAY_AUTOMAP_MAX_SEGS * 28];
+        static float s_fg_xy[DISPLAY_AUTOMAP_MAX_SEGS * 12];
+        DisplayAutomapGlLineBucket black_buckets[DISPLAY_AUTOMAP_GL_MAX_BUCKETS];
+        DisplayAutomapGlLineBucket fg_buckets[DISPLAY_AUTOMAP_GL_MAX_BUCKETS];
+        int black_bucket_count = 0;
+        int fg_bucket_count = 0;
+        int batched = 1;
+
+        memset(black_buckets, 0, sizeof(black_buckets));
+        memset(fg_buckets, 0, sizeof(fg_buckets));
+
+        for (int i = 0; i < wall_end; i++) {
+            uint16_t seg = s_c12[i];
+            Uint8 alpha = (seg & RENDERER_AUTOMAP_SEGFLAG_INTERNAL) ? (Uint8)128 : (Uint8)255;
+            Uint8 fr, fg, fb;
+            int black_idx;
+            int fg_idx;
+
+            display_automap_amiga12_to_rgb(seg, &fr, &fg, &fb);
+            black_idx = display_automap_gl_find_bucket(black_buckets, &black_bucket_count,
+                                                       DISPLAY_AUTOMAP_GL_MAX_BUCKETS,
+                                                       0, 0, 0, alpha);
+            fg_idx = display_automap_gl_find_bucket(fg_buckets, &fg_bucket_count,
+                                                    DISPLAY_AUTOMAP_GL_MAX_BUCKETS,
+                                                    fr, fg, fb, alpha);
+            if (black_idx < 0 || fg_idx < 0) {
+                batched = 0;
+                break;
+            }
+            black_buckets[black_idx].count += 28;
+            fg_buckets[fg_idx].count += 12;
+        }
+
+        if (batched) {
+            display_automap_gl_prepare_buckets(black_buckets, black_bucket_count);
+            display_automap_gl_prepare_buckets(fg_buckets, fg_bucket_count);
+
+            for (int i = 0; i < wall_end; i++) {
+                int ax0, ay0, ax1, ay1;
+                uint16_t seg = s_c12[i];
+                Uint8 alpha = (seg & RENDERER_AUTOMAP_SEGFLAG_INTERNAL) ? (Uint8)128 : (Uint8)255;
+                Uint8 fr, fg, fb;
+                int black_idx;
+                int fg_idx;
+                int dx;
+                int dy;
+                double len;
+                double px;
+                double py;
+
+                display_automap_map_pt(s_ix0[i], s_iy0[i], iw, ih, &ax0, &ay0);
+                display_automap_map_pt(s_ix1[i], s_iy1[i], iw, ih, &ax1, &ay1);
+                display_automap_amiga12_to_rgb(seg, &fr, &fg, &fb);
+                black_idx = display_automap_gl_find_bucket(black_buckets, &black_bucket_count,
+                                                           DISPLAY_AUTOMAP_GL_MAX_BUCKETS,
+                                                           0, 0, 0, alpha);
+                fg_idx = display_automap_gl_find_bucket(fg_buckets, &fg_bucket_count,
+                                                        DISPLAY_AUTOMAP_GL_MAX_BUCKETS,
+                                                        fr, fg, fb, alpha);
+                if (black_idx < 0 || fg_idx < 0) {
+                    batched = 0;
+                    break;
+                }
+
+                dx = ax1 - ax0;
+                dy = ay1 - ay0;
+                len = hypot((double)dx, (double)dy);
+                if (len < 1e-6) continue;
+                px = -dy / len;
+                py = dx / len;
+
+                for (int k = -3; k <= 3; k++) {
+                    double oxk = k * px;
+                    double oyk = k * py;
+                    float ox = (float)(oxk + (oxk >= 0.0 ? 0.5 : -0.5));
+                    float oy = (float)(oyk + (oyk >= 0.0 ? 0.5 : -0.5));
+                    display_automap_gl_append_bucket_line(s_black_xy, (int)(sizeof(s_black_xy) / sizeof(s_black_xy[0])),
+                                                          &black_buckets[black_idx],
+                                                          (float)ax0 + ox, (float)ay0 + oy,
+                                                          (float)ax1 + ox, (float)ay1 + oy);
+                }
+                for (int k = -1; k <= 1; k++) {
+                    double oxk = k * px;
+                    double oyk = k * py;
+                    float ox = (float)(oxk + (oxk >= 0.0 ? 0.5 : -0.5));
+                    float oy = (float)(oyk + (oyk >= 0.0 ? 0.5 : -0.5));
+                    display_automap_gl_append_bucket_line(s_fg_xy, (int)(sizeof(s_fg_xy) / sizeof(s_fg_xy[0])),
+                                                          &fg_buckets[fg_idx],
+                                                          (float)ax0 + ox, (float)ay0 + oy,
+                                                          (float)ax1 + ox, (float)ay1 + oy);
+                }
+            }
+        }
+
+        if (batched) {
+            for (int i = 0; i < black_bucket_count; i++) {
+                if (black_buckets[i].count <= 0) continue;
+                display_gl_lines_xy(s_black_xy + black_buckets[i].begin,
+                                    black_buckets[i].count / 2,
+                                    black_buckets[i].r,
+                                    black_buckets[i].g,
+                                    black_buckets[i].b,
+                                    black_buckets[i].a);
+            }
+            for (int i = 0; i < fg_bucket_count; i++) {
+                if (fg_buckets[i].count <= 0) continue;
+                display_gl_lines_xy(s_fg_xy + fg_buckets[i].begin,
+                                    fg_buckets[i].count / 2,
+                                    fg_buckets[i].r,
+                                    fg_buckets[i].g,
+                                    fg_buckets[i].b,
+                                    fg_buckets[i].a);
+            }
+        } else {
+            for (int i = 0; i < wall_end; i++) {
+                int ax0, ay0, ax1, ay1;
+                display_automap_map_pt(s_ix0[i], s_iy0[i], iw, ih, &ax0, &ay0);
+                display_automap_map_pt(s_ix1[i], s_iy1[i], iw, ih, &ax1, &ay1);
+                uint16_t seg = s_c12[i];
+                Uint8 alpha = (seg & RENDERER_AUTOMAP_SEGFLAG_INTERNAL) ? (Uint8)128 : (Uint8)255;
+                Uint8 fr, fg, fb;
+                display_automap_amiga12_to_rgb(seg, &fr, &fg, &fb);
+                display_automap_draw_line_outlined(g_sdl_ren, ax0, ay0, ax1, ay1, fr, fg, fb, alpha, 3, 1);
+            }
+        }
+    } else {
+
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+        static SDL_Vertex s_black_verts[DISPLAY_AUTOMAP_MAX_SEGS * 6];
+        static SDL_Vertex s_fg_verts[DISPLAY_AUTOMAP_MAX_SEGS * 6];
+        int black_vert_count = 0;
+        int fg_vert_count = 0;
+        int batched = 1;
+
+        for (int i = 0; i < wall_end; i++) {
+            int ax0, ay0, ax1, ay1;
+            display_automap_map_pt(s_ix0[i], s_iy0[i], iw, ih, &ax0, &ay0);
+            display_automap_map_pt(s_ix1[i], s_iy1[i], iw, ih, &ax1, &ay1);
+            uint16_t seg = s_c12[i];
+            Uint8 alpha = (seg & RENDERER_AUTOMAP_SEGFLAG_INTERNAL) ? (Uint8)128 : (Uint8)255;
+            Uint8 fr, fg, fb;
+            display_automap_amiga12_to_rgb(seg, &fr, &fg, &fb);
+
+            if (!display_automap_append_stroke_quad(s_black_verts, DISPLAY_AUTOMAP_MAX_SEGS * 6,
+                                                    &black_vert_count,
+                                                    ax0, ay0, ax1, ay1,
+                                                    0, 0, 0, alpha, 3.5f) ||
+                !display_automap_append_stroke_quad(s_fg_verts, DISPLAY_AUTOMAP_MAX_SEGS * 6,
+                                                    &fg_vert_count,
+                                                    ax0, ay0, ax1, ay1,
+                                                    fr, fg, fb, alpha, 1.5f)) {
+                batched = 0;
+                break;
+            }
+        }
+
+        if (batched) {
+            SDL_SetRenderDrawBlendMode(g_sdl_ren, SDL_BLENDMODE_BLEND);
+            if (black_vert_count > 0)
+                SDL_RenderGeometry(g_sdl_ren, NULL, s_black_verts, black_vert_count, NULL, 0);
+            if (fg_vert_count > 0)
+                SDL_RenderGeometry(g_sdl_ren, NULL, s_fg_verts, fg_vert_count, NULL, 0);
+        } else {
+            for (int i = 0; i < wall_end; i++) {
+                int ax0, ay0, ax1, ay1;
+                display_automap_map_pt(s_ix0[i], s_iy0[i], iw, ih, &ax0, &ay0);
+                display_automap_map_pt(s_ix1[i], s_iy1[i], iw, ih, &ax1, &ay1);
+                uint16_t seg = s_c12[i];
+                Uint8 alpha = (seg & RENDERER_AUTOMAP_SEGFLAG_INTERNAL) ? (Uint8)128 : (Uint8)255;
+                Uint8 fr, fg, fb;
+                display_automap_amiga12_to_rgb(seg, &fr, &fg, &fb);
+                display_automap_draw_line_outlined(g_sdl_ren, ax0, ay0, ax1, ay1, fr, fg, fb, alpha, 3, 1);
+            }
+        }
+#endif
+    {
+        for (int i = 0; i < wall_end; i++) {
+            int ax0, ay0, ax1, ay1;
+            display_automap_map_pt(s_ix0[i], s_iy0[i], iw, ih, &ax0, &ay0);
+            display_automap_map_pt(s_ix1[i], s_iy1[i], iw, ih, &ax1, &ay1);
+            uint16_t seg = s_c12[i];
+            Uint8 alpha = (seg & RENDERER_AUTOMAP_SEGFLAG_INTERNAL) ? (Uint8)128 : (Uint8)255;
+            Uint8 fr, fg, fb;
+            display_automap_amiga12_to_rgb(seg, &fr, &fg, &fb);
+            display_automap_draw_line_outlined(g_sdl_ren, ax0, ay0, ax1, ay1, fr, fg, fb, alpha, 3, 1);
+        }
+    }
     }
 
     if (wall_end < n) {
