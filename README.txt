@@ -18,6 +18,19 @@ ACTIONS
 - Space: Operate / Use
 - Right Mouse Button: Operate / Use (when mouse is captured)
 
+GAMEPAD (MODERN FPS LAYOUT)
+- Left Stick: Move
+- Right Stick (X): Turn / look left-right
+- Right Trigger: Fire
+- Left Trigger or A: Operate / Use
+- B (press): Duck toggle
+- Left Bumper / Right Bumper: Previous / next weapon
+- Left Stick Click (or full stick tilt): Run
+- Right Stick Click or Y: Look behind
+- Start: Pause
+- Back: Toggle automap
+- D-pad Up / Down: Automap zoom in / out
+
 WEAPONS
 - 1-6 (or Numpad 1-6): Select weapon
 - Mouse Wheel: Cycle weapons

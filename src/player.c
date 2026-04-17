@@ -472,6 +472,10 @@ static void player_always_keys(PlayerState *plr, uint8_t *key_map,
 {
     player_ensure_valid_weapon_selection(plr);
 
+    if (input_gamepad_duck_toggle_requested()) {
+        key_map[keys->duck] = 1;
+    }
+
     /* Operate/Space - tap detection */
     uint8_t space_state = key_map[keys->operate];
     if (space_state && !(*old_space)) {
@@ -541,7 +545,8 @@ static void player_always_keys(PlayerState *plr, uint8_t *key_map,
     {
         MouseState mouse;
         input_read_mouse(&mouse);
-        int wheel_steps = (int)mouse.wheel_y;
+        int wheel_steps = (int)mouse.wheel_y +
+                          (int)input_consume_gamepad_weapon_cycle_steps();
         if (wheel_steps != 0) {
             int direction = (wheel_steps > 0) ? -1 : 1;
             if (wheel_steps < 0) wheel_steps = -wheel_steps;

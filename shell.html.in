@@ -198,7 +198,8 @@
         <p>For more projects use the top-right links (GitHub, Discord, or Patreon).</p>
         <p><strong>Mouse:</strong> The pointer is visible until you <strong>left-click</strong> in the window to capture it (windowed or fullscreen). Press <strong>Esc</strong> once to release capture</p>
         <p><strong>Move:</strong> WASD or arrow keys; <strong>mouse</strong> turns when captured. Shift: run; C: duck; L: look behind. <strong>Fire:</strong> mouse or Alt/Ctrl; <strong>use:</strong> Space or right mouse when captured.</p>
-        <p><strong>Weapons:</strong> 1–5 (or numpad); mouse wheel cycles. <strong>Tab:</strong> automap; PgUp/PgDn zoom. F5/F9 quick save/load. Save games will not currently persist between sessions.</p>
+        <p><strong>Gamepad:</strong> left stick move, right stick turn, RT fire, LT/A use, B duck toggle, LB/RB weapon cycle, L3 run, R3/Y look behind, Back automap, D-pad Up/Down zoom.</p>
+        <p><strong>Weapons:</strong> 1–6 (or numpad); mouse wheel cycles. <strong>Tab:</strong> automap; PgUp/PgDn zoom. F5/F9 quick save/load. Save games will not currently persist between sessions.</p>
         <p><strong>Web build:</strong> After you finish level 4, the game returns to level 1, this is a 4 level demo. <strong>F11</strong> toggles fullscreen.</p>
       </div>
       <div class="remote-multiplayer-tip__note">

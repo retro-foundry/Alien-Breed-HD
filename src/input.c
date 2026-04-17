@@ -39,6 +39,17 @@
 #define AMIGA_KEY_7         0x07
 #define AMIGA_KEY_8         0x08
 
+/* Controller tuning */
+#define PAD_MOVE_DEADZONE           8000
+#define PAD_MOVE_KEY_THRESHOLD      7000
+#define PAD_RUN_AXIS_THRESHOLD      22000
+#define PAD_LOOK_DEADZONE           7000
+#define PAD_LOOK_AXIS_TO_MOUSE_DIV  1500
+#define PAD_LOOK_MIN_DELTA_AXIS     12000
+#define PAD_TRIGGER_DEADZONE        6000
+#define PAD_TRIGGER_FIRE_THRESHOLD  12000
+#define PAD_TRIGGER_USE_THRESHOLD   12000
+
 /* -----------------------------------------------------------------------
  * SDL scancode -> Amiga rawkey mapping
  * ----------------------------------------------------------------------- */
@@ -86,10 +97,62 @@ static uint8_t sdl_to_amiga(SDL_Scancode sc)
     }
 }
 
+static int input_abs_i32(int v)
+{
+    return (v < 0) ? -v : v;
+}
+
+static void input_set_key_state(uint8_t *map, uint8_t keycode, bool down)
+{
+    if (!map || keycode >= 128) return;
+    map[keycode] = down ? 1u : 0u;
+}
+
+static int16_t input_axis_with_deadzone(Sint16 raw, int deadzone)
+{
+    int v = (int)raw;
+    int sign = (v < 0) ? -1 : 1;
+    int mag = (v < 0) ? -v : v;
+    int scaled;
+    int range;
+
+    if (mag > 32767) mag = 32767;
+    if (mag <= deadzone) return 0;
+
+    range = 32767 - deadzone;
+    if (range <= 0) return 0;
+
+    scaled = ((mag - deadzone) * 32767) / range;
+    if (scaled > 32767) scaled = 32767;
+
+    return (int16_t)(scaled * sign);
+}
+
+static int input_axis_to_mouse_delta(int16_t axis)
+{
+    int mag = input_abs_i32((int)axis);
+    int shaped;
+    int delta;
+
+    if (mag <= 0) return 0;
+
+    /* Blend linear + quadratic response:
+     * near center = precise, near edge = quick turn. */
+    shaped = (mag + ((mag * mag) / 32767)) / 2;
+    delta = shaped / PAD_LOOK_AXIS_TO_MOUSE_DIV;
+    if (delta == 0 && mag >= PAD_LOOK_MIN_DELTA_AXIS) {
+        delta = 1;
+    }
+    if (axis < 0) delta = -delta;
+    return delta;
+}
+
 /* -----------------------------------------------------------------------
  * Mouse state
  * ----------------------------------------------------------------------- */
 static MouseState g_mouse = {0};
+static JoyState g_joy1 = {0};
+static JoyState g_joy2 = {0};
 static bool g_quit_requested = false;
 static bool g_f5_save_requested = false;
 static bool g_f9_load_requested = false;
@@ -100,6 +163,16 @@ static bool g_automap_toggle_requested = false;
 static bool g_automap_pgup_requested = false;
 static bool g_automap_pgdn_requested = false;
 static bool g_fullscreen_toggle_requested = false;
+static uint8_t g_keyboard_keys[128];
+static uint8_t g_mouse_keys[128];
+static uint8_t g_gamepad_keys[128];
+
+static SDL_GameController *g_gamepad = NULL;
+static SDL_JoystickID g_gamepad_instance = -1;
+static uint8_t g_gamepad_prev_buttons[SDL_CONTROLLER_BUTTON_MAX];
+static bool g_gamecontroller_subsystem_inited = false;
+static uint8_t g_gamepad_duck_toggle_queue = 0;
+static int16_t g_gamepad_weapon_cycle_steps = 0;
 
 /* True after we successfully enable relative mode (click-to-play). The browser may
  * exit pointer lock before SDL_KEYDOWN(Escape) is delivered, so SDL_GetRelativeMouseMode()
@@ -135,6 +208,178 @@ static void input_force_cursor_visible(void)
     }
 }
 
+static void input_merge_key_sources(uint8_t *key_map)
+{
+    if (!key_map) return;
+    for (int i = 0; i < 128; i++) {
+        key_map[i] = (uint8_t)(g_keyboard_keys[i] || g_mouse_keys[i] || g_gamepad_keys[i]);
+    }
+}
+
+static void input_clear_key_sources(void)
+{
+    memset(g_keyboard_keys, 0, sizeof(g_keyboard_keys));
+    memset(g_mouse_keys, 0, sizeof(g_mouse_keys));
+    memset(g_gamepad_keys, 0, sizeof(g_gamepad_keys));
+}
+
+static void input_close_gamepad(void)
+{
+    if (g_gamepad) {
+        const char *name = SDL_GameControllerName(g_gamepad);
+        printf("[INPUT] Gamepad disconnected: %s\n", name ? name : "Unknown");
+        SDL_GameControllerClose(g_gamepad);
+        g_gamepad = NULL;
+    }
+    g_gamepad_instance = -1;
+    memset(g_gamepad_prev_buttons, 0, sizeof(g_gamepad_prev_buttons));
+    memset(g_gamepad_keys, 0, sizeof(g_gamepad_keys));
+    memset(&g_joy1, 0, sizeof(g_joy1));
+    memset(&g_joy2, 0, sizeof(g_joy2));
+    g_gamepad_duck_toggle_queue = 0;
+    g_gamepad_weapon_cycle_steps = 0;
+}
+
+static void input_try_open_gamepad(int device_index)
+{
+    SDL_GameController *pad;
+    SDL_Joystick *joy;
+    const char *name;
+
+    if (g_gamepad) return;
+    if (device_index < 0 || device_index >= SDL_NumJoysticks()) return;
+    if (!SDL_IsGameController(device_index)) return;
+
+    pad = SDL_GameControllerOpen(device_index);
+    if (!pad) {
+        printf("[INPUT] SDL_GameControllerOpen(%d) failed: %s\n",
+               device_index, SDL_GetError());
+        return;
+    }
+
+    joy = SDL_GameControllerGetJoystick(pad);
+    if (!joy) {
+        SDL_GameControllerClose(pad);
+        return;
+    }
+
+    g_gamepad = pad;
+    g_gamepad_instance = SDL_JoystickInstanceID(joy);
+    memset(g_gamepad_prev_buttons, 0, sizeof(g_gamepad_prev_buttons));
+    name = SDL_GameControllerName(pad);
+    printf("[INPUT] Gamepad connected: %s\n", name ? name : "Unknown");
+}
+
+static void input_try_open_first_gamepad(void)
+{
+    int num = SDL_NumJoysticks();
+    for (int i = 0; i < num && !g_gamepad; i++) {
+        input_try_open_gamepad(i);
+    }
+}
+
+static void input_update_gamepad(uint8_t *last_pressed)
+{
+    uint8_t buttons[SDL_CONTROLLER_BUTTON_MAX];
+    int16_t lx;
+    int16_t ly;
+    int16_t rx;
+    int16_t lt;
+    int16_t rt;
+    int move_mag;
+    bool run_held;
+    bool fire_held;
+    bool use_held;
+    bool look_behind_held;
+
+    (void)last_pressed;
+
+    memset(g_gamepad_keys, 0, sizeof(g_gamepad_keys));
+    memset(&g_joy1, 0, sizeof(g_joy1));
+    memset(&g_joy2, 0, sizeof(g_joy2));
+
+    if (!g_gamepad) return;
+
+    lx = input_axis_with_deadzone(
+        SDL_GameControllerGetAxis(g_gamepad, SDL_CONTROLLER_AXIS_LEFTX),
+        PAD_MOVE_DEADZONE);
+    ly = input_axis_with_deadzone(
+        SDL_GameControllerGetAxis(g_gamepad, SDL_CONTROLLER_AXIS_LEFTY),
+        PAD_MOVE_DEADZONE);
+    rx = input_axis_with_deadzone(
+        SDL_GameControllerGetAxis(g_gamepad, SDL_CONTROLLER_AXIS_RIGHTX),
+        PAD_LOOK_DEADZONE);
+    lt = input_axis_with_deadzone(
+        SDL_GameControllerGetAxis(g_gamepad, SDL_CONTROLLER_AXIS_TRIGGERLEFT),
+        PAD_TRIGGER_DEADZONE);
+    rt = input_axis_with_deadzone(
+        SDL_GameControllerGetAxis(g_gamepad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT),
+        PAD_TRIGGER_DEADZONE);
+
+    g_joy1.dx = (int16_t)(lx / 256);
+    g_joy1.dy = (int16_t)(ly / 256);
+    g_joy1.fire = (rt >= PAD_TRIGGER_FIRE_THRESHOLD);
+
+    if (ly < -PAD_MOVE_KEY_THRESHOLD) input_set_key_state(g_gamepad_keys, AMIGA_KEY_UP, true);
+    if (ly > PAD_MOVE_KEY_THRESHOLD) input_set_key_state(g_gamepad_keys, AMIGA_KEY_DOWN, true);
+    if (lx < -PAD_MOVE_KEY_THRESHOLD) input_set_key_state(g_gamepad_keys, AMIGA_KEY_PERIOD, true);
+    if (lx > PAD_MOVE_KEY_THRESHOLD) input_set_key_state(g_gamepad_keys, AMIGA_KEY_SLASH, true);
+
+    move_mag = input_abs_i32((int)lx);
+    if (input_abs_i32((int)ly) > move_mag) move_mag = input_abs_i32((int)ly);
+    run_held = SDL_GameControllerGetButton(g_gamepad, SDL_CONTROLLER_BUTTON_LEFTSTICK) != 0 ||
+               move_mag >= PAD_RUN_AXIS_THRESHOLD;
+    if (run_held) input_set_key_state(g_gamepad_keys, AMIGA_KEY_RSHIFT, true);
+
+    fire_held = (rt >= PAD_TRIGGER_FIRE_THRESHOLD);
+    if (fire_held) input_set_key_state(g_gamepad_keys, AMIGA_KEY_RALT, true);
+
+    use_held = (lt >= PAD_TRIGGER_USE_THRESHOLD) ||
+               (SDL_GameControllerGetButton(g_gamepad, SDL_CONTROLLER_BUTTON_A) != 0);
+    if (use_held) input_set_key_state(g_gamepad_keys, AMIGA_KEY_SPACE, true);
+
+    look_behind_held = (SDL_GameControllerGetButton(g_gamepad, SDL_CONTROLLER_BUTTON_RIGHTSTICK) != 0) ||
+                       (SDL_GameControllerGetButton(g_gamepad, SDL_CONTROLLER_BUTTON_Y) != 0);
+    if (look_behind_held) input_set_key_state(g_gamepad_keys, AMIGA_KEY_L, true);
+
+    if (SDL_GameControllerGetButton(g_gamepad, SDL_CONTROLLER_BUTTON_START)) {
+        input_set_key_state(g_gamepad_keys, AMIGA_KEY_P, true);
+    }
+
+    g_mouse.dx = (int16_t)(g_mouse.dx + input_axis_to_mouse_delta(rx));
+
+    for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; b++) {
+        buttons[b] = (uint8_t)SDL_GameControllerGetButton(g_gamepad, (SDL_GameControllerButton)b);
+    }
+
+    /* Edge-triggered actions */
+    if (buttons[SDL_CONTROLLER_BUTTON_B] && !g_gamepad_prev_buttons[SDL_CONTROLLER_BUTTON_B]) {
+        if (g_gamepad_duck_toggle_queue < 255) g_gamepad_duck_toggle_queue++;
+    }
+    if (buttons[SDL_CONTROLLER_BUTTON_LEFTSHOULDER] &&
+        !g_gamepad_prev_buttons[SDL_CONTROLLER_BUTTON_LEFTSHOULDER]) {
+        if (g_gamepad_weapon_cycle_steps < 1024) g_gamepad_weapon_cycle_steps++;
+    }
+    if (buttons[SDL_CONTROLLER_BUTTON_RIGHTSHOULDER] &&
+        !g_gamepad_prev_buttons[SDL_CONTROLLER_BUTTON_RIGHTSHOULDER]) {
+        if (g_gamepad_weapon_cycle_steps > -1024) g_gamepad_weapon_cycle_steps--;
+    }
+    if (buttons[SDL_CONTROLLER_BUTTON_BACK] &&
+        !g_gamepad_prev_buttons[SDL_CONTROLLER_BUTTON_BACK]) {
+        g_automap_toggle_requested = true;
+    }
+    if (buttons[SDL_CONTROLLER_BUTTON_DPAD_UP] &&
+        !g_gamepad_prev_buttons[SDL_CONTROLLER_BUTTON_DPAD_UP]) {
+        g_automap_pgup_requested = true;
+    }
+    if (buttons[SDL_CONTROLLER_BUTTON_DPAD_DOWN] &&
+        !g_gamepad_prev_buttons[SDL_CONTROLLER_BUTTON_DPAD_DOWN]) {
+        g_automap_pgdn_requested = true;
+    }
+
+    memcpy(g_gamepad_prev_buttons, buttons, sizeof(g_gamepad_prev_buttons));
+}
+
 /* Relative mode hides the OS cursor; when not captured, keep the pointer visible.
  * Releasing capture clears mouse state and the full key_map (if provided) so movement
  * and fire keys do not stay latched after Esc or focus loss. */
@@ -154,8 +399,9 @@ static void input_apply_relative_mouse(SDL_bool want_capture, uint8_t *key_map)
         g_mouse.wheel_y = 0;
         g_mouse.dx = 0;
         g_mouse.dy = 0;
+        input_clear_key_sources();
         if (key_map) {
-            memset(key_map, 0, 128);
+            input_merge_key_sources(key_map);
         }
         SDL_CaptureMouse(SDL_FALSE);
         g_input_capture_active = SDL_FALSE;
@@ -174,9 +420,22 @@ static void input_apply_relative_mouse(SDL_bool want_capture, uint8_t *key_map)
 void input_init(void)
 {
     printf("[INPUT] SDL2 input init\n");
+    input_clear_key_sources();
+    memset(g_gamepad_prev_buttons, 0, sizeof(g_gamepad_prev_buttons));
+    memset(&g_joy1, 0, sizeof(g_joy1));
+    memset(&g_joy2, 0, sizeof(g_joy2));
+    g_gamepad_duck_toggle_queue = 0;
+    g_gamepad_weapon_cycle_steps = 0;
     g_quit_requested = false;
     g_f7_spill_visualize_requested = false;
     g_f2_pick_log_requested = false;
+    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) == 0) {
+        g_gamecontroller_subsystem_inited = true;
+        SDL_GameControllerEventState(SDL_ENABLE);
+        input_try_open_first_gamepad();
+    } else {
+        printf("[INPUT] SDL_InitSubSystem GAMECONTROLLER failed: %s\n", SDL_GetError());
+    }
     /* Pointer visible until user clicks in the window to capture (fullscreen or windowed). */
     input_apply_relative_mouse(SDL_FALSE, NULL);
     input_emscripten_install_pointer_lock_listener();
@@ -185,6 +444,11 @@ void input_init(void)
 void input_shutdown(void)
 {
     input_apply_relative_mouse(SDL_FALSE, NULL);
+    input_close_gamepad();
+    if (g_gamecontroller_subsystem_inited) {
+        SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
+        g_gamecontroller_subsystem_inited = false;
+    }
     printf("[INPUT] SDL2 input shutdown\n");
 }
 
@@ -218,7 +482,7 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
         case SDL_QUIT:
             g_quit_requested = true;
             /* Map to ESC so the game exits cleanly */
-            if (key_map) key_map[AMIGA_KEY_ESC] = 1;
+            input_set_key_state(g_keyboard_keys, AMIGA_KEY_ESC, true);
             break;
 
         case SDL_KEYDOWN:
@@ -233,8 +497,8 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
                 SDL_bool had_capture = g_input_capture_active || SDL_GetRelativeMouseMode();
                 input_apply_relative_mouse(SDL_FALSE, key_map);
                 /* Quit to menu only when Esc was not releasing in-game capture */
-                if (!had_capture && key_map) {
-                    key_map[AMIGA_KEY_ESC] = 1;
+                if (!had_capture) {
+                    input_set_key_state(g_keyboard_keys, AMIGA_KEY_ESC, true);
                     if (last_pressed) *last_pressed = AMIGA_KEY_ESC;
                 }
                 break;
@@ -263,8 +527,8 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
                 g_automap_pgdn_requested = true;
             }
             uint8_t amiga = sdl_to_amiga(ev.key.keysym.scancode);
-            if (amiga != 0xFF && key_map) {
-                key_map[amiga] = 1;
+            if (amiga != 0xFF) {
+                input_set_key_state(g_keyboard_keys, amiga, true);
                 if (last_pressed) *last_pressed = amiga;
             }
             break;
@@ -279,8 +543,8 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
                 break;
             }
             uint8_t amiga = sdl_to_amiga(ev.key.keysym.scancode);
-            if (amiga != 0xFF && key_map) {
-                key_map[amiga] = 0;
+            if (amiga != 0xFF) {
+                input_set_key_state(g_keyboard_keys, amiga, false);
             }
             break;
         }
@@ -304,22 +568,22 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
             /* Mouse buttons only affect gameplay while captured */
             if (ev.button.button == SDL_BUTTON_LEFT) {
                 g_mouse.left_button = true;
-                if (key_map) key_map[AMIGA_KEY_RALT] = 1;
+                input_set_key_state(g_mouse_keys, AMIGA_KEY_RALT, true);
             }
             if (ev.button.button == SDL_BUTTON_RIGHT) {
                 g_mouse.right_button = true;
-                if (key_map) key_map[AMIGA_KEY_SPACE] = 1;
+                input_set_key_state(g_mouse_keys, AMIGA_KEY_SPACE, true);
             }
             break;
 
         case SDL_MOUSEBUTTONUP:
             if (ev.button.button == SDL_BUTTON_LEFT) {
                 g_mouse.left_button = false;
-                if (SDL_GetRelativeMouseMode() && key_map) key_map[AMIGA_KEY_RALT] = 0;
+                if (SDL_GetRelativeMouseMode()) input_set_key_state(g_mouse_keys, AMIGA_KEY_RALT, false);
             }
             if (ev.button.button == SDL_BUTTON_RIGHT) {
                 g_mouse.right_button = false;
-                if (SDL_GetRelativeMouseMode() && key_map) key_map[AMIGA_KEY_SPACE] = 0;
+                if (SDL_GetRelativeMouseMode()) input_set_key_state(g_mouse_keys, AMIGA_KEY_SPACE, false);
             }
             break;
 
@@ -347,8 +611,22 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
                 break;
             }
             break;
+
+        case SDL_CONTROLLERDEVICEADDED:
+            input_try_open_gamepad((int)ev.cdevice.which);
+            break;
+
+        case SDL_CONTROLLERDEVICEREMOVED:
+            if (g_gamepad && ev.cdevice.which == g_gamepad_instance) {
+                input_close_gamepad();
+                input_try_open_first_gamepad();
+            }
+            break;
         }
     }
+
+    input_update_gamepad(last_pressed);
+
     /* Pointer lock can drop before SDL_KEYDOWN(Escape); sync state next frame. */
     if (g_input_capture_active && !SDL_GetRelativeMouseMode()) {
         input_apply_relative_mouse(SDL_FALSE, key_map);
@@ -357,7 +635,10 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
     if (!SDL_GetRelativeMouseMode()) {
         g_mouse.left_button = false;
         g_mouse.right_button = false;
+        input_set_key_state(g_mouse_keys, AMIGA_KEY_RALT, false);
+        input_set_key_state(g_mouse_keys, AMIGA_KEY_SPACE, false);
     }
+    input_merge_key_sources(key_map);
 }
 
 void input_read_mouse(MouseState *out)
@@ -367,12 +648,26 @@ void input_read_mouse(MouseState *out)
 
 void input_read_joy1(JoyState *out)
 {
-    if (out) memset(out, 0, sizeof(*out));
+    if (out) *out = g_joy1;
 }
 
 void input_read_joy2(JoyState *out)
 {
-    if (out) memset(out, 0, sizeof(*out));
+    if (out) *out = g_joy2;
+}
+
+bool input_gamepad_duck_toggle_requested(void)
+{
+    if (g_gamepad_duck_toggle_queue == 0) return false;
+    g_gamepad_duck_toggle_queue--;
+    return true;
+}
+
+int16_t input_consume_gamepad_weapon_cycle_steps(void)
+{
+    int16_t steps = g_gamepad_weapon_cycle_steps;
+    g_gamepad_weapon_cycle_steps = 0;
+    return steps;
 }
 
 bool input_key_pressed(const uint8_t *key_map, uint8_t keycode)
@@ -383,7 +678,8 @@ bool input_key_pressed(const uint8_t *key_map, uint8_t keycode)
 
 void input_clear_keyboard(uint8_t *key_map)
 {
-    if (key_map) memset(key_map, 0, 128);
+    input_clear_key_sources();
+    if (key_map) input_merge_key_sources(key_map);
 }
 
 bool input_f5_save_requested(void)
