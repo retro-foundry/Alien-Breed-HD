@@ -430,45 +430,6 @@ typedef struct {
     int before_ready;
 } RendererZoneTraceFloorStats;
 
-static AB3D_THREAD_LOCAL uint8_t *g_zone_trace_before_tags_scratch = NULL;
-static AB3D_THREAD_LOCAL uint16_t *g_zone_trace_before_cw_scratch = NULL;
-static AB3D_THREAD_LOCAL size_t g_zone_trace_before_capacity = 0;
-
-static int renderer_zone_trace_ensure_before_capacity(size_t want)
-{
-    size_t new_cap;
-    uint8_t *new_tags;
-    uint16_t *new_cw;
-
-    if (want == 0) return 1;
-    if (g_zone_trace_before_tags_scratch && g_zone_trace_before_cw_scratch &&
-        want <= g_zone_trace_before_capacity) {
-        return 1;
-    }
-
-    new_cap = (g_zone_trace_before_capacity > 0) ? g_zone_trace_before_capacity : 1024u;
-    while (new_cap < want) {
-        if (new_cap > SIZE_MAX / 2u) {
-            new_cap = want;
-            break;
-        }
-        new_cap *= 2u;
-    }
-
-    new_tags = (uint8_t *)realloc(g_zone_trace_before_tags_scratch,
-                                  new_cap * sizeof(*new_tags));
-    if (!new_tags) return 0;
-    g_zone_trace_before_tags_scratch = new_tags;
-
-    new_cw = (uint16_t *)realloc(g_zone_trace_before_cw_scratch,
-                                 new_cap * sizeof(*new_cw));
-    if (!new_cw) return 0;
-    g_zone_trace_before_cw_scratch = new_cw;
-
-    g_zone_trace_before_capacity = new_cap;
-    return 1;
-}
-
 static void renderer_workload_stats_reset(RendererWorkloadStats *stats);
 static void renderer_workload_stats_add(RendererWorkloadStats *dst, const RendererWorkloadStats *src);
 static uint64_t renderer_workload_estimated_writes(const RendererWorkloadStats *stats);
@@ -1124,30 +1085,14 @@ static void automap_mark_seen(LevelState *level,
                               int16_t x1, int16_t z1, int16_t x2, int16_t z2,
                               uint8_t is_door, uint8_t door_key_id)
 {
-    uint32_t reserve_walls;
-    uint32_t reserve_hash;
-
     if (!level) return;
     if (!level->graphics || level->graphics_byte_count == 0) return;
     if (gfx_off == 0 || gfx_off >= level->graphics_byte_count) return;
 
     automap_lock();
 
-    /* One-time reservation based on level topology so first exploration does not
-     * trigger repeated realloc/calloc growth in the render loop. */
-    reserve_walls = (level->num_floor_lines > 0) ? (uint32_t)level->num_floor_lines : 256u;
-    if (reserve_walls < 256u) reserve_walls = 256u;
-    if (reserve_walls > 262144u) reserve_walls = 262144u;
-    reserve_walls *= 2u;
-
-    reserve_hash = reserve_walls * 2u;
-    if (reserve_hash < 2048u) reserve_hash = 2048u;
-
-    if (!automap_ensure_walls(level, reserve_walls)) {
-        automap_unlock();
-        return;
-    }
-    if (!automap_ensure_hash(level, reserve_hash)) {
+    /* Lazy init structures. */
+    if (!automap_ensure_hash(level, 2048u)) {
         automap_unlock();
         return;
     }
@@ -5153,13 +5098,15 @@ static void renderer_zone_trace_floor_stats_accumulate_edges(RendererZoneTraceFl
 
     if (!cw || stats->submitted_pixels == 0) return;
 
-    if (!renderer_zone_trace_ensure_before_capacity((size_t)stats->submitted_pixels)) {
+    stats->before_tags = (uint8_t *)malloc((size_t)stats->submitted_pixels * sizeof(*stats->before_tags));
+    stats->before_cw = (uint16_t *)malloc((size_t)stats->submitted_pixels * sizeof(*stats->before_cw));
+    if (!stats->before_tags || !stats->before_cw) {
+        free(stats->before_tags);
+        free(stats->before_cw);
         stats->before_tags = NULL;
         stats->before_cw = NULL;
         return;
     }
-    stats->before_tags = g_zone_trace_before_tags_scratch;
-    stats->before_cw = g_zone_trace_before_cw_scratch;
 
     {
         size_t idx = 0;
@@ -5187,6 +5134,8 @@ static void renderer_zone_trace_floor_stats_accumulate_edges(RendererZoneTraceFl
         stats->before_count = idx;
         stats->before_ready = (idx == (size_t)stats->submitted_pixels) ? 1 : 0;
         if (!stats->before_ready) {
+            free(stats->before_tags);
+            free(stats->before_cw);
             stats->before_tags = NULL;
             stats->before_cw = NULL;
             stats->before_count = 0;
@@ -5238,6 +5187,8 @@ static void renderer_zone_trace_floor_stats_finalize(RendererZoneTraceFloorStats
         }
     }
 
+    free(stats->before_tags);
+    free(stats->before_cw);
     stats->before_tags = NULL;
     stats->before_cw = NULL;
     stats->before_count = 0;
@@ -7359,10 +7310,6 @@ static AB3D_THREAD_LOCAL int *g_floor_fast_cov_diff_scratch = NULL;
 static AB3D_THREAD_LOCAL int g_floor_fast_col_capacity = 0;
 static AB3D_THREAD_LOCAL int16_t *g_viewer_floor_occlude_scratch = NULL;
 static AB3D_THREAD_LOCAL int g_viewer_floor_occlude_capacity = 0;
-static AB3D_THREAD_LOCAL int g_renderer_slice_prewarm_w = 0;
-static AB3D_THREAD_LOCAL int g_renderer_slice_prewarm_h = 0;
-static int g_renderer_main_prewarm_w = 0;
-static int g_renderer_main_prewarm_h = 0;
 
 /* Thread-local scanline edge tables for floor/ceiling/sky polygon rasterization.
  * Shared by renderer_draw_zone_ctx, renderer_tessellate_sky_ceiling_ctx, and
@@ -7534,40 +7481,8 @@ static int renderer_floor_fast_ensure_cols_capacity(int col_count)
     return 1;
 }
 
-static void renderer_prewarm_slice_tls_scratch(int w, int h)
-{
-    if (w <= 0 || h <= 0) return;
-    if (g_renderer_slice_prewarm_w == w && g_renderer_slice_prewarm_h == h) return;
-
-    (void)renderer_viewer_floor_occlude_get_scratch(w);
-    (void)renderer_poly_edge_ensure_h(h);
-    (void)renderer_poly_col_ensure_w(w);
-    (void)renderer_floor_fast_ensure_rows_capacity(h);
-    (void)renderer_floor_fast_ensure_cols_capacity(w);
-
-    g_renderer_slice_prewarm_w = w;
-    g_renderer_slice_prewarm_h = h;
-}
-
-static void renderer_prewarm_main_thread_scratch(int w, int h)
-{
-    if (w <= 0 || h <= 0) return;
-    if (g_renderer_main_prewarm_w == w && g_renderer_main_prewarm_h == h) return;
-
-    (void)renderer_zone_trace_ensure_before_capacity((size_t)w * (size_t)h);
-
-    g_renderer_main_prewarm_w = w;
-    g_renderer_main_prewarm_h = h;
-}
-
 static void renderer_floor_fast_release_scratch(void)
 {
-    free(g_zone_trace_before_tags_scratch);
-    g_zone_trace_before_tags_scratch = NULL;
-    free(g_zone_trace_before_cw_scratch);
-    g_zone_trace_before_cw_scratch = NULL;
-    g_zone_trace_before_capacity = 0;
-
     free(g_floor_fast_rows_scratch);
     g_floor_fast_rows_scratch = NULL;
     g_floor_fast_rows_capacity = 0;
@@ -7583,31 +7498,6 @@ static void renderer_floor_fast_release_scratch(void)
     free(g_floor_fast_cov_diff_scratch);
     g_floor_fast_cov_diff_scratch = NULL;
     g_floor_fast_col_capacity = 0;
-
-    free(g_viewer_floor_occlude_scratch);
-    g_viewer_floor_occlude_scratch = NULL;
-    g_viewer_floor_occlude_capacity = 0;
-
-    free(g_poly_edge_left_scratch);
-    g_poly_edge_left_scratch = NULL;
-    free(g_poly_edge_right_scratch);
-    g_poly_edge_right_scratch = NULL;
-    free(g_poly_bright_left_scratch);
-    g_poly_bright_left_scratch = NULL;
-    free(g_poly_bright_right_scratch);
-    g_poly_bright_right_scratch = NULL;
-    g_poly_edge_h_capacity = 0;
-
-    free(g_poly_col_top_scratch);
-    g_poly_col_top_scratch = NULL;
-    free(g_poly_col_bot_scratch);
-    g_poly_col_bot_scratch = NULL;
-    g_poly_col_w_capacity = 0;
-
-    g_renderer_slice_prewarm_w = 0;
-    g_renderer_slice_prewarm_h = 0;
-    g_renderer_main_prewarm_w = 0;
-    g_renderer_main_prewarm_h = 0;
 }
 
 static void renderer_floor_fast_seed_rows(FloorRowFast *rows,
@@ -9803,7 +9693,7 @@ static int renderer_spill_zone_order_allows(const GameState *state,
      * backward tolerance for lateral continuity while still rejecting clearly
      * far-behind spill that causes smear artifacts. */
     if (order_delta > 0) return 1;
-    if (order_delta >= -7) return 1;
+    if (order_delta >= -10) return 1;
     return 0;
 }
 
@@ -9874,9 +9764,9 @@ static int renderer_spill_draw_still_valid(const GameState *state,
             int32_t src_top = 0, src_bot = 0;
             int32_t draw_top = 0, draw_bot = 0;
             int have_src_bounds = renderer_resolve_zone_section_world_bounds(level, source_zone, 0,
-                                                                              &src_top, &src_bot);
+                                                                             &src_top, &src_bot);
             int have_draw_bounds = renderer_resolve_zone_section_world_bounds(level, draw_zone, 0,
-                                                                               &draw_top, &draw_bot);
+                                                                              &draw_top, &draw_bot);
 
             if (have_src_bounds && have_draw_bounds) {
                 int32_t floor_delta = src_bot - draw_bot;
@@ -11597,31 +11487,16 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int obj_on_upper = (obj[obj_off_in_top] != 0);
         if (obj_zone < 0) continue;
         if (!in_this_zone) {
-            int32_t obj_world_y = ((int32_t)rd16(obj + 4)) << WORLD_Y_FRAC_BITS;
-            int32_t half_h = renderer_billboard_half_height_world_fp(spill_world_h);
             if (!renderer_zone_list_contains(adjacent_source_zones, adjacent_source_count, obj_zone))
                 continue;
             if (!renderer_spill_zone_order_allows(state, obj_zone, zone_id))
                 continue;
-            if (!renderer_world_span_overlaps_room(obj_world_y,
-                                                  half_h,
-                                                  top_of_room,
-                                                  bot_of_room)) {
-                continue;
-            }
-            /* Only spill if the billboard lateral segment crosses the portal. */
-            if (level->object_points && (unsigned)pt_num < (unsigned)num_pts) {
-                const uint8_t *pt_ptr = level->object_points + (size_t)(uint16_t)pt_num * 8u;
-                int32_t obj_wx = (int32_t)rd16(pt_ptr + 0);
-                int32_t obj_wz = (int32_t)rd16(pt_ptr + 4);
-                if (!renderer_billboard_crosses_zone_portal(level,
-                                                            obj_zone, zone_id,
-                                                            obj_wx, obj_wz,
-                                                            spill_world_w / 2,
-                                                            billboard_view_right_x,
-                                                            billboard_view_right_z))
-                    continue;
-            }
+            /* Portal crossing check removed: draw-time geometric clip
+             * narrowing (renderer_spill_narrow_clip_to_zone_geometry)
+             * definitively restricts each spill draw to only the screen
+             * columns where the billboard actually overlaps the
+             * destination zone polygon, making the early rejection
+             * redundant and overly conservative for close objects. */
         }
 
         if (level_filter >= 0 && in_this_zone) {
@@ -11715,30 +11590,10 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             int in_this_zone = (shot_zone == (int16_t)zone_id);
             int shot_on_upper = (obj[obj_off_in_top] != 0);
             if (!in_this_zone) {
-                int32_t shot_world_y = ((int32_t)rd16(obj + 4)) << WORLD_Y_FRAC_BITS;
-                int32_t half_h = renderer_billboard_half_height_world_fp(spill_world_h);
                 if (!renderer_zone_list_contains(adjacent_source_zones, adjacent_source_count, shot_zone))
                     continue;
                 if (!renderer_spill_zone_order_allows(state, shot_zone, zone_id))
                     continue;
-                if (!renderer_world_span_overlaps_room(shot_world_y,
-                                                      half_h,
-                                                      top_of_room,
-                                                      bot_of_room)) {
-                    continue;
-                }
-                if (level->object_points && (unsigned)pt_num < (unsigned)num_pts) {
-                    const uint8_t *pt_ptr = level->object_points + (size_t)(uint16_t)pt_num * 8u;
-                    int32_t shot_wx = (int32_t)rd16(pt_ptr + 0);
-                    int32_t shot_wz = (int32_t)rd16(pt_ptr + 4);
-                    if (!renderer_billboard_crosses_zone_portal(level,
-                                                                shot_zone, zone_id,
-                                                                shot_wx, shot_wz,
-                                                                spill_world_w / 2,
-                                                                billboard_view_right_x,
-                                                                billboard_view_right_z))
-                        continue;
-                }
             }
             if (level_filter >= 0 && in_this_zone) {
                 if ((level_filter == 1 && !shot_on_upper) ||
@@ -11812,35 +11667,14 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             int in_this_zone = (expl_zone == (int16_t)zone_id);
             int expl_on_upper = (state->explosions[ei].in_top != 0);
             int expl_h_est = 100;
-            int32_t half_h;
             if (state->explosions[ei].start_delay > 0) continue;
             if ((int)state->explosions[ei].frame >= 9) continue;
             renderer_get_explosion_frame_and_world_size(state, ei, NULL, NULL, &expl_h_est);
-            half_h = renderer_billboard_half_height_world_fp(expl_h_est);
             if (!in_this_zone) {
                 if (!renderer_zone_list_contains(adjacent_source_zones, adjacent_source_count, expl_zone))
                     continue;
                 if (!renderer_spill_zone_order_allows(state, expl_zone, zone_id))
                     continue;
-                if (!renderer_world_span_overlaps_room(state->explosions[ei].y_floor,
-                                                      half_h,
-                                                      top_of_room,
-                                                      bot_of_room)) {
-                    continue;
-                }
-                {
-                    int expl_w_est2 = 100;
-                    renderer_get_explosion_frame_and_world_size(state, ei, NULL, &expl_w_est2, NULL);
-                    int32_t half_w = (int32_t)(expl_w_est2 * EXPLOSION_SIZE_CORRECTION) / 2;
-                    if (!renderer_billboard_crosses_zone_portal(level,
-                                                                expl_zone, zone_id,
-                                                                (int32_t)state->explosions[ei].x,
-                                                                (int32_t)state->explosions[ei].z,
-                                                                half_w,
-                                                                billboard_view_right_x,
-                                                                billboard_view_right_z))
-                        continue;
-                }
             }
             if (level_filter >= 0 && in_this_zone) {
                 if ((level_filter == 1 && !expl_on_upper) ||
@@ -14659,7 +14493,6 @@ static void renderer_draw_world_slice(GameState *state,
         if (out_fill_screen_water) *out_fill_screen_water = 0;
         return;
     }
-    renderer_prewarm_slice_tls_scratch(w, h);
 
     int cs = (int)col_start;
     int ce = (int)col_end;
@@ -14936,7 +14769,6 @@ void renderer_draw_display(GameState *state)
         r->floor_uv_dist_max = (int32_t)(((int64_t)30000 * (int64_t)ypct + 50) / 100);
         r->floor_uv_dist_near = (int32_t)(((int64_t)32000 * (int64_t)ypct + 50) / 100);
     }
-    renderer_prewarm_main_thread_scratch(w, h);
     renderer_floor_prepare_row_recip_table(h);
 
     /* 2. Setup view transform (from AB3DI.s DrawDisplay lines 3399-3438) */
