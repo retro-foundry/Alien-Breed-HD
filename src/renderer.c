@@ -220,6 +220,7 @@ static int g_pick_capture_active = 0;
 static int g_pick_last_frame_valid = 0;
 static int g_renderfix_l6_zone120_seen = 0;
 static int g_renderfix_l6_zone123_seen = 0;
+static int g_renderfix_l12_zone72_seen = 0;
 /* Set per-frame in renderer_draw_display; hot paths read it via RenderSliceContext. */
 static int g_renderer_profile_collect_stats = 0;
 
@@ -14028,6 +14029,19 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                         printf("[RENDERFIX] level 6 door zone 123 scale fix active (first hit: zone=%d p1=%d p2=%d tex=%d gfx_off=%u)\n",
                                (int)zone_id, (int)p1, (int)p2, (int)tex_id, (unsigned)wall_gfx_off);
                     }
+                    }
+                }
+
+                /* Level 12 (1-indexed, level_l), door zone 72:
+                 * apply the same scale-only correction to all wall-list-linked door faces. */
+                if (state->current_level == 11 &&
+                    renderer_wall_gfx_off_matches_door_zone(level, wall_gfx_off, 72)) {
+                    wall_height_for_tex = (int16_t)(wall_height_for_tex - 32);
+                    if (wall_height_for_tex < 1) wall_height_for_tex = 1;
+                    if (!g_renderfix_l12_zone72_seen) {
+                        g_renderfix_l12_zone72_seen = 1;
+                        printf("[RENDERFIX] level 12 door zone 72 scale fix active (first hit: zone=%d p1=%d p2=%d tex=%d gfx_off=%u)\n",
+                               (int)zone_id, (int)p1, (int)p2, (int)tex_id, (unsigned)wall_gfx_off);
                     }
                 }
 
