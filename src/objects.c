@@ -446,6 +446,48 @@ static int object_zone_use_upper(const LevelState *level, int zone_index, int8_t
     return level_zone_has_upper_layer(level, (int16_t)zone_index) ? 1 : 0;
 }
 
+static int enemy_zone_from_ctx_room_or_obj(const GameState *state,
+                                           const MoveContext *ctx,
+                                           const GameObject *obj)
+{
+    int zone_slots;
+    int zone = -1;
+
+    if (!state || !ctx || !obj) return -1;
+    zone_slots = level_zone_slot_count(&state->level);
+    if (zone_slots <= 0) return -1;
+
+    if (ctx->objroom && state->level.data) {
+        zone = level_zone_index_from_room_ptr(&state->level, ctx->objroom);
+        if (zone < 0) {
+            int16_t room_zone_word = (int16_t)((ctx->objroom[0] << 8) | ctx->objroom[1]);
+            zone = level_connect_to_zone_index(&state->level, room_zone_word);
+        }
+    }
+
+    if (zone < 0) {
+        int16_t obj_zone = OBJ_ZONE(obj);
+        zone = level_connect_to_zone_index(&state->level, obj_zone);
+        if (zone < 0 && obj_zone >= 0 && obj_zone < zone_slots)
+            zone = obj_zone;
+    }
+
+    if (zone < 0 || zone >= zone_slots) return -1;
+    return zone;
+}
+
+static bool enemy_try_zone_teleport(GameObject *obj, GameState *state, MoveContext *ctx)
+{
+    int zone_for_teleport;
+    if (!obj || !state || !ctx) return false;
+
+    zone_for_teleport = enemy_zone_from_ctx_room_or_obj(state, ctx, obj);
+    if (zone_for_teleport < 0) return false;
+
+    /* Players already run teleports in player_control; enemies need this explicit pass. */
+    return check_teleport(ctx, &state->level, (int16_t)zone_for_teleport);
+}
+
 /* -----------------------------------------------------------------------
  * enemy_viewpoint - Amiga AlienControl.s ViewpointToDraw
  * Returns 0=towards, 1=right, 2=away, 3=left based on angle between
@@ -1314,47 +1356,50 @@ static void enemy_wander_with_timer(GameObject *obj, const EnemyParams *params,
         }
     }
 
-    /* Amiga enemy flow: many types do object Collision first; some (Robot/BigUgly) don't. */
-    if (use_pre_collision) {
-        collision_check(&ctx, &state->level);
-    }
-    if (ctx.hitwall) {
-        ctx.newx = ctx.oldx;
-        ctx.newz = ctx.oldz;
-    } else {
-        /* Robot movement is especially sensitive in narrow passages; run it
-         * sub-stepped to match expected traversal and avoid wall-edge snagging. */
-        if (obj->obj.number == OBJ_NBR_ROBOT)
-            move_object_substepped(&ctx, &state->level);
-        else
-            move_object(&ctx, &state->level);
-    }
-
-    /* Robot.s does not clamp MoveObject displacement here; clamping can also
-     * freeze flyers against corners when MoveObject returns a legal wall-contact
-     * correction larger than their nominal per-tick speed. */
-    if (obj->obj.number != OBJ_NBR_ROBOT && !flying_hover) {
-        if (!enemy_step_within_limit(&ctx, (int32_t)speed * ENEMY_STEP_CLAMP_TICKS)) {
+    /* Amiga enemy flow checks zone teleports before directional movement. */
+    if (!enemy_try_zone_teleport(obj, state, &ctx)) {
+        /* Amiga enemy flow: many types do object Collision first; some (Robot/BigUgly) don't. */
+        if (use_pre_collision) {
+            collision_check(&ctx, &state->level);
+        }
+        if (ctx.hitwall) {
             ctx.newx = ctx.oldx;
             ctx.newz = ctx.oldz;
+        } else {
+            /* Robot movement is especially sensitive in narrow passages; run it
+             * sub-stepped to match expected traversal and avoid wall-edge snagging. */
+            if (obj->obj.number == OBJ_NBR_ROBOT)
+                move_object_substepped(&ctx, &state->level);
+            else
+                move_object(&ctx, &state->level);
         }
-    }
 
-    /* Robot.s does not run the extra anti-overlap guard; keeping it disabled
-     * here avoids mech stalls at close range in parity-critical battles. */
-    if (obj->obj.number != OBJ_NBR_ROBOT && !flying_hover) {
-        int16_t contact_x = (int16_t)ctx.newx;
-        int16_t contact_z = (int16_t)ctx.newz;
-        enemy_prevent_deeper_player_overlap(obj, state, (int16_t)ctx.oldx, (int16_t)ctx.oldz,
-                                            &contact_x, &contact_z);
-        ctx.newx = contact_x;
-        ctx.newz = contact_z;
-    }
+        /* Robot.s does not clamp MoveObject displacement here; clamping can also
+         * freeze flyers against corners when MoveObject returns a legal wall-contact
+         * correction larger than their nominal per-tick speed. */
+        if (obj->obj.number != OBJ_NBR_ROBOT && !flying_hover) {
+            if (!enemy_step_within_limit(&ctx, (int32_t)speed * ENEMY_STEP_CLAMP_TICKS)) {
+                ctx.newx = ctx.oldx;
+                ctx.newz = ctx.oldz;
+            }
+        }
 
-    enemy_motion_restore_blocked_step(state, obj,
-                                      intended_dx, intended_dz,
-                                      ctx.newx - ctx.oldx,
-                                      ctx.newz - ctx.oldz);
+        /* Robot.s does not run the extra anti-overlap guard; keeping it disabled
+         * here avoids mech stalls at close range in parity-critical battles. */
+        if (obj->obj.number != OBJ_NBR_ROBOT && !flying_hover) {
+            int16_t contact_x = (int16_t)ctx.newx;
+            int16_t contact_z = (int16_t)ctx.newz;
+            enemy_prevent_deeper_player_overlap(obj, state, (int16_t)ctx.oldx, (int16_t)ctx.oldz,
+                                                &contact_x, &contact_z);
+            ctx.newx = contact_x;
+            ctx.newz = contact_z;
+        }
+
+        enemy_motion_restore_blocked_step(state, obj,
+                                          intended_dx, intended_dz,
+                                          ctx.newx - ctx.oldx,
+                                          ctx.newz - ctx.oldz);
+    }
 
     if (state->level.object_points) {
         uint8_t *pts = state->level.object_points + cid * 8;
@@ -1829,7 +1874,7 @@ static void game_apply_all_keys_from_level(const GameState *state)
     const uint8_t *obj = state->level.object_data;
     for (int i = 0; i < MAX_OBJECTS; i++) {
         if ((int8_t)obj[16] == OBJ_NBR_KEY)
-            game_conditions |= (int8_t)obj[17];
+            game_conditions = (int16_t)((uint16_t)game_conditions | (uint16_t)(uint8_t)obj[17]);
         obj += OBJECT_SIZE;
     }
 }
@@ -2570,7 +2615,7 @@ static int32_t robot_track_target(GameObject *obj, const EnemyParams *params,
         ctx.pos_shift = 0;
         ctx.stood_in_top = obj->obj.in_top;
 
-        {
+        if (!enemy_try_zone_teleport(obj, state, &ctx)) {
             int32_t intended_dx = 0;
             int32_t intended_dz = 0;
             int32_t move_dist = (int32_t)speed * (int32_t)state->temp_frames;
@@ -2770,39 +2815,41 @@ static int32_t enemy_track_target_with_turn(GameObject *obj, const EnemyParams *
     }
     NASTY_SET_FACING(*obj, facing);
 
-    if (use_pre_collision) {
-        collision_check(&ctx, &state->level);
-    }
-    if (ctx.hitwall) {
-        ctx.newx = ctx.oldx;
-        ctx.newz = ctx.oldz;
-    } else {
-        /* Match original enemy chase movement (single MoveObject call). */
-        move_object(&ctx, &state->level);
-    }
+    if (!enemy_try_zone_teleport(obj, state, &ctx)) {
+        if (use_pre_collision) {
+            collision_check(&ctx, &state->level);
+        }
+        if (ctx.hitwall) {
+            ctx.newx = ctx.oldx;
+            ctx.newz = ctx.oldz;
+        } else {
+            /* Match original enemy chase movement (single MoveObject call). */
+            move_object(&ctx, &state->level);
+        }
 
-    /* Keep the anti-jump clamp for ground chasers only. */
-    if (!flying_hover &&
-        !enemy_step_within_limit(&ctx, (int32_t)speed * ENEMY_STEP_CLAMP_TICKS)) {
-        ctx.newx = ctx.oldx;
-        ctx.newz = ctx.oldz;
-    }
+        /* Keep the anti-jump clamp for ground chasers only. */
+        if (!flying_hover &&
+            !enemy_step_within_limit(&ctx, (int32_t)speed * ENEMY_STEP_CLAMP_TICKS)) {
+            ctx.newx = ctx.oldx;
+            ctx.newz = ctx.oldz;
+        }
 
-    /* Robot.s does not run the extra anti-overlap guard; keeping it disabled
-     * here avoids mech stalls at close range in parity-critical battles. */
-    if (obj->obj.number != OBJ_NBR_ROBOT && !flying_hover) {
-        int16_t contact_x = (int16_t)ctx.newx;
-        int16_t contact_z = (int16_t)ctx.newz;
-        enemy_prevent_deeper_player_overlap(obj, state, (int16_t)ctx.oldx, (int16_t)ctx.oldz,
-                                            &contact_x, &contact_z);
-        ctx.newx = contact_x;
-        ctx.newz = contact_z;
-    }
+        /* Robot.s does not run the extra anti-overlap guard; keeping it disabled
+         * here avoids mech stalls at close range in parity-critical battles. */
+        if (obj->obj.number != OBJ_NBR_ROBOT && !flying_hover) {
+            int16_t contact_x = (int16_t)ctx.newx;
+            int16_t contact_z = (int16_t)ctx.newz;
+            enemy_prevent_deeper_player_overlap(obj, state, (int16_t)ctx.oldx, (int16_t)ctx.oldz,
+                                                &contact_x, &contact_z);
+            ctx.newx = contact_x;
+            ctx.newz = contact_z;
+        }
 
-    enemy_motion_restore_blocked_step(state, obj,
-                                      intended_dx, intended_dz,
-                                      ctx.newx - ctx.oldx,
-                                      ctx.newz - ctx.oldz);
+        enemy_motion_restore_blocked_step(state, obj,
+                                          intended_dx, intended_dz,
+                                          ctx.newx - ctx.oldx,
+                                          ctx.newz - ctx.oldz);
+    }
 
     if (state->level.object_points) {
         int cid = (int)OBJ_CID(obj);
@@ -3436,12 +3483,12 @@ void object_handle_key(GameObject *obj, GameState *state)
 {
     if (pickup_distance_check(obj, state, 1)) {
         /* Determine which key from shared "can_see" */
-        game_conditions |= obj->obj.can_see;
+        game_conditions = (int16_t)((uint16_t)game_conditions | (uint16_t)(uint8_t)obj->obj.can_see);
         OBJ_SET_ZONE(obj, -1);
         audio_play_sample(4, 50);
     }
     if (state->mode != MODE_SINGLE && pickup_distance_check(obj, state, 2)) {
-        game_conditions |= obj->obj.can_see;
+        game_conditions = (int16_t)((uint16_t)game_conditions | (uint16_t)(uint8_t)obj->obj.can_see);
         OBJ_SET_ZONE(obj, -1);
         audio_play_sample(4, 50);
     }
