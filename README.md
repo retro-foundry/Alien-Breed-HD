@@ -87,6 +87,10 @@ Typical outputs:
 
 Floor column-fast rendering is enabled by default.
 
+### Beta releases
+
+GitHub Actions publishes Windows-only beta prereleases from tags such as `v0.9.0-beta.1`. Release downloads include the packaged runtime zip, SHA256 checksums, and GitHub artifact attestations where supported. See `RELEASING.md` and `VERIFY_RELEASE.md`.
+
 Optional troubleshooting build (disable floor column-fast):
 
 ```bash

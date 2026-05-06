@@ -3,4 +3,7 @@
 build
 build-web
 build-native-test
+build-ci/
+dist/
+dist-*/
 /data/

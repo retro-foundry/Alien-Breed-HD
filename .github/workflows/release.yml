@@ -1,0 +1,163 @@
+name: Beta Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*-beta*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing beta tag to package, for example v0.9.0-beta.1"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build Windows package
+    if: github.repository == 'retro-foundry/Alien-Breed-HD'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Set release version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "AB3D_RELEASE_VERSION=${{ inputs.tag }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          } else {
+            "AB3D_RELEASE_VERSION=${{ github.ref_name }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+
+      - name: Validate beta tag
+        shell: pwsh
+        run: |
+          if ($env:AB3D_RELEASE_VERSION -notmatch '^v\d+\.\d+\.\d+-beta') {
+            throw "Release version must be a beta tag like v0.9.0-beta.1; got $env:AB3D_RELEASE_VERSION"
+          }
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install audio conversion dependency
+        shell: pwsh
+        run: choco install ffmpeg -y --no-progress
+
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      - name: Optionally sign Windows executable
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_BASE64) -or [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_PASSWORD)) {
+            Write-Host "Windows signing secrets are not configured; skipping code signing."
+            exit 0
+          }
+          $certPath = Join-Path $env:RUNNER_TEMP "ab3d1-signing.pfx"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT_BASE64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match "\\x64\\signtool\.exe$" } |
+            Select-Object -First 1
+          if (-not $signtool) {
+            throw "signtool.exe was not found on the runner"
+          }
+          & $signtool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $certPath /p $env:WINDOWS_SIGNING_CERT_PASSWORD "build\Release\ab3d1.exe"
+
+      - name: Package Windows beta
+        shell: pwsh
+        run: python tools/package_release.py --build-dir build --config Release --version "$env:AB3D_RELEASE_VERSION" --output-dir dist
+
+      - name: Attest Windows package provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*.zip"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub prerelease
+    needs: build-windows
+    if: github.repository == 'retro-foundry/Alien-Breed-HD'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Set release version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "AB3D_RELEASE_VERSION=${{ inputs.tag }}" >> "$GITHUB_ENV"
+          else
+            echo "AB3D_RELEASE_VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Validate beta tag
+        shell: bash
+        run: |
+          case "$AB3D_RELEASE_VERSION" in
+            v[0-9]*.[0-9]*.[0-9]*-beta*) ;;
+            *) echo "Release version must be a beta tag like v0.9.0-beta.1; got $AB3D_RELEASE_VERSION" >&2; exit 1 ;;
+          esac
+
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate SHA256 checksums
+        run: python3 tools/sha256sums.py release-assets/*.zip --output release-assets/SHA256SUMS.txt
+
+      - name: Attest checksum provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "release-assets/SHA256SUMS.txt"
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.AB3D_RELEASE_VERSION }}
+          name: Alien Breed 3D I ${{ env.AB3D_RELEASE_VERSION }} beta
+          prerelease: true
+          make_latest: false
+          body_path: VERIFY_RELEASE.md
+          files: |
+            release-assets/*.zip
+            release-assets/SHA256SUMS.txt
+          fail_on_unmatched_files: true
