@@ -1805,7 +1805,9 @@ void display_init(GameState *state)
         int explicit_render_driver = (driver_override && driver_override[0] != '\0' &&
                                       strcmp(driver_override, "auto") != 0);
         if (prefer_gpu_unpack && !explicit_render_driver) {
+#if !defined(__amigaos4__)
             window_flags |= SDL_WINDOW_OPENGL;
+#endif
         }
     }
     if (driver_override && strcmp(driver_override, "opengl") == 0) {
