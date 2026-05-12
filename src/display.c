@@ -1470,7 +1470,11 @@ static void display_cpu_unpack_cw_to_texture(const uint16_t *src, int w, int h)
     if (!g_texture || !src || w < 1 || h < 1) return;
 
     /* Fast path: cw_buffer is already packed 0x0RGB words. Push directly; no per-pixel CPU work. */
+#if defined(__amigaos4__) || defined(__BIG_ENDIAN__)
+    if (0) { /* Disabled on big-endian: byte order mismatch */
+#else
     if (g_texture_is_4444_direct && !AB3D_CW_COL_MAJOR) {
+#endif
         if (SDL_UpdateTexture(g_texture, NULL, src, (int)((size_t)w * sizeof(uint16_t))) != 0) {
             return;
         }
@@ -1487,7 +1491,11 @@ static void display_cpu_unpack_cw_to_texture(const uint16_t *src, int w, int h)
             uint32_t r4 = (c >> 8) & 0xFu;
             uint32_t g4 = (c >> 4) & 0xFu;
             uint32_t b4 = c & 0xFu;
+            #if defined(__amigaos4__) || defined(__BIG_ENDIAN__)
+            dst_row[x] = 0xFF000000u | (b4 * 0x11u << 16) | (g4 * 0x11u << 8) | (r4 * 0x11u);
+#else
             dst_row[x] = 0xFF000000u | (r4 * 0x11u << 16) | (g4 * 0x11u << 8) | (b4 * 0x11u);
+#endif
         }
     }
     SDL_UnlockTexture(g_texture);
@@ -1551,13 +1559,21 @@ static void display_set_renderer_target_size(int w, int h)
     if (g_gl_unpack_ok) {
         display_gl_resize_cw_texture(w, h);
     } else {
+#if defined(__amigaos4__) || defined(__BIG_ENDIAN__)
+        g_texture = NULL; /* Force ARGB8888 on big-endian */
+#else
         g_texture = SDL_CreateTexture(g_sdl_ren,
             SDL_PIXELFORMAT_XRGB4444, SDL_TEXTUREACCESS_STREAMING, g_internal_w, g_internal_h);
+#endif
         if (g_texture) {
             g_texture_is_4444_direct = 1;
         } else {
+#if defined(__amigaos4__) || defined(__BIG_ENDIAN__)
+            g_texture = NULL; /* Force ARGB8888 on big-endian */
+#else
             g_texture = SDL_CreateTexture(g_sdl_ren,
                 SDL_PIXELFORMAT_ARGB4444, SDL_TEXTUREACCESS_STREAMING, g_internal_w, g_internal_h);
+#endif
             if (g_texture) {
                 g_texture_is_4444_direct = 1;
             } else {
