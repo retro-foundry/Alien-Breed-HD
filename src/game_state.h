@@ -38,6 +38,7 @@ typedef struct {
     int32_t  yvel;
     int32_t  zoff;
     int32_t  tyoff;            /* target y offset */
+    int16_t  look_y;           /* AB3D2-style STOPOFFSET view look offset, reference pixels */
     int32_t  xspdval;
     int32_t  zspdval;
     int16_t  zone;
@@ -50,6 +51,7 @@ typedef struct {
     int32_t  oldzoff;
     int32_t  oldyoff;
     int16_t  oldangpos;
+    int16_t  oldlook_y;         /* AB3D2-style STOPOFFSET view look offset, reference pixels */
     int8_t   stood_in_top;
     int32_t  height;
 
@@ -74,6 +76,7 @@ typedef struct {
     int32_t  s_oldzoff;
     int32_t  s_height;
     int32_t  s_targheight;
+    int16_t  s_look_y;          /* Simulation view look offset, reference pixels */
 
     /* Per-frame snapshot (pn_xxx) */
     int32_t  p_xoff;
@@ -81,6 +84,7 @@ typedef struct {
     int32_t  p_yoff;
     int32_t  p_height;
     int16_t  p_angpos;
+    int16_t  p_look_y;
     int16_t  p_bobble;
     int8_t   p_clicked;
     int8_t   p_spctap;
@@ -242,6 +246,8 @@ typedef struct {
     bool            infinite_ammo;
     bool            cfg_all_weapons;    /* 1 = all guns visible + full ammo (plr1/plr2) */
     bool            cfg_all_keys;       /* 1 = OR in key condition bits from level key objects (doors/lifts) */
+    bool            cfg_mouse_look;     /* 1 = mouse Y shifts AB3D2-style view center in mouse+kbd mode */
+    bool            cfg_mouse_look_invert_y; /* 1 = invert mouse-look Y direction */
 
     /* ab3d.ini: display mode (-1=auto by build, 0=windowed, 1=desktop-sized window — same SDL flags as 0, no mode switch) */
     int8_t          cfg_display_mode;

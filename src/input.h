@@ -29,6 +29,7 @@ typedef struct {
 } MouseState;
 
 void input_read_mouse(MouseState *out);
+void input_consume_mouse_deltas(void);
 
 /* Joystick */
 typedef struct {

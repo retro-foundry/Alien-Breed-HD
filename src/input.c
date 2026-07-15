@@ -9,6 +9,7 @@
 #include "input.h"
 #include "display.h"
 #include <SDL.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -173,11 +174,20 @@ static uint8_t g_gamepad_prev_buttons[SDL_CONTROLLER_BUTTON_MAX];
 static bool g_gamecontroller_subsystem_inited = false;
 static uint8_t g_gamepad_duck_toggle_queue = 0;
 static int16_t g_gamepad_weapon_cycle_steps = 0;
+static int16_t g_gamepad_mouse_dx = 0;
 
 /* True after we successfully enable relative mode (click-to-play). The browser may
  * exit pointer lock before SDL_KEYDOWN(Escape) is delivered, so SDL_GetRelativeMouseMode()
  * can already be false when handling Esc — we still must clear keys and show the cursor. */
 static SDL_bool g_input_capture_active = SDL_FALSE;
+
+static int16_t input_add_i16_clamped(int16_t base, int delta)
+{
+    int value = (int)base + delta;
+    if (value > INT16_MAX) value = INT16_MAX;
+    if (value < INT16_MIN) value = INT16_MIN;
+    return (int16_t)value;
+}
 
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
@@ -298,6 +308,7 @@ static void input_update_gamepad(uint8_t *last_pressed)
     memset(&g_joy1, 0, sizeof(g_joy1));
     memset(&g_joy2, 0, sizeof(g_joy2));
 
+    g_gamepad_mouse_dx = 0;
     if (!g_gamepad) return;
 
     lx = input_axis_with_deadzone(
@@ -346,7 +357,7 @@ static void input_update_gamepad(uint8_t *last_pressed)
         input_set_key_state(g_gamepad_keys, AMIGA_KEY_P, true);
     }
 
-    g_mouse.dx = (int16_t)(g_mouse.dx + input_axis_to_mouse_delta(rx));
+    g_gamepad_mouse_dx = (int16_t)input_axis_to_mouse_delta(rx);
 
     for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; b++) {
         buttons[b] = (uint8_t)SDL_GameControllerGetButton(g_gamepad, (SDL_GameControllerButton)b);
@@ -399,6 +410,7 @@ static void input_apply_relative_mouse(SDL_bool want_capture, uint8_t *key_map)
         g_mouse.wheel_y = 0;
         g_mouse.dx = 0;
         g_mouse.dy = 0;
+        g_gamepad_mouse_dx = 0;
         input_clear_key_sources();
         if (key_map) {
             input_merge_key_sources(key_map);
@@ -426,6 +438,7 @@ void input_init(void)
     memset(&g_joy2, 0, sizeof(g_joy2));
     g_gamepad_duck_toggle_queue = 0;
     g_gamepad_weapon_cycle_steps = 0;
+    g_gamepad_mouse_dx = 0;
     g_quit_requested = false;
     g_f7_spill_visualize_requested = false;
     g_f2_pick_log_requested = false;
@@ -457,11 +470,6 @@ void input_shutdown(void)
  * ----------------------------------------------------------------------- */
 void input_update(uint8_t *key_map, uint8_t *last_pressed)
 {
-    /* Reset mouse deltas each frame */
-    g_mouse.dx = 0;
-    g_mouse.dy = 0;
-    g_mouse.wheel_y = 0;
-
 #if defined(__EMSCRIPTEN__)
     /* Pointer lock often ends here before SDL gets KEYDOWN(Escape). */
     {
@@ -552,8 +560,8 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
         case SDL_MOUSEMOTION:
             /* Only use mouse motion for look when captured */
             if (SDL_GetRelativeMouseMode()) {
-                g_mouse.dx += (int16_t)ev.motion.xrel;
-                g_mouse.dy += (int16_t)ev.motion.yrel;
+                g_mouse.dx = input_add_i16_clamped(g_mouse.dx, ev.motion.xrel);
+                g_mouse.dy = input_add_i16_clamped(g_mouse.dy, ev.motion.yrel);
             }
             break;
 
@@ -594,7 +602,7 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
                 if (ev.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
                     wheel_y = (int16_t)-wheel_y;
                 }
-                g_mouse.wheel_y = (int16_t)(g_mouse.wheel_y + wheel_y);
+                g_mouse.wheel_y = input_add_i16_clamped(g_mouse.wheel_y, wheel_y);
             }
             break;
 
@@ -643,7 +651,18 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
 
 void input_read_mouse(MouseState *out)
 {
-    if (out) *out = g_mouse;
+    if (out) {
+        *out = g_mouse;
+        out->dx = input_add_i16_clamped(out->dx, g_gamepad_mouse_dx);
+    }
+}
+
+void input_consume_mouse_deltas(void)
+{
+    g_mouse.dx = 0;
+    g_mouse.dy = 0;
+    g_mouse.wheel_y = 0;
+    g_gamepad_mouse_dx = 0;
 }
 
 void input_read_joy1(JoyState *out)

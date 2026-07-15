@@ -360,6 +360,7 @@ void game_loop_tick(GameState *state, GameLoopCtx *ctx)
                 player1_control(state);
                 player2_control(state);
             }
+            input_consume_mouse_deltas();
 
             /* ---- Phase 10: Zone brightness animation (bright_anim_values updated; rendering reads from zone data) ---- */
             bright_anim_handler(state);

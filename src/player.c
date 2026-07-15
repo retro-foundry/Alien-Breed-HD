@@ -30,6 +30,7 @@
 #define MAX_TURN_RUN        60
 #define TURN_STEP           10
 #define MOUSE_CLAMP         50
+#define MOUSE_LOOK_LIMIT    (RENDER_DEFAULT_HEIGHT / 2)
 #define HEIGHT_STEP         1024
 #define BOBBLE_MASK         ANGLE_MASK
 #define CLUMP_MASK          4095
@@ -836,11 +837,36 @@ static void player_mouse_control(PlayerState *plr, const uint8_t *key_map,
  * ----------------------------------------------------------------------- */
 #define MOUSE_SENSITIVITY 3  /* angle units per SDL pixel; tune to taste */
 
+static int16_t player_clamp_mouse_look(int32_t look_y)
+{
+    if (look_y > MOUSE_LOOK_LIMIT) look_y = MOUSE_LOOK_LIMIT;
+    if (look_y < -MOUSE_LOOK_LIMIT) look_y = -MOUSE_LOOK_LIMIT;
+    return (int16_t)look_y;
+}
+
+static void player_apply_mouse_look(PlayerState *plr, const GameState *state, int16_t mouse_dy)
+{
+    if (!plr) return;
+    if (!state || !state->cfg_mouse_look) {
+        plr->s_look_y = 0;
+        return;
+    }
+
+    int32_t delta = (int32_t)mouse_dy * (int32_t)MOUSE_SENSITIVITY;
+    if (state->cfg_mouse_look_invert_y) delta = -delta;
+    plr->s_look_y = player_clamp_mouse_look((int32_t)plr->s_look_y + delta);
+}
+
 static void player_mouse_kbd_control(PlayerState *plr, const uint8_t *key_map,
-                                      const KeyBindings *keys, int16_t temp_frames)
+                                      const KeyBindings *keys, const GameState *state,
+                                      int16_t temp_frames)
 {
     MouseState mouse;
     input_read_mouse(&mouse);
+
+    /* AB3D2 modules/player.s uses Sys_MouseY to update STOPOFFSET, then the
+     * renderer shifts its projection center. Keep this view-only in AB3D I. */
+    player_apply_mouse_look(plr, state, mouse.dy);
 
     int16_t move_speed = WALK_SPEED;
 
@@ -965,16 +991,19 @@ static void player_sim_control(PlayerState *plr, const ControlMode *ctrl,
 
     /* Dispatch based on control mode */
     if (ctrl->mouse_kbd) {
-        player_mouse_kbd_control(plr, key_map, keys, temp_frames);
+        player_mouse_kbd_control(plr, key_map, keys, state, temp_frames);
     } else if (ctrl->mouse) {
+        plr->s_look_y = 0;
         player_mouse_control(plr, key_map, keys, temp_frames);
     } else if (ctrl->keys) {
+        plr->s_look_y = 0;
         player_keyboard_control(plr, key_map, keys, temp_frames);
     } else if (ctrl->joy) {
+        plr->s_look_y = 0;
         player_keyboard_control(plr, key_map, keys, temp_frames);
     } else {
         /* Default: mouse + keyboard */
-        player_mouse_kbd_control(plr, key_map, keys, temp_frames);
+        player_mouse_kbd_control(plr, key_map, keys, state, temp_frames);
     }
 }
 
@@ -1001,6 +1030,7 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
     plr->oldzoff = plr->zoff;
     plr->oldyoff = plr->yoff;
     plr->oldangpos = plr->angpos;
+    plr->oldlook_y = plr->look_y;
 
     /* Copy simulation position to actual (both in 16.16 fixed-point).
      * On the Amiga (AB3DI.s PLR1_Control ~line 2984):
@@ -1025,6 +1055,7 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
     /* 2. Angle and sin/cos */
     int16_t angpos = plr->p_angpos;
     plr->angpos = angpos;
+    plr->look_y = plr->p_look_y;
     plr->sinval = sin_lookup(angpos);
     plr->cosval = cos_lookup(angpos);
 
@@ -1084,6 +1115,7 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
             plr->yoff = ctx.newy;
             plr->oldyoff = plr->yoff;
             plr->oldangpos = plr->angpos;
+            plr->oldlook_y = plr->look_y;
             audio_play_sample(26, 64);
         }
     }
@@ -1380,6 +1412,7 @@ void player1_snapshot(GameState *state)
     p->p_yoff        = p->s_yoff;
     p->p_height      = p->s_height;
     p->p_angpos      = p->s_angpos;
+    p->p_look_y      = p->s_look_y;
     p->p_bobble      = p->bobble;
     p->p_clicked     = p->clicked;
     p->clicked       = 0;
@@ -1399,6 +1432,7 @@ void player2_snapshot(GameState *state)
     p->p_yoff        = p->s_yoff;
     p->p_height      = p->s_height;
     p->p_angpos      = p->s_angpos;
+    p->p_look_y      = p->s_look_y;
     p->p_bobble      = p->bobble;
     p->p_clicked     = p->clicked;
     p->clicked       = 0;
@@ -1477,7 +1511,7 @@ void player2_control(GameState *state)
  * Legacy format (magic "AB3D") remains readable for old position-only saves. */
 #define SAVE_MAGIC_LEGACY "AB3D"
 #define SAVE_MAGIC_FULL   "AB3S"
-#define SAVE_VERSION_FULL 4u
+#define SAVE_VERSION_FULL 5u
 #define SAVE_FILE_SUBPATH "savegame.bin"
 #define SAVE_MAX_TABLE_ENTRIES 4096
 #define SAVE_MAX_CHUNK_BYTES (256u * 1024u * 1024u)
@@ -1704,8 +1738,8 @@ static bool player_save_read_full_save(FILE *f, GameState *state, const char *pa
         printf("[PLAYER] load: unsupported full save format in %s\n", path);
         return false;
     }
-    if (hdr.game_state_size != (uint32_t)sizeof(GameState)) {
-        printf("[PLAYER] load: save game state size mismatch (%u != %u)\n",
+    if (hdr.game_state_size == 0u || hdr.game_state_size > (uint32_t)sizeof(GameState)) {
+        printf("[PLAYER] load: unsupported game state size in save (%u > %u)\n",
                (unsigned)hdr.game_state_size, (unsigned)sizeof(GameState));
         return false;
     }
@@ -1713,7 +1747,8 @@ static bool player_save_read_full_save(FILE *f, GameState *state, const char *pa
     player_save_clear_pending_full_save();
     g_full_save_pending.header = hdr;
 
-    if (!player_save_read_exact(f, &g_full_save_pending.game_state, sizeof(GameState)))
+    memset(&g_full_save_pending.game_state, 0, sizeof(g_full_save_pending.game_state));
+    if (!player_save_read_exact(f, &g_full_save_pending.game_state, hdr.game_state_size))
         goto fail;
     if (!player_save_alloc_read_chunk(f, hdr.level_data_bytes, &g_full_save_pending.level_data))
         goto fail;
@@ -1786,6 +1821,8 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     bool    ini_infinite_ammo = state->infinite_ammo;
     bool    ini_cfg_all_weapons = state->cfg_all_weapons;
     bool    ini_cfg_all_keys = state->cfg_all_keys;
+    bool    ini_cfg_mouse_look = state->cfg_mouse_look;
+    bool    ini_cfg_mouse_look_invert_y = state->cfg_mouse_look_invert_y;
     int16_t ini_cfg_render_width = state->cfg_render_width;
     int16_t ini_cfg_render_height = state->cfg_render_height;
     int16_t ini_cfg_supersampling = state->cfg_supersampling;
@@ -1809,6 +1846,8 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     state->infinite_ammo = ini_infinite_ammo;
     state->cfg_all_weapons = ini_cfg_all_weapons;
     state->cfg_all_keys = ini_cfg_all_keys;
+    state->cfg_mouse_look = ini_cfg_mouse_look;
+    state->cfg_mouse_look_invert_y = ini_cfg_mouse_look_invert_y;
     state->cfg_render_width = ini_cfg_render_width;
     state->cfg_render_height = ini_cfg_render_height;
     state->cfg_supersampling = ini_cfg_supersampling;
@@ -2258,6 +2297,8 @@ static void player_seed_facing_and_snapshots(GameState *state)
         plr->oldzoff = plr->zoff;
         plr->oldyoff = plr->yoff;
         plr->oldangpos = plr->angpos;
+        plr->oldlook_y = plr->look_y;
+        plr->s_look_y = plr->look_y;
         plr->s_oldxoff = plr->s_xoff;
         plr->s_oldzoff = plr->s_zoff;
     }

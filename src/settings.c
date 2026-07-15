@@ -121,6 +121,10 @@ static void apply_line(GameState *state, char *line)
         state->cfg_all_weapons = parse_bool(val) ? true : false;
     } else if (strcmp(key, "all_keys") == 0) {
         state->cfg_all_keys = parse_bool(val) ? true : false;
+    } else if (strcmp(key, "mouse_look") == 0) {
+        state->cfg_mouse_look = parse_bool(val) ? true : false;
+    } else if (strcmp(key, "mouse_look_invert_y") == 0) {
+        state->cfg_mouse_look_invert_y = parse_bool(val) ? true : false;
     } else if (strcmp(key, "display_mode") == 0 ||
                strcmp(key, "window_mode") == 0) {
         int8_t mode = -1;
@@ -214,13 +218,15 @@ static void apply_runtime_constraints(GameState *state)
 static void log_effective_settings(const GameState *state, const char *source_label)
 {
     if (state->cfg_start_level >= 0) {
-        printf("[SETTINGS] %s: start_level=%d infinite_health=%d infinite_ammo=%d all_weapons=%d all_keys=%d display_mode=%s render=%dx%d supersampling=%d render_threads=%d render_threads_max=%d volume=%d audio_buffer_samples=%d y_proj_scale=%d billboard_sprite_rendering_enhancement=%d weapon_draw=%d post_tint=%d weapon_post_gl=%d show_fps=%d\n",
+        printf("[SETTINGS] %s: start_level=%d infinite_health=%d infinite_ammo=%d all_weapons=%d all_keys=%d mouse_look=%d mouse_look_invert_y=%d display_mode=%s render=%dx%d supersampling=%d render_threads=%d render_threads_max=%d volume=%d audio_buffer_samples=%d y_proj_scale=%d billboard_sprite_rendering_enhancement=%d weapon_draw=%d post_tint=%d weapon_post_gl=%d show_fps=%d\n",
                source_label,
                (int)state->cfg_start_level + 1,
                state->infinite_health ? 1 : 0,
                state->infinite_ammo ? 1 : 0,
                state->cfg_all_weapons ? 1 : 0,
                state->cfg_all_keys ? 1 : 0,
+               state->cfg_mouse_look ? 1 : 0,
+               state->cfg_mouse_look_invert_y ? 1 : 0,
                display_mode_to_text(state->cfg_display_mode),
                (int)state->cfg_render_width,
                (int)state->cfg_render_height,
@@ -236,12 +242,14 @@ static void log_effective_settings(const GameState *state, const char *source_la
                state->cfg_weapon_post_gl ? 1 : 0,
                state->cfg_show_fps ? 1 : 0);
     } else {
-         printf("[SETTINGS] %s: start_level=default infinite_health=%d infinite_ammo=%d all_weapons=%d all_keys=%d display_mode=%s render=%dx%d supersampling=%d render_threads=%d render_threads_max=%d volume=%d audio_buffer_samples=%d y_proj_scale=%d billboard_sprite_rendering_enhancement=%d weapon_draw=%d post_tint=%d weapon_post_gl=%d show_fps=%d\n",
+         printf("[SETTINGS] %s: start_level=default infinite_health=%d infinite_ammo=%d all_weapons=%d all_keys=%d mouse_look=%d mouse_look_invert_y=%d display_mode=%s render=%dx%d supersampling=%d render_threads=%d render_threads_max=%d volume=%d audio_buffer_samples=%d y_proj_scale=%d billboard_sprite_rendering_enhancement=%d weapon_draw=%d post_tint=%d weapon_post_gl=%d show_fps=%d\n",
                source_label,
                state->infinite_health ? 1 : 0,
                state->infinite_ammo ? 1 : 0,
                state->cfg_all_weapons ? 1 : 0,
                state->cfg_all_keys ? 1 : 0,
+               state->cfg_mouse_look ? 1 : 0,
+               state->cfg_mouse_look_invert_y ? 1 : 0,
                display_mode_to_text(state->cfg_display_mode),
                (int)state->cfg_render_width,
                (int)state->cfg_render_height,

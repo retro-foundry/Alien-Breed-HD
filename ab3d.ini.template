@@ -20,6 +20,13 @@ all_weapons=0
 # 1 = treat every key in the level as collected (door/lift condition bits only; switches unchanged).
 all_keys=0
 
+# 1 = mouse Y shifts the 3D view center in modern mouse+keyboard mode.
+# 0 = original fixed vertical view.
+mouse_look=0
+
+# 1 = invert mouse-look Y when mouse_look=1.
+mouse_look_invert_y=0
+
 # Display mode:
 # fullscreen = fullscreen-desktop borderless (no display mode switch / no resolution change)
 # windowed = resizable window using render_width/render_height

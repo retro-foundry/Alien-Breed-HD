@@ -67,6 +67,8 @@ void game_state_init(GameState *state)
     state->infinite_ammo = false;
     state->cfg_all_weapons = true;
     state->cfg_all_keys = false;
+    state->cfg_mouse_look = false;
+    state->cfg_mouse_look_invert_y = false;
     state->cfg_display_mode = -1;
     state->cfg_render_width = 1280;
     state->cfg_render_height = 720;

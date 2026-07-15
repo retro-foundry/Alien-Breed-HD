@@ -3709,6 +3709,15 @@ static inline int project_y_to_pixels_round(int32_t vy, int32_t vz, int32_t proj
     return (int)q + center_y;
 }
 
+static inline int renderer_view_center_y(void)
+{
+    int center_y = g_renderer.view_center_y;
+    int h = g_renderer.height;
+    if (h < 1) h = 1;
+    if (center_y < 0 || center_y > h) center_y = h / 2;
+    return center_y;
+}
+
 typedef struct {
     int width;
     int base_w;
@@ -5990,7 +5999,7 @@ static void draw_wall_rasterize_segment(
     const size_t cw_step_y = renderer_cw_step_y(width);
     const size_t cw_step_x = renderer_cw_step_x(height);
     const int32_t proj_y_scale = g_renderer.proj_y_scale;
-    const int half_h = height / 2;
+    const int center_y = renderer_view_center_y();
 
     if (d6_max < 0) d6_max = 0;
     if (d6_max > 64) d6_max = 64;
@@ -6065,9 +6074,9 @@ static void draw_wall_rasterize_segment(
 
         /* Inline projection with precomputed factors */
         int64_t tnum = top_proj * inv_z_fp;
-        int y_top_scr = (int)((tnum >= 0 ? (tnum + (INVZ_ONE / 2)) : (tnum - (INVZ_ONE / 2))) / INVZ_ONE) + half_h;
+        int y_top_scr = (int)((tnum >= 0 ? (tnum + (INVZ_ONE / 2)) : (tnum - (INVZ_ONE / 2))) / INVZ_ONE) + center_y;
         int64_t bnum = bot_proj * inv_z_fp;
-        int y_bot_scr = (int)((bnum >= 0 ? (bnum + (INVZ_ONE / 2)) : (bnum - (INVZ_ONE / 2))) / INVZ_ONE) + half_h;
+        int y_bot_scr = (int)((bnum >= 0 ? (bnum + (INVZ_ONE / 2)) : (bnum - (INVZ_ONE / 2))) / INVZ_ONE) + center_y;
 
         /* Texture column via perspective divide */
         int64_t tex_t_fp64 = ((tex_z_acc >> INTERP_SUB_BITS) * INVZ_ONE) / inv_z_fp;
@@ -6773,7 +6782,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
 
     renderer_floor_prepare_common(&floor_common, rs, floor_height, scaleval);
 
-    int center = rs->height / 2;  /* Match wall/floor projection center */
+    int center = renderer_view_center_y();  /* Match wall/floor projection center */
     int row_dist = renderer_floor_row_dist_from_screen_y(y, center);
     const int use_gour = (use_gouraud != 0 && !is_water);
     /* Amiga floor distance attenuation uses 80-line screen-space row offsets (d0 around center=40). */
@@ -8568,7 +8577,7 @@ static int renderer_draw_floor_columns_ctx_fast(RenderSliceContext *ctx,
         }
 
         const int expand = g_renderer_rgb_raster_expand;
-        const int center = h / 2;
+        const int center = renderer_view_center_y();
         const int pick_capture_active = (g_pick_capture_active != 0);
         uint64_t drawn_px_count = 0;
         uint64_t drawn_col_count = 0;
@@ -12032,7 +12041,7 @@ static void renderer_project_zone_world_clip_y(const RendererState *r,
                                                int32_t *out_bot_y)
 {
     int32_t z = (z_fp > 0) ? z_fp : 1;
-    int center_y = r->height / 2;
+    int center_y = renderer_view_center_y();
     if (ignore_top_clip) {
         *out_top_y = INT32_MIN;
     } else {
@@ -12447,7 +12456,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
 
             int scr_x = project_x_to_pixels(vx_fine, orp_z);
             int32_t rel_y_8 = (state->explosions[ei].y_floor - y_off) >> WORLD_Y_FRAC_BITS;
-            int center_y = r->height / 2;
+            int center_y = renderer_view_center_y();
             int scr_y = (int)(((int64_t)rel_y_8 * (int64_t)r->proj_y_scale * (int64_t)RENDER_SCALE << ROT_Z_FRAC_BITS) / (int64_t)orp_z) + center_y;
             int z_for_size = ROT_Z_INT(orp_z);
             if (z_for_size < 1) z_for_size = 1;
@@ -12713,7 +12722,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int16_t obj_y = rd16(obj + 4);
         int32_t rel_y = (((int32_t)obj_y) << 7) - y_off;
         int32_t rel_y_8 = rel_y >> WORLD_Y_FRAC_BITS;
-        int center_y = g_renderer.height / 2;
+        int center_y = renderer_view_center_y();
         int scr_y = (int)(((int64_t)rel_y_8 * (int64_t)g_renderer.proj_y_scale * (int64_t)RENDER_SCALE << ROT_Z_FRAC_BITS) / (int64_t)orp->z) + center_y;
         /* Keep the BitMapObj bottom edge anchored to the wall/floor projection
          * after applying Amiga-proportioned billboard height. */
@@ -13059,7 +13068,7 @@ static int renderer_build_viewer_split_floor_occluder(const GameState *state,
     int32_t y_off;
     int w;
     int h;
-    int half_h;
+    int center_y;
     int active = 0;
     int16_t *left_edge = NULL;
     int16_t *right_edge = NULL;
@@ -13097,7 +13106,7 @@ static int renderer_build_viewer_split_floor_occluder(const GameState *state,
     gfx_data = level->graphics + (size_t)gfx_off;
 
     y_off = r->yoff;
-    half_h = h / 2;
+    center_y = renderer_view_center_y();
 
     if (!renderer_poly_edge_ensure_h(h)) return 0;
     left_edge  = g_poly_edge_left_scratch;
@@ -13142,7 +13151,7 @@ static int renderer_build_viewer_split_floor_occluder(const GameState *state,
                 int32_t floor_y_dist = draw_h_world - y_off;
                 int poly_top = h;
                 int poly_bot = -1;
-                int y_min_clamp = half_h;
+                int y_min_clamp = center_y;
                 int y_max_clamp = h - 1;
 
                 if (draw_h_world < zone_roof || draw_h_world > zone_floor) continue;
@@ -13193,8 +13202,8 @@ static int renderer_build_viewer_split_floor_occluder(const GameState *state,
                     int sx1 = project_x_to_pixels(ex1, ez1);
                     int sx2 = project_x_to_pixels(ex2, ez2);
                     int32_t rel_h_8 = rel_h >> WORLD_Y_FRAC_BITS;
-                    int sy1_raw = project_y_to_pixels_round(rel_h_8, ez1, r->proj_y_scale, half_h);
-                    int sy2_raw = project_y_to_pixels_round(rel_h_8, ez2, r->proj_y_scale, half_h);
+                    int sy1_raw = project_y_to_pixels_round(rel_h_8, ez1, r->proj_y_scale, center_y);
+                    int sy2_raw = project_y_to_pixels_round(rel_h_8, ez2, r->proj_y_scale, center_y);
 
                     int sy1 = sy1_raw;
                     int sy2 = sy2_raw;
@@ -13513,8 +13522,7 @@ static void renderer_tessellate_sky_ceiling_ctx(RenderSliceContext *ctx,
 {
     RendererState *r = &g_renderer;
     int h = r->height;
-    int half_h = h / 2;
-    int center = half_h;
+    int center = renderer_view_center_y();
 
     int32_t rel_h = zone_roof - y_off;
     if (rel_h >= 0) return; /* ceiling must be above camera eye */
@@ -13530,9 +13538,9 @@ static void renderer_tessellate_sky_ceiling_ctx(RenderSliceContext *ctx,
     int poly_top = h;
     int poly_bot = -1;
 
-    /* Ceiling: rows 0 .. half_h-1, further clamped to ctx clip band */
+    /* Ceiling: rows 0 .. center-1, further clamped to ctx clip band */
     int y_min = ctx->top_clip;
-    int y_max = half_h - 1;
+    int y_max = center - 1;
     if (y_max > ctx->bot_clip) y_max = ctx->bot_clip;
 
     const int32_t NEAR = ROT_Z_FROM_INT(1);
@@ -13857,7 +13865,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
     PlayerState *viewer = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
     int16_t viewer_zone = viewer->zone;
     int trace_floor_zone = (g_renderer_zone_trace_active && !use_upper && zone_id == viewer_zone) ? 1 : 0;
-    int half_h = g_renderer.height / 2;
+    int view_center_y = renderer_view_center_y();
 
     int has_split_water = (zone_water > zone_roof && zone_water < zone_floor);
 
@@ -14246,7 +14254,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
              * Screen X from on_screen[] (already projected).
              */
             int h = g_renderer.height;
-            int center = h / 2;  /* Match wall projection center */
+            int center = view_center_y;  /* Match wall projection center */
             const int allow_floor_col_fast =
                 (AB3D_ENABLE_FLOOR_COL_FAST && AB3D_CW_COL_MAJOR);
             const int allow_floor_col_fast_poly =
@@ -14293,11 +14301,11 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 top_clip_for_poly -= CHUNKY_TOPCLIP_BIAS;
             }
             if (floor_y_dist > 0) {
-                y_min_clamp = half_h;       /* floor: center to bottom */
+                y_min_clamp = center;       /* floor: center to bottom */
                 y_max_clamp = h - 1;
             } else {
                 y_min_clamp = 0;            /* ceiling: top to center */
-                y_max_clamp = half_h - 1;
+                y_max_clamp = center - 1;
             }
             if (y_min_clamp < top_clip_for_poly) y_min_clamp = top_clip_for_poly;
             if (y_max_clamp > ctx->bot_clip) y_max_clamp = ctx->bot_clip;
@@ -15444,9 +15452,22 @@ void renderer_draw_display(GameState *state)
     int32_t view_xoff = renderer_interp_i32(plr->oldxoff, plr->xoff, view_alpha);
     int32_t view_zoff = renderer_interp_i32(plr->oldzoff, plr->zoff, view_alpha);
     int32_t view_yoff = renderer_interp_i32(plr->oldyoff, plr->yoff, view_alpha);
+    int32_t view_look_y = state->cfg_mouse_look
+        ? renderer_interp_i32((int32_t)plr->oldlook_y, (int32_t)plr->look_y, view_alpha)
+        : 0;
     int16_t ang = renderer_interp_angle(plr->oldangpos, plr->angpos, view_alpha);
     int16_t sky_angpos = ang;
     r->sky_frame_angpos = sky_angpos;
+    {
+        int64_t scaled = (int64_t)view_look_y * (int64_t)h;
+        int look_px = (int)((scaled >= 0)
+            ? ((scaled + RENDER_DEFAULT_HEIGHT / 2) / RENDER_DEFAULT_HEIGHT)
+            : ((scaled - RENDER_DEFAULT_HEIGHT / 2) / RENDER_DEFAULT_HEIGHT));
+        int center_y = h / 2 - look_px;
+        if (center_y < 0) center_y = 0;
+        if (center_y > h) center_y = h;
+        r->view_center_y = center_y;
+    }
 
     r->sinval = sin_lookup(ang);
     r->cosval = cos_lookup(ang);
