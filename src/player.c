@@ -31,6 +31,8 @@
 #define TURN_STEP           10
 #define MOUSE_CLAMP         50
 #define MOUSE_LOOK_LIMIT    (RENDER_DEFAULT_HEIGHT / 2)
+#define MOUSE_AIM_SPEED_SCALE 128
+#define MOUSE_AIM_SPEED_LIMIT (512 * 20)
 #define HEIGHT_STEP         1024
 #define BOBBLE_MASK         ANGLE_MASK
 #define CLUMP_MASK          4095
@@ -844,21 +846,115 @@ static int16_t player_clamp_mouse_look(int32_t look_y)
     return (int16_t)look_y;
 }
 
-static void player_apply_mouse_look(PlayerState *plr, const GameState *state, int16_t mouse_dy)
+static int16_t player_clamp_mouse_aim_speed(int32_t aim_speed)
 {
+    if (aim_speed > MOUSE_AIM_SPEED_LIMIT) aim_speed = MOUSE_AIM_SPEED_LIMIT;
+    if (aim_speed < -MOUSE_AIM_SPEED_LIMIT) aim_speed = -MOUSE_AIM_SPEED_LIMIT;
+    return (int16_t)aim_speed;
+}
+
+static int16_t player_mouse_aim_speed_from_look(int16_t look_y)
+{
+    return player_clamp_mouse_aim_speed((int32_t)look_y * MOUSE_AIM_SPEED_SCALE);
+}
+
+static int16_t *player_sim_aim_speed_ptr(GameState *state, const PlayerState *plr)
+{
+    if (!state || !plr) return NULL;
+    return (plr == &state->plr2) ? &state->plr2_s_aim_speed : &state->plr1_s_aim_speed;
+}
+
+static void player_reset_mouse_look_aim(PlayerState *plr, GameState *state)
+{
+    int16_t *sim_aim = player_sim_aim_speed_ptr(state, plr);
+    if (plr) plr->s_look_y = 0;
+    if (sim_aim) *sim_aim = 0;
+}
+
+static void player_clear_mouse_look_aim_state(GameState *state)
+{
+    if (!state) return;
+
+    PlayerState *plrs[2] = { &state->plr1, &state->plr2 };
+    for (int i = 0; i < 2; i++) {
+        plrs[i]->look_y = 0;
+        plrs[i]->oldlook_y = 0;
+        plrs[i]->s_look_y = 0;
+        plrs[i]->p_look_y = 0;
+    }
+    state->plr1_aim_speed = 0;
+    state->plr1_s_aim_speed = 0;
+    state->plr1_p_aim_speed = 0;
+    state->plr2_aim_speed = 0;
+    state->plr2_s_aim_speed = 0;
+    state->plr2_p_aim_speed = 0;
+}
+
+static void player_sync_mouse_look_aim_after_load(GameState *state, bool derive_from_look)
+{
+    if (!state) return;
+
+    PlayerState *plrs[2] = { &state->plr1, &state->plr2 };
+    int16_t *aims[2] = { &state->plr1_aim_speed, &state->plr2_aim_speed };
+    int16_t *sim_aims[2] = { &state->plr1_s_aim_speed, &state->plr2_s_aim_speed };
+    int16_t *snap_aims[2] = { &state->plr1_p_aim_speed, &state->plr2_p_aim_speed };
+
+    for (int i = 0; i < 2; i++) {
+        PlayerState *plr = plrs[i];
+        int16_t look_y = plr->look_y;
+        if (!state->cfg_mouse_look) {
+            plr->look_y = 0;
+            plr->oldlook_y = 0;
+            plr->s_look_y = 0;
+            plr->p_look_y = 0;
+            *aims[i] = 0;
+            *sim_aims[i] = 0;
+            *snap_aims[i] = 0;
+            continue;
+        }
+
+        if (derive_from_look) {
+            *aims[i] = 0;
+            *sim_aims[i] = 0;
+            *snap_aims[i] = 0;
+        }
+        if (derive_from_look && look_y != 0) {
+            *aims[i] = player_mouse_aim_speed_from_look(look_y);
+        }
+        if (*sim_aims[i] == 0) *sim_aims[i] = *aims[i];
+        if (*snap_aims[i] == 0) *snap_aims[i] = *sim_aims[i];
+    }
+}
+
+static void player_apply_mouse_look(PlayerState *plr, GameState *state, int16_t mouse_dy)
+{
+    int16_t *sim_aim = player_sim_aim_speed_ptr(state, plr);
     if (!plr) return;
     if (!state || !state->cfg_mouse_look) {
-        plr->s_look_y = 0;
+        player_reset_mouse_look_aim(plr, state);
         return;
     }
 
     int32_t delta = (int32_t)mouse_dy * (int32_t)MOUSE_SENSITIVITY;
     if (state->cfg_mouse_look_invert_y) delta = -delta;
-    plr->s_look_y = player_clamp_mouse_look((int32_t)plr->s_look_y + delta);
+    int32_t unclamped_look = (int32_t)plr->s_look_y + delta;
+    int16_t clamped_look = player_clamp_mouse_look(unclamped_look);
+    bool look_was_clamped = (unclamped_look != (int32_t)clamped_look);
+
+    /* AB3D2 modules/player.s plr_MouseControl adds the mouse-Y delta to
+     * STOPOFFSET and the same delta scaled by 128 to PlrT_AimSpeed_l. */
+    if (sim_aim && delta != 0) {
+        int32_t aim = (int32_t)(*sim_aim) + delta * MOUSE_AIM_SPEED_SCALE;
+        if (look_was_clamped) {
+            aim = (delta > 0) ? MOUSE_AIM_SPEED_LIMIT : -MOUSE_AIM_SPEED_LIMIT;
+        }
+        *sim_aim = player_clamp_mouse_aim_speed(aim);
+    }
+    plr->s_look_y = clamped_look;
 }
 
 static void player_mouse_kbd_control(PlayerState *plr, const uint8_t *key_map,
-                                      const KeyBindings *keys, const GameState *state,
+                                      const KeyBindings *keys, GameState *state,
                                       int16_t temp_frames)
 {
     MouseState mouse;
@@ -981,7 +1077,7 @@ static void player_mouse_kbd_control(PlayerState *plr, const uint8_t *key_map,
  * ----------------------------------------------------------------------- */
 static void player_sim_control(PlayerState *plr, const ControlMode *ctrl,
                                 uint8_t *key_map, const KeyBindings *keys,
-                                const GameState *state,
+                                GameState *state,
                                 int16_t temp_frames)
 {
     static uint8_t old_space = 0;
@@ -993,13 +1089,13 @@ static void player_sim_control(PlayerState *plr, const ControlMode *ctrl,
     if (ctrl->mouse_kbd) {
         player_mouse_kbd_control(plr, key_map, keys, state, temp_frames);
     } else if (ctrl->mouse) {
-        plr->s_look_y = 0;
+        player_reset_mouse_look_aim(plr, state);
         player_mouse_control(plr, key_map, keys, temp_frames);
     } else if (ctrl->keys) {
-        plr->s_look_y = 0;
+        player_reset_mouse_look_aim(plr, state);
         player_keyboard_control(plr, key_map, keys, temp_frames);
     } else if (ctrl->joy) {
-        plr->s_look_y = 0;
+        player_reset_mouse_look_aim(plr, state);
         player_keyboard_control(plr, key_map, keys, temp_frames);
     } else {
         /* Default: mouse + keyboard */
@@ -1056,6 +1152,11 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
     int16_t angpos = plr->p_angpos;
     plr->angpos = angpos;
     plr->look_y = plr->p_look_y;
+    if (plr_num == 2) {
+        state->plr2_aim_speed = state->plr2_p_aim_speed;
+    } else {
+        state->plr1_aim_speed = state->plr1_p_aim_speed;
+    }
     plr->sinval = sin_lookup(angpos);
     plr->cosval = cos_lookup(angpos);
 
@@ -1413,6 +1514,7 @@ void player1_snapshot(GameState *state)
     p->p_height      = p->s_height;
     p->p_angpos      = p->s_angpos;
     p->p_look_y      = p->s_look_y;
+    state->plr1_p_aim_speed = state->plr1_s_aim_speed;
     p->p_bobble      = p->bobble;
     p->p_clicked     = p->clicked;
     p->clicked       = 0;
@@ -1433,6 +1535,7 @@ void player2_snapshot(GameState *state)
     p->p_height      = p->s_height;
     p->p_angpos      = p->s_angpos;
     p->p_look_y      = p->s_look_y;
+    state->plr2_p_aim_speed = state->plr2_s_aim_speed;
     p->p_bobble      = p->bobble;
     p->p_clicked     = p->clicked;
     p->clicked       = 0;
@@ -1511,7 +1614,7 @@ void player2_control(GameState *state)
  * Legacy format (magic "AB3D") remains readable for old position-only saves. */
 #define SAVE_MAGIC_LEGACY "AB3D"
 #define SAVE_MAGIC_FULL   "AB3S"
-#define SAVE_VERSION_FULL 5u
+#define SAVE_VERSION_FULL 6u
 #define SAVE_FILE_SUBPATH "savegame.bin"
 #define SAVE_MAX_TABLE_ENTRIES 4096
 #define SAVE_MAX_CHUNK_BYTES (256u * 1024u * 1024u)
@@ -1861,6 +1964,7 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     state->cfg_post_tint = ini_cfg_post_tint;
     state->cfg_weapon_post_gl = ini_cfg_weapon_post_gl;
     state->cfg_show_fps = ini_cfg_show_fps;
+    player_sync_mouse_look_aim_after_load(state, hdr->version < 6u);
 
     door_data_dst = player_save_table_size_with_sentinel(state->level.door_data, 22u);
     switch_data_dst = player_save_table_size_with_sentinel(state->level.switch_data, 14u);
@@ -2284,6 +2388,9 @@ static void player_sync_loaded_player(GameState *state, PlayerState *plr, int pl
 static void player_seed_facing_and_snapshots(GameState *state)
 {
     PlayerState *plrs[2] = { &state->plr1, &state->plr2 };
+    int16_t *aims[2] = { &state->plr1_aim_speed, &state->plr2_aim_speed };
+    int16_t *sim_aims[2] = { &state->plr1_s_aim_speed, &state->plr2_s_aim_speed };
+    int16_t *snap_aims[2] = { &state->plr1_p_aim_speed, &state->plr2_p_aim_speed };
     for (int i = 0; i < 2; i++) {
         PlayerState *plr = plrs[i];
         int16_t ang = (int16_t)(plr->angpos & ANGLE_MASK);
@@ -2299,6 +2406,20 @@ static void player_seed_facing_and_snapshots(GameState *state)
         plr->oldangpos = plr->angpos;
         plr->oldlook_y = plr->look_y;
         plr->s_look_y = plr->look_y;
+        if (!state->cfg_mouse_look) {
+            plr->look_y = 0;
+            plr->oldlook_y = 0;
+            plr->s_look_y = 0;
+            *aims[i] = 0;
+            *sim_aims[i] = 0;
+            *snap_aims[i] = 0;
+        } else {
+            if (*aims[i] == 0 && *sim_aims[i] == 0 && *snap_aims[i] == 0 && plr->look_y != 0) {
+                *aims[i] = player_mouse_aim_speed_from_look(plr->look_y);
+            }
+            *sim_aims[i] = *aims[i];
+            *snap_aims[i] = *sim_aims[i];
+        }
         plr->s_oldxoff = plr->s_xoff;
         plr->s_oldzoff = plr->s_zoff;
     }
@@ -2368,6 +2489,7 @@ PlayerSaveLoadResult player_load_save_from_file(GameState *state)
     if (fread(&state->plr2.zone, sizeof(state->plr2.zone), 1, f) != 1) goto load_fail;
     if (fread(&state->plr2.angpos, sizeof(state->plr2.angpos), 1, f) != 1) goto load_fail;
     if (fread(&state->plr2.yoff, sizeof(state->plr2.yoff), 1, f) != 1) goto load_fail;
+    player_clear_mouse_look_aim_state(state);
 
     has_level = (fread(&file_level, sizeof(file_level), 1, f) == 1);
     fclose(f);
@@ -2509,6 +2631,46 @@ void player_init_from_level(GameState *state)
  * 5. For projectile weapons: create bullet in PlayerShotData
  * 6. Play sound, animate gun
  * ----------------------------------------------------------------------- */
+static int16_t player_sequel_mouse_aim_bulyspd(const GameState *state, int plr_num,
+                                               int16_t bullet_speed)
+{
+    int32_t yvel = (plr_num == 2) ? state->plr2_p_aim_speed : state->plr1_p_aim_speed;
+    int shift = 8 - bullet_speed;
+
+    /* AB3D2 newplayershoot.s shifts PlrT_AimSpeed_l by (8 - BulletSpd)
+     * before writing bulyspd for projectile launch. */
+    if (shift > 0) {
+        yvel >>= shift;
+    } else if (shift < 0) {
+        yvel <<= -shift;
+    }
+
+    if (yvel > 32767) yvel = 32767;
+    if (yvel < -32768) yvel = -32768;
+    return (int16_t)yvel;
+}
+
+static int16_t player_legacy_projectile_yvel(const GunDataEntry *gun, int16_t bulyspd)
+{
+    /* AB3D I PlayerShoot.s PLR1FIREBULLET clamp order, including the
+     * original second compare quirk, then gun initial Y offset. */
+    int16_t final_yvel = bulyspd;
+    if (final_yvel >= 20) final_yvel = 20;
+    if (final_yvel >= -20) final_yvel = -20;
+    final_yvel = (int16_t)((int32_t)final_yvel + (int32_t)gun->bullet_y_offset);
+    return final_yvel;
+}
+
+static int16_t player_sequel_projectile_yvel(int16_t bulyspd)
+{
+    /* AB3D2 newplayershoot.s firefive clamps to +-20*128 and leaves the
+     * old initial-Y-velocity add commented out. */
+    int32_t final_yvel = bulyspd;
+    if (final_yvel > 20 * 128) final_yvel = 20 * 128;
+    if (final_yvel < -20 * 128) final_yvel = -20 * 128;
+    return (int16_t)final_yvel;
+}
+
 static void player_shoot_internal(GameState *state, PlayerState *plr,
                                   int plr_num, const GunDataEntry *guns)
 {
@@ -2788,10 +2950,12 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     } else {
         /* Projectile weapon: Amiga uses PlayerShotData for player projectiles. */
         if (!state->level.player_shot_data) return;
-        /* PlayerShoot.s nothingtoshoot path zeros bulyspd before PLR1FIREBULLET.
-         * All projectile guns share this; per-gun arc differs via gun data
-         * (bullet_y_offset, gravity, flags). */
-        if (!has_target) {
+        if (state->cfg_mouse_look) {
+            bulyspd = player_sequel_mouse_aim_bulyspd(state, plr_num, gun->bullet_speed);
+        } else if (!has_target) {
+            /* PlayerShoot.s nothingtoshoot path zeros bulyspd before PLR1FIREBULLET.
+             * All projectile guns share this; per-gun arc differs via gun data
+             * (bullet_y_offset, gravity, flags). */
             bulyspd = 0;
         }
 
@@ -2854,14 +3018,9 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         int32_t zvel = ((int32_t)cos_val) << (shift + 1);
         SHOT_SET_XVEL(*bullet, xvel);
         SHOT_SET_ZVEL(*bullet, zvel);
-        /* PlayerShoot.s PLR1FIREBULLET clamp order:
-         *   if (bulyspd >= 20)  bulyspd = 20;
-         *   if (bulyspd >= -20) bulyspd = -20;
-         *   bulyspd += bullet_y_offset; */
-        int16_t final_yvel = bulyspd;
-        if (final_yvel >= 20) final_yvel = 20;
-        if (final_yvel >= -20) final_yvel = -20;
-        final_yvel = (int16_t)((int32_t)final_yvel + (int32_t)gun->bullet_y_offset);
+        int16_t final_yvel = state->cfg_mouse_look ?
+            player_sequel_projectile_yvel(bulyspd) :
+            player_legacy_projectile_yvel(gun, bulyspd);
         SHOT_SET_YVEL(*bullet, final_yvel);
         SHOT_POWER(*bullet) = gun->shot_power;
         SHOT_STATUS(*bullet) = 0;
