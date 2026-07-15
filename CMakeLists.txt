@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ab3d1 VERSION 0.9.0 LANGUAGES C)
+project(ab3d1 VERSION 0.9.1 LANGUAGES C)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 set(CMAKE_C_STANDARD 11)
