@@ -837,7 +837,9 @@ static void player_mouse_control(PlayerState *plr, const uint8_t *key_map,
  * Mouse left button or fire key fires weapon.
  * Shift to run.
  * ----------------------------------------------------------------------- */
-#define MOUSE_SENSITIVITY 3  /* angle units per SDL pixel; tune to taste */
+#define MOUSE_AXIS_X 0
+#define MOUSE_AXIS_Y 1
+#define MOUSE_TURN_SCALE 4  /* AB3D2 c/system.c Sys_ReadMouse: Vis_AngPos_w += diffX << 2 */
 
 static int16_t player_clamp_mouse_look(int32_t look_y)
 {
@@ -856,6 +858,52 @@ static int16_t player_clamp_mouse_aim_speed(int32_t aim_speed)
 static int16_t player_mouse_aim_speed_from_look(int16_t look_y)
 {
     return player_clamp_mouse_aim_speed((int32_t)look_y * MOUSE_AIM_SPEED_SCALE);
+}
+
+static int player_input_index(const GameState *state, const PlayerState *plr)
+{
+    return (state && plr == &state->plr2) ? 1 : 0;
+}
+
+static int player_mouse_present_extent(int axis)
+{
+    int present = (axis == MOUSE_AXIS_X) ? g_renderer.present_width : g_renderer.present_height;
+    if (present <= 0) {
+        present = (axis == MOUSE_AXIS_X) ? renderer_get_width() : renderer_get_height();
+    }
+    if (present <= 0) {
+        present = (axis == MOUSE_AXIS_X) ? RENDER_DEFAULT_WIDTH : RENDER_DEFAULT_HEIGHT;
+    }
+    return present;
+}
+
+static int16_t player_mouse_delta_to_reference(const GameState *state,
+                                               const PlayerState *plr,
+                                               int axis,
+                                               int16_t delta)
+{
+    static int32_t remainders[2][2];
+    int idx = player_input_index(state, plr);
+    int reference = (axis == MOUSE_AXIS_X) ? RENDER_DEFAULT_WIDTH : RENDER_DEFAULT_HEIGHT;
+    int present = player_mouse_present_extent(axis);
+
+    if (delta == 0) {
+        if (abs(remainders[idx][axis]) >= present) {
+            remainders[idx][axis] %= present;
+        }
+        return 0;
+    }
+
+    /* SDL reports relative movement in presented-window pixels. AB3D2 consumes
+     * mouse deltas in its own low-resolution view space, so preserve the source
+     * cadence by first converting into the current letterboxed render extent. */
+    int64_t scaled = (int64_t)delta * (int64_t)reference + remainders[idx][axis];
+    int64_t ref_delta = scaled / present;
+    remainders[idx][axis] = (int32_t)(scaled % present);
+
+    if (ref_delta > INT16_MAX) ref_delta = INT16_MAX;
+    if (ref_delta < INT16_MIN) ref_delta = INT16_MIN;
+    return (int16_t)ref_delta;
 }
 
 static int16_t *player_sim_aim_speed_ptr(GameState *state, const PlayerState *plr)
@@ -935,14 +983,14 @@ static void player_apply_mouse_look(PlayerState *plr, GameState *state, int16_t 
         return;
     }
 
-    int32_t delta = (int32_t)mouse_dy * (int32_t)MOUSE_SENSITIVITY;
+    int32_t delta = (int32_t)mouse_dy;
     if (state->cfg_mouse_look_invert_y) delta = -delta;
     int32_t unclamped_look = (int32_t)plr->s_look_y + delta;
     int16_t clamped_look = player_clamp_mouse_look(unclamped_look);
     bool look_was_clamped = (unclamped_look != (int32_t)clamped_look);
 
-    /* AB3D2 modules/player.s plr_MouseControl adds the mouse-Y delta to
-     * STOPOFFSET and the same delta scaled by 128 to PlrT_AimSpeed_l. */
+    /* AB3D2 modules/player.s plr_MouseControl adds mouse-Y delta directly to
+     * STOPOFFSET and scales that same source-space delta for PlrT_AimSpeed_l. */
     if (sim_aim && delta != 0) {
         int32_t aim = (int32_t)(*sim_aim) + delta * MOUSE_AIM_SPEED_SCALE;
         if (look_was_clamped) {
@@ -960,9 +1008,14 @@ static void player_mouse_kbd_control(PlayerState *plr, const uint8_t *key_map,
     MouseState mouse;
     input_read_mouse(&mouse);
 
-    /* AB3D2 modules/player.s uses Sys_MouseY to update STOPOFFSET, then the
-     * renderer shifts its projection center. Keep this view-only in AB3D I. */
-    player_apply_mouse_look(plr, state, mouse.dy);
+    int16_t ref_mouse_dx = player_mouse_delta_to_reference(state, plr, MOUSE_AXIS_X, mouse.dx);
+    int16_t ref_mouse_dy = (state && state->cfg_mouse_look)
+        ? player_mouse_delta_to_reference(state, plr, MOUSE_AXIS_Y, mouse.dy)
+        : 0;
+
+    /* AB3D2 modules/player.s uses source-space Sys_MouseY to update STOPOFFSET,
+     * then the renderer shifts its projection center. */
+    player_apply_mouse_look(plr, state, ref_mouse_dy);
 
     int16_t move_speed = WALK_SPEED;
 
@@ -981,9 +1034,9 @@ static void player_mouse_kbd_control(PlayerState *plr, const uint8_t *key_map,
     move_speed *= temp_frames;
 
     /* ---- Turning from mouse X ---- */
-    /* Mouse delta self-scales (accumulates between game ticks) */
+    /* input.c accumulates relative deltas between 50 Hz logic ticks. */
     int16_t angpos = plr->s_angpos;
-    angpos += (int16_t)(mouse.dx * MOUSE_SENSITIVITY);
+    angpos += (int16_t)(ref_mouse_dx * MOUSE_TURN_SCALE);
     angpos &= ANGLE_MASK;
     plr->s_angpos = angpos;
     plr->s_sinval = sin_lookup(angpos);
