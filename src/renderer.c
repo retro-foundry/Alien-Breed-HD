@@ -262,6 +262,31 @@ static inline int renderer_clamp_base_width(int w)
     return w;
 }
 
+static inline float renderer_clamp_interp_alpha(float alpha)
+{
+    if (alpha < 0.0f) return 0.0f;
+    if (alpha > 1.0f) return 1.0f;
+    return alpha;
+}
+
+static inline int32_t renderer_interp_i32(int32_t from, int32_t to, float alpha)
+{
+    double value = (double)from + ((double)to - (double)from) * (double)alpha;
+    if (value > (double)INT_MAX) return INT_MAX;
+    if (value < (double)INT_MIN) return INT_MIN;
+    return (int32_t)value;
+}
+
+static inline int16_t renderer_interp_angle(int16_t from, int16_t to, float alpha)
+{
+    int32_t a0 = (int32_t)from & ANGLE_MASK;
+    int32_t a1 = (int32_t)to & ANGLE_MASK;
+    int32_t delta = a1 - a0;
+    if (delta > ANGLE_180) delta -= ANGLE_FULL;
+    else if (delta < -ANGLE_180) delta += ANGLE_FULL;
+    return (int16_t)((a0 + (int32_t)((double)delta * (double)alpha)) & ANGLE_MASK);
+}
+
 /* Keep projection stable when users change render size at the same aspect
  * (e.g. 1280x720 <-> 1920x1080 <-> 3840x2160). Normalize logical width to a
  * fixed 1080-high baseline so same-aspect resolutions share one X-FOV. */
@@ -15397,19 +15422,22 @@ void renderer_draw_display(GameState *state)
 
     /* 2. Setup view transform (from AB3DI.s DrawDisplay lines 3399-3438) */
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
-    PlayerState *plr_sky = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
-    int16_t sky_angpos = (int16_t)plr_sky->angpos;
+    float view_alpha = renderer_clamp_interp_alpha(state->obj_interp_alpha);
+    int32_t view_xoff = renderer_interp_i32(plr->oldxoff, plr->xoff, view_alpha);
+    int32_t view_zoff = renderer_interp_i32(plr->oldzoff, plr->zoff, view_alpha);
+    int32_t view_yoff = renderer_interp_i32(plr->oldyoff, plr->yoff, view_alpha);
+    int16_t ang = renderer_interp_angle(plr->oldangpos, plr->angpos, view_alpha);
+    int16_t sky_angpos = ang;
     r->sky_frame_angpos = sky_angpos;
 
-    int16_t ang = (int16_t)(plr->angpos & 0x3FFF); /* 14-bit angle */
     r->sinval = sin_lookup(ang);
     r->cosval = cos_lookup(ang);
 
     /* Extract integer part of 16.16 fixed-point position for rendering.
      * On Amiga: .w operations on big-endian 32-bit values read the high word. */
-    r->xoff = (int16_t)(plr->xoff >> 16);
-    r->zoff = (int16_t)(plr->zoff >> 16);
-    r->yoff = plr->yoff;
+    r->xoff = (int16_t)(view_xoff >> 16);
+    r->zoff = (int16_t)(view_zoff >> 16);
+    r->yoff = view_yoff;
 
     /* wallyoff = (yoff >> 8) + 224, masked to 0-255 */
     int32_t y_shifted = r->yoff >> 8;

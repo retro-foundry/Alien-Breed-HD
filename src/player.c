@@ -947,6 +947,8 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
     /* 1. Snapshot positions (16.16 fixed-point) */
     plr->oldxoff = plr->xoff;
     plr->oldzoff = plr->zoff;
+    plr->oldyoff = plr->yoff;
+    plr->oldangpos = plr->angpos;
 
     /* Copy simulation position to actual (both in 16.16 fixed-point).
      * On the Amiga (AB3DI.s PLR1_Control ~line 2984):
@@ -1028,6 +1030,8 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
              * delta; carry that back into sim Y (without bob offset). */
             plr->s_yoff = ctx.newy - bob_val;
             plr->yoff = ctx.newy;
+            plr->oldyoff = plr->yoff;
+            plr->oldangpos = plr->angpos;
             audio_play_sample(26, 64);
         }
     }
@@ -1421,7 +1425,7 @@ void player2_control(GameState *state)
  * Legacy format (magic "AB3D") remains readable for old position-only saves. */
 #define SAVE_MAGIC_LEGACY "AB3D"
 #define SAVE_MAGIC_FULL   "AB3S"
-#define SAVE_VERSION_FULL 3u
+#define SAVE_VERSION_FULL 4u
 #define SAVE_FILE_SUBPATH "savegame.bin"
 #define SAVE_MAX_TABLE_ENTRIES 4096
 #define SAVE_MAX_CHUNK_BYTES (256u * 1024u * 1024u)
@@ -2200,6 +2204,8 @@ static void player_seed_facing_and_snapshots(GameState *state)
         plr->s_cosval = plr->cosval;
         plr->oldxoff = plr->xoff;
         plr->oldzoff = plr->zoff;
+        plr->oldyoff = plr->yoff;
+        plr->oldangpos = plr->angpos;
         plr->s_oldxoff = plr->s_xoff;
         plr->s_oldzoff = plr->s_zoff;
     }

@@ -48,6 +48,8 @@ typedef struct {
     int32_t  list_of_graph_rooms;
     int32_t  oldxoff;
     int32_t  oldzoff;
+    int32_t  oldyoff;
+    int16_t  oldangpos;
     int8_t   stood_in_top;
     int32_t  height;
 
