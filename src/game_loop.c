@@ -270,9 +270,6 @@ void game_loop_tick(GameState *state, GameLoopCtx *ctx)
             ctx->vblank_remainder_ms += elapsed;
             ctx->pending_vblanks += (int)(ctx->vblank_remainder_ms / 20);
             ctx->vblank_remainder_ms %= 20;
-
-            /* Keep water phase moving every display frame; average speed stays 50Hz. */
-            renderer_step_water_anim_ms(elapsed);
         }
 
         /* Track how far we are into the current 50Hz tick (0=just ticked, 1=about to tick).
@@ -295,6 +292,10 @@ void game_loop_tick(GameState *state, GameLoopCtx *ctx)
             state->frames_to_draw = (int16_t)ticks;
             state->temp_frames = (int16_t)ticks;
             audio_begin_frame();
+
+            /* Water waves are an Amiga draw-loop visual animation. Keep them
+             * on latched vblank cadence, not display-refresh cadence. */
+            renderer_step_water_anim_vblanks(ticks);
 
             /* ---- Phase 1: Pause handling ---- */
             if (state->mode == MODE_SINGLE) {

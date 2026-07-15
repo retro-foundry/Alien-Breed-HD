@@ -2596,12 +2596,13 @@ static uint8_t g_water_src_phase = 0;
 static uint16_t g_water_src_off = 0;
 #define WATER_BRIGHTEN_ROW_BYTES 512u
 #define WATER_BRIGHTEN_ROW_COUNT 22u
-/* Interpolated per-display-frame refraction phase (smooths 50Hz step on 60Hz+ displays). */
+/* Amiga-style draw-loop cadence for visible water phase. */
+#define WATER_ANIM_FRAME_STEP_VBLANKS 2u
+/* Draw-latched refraction phase; render frames must not advance animation state. */
 static uint16_t g_water_wtan_draw = 0;
-/* Millisecond remainder used to keep average animation speed at exactly 50Hz. */
+/* VBlank/ms remainders for keeping cadence independent of presentation frame rate. */
+static uint32_t g_water_vblank_remainder = 0;
 static uint32_t g_water_ms_remainder = 0;
-/* Gameplay tweak: run water animation at half speed. */
-static uint32_t g_water_speed_ms_remainder = 0;
 static const uint8_t *g_water_file = NULL;
 static size_t g_water_file_size = 0;
 static uint8_t g_water_file_level_max = 0;
@@ -2869,32 +2870,31 @@ void renderer_step_water_anim(int steps)
     g_water_wtan_draw = g_water_wtan;
 }
 
+void renderer_step_water_anim_vblanks(int vblanks)
+{
+    if (vblanks <= 0) return;
+    if (vblanks > 128) vblanks = 128;
+
+    g_water_vblank_remainder += (uint32_t)vblanks;
+    {
+        int steps = (int)(g_water_vblank_remainder / WATER_ANIM_FRAME_STEP_VBLANKS);
+        g_water_vblank_remainder %= WATER_ANIM_FRAME_STEP_VBLANKS;
+        if (steps > 0) {
+            renderer_step_water_anim(steps);
+        }
+    }
+}
+
 void renderer_step_water_anim_ms(uint32_t elapsed_ms)
 {
-    if (elapsed_ms == 0u) return;
-
-    /* Slow water movement to 50%: convert real elapsed ms to simulation ms / 2. */
-    g_water_speed_ms_remainder += elapsed_ms;
-    elapsed_ms = g_water_speed_ms_remainder / 2u;
-    g_water_speed_ms_remainder %= 2u;
     if (elapsed_ms == 0u) return;
 
     g_water_ms_remainder += elapsed_ms;
     if (g_water_ms_remainder > 2000u) g_water_ms_remainder = 2000u;
 
-    /* Amiga cadence: one water step per 20 ms (50Hz). */
-    int steps = (int)(g_water_ms_remainder / 20u);
+    int vblanks = (int)(g_water_ms_remainder / 20u);
     g_water_ms_remainder %= 20u;
-    if (steps > 0) {
-        renderer_step_water_anim(steps);
-    }
-
-    /* Interpolate within the next 20 ms step for smoother temporal motion. */
-    {
-        uint32_t frac_num = g_water_ms_remainder; /* 0..19 */
-        uint32_t interp = ((uint32_t)640u * frac_num) / 20u;
-        g_water_wtan_draw = (uint16_t)((g_water_wtan + interp) & 8191u);
-    }
+    renderer_step_water_anim_vblanks(vblanks);
 }
 
 int renderer_toggle_floor_gouraud_debug_view(void)
@@ -4313,8 +4313,8 @@ void renderer_set_water_assets(const uint8_t *water_file, size_t water_file_size
     g_water_anim_cursor = 0;
     g_water_src_phase = 0;
     g_water_src_off = 0;
+    g_water_vblank_remainder = 0;
     g_water_ms_remainder = 0;
-    g_water_speed_ms_remainder = 0;
     /* First DrawDisplay on Amiga immediately sets watertouse/wtan/wateroff. */
     renderer_advance_water_anim();
     g_water_wtan_draw = g_water_wtan;
