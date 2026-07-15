@@ -15,7 +15,6 @@
 #ifndef OBJECTS_H
 #define OBJECTS_H
 
-#include <stdbool.h>
 #include "game_state.h"
 
 /* -----------------------------------------------------------------------
@@ -23,10 +22,6 @@
  * Equivalent to ObjMoveAnim in Anims.s
  * ----------------------------------------------------------------------- */
 void objects_update(GameState *state);
-
-/* Modern high-rate safety: unwind live enemies that are already intersecting
- * the player collision cylinder before shooting/AI can soft-lock the player. */
-bool objects_resolve_player_enemy_overlaps(GameState *state);
 
 /* -----------------------------------------------------------------------
  * Update sprite viewpoint frames (rotation) for visible enemies.
