@@ -406,6 +406,13 @@ void game_loop_tick(GameState *state, GameLoopCtx *ctx)
             }
 
             /* ---- Phase 14: Shooting, objects ---- */
+            if (objects_resolve_player_enemy_overlaps(state)) {
+                calc_plr1_in_line(state);
+                if (state->mode != MODE_SINGLE) {
+                    calc_plr2_in_line(state);
+                }
+            }
+
             player1_shoot(state);
             if (state->mode != MODE_SINGLE) {
                 player2_shoot(state);
