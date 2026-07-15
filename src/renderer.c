@@ -12222,7 +12222,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         obj_count++;
     }
 
-    /* Add bullets/gibs from both shot pools (same zone, depth-sorted with level objects). */
+    /* Add bullets/gibs from both shot pools (same-zone only, depth-sorted with level objects). */
     int shot_pool_slots[2] = { NASTY_SHOT_SLOT_COUNT, PLAYER_SHOT_SLOT_COUNT };
     for (int pool = 0; pool < 2 && obj_count < max_draw_entries; pool++) {
         const uint8_t *shots = (pool == 0) ? level->nasty_shot_data : level->player_shot_data;
@@ -12239,12 +12239,12 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             renderer_resolve_billboard_world_size_for_spill(obj, 1, &spill_world_w, &spill_world_h);
             int in_this_zone = (shot_zone == (int16_t)zone_id);
             int shot_on_upper = (obj[obj_off_in_top] != 0);
-            if (!in_this_zone) {
-                if (!renderer_zone_list_contains(adjacent_source_zones, adjacent_source_count, shot_zone))
-                    continue;
-                if (!renderer_spill_zone_order_allows(state, shot_zone, zone_id))
-                    continue;
-            }
+            /*
+             * Shot pools hold projectiles, gibs, and blast particles. These
+             * transient effects should stay in their owning zone; billboard
+             * spill is only for regular level objects.
+             */
+            if (!in_this_zone) continue;
             if (level_filter >= 0 && in_this_zone) {
                 if ((level_filter == 1 && !shot_on_upper) ||
                     (level_filter == 0 && shot_on_upper))
@@ -12320,12 +12320,11 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             if (state->explosions[ei].start_delay > 0) continue;
             if ((int)state->explosions[ei].frame >= 9) continue;
             renderer_get_explosion_frame_and_world_size(state, ei, NULL, NULL, &expl_h_est);
-            if (!in_this_zone) {
-                if (!renderer_zone_list_contains(adjacent_source_zones, adjacent_source_count, expl_zone))
-                    continue;
-                if (!renderer_spill_zone_order_allows(state, expl_zone, zone_id))
-                    continue;
-            }
+            /*
+             * Active explosion billboards are transient particle effects; do
+             * not draw them through adjacent-zone billboard spill.
+             */
+            if (!in_this_zone) continue;
             if (level_filter >= 0 && in_this_zone) {
                 if ((level_filter == 1 && !expl_on_upper) ||
                     (level_filter == 0 && expl_on_upper))
