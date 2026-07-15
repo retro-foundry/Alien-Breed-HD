@@ -2714,13 +2714,17 @@ static int16_t player_legacy_projectile_yvel(const GunDataEntry *gun, int16_t bu
     return final_yvel;
 }
 
-static int16_t player_sequel_projectile_yvel(int16_t bulyspd)
+static int16_t player_mouse_look_projectile_yvel(const GunDataEntry *gun, int16_t bulyspd)
 {
-    /* AB3D2 newplayershoot.s firefive clamps to +-20*128 and leaves the
-     * old initial-Y-velocity add commented out. */
+    /* AB3D2 newplayershoot.s firefive clamps AimSpeed-derived bulyspd to
+     * +-20*128. Keep AB3D I PlayerShoot.s offset 20 weapon launch data after
+     * that clamp so grenades retain their original upward lob. */
     int32_t final_yvel = bulyspd;
     if (final_yvel > 20 * 128) final_yvel = 20 * 128;
     if (final_yvel < -20 * 128) final_yvel = -20 * 128;
+    if (gun) final_yvel += (int32_t)gun->bullet_y_offset;
+    if (final_yvel > 32767) final_yvel = 32767;
+    if (final_yvel < -32768) final_yvel = -32768;
     return (int16_t)final_yvel;
 }
 
@@ -3072,7 +3076,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         SHOT_SET_XVEL(*bullet, xvel);
         SHOT_SET_ZVEL(*bullet, zvel);
         int16_t final_yvel = state->cfg_mouse_look ?
-            player_sequel_projectile_yvel(bulyspd) :
+            player_mouse_look_projectile_yvel(gun, bulyspd) :
             player_legacy_projectile_yvel(gun, bulyspd);
         SHOT_SET_YVEL(*bullet, final_yvel);
         SHOT_POWER(*bullet) = gun->shot_power;
@@ -3080,7 +3084,12 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         SHOT_SET_LIFE(*bullet, 0);
         SHOT_SET_GRAV(*bullet, gun->shot_gravity);
         SHOT_SET_FLAGS(*bullet, gun->shot_flags);
-        SHOT_SET_ACCYPOS(*bullet, plr->yoff + 20 * 128);
+        /* PlayerShoot.s stores tempyoff = PLR_yoff + 20*128 before the fire
+         * path; PLR1FIREBULLET adds another 20*128 for projectile accypos
+         * and immediately mirrors accypos>>7 into object Y. */
+        int32_t spawn_y = plr->yoff + 40 * 128;
+        SHOT_SET_ACCYPOS(*bullet, spawn_y);
+        obj_sw(bullet->raw + 4, (int16_t)(spawn_y >> 7));
         NASTY_SET_EFLAGS(*bullet, enemy_flags);
         SHOT_SIZE(*bullet) = (int8_t)gun_idx;
         bullet->obj.worry = 127;
