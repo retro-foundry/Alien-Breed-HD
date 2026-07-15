@@ -123,6 +123,7 @@ void explode_into_bits(GameObject *obj, GameState *state, bool explosion_kill, i
         SHOT_SIZE(*bit) = gib_type;
         SHOT_STATUS(*bit) = 0;
         SHOT_ANIM(*bit) = 0;
+        SHOT_SET_ANIM_ACCUM(*bit, 0);
         SHOT_POWER(*bit) = 0;
         SHOT_SET_LIFE(*bit, -1);   /* infinite lifetime */
         SHOT_SET_GRAV(*bit, 40);   /* Amiga: shotgrav = 40 */

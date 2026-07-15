@@ -130,9 +130,12 @@ enum {
     ENEMY_FOURTH_TIMER_OFF = 36  /* FourthTimer(raw+54) */
 };
 
-/* Explosion visual pacing in logic-vblank units.
- * 2 means one animation frame every 2 logic-vblank units. */
-#define EXPLOSION_FRAME_STEP_VBLANKS 2
+/* Amiga sprite animation cadence in logic-vblank units.
+ * Anims.s ItsABullet and ItsABarrel advance sprite frames once per ObjMoveAnim
+ * call, not by TempFrames. The modern loop runs logic at 50 Hz, so two
+ * vblank units preserve the original typical draw-loop cadence for these
+ * visual-only frame sequences while movement/lifetimes still use TempFrames. */
+#define SPRITE_ANIM_FRAME_STEP_VBLANKS 2
 
 static int32_t enemy_move_y_for_context(const GameObject *obj,
                                         const EnemyParams *params,
@@ -3279,6 +3282,7 @@ void object_handle_gas_pipe(GameObject *obj, GameState *state)
     if (!bullet) return;
 
     SHOT_ANIM(*bullet) = 0;
+    SHOT_SET_ANIM_ACCUM(*bullet, 0);
     bullet->obj.number = OBJ_NBR_BULLET;
     OBJ_SET_ZONE(bullet, OBJ_ZONE(obj));
     int16_t src_y = (int16_t)((obj->raw[4] << 8) | obj->raw[5]);
@@ -3340,8 +3344,8 @@ void object_handle_barrel(GameObject *obj, GameState *state)
         int16_t accum = OBJ_TD_W(obj, ENEMY_OBJ_TIMER_OFF);
         if (accum < 0) accum = 0;
         accum = (int16_t)(accum + tf);
-        int steps = accum / EXPLOSION_FRAME_STEP_VBLANKS;
-        accum = (int16_t)(accum % EXPLOSION_FRAME_STEP_VBLANKS);
+        int steps = accum / SPRITE_ANIM_FRAME_STEP_VBLANKS;
+        accum = (int16_t)(accum % SPRITE_ANIM_FRAME_STEP_VBLANKS);
         OBJ_SET_TD_W(obj, ENEMY_OBJ_TIMER_OFF, accum);
 
         if (steps <= 0) return;
@@ -3632,17 +3636,13 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         }
 
         const BulletAnimFrame *table = bullet_pop_tables[shot_size];
-        int pop_step_vblanks = 1;
-        if (shot_size == 2 || shot_size == 4) {
-            /* Keep RockPop-derived sequences at their intended slower cadence. */
-            pop_step_vblanks = EXPLOSION_FRAME_STEP_VBLANKS;
-        }
-        int16_t pop_accum = SHOT_LIFE(*obj);
+        int pop_step_vblanks = SPRITE_ANIM_FRAME_STEP_VBLANKS;
+        int16_t pop_accum = SHOT_ANIM_ACCUM(*obj);
         if (pop_accum < 0) pop_accum = 0;
         pop_accum = (int16_t)(pop_accum + anim_ticks);
         int anim_steps = pop_accum / pop_step_vblanks;
         pop_accum = (int16_t)(pop_accum % pop_step_vblanks);
-        SHOT_SET_LIFE(*obj, pop_accum);
+        SHOT_SET_ANIM_ACCUM(*obj, pop_accum);
         if (anim_steps < 1) return;
 
         uint8_t anim_idx = SHOT_ANIM(*obj);
@@ -3689,8 +3689,8 @@ void object_handle_bullet(GameObject *obj, GameState *state)
             timed_out = true;
         }
     }
-    /* Increment life for regular bullets.
-     * Gibs (50-53) reuse SHOT_LIFE as an animation cadence accumulator. */
+    /* Increment life for regular bullets. Visual cadence uses shotimpact
+     * (SHOT_ANIM_ACCUM), leaving SHOT_LIFE for Amiga lifetime semantics. */
     if (shot_size < 50) {
         life += state->temp_frames;
         SHOT_SET_LIFE(*obj, life);
@@ -3699,15 +3699,12 @@ void object_handle_bullet(GameObject *obj, GameState *state)
     /* Advance bullet animation (Amiga ItsABullet notpopping path).
      * BulletTypes[shot_size].anim_ptr drives size/vect/frame each tick. */
     if (shot_status == 0 && shot_size >= 0 && shot_size < MAX_BULLET_ANIM_IDX && bullet_anim_tables[shot_size]) {
-        int anim_steps = anim_ticks;
-        if (shot_size >= 50) {
-            int16_t accum = SHOT_LIFE(*obj);
-            if (accum < 0) accum = 0;
-            accum = (int16_t)(accum + anim_ticks);
-            anim_steps = accum / EXPLOSION_FRAME_STEP_VBLANKS;
-            accum = (int16_t)(accum % EXPLOSION_FRAME_STEP_VBLANKS);
-            SHOT_SET_LIFE(*obj, accum);
-        }
+        int16_t accum = SHOT_ANIM_ACCUM(*obj);
+        if (accum < 0) accum = 0;
+        accum = (int16_t)(accum + anim_ticks);
+        int anim_steps = accum / SPRITE_ANIM_FRAME_STEP_VBLANKS;
+        accum = (int16_t)(accum % SPRITE_ANIM_FRAME_STEP_VBLANKS);
+        SHOT_SET_ANIM_ACCUM(*obj, accum);
 
         uint8_t anim_idx = SHOT_ANIM(*obj);
         const BulletAnimFrame *f = &bullet_anim_tables[shot_size][anim_idx];
@@ -3736,7 +3733,7 @@ void object_handle_bullet(GameObject *obj, GameState *state)
             SHOT_SET_ACCYPOS(*obj, acc);
             obj_sw(obj->raw + 4, (int16_t)(acc >> 7));
         }
-        /* Advance for next tick(s). Gibs use paced cadence to match Amiga feel. */
+        /* Advance for the next visual step(s); physics and lifetime stay TempFrames-scaled. */
         while (anim_steps > 0) {
             anim_idx = (uint8_t)(anim_idx + 1);
             if (bullet_anim_tables[shot_size][anim_idx].width < 0)
@@ -4026,6 +4023,7 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         if (timed_out) {
             SHOT_STATUS(*obj) = 1;
             SHOT_ANIM(*obj) = 0;
+            SHOT_SET_ANIM_ACCUM(*obj, 0);
             SHOT_SET_LIFE(*obj, 0);
 
             if (shot_size >= 0 && shot_size < 8 &&
@@ -4078,6 +4076,7 @@ void object_handle_bullet(GameObject *obj, GameState *state)
     /* Set bullet to popping */
     SHOT_STATUS(*obj) = 1;
     SHOT_ANIM(*obj) = 0;
+    SHOT_SET_ANIM_ACCUM(*obj, 0);
     SHOT_SET_LIFE(*obj, 0);
 
     /* Hit sound + explosive splash */
@@ -4950,6 +4949,7 @@ void enemy_fire_at_player(GameObject *obj, GameState *state,
     SHOT_SET_ZVEL(*bullet, zvel << 16);
     SHOT_POWER(*bullet) = (int8_t)shot_power;
     SHOT_SIZE(*bullet) = (int8_t)shot_type;
+    SHOT_SET_ANIM_ACCUM(*bullet, 0);
     SHOT_SET_LIFE(*bullet, 0);
 
     /* EnemyFlags = both players (bits 5 and 11: OBJ_NBR_PLR1 / OBJ_NBR_PLR2) */
@@ -5090,6 +5090,7 @@ static void spawn_blast_particles(GameState *state, int32_t x, int32_t z, int32_
             SHOT_STATUS(*part) = 1;
             SHOT_SIZE(*part) = 2;                /* RockPop */
             SHOT_ANIM(*part) = (uint8_t)start_anim;
+            SHOT_SET_ANIM_ACCUM(*part, 0);
             SHOT_SET_LIFE(*part, 0);
             part->raw[14] = 0x20;
             part->raw[15] = 0x20;
@@ -5400,8 +5401,7 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
 
 /* -----------------------------------------------------------------------
  * Explosion animation (visual only; damage is compute_blast).
- * Progress in TempFrames (50 Hz logic-vblank units) so speed stays stable
- * when a slow frame batches multiple logic ticks.
+ * Progress with the same Amiga sprite cadence used by bullet pop frames.
  * ----------------------------------------------------------------------- */
 void explosion_spawn(GameState *state, int16_t x, int16_t z, int16_t zone, int8_t in_top, int32_t y_floor,
                     int8_t size_scale, int8_t anim_rate)
@@ -5423,7 +5423,7 @@ void explosion_spawn(GameState *state, int16_t x, int16_t z, int16_t zone, int8_
     state->explosions[i].start_delay = (int8_t)(rand() & 3);
 }
 
-/* anim_rate is percentage of one frame step per logic-vblank (100 = 1 frame / 20ms). */
+/* anim_rate is percentage of one frame per SPRITE_ANIM_FRAME_STEP_VBLANKS. */
 void explosion_advance(GameState *state)
 {
     int n = state->num_explosions;
@@ -5444,12 +5444,13 @@ void explosion_advance(GameState *state)
         if (ticks_left > 0) {
             int rate = (int)state->explosions[i].anim_rate;
             if (rate <= 0) rate = 100;
+            int frame_threshold = 100 * SPRITE_ANIM_FRAME_STEP_VBLANKS;
             int frac = (int)state->explosions[i].frame_frac + (rate * ticks_left);
-            while (frac >= 100) {
+            while (frac >= frame_threshold) {
                 state->explosions[i].frame = (int8_t)(state->explosions[i].frame + 1);
-                frac -= 100;
+                frac -= frame_threshold;
             }
-            state->explosions[i].frame_frac = (int8_t)frac;
+            state->explosions[i].frame_frac = (int16_t)frac;
         }
         if ((int)state->explosions[i].frame >= 9) {
             /* Remove: shift down */

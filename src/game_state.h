@@ -330,8 +330,8 @@ typedef struct {
         int8_t   frame;     /* animation frame 0..8 */
         int8_t   start_delay; /* ticks before animation starts (variation) */
         int8_t   size_scale;  /* 100 = normal; barrel uses larger (e.g. 150) */
-        int8_t   anim_rate;   /* 100 = normal; 75 = 25% slower */
-        int8_t   frame_frac;  /* fractional frame accumulator (0-99) for anim_rate */
+        int8_t   anim_rate;   /* 100 = normal sprite cadence; 75 = 25% slower */
+        int16_t  frame_frac;  /* fractional sprite cadence accumulator for anim_rate */
     } explosions[MAX_EXPLOSIONS];
     int num_explosions;
 

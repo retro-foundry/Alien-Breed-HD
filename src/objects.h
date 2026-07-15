@@ -84,7 +84,7 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
                    int16_t max_damage, int16_t zone, int8_t in_top);
 
 /* Explosion animation: spawn at (x,z,zone,y_floor).
- * size_scale 100=normal; anim_rate 100 = one frame per 50Hz logic tick. */
+ * size_scale 100=normal; anim_rate 100 = one frame per Amiga sprite cadence step. */
 void explosion_spawn(GameState *state, int16_t x, int16_t z, int16_t zone, int8_t in_top, int32_t y_floor,
                     int8_t size_scale, int8_t anim_rate);
 void explosion_advance(GameState *state);

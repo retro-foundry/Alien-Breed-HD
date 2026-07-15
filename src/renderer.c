@@ -321,6 +321,17 @@ static inline int renderer_proj_x_scale_px_for_state(const RendererState *r, con
     return (int)s;
 }
 
+static inline int64_t renderer_proj_x_scale_fp16_for_state(const RendererState *r, const GameState *state)
+{
+    int base_w = RENDER_DEFAULT_WIDTH;
+    if (state) base_w = renderer_proj_effective_base_width_from_state(state);
+    else base_w = renderer_clamp_base_width(g_proj_base_width);
+    int cur_w = (r && r->width > 0) ? r->width : base_w;
+    int64_t s = (((int64_t)RENDER_SCALE * (int64_t)cur_w) << 16) / (int64_t)base_w;
+    if (s < (1LL << 16)) s = (1LL << 16);
+    return s;
+}
+
 /* Horizontal focal scale in internal-render pixels.
  * Keeps output FOV stable when supersampling changes internal width. */
 static inline int renderer_proj_x_scale_px(void)
@@ -328,15 +339,9 @@ static inline int renderer_proj_x_scale_px(void)
     return renderer_proj_x_scale_px_for_state(&g_renderer, NULL);
 }
 
-static inline int renderer_sprite_scale_x_for_state(const RendererState *r, const GameState *state)
+static inline int64_t renderer_sprite_scale_x_fp16_for_state(const RendererState *r, const GameState *state)
 {
-    return 128 * renderer_proj_x_scale_px_for_state(r, state);
-}
-
-static inline int renderer_sprite_scale_x(void)
-{
-    /* Width path equivalent of SPRITE_SIZE_SCALE, but tied to runtime horizontal projection. */
-    return renderer_sprite_scale_x_for_state(&g_renderer, NULL);
+    return 128 * renderer_proj_x_scale_fp16_for_state(r, state);
 }
 
 #define RENDERER_MAX_ZONE_ORDER 256
@@ -10197,13 +10202,13 @@ static void renderer_resolve_billboard_world_size_for_spill(const uint8_t *obj,
  * with the same <<7 / z projection step before drawing the full extents.
  * Use the same runtime sprite scale for X and Y so billboards keep the original
  * proportions instead of inheriting wall/floor vertical projection scale. */
-static inline int renderer_project_billboard_size(int world_size, int sprite_scale, int z)
+static inline int renderer_project_billboard_size(int world_size, int64_t sprite_scale_fp16, int z)
 {
     int64_t projected;
     if (world_size < 1) world_size = 1;
-    if (sprite_scale < 1) sprite_scale = 1;
+    if (sprite_scale_fp16 < (1LL << 16)) sprite_scale_fp16 = (1LL << 16);
     if (z < 1) z = 1;
-    projected = ((int64_t)world_size * (int64_t)sprite_scale) / (int64_t)z;
+    projected = ((int64_t)world_size * sprite_scale_fp16) / ((int64_t)z << 16);
     if (projected < 1) projected = 1;
     if (projected > INT_MAX) projected = INT_MAX;
     return (int)projected;
@@ -12057,8 +12062,8 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
     if (!level->object_data || !level->object_points) return;
 
     int32_t y_off = r->yoff;
-    const int sprite_scale_x_for_estimate = renderer_sprite_scale_x_for_state(r, state);
-    const int explosion_sprite_scale_x_for_estimate = renderer_sprite_scale_x_for_state(r, state);
+    const int64_t sprite_scale_x_for_estimate = renderer_sprite_scale_x_fp16_for_state(r, state);
+    const int64_t explosion_sprite_scale_x_for_estimate = renderer_sprite_scale_x_fp16_for_state(r, state);
     const int16_t billboard_view_right_x = (int16_t)(r->cosval / 2);
     const int16_t billboard_view_right_z = (int16_t)(-r->sinval / 2);
 
@@ -12186,7 +12191,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             int world_w = spill_world_w;
             int z_for_size = ROT_Z_INT(orp->z);
             if (z_for_size < 1) z_for_size = 1;
-            int sprite_w_est = (int)((int32_t)world_w * sprite_scale_x_for_estimate / z_for_size) * SPRITE_SIZE_MULTIPLIER;
+            int sprite_w_est = renderer_project_billboard_size(world_w, sprite_scale_x_for_estimate, z_for_size) * SPRITE_SIZE_MULTIPLIER;
             if (sprite_w_est < 1) sprite_w_est = 1;
             int scr_x_est = project_x_to_pixels(orp->x_fine, orp->z);
             int spr_l = scr_x_est - sprite_w_est / 2;
@@ -12270,7 +12275,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 int world_w = spill_world_w;
                 int z_for_size = ROT_Z_INT(orp->z);
                 if (z_for_size < 1) z_for_size = 1;
-                int sprite_w_est = (int)((int32_t)world_w * sprite_scale_x_for_estimate / z_for_size) * SPRITE_SIZE_MULTIPLIER;
+                int sprite_w_est = renderer_project_billboard_size(world_w, sprite_scale_x_for_estimate, z_for_size) * SPRITE_SIZE_MULTIPLIER;
                 if (sprite_w_est < 1) sprite_w_est = 1;
                 int scr_x_est = project_x_to_pixels(orp->x_fine, orp->z);
                 int spr_l = scr_x_est - sprite_w_est / 2;
@@ -12358,7 +12363,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 renderer_get_explosion_frame_and_world_size(state, ei, NULL, &expl_w_est, NULL);
                 int world_w = expl_w_est * EXPLOSION_SIZE_CORRECTION;
                 if (world_w < 1) world_w = 1;
-                int sprite_w_est = (int)((int32_t)world_w * explosion_sprite_scale_x_for_estimate / z_for_size) * SPRITE_SIZE_MULTIPLIER;
+                int sprite_w_est = renderer_project_billboard_size(world_w, explosion_sprite_scale_x_for_estimate, z_for_size) * SPRITE_SIZE_MULTIPLIER;
                 if (sprite_w_est < 1) sprite_w_est = 1;
                 int32_t vx = (int32_t)dx * cos_v - (int32_t)dz * sin_v;
                 vx <<= 1;
@@ -12409,7 +12414,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
     const int expl_vect = 8;
     const SpriteFrame *expl_ft = sprite_frames_table[expl_vect].frames;
     const int expl_ft_count = sprite_frames_table[expl_vect].count;
-    const int explosion_sprite_scale_x = renderer_sprite_scale_x_for_state(r, state);
+    const int64_t explosion_sprite_scale_x = renderer_sprite_scale_x_fp16_for_state(r, state);
     for (int oi = 0; oi < obj_count; oi++) {
         const ObjEntry *entry = &objs[oi];
         int entry_src = entry->src;
@@ -12643,11 +12648,11 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             }
         }
 
-        int sprite_scale_x = renderer_sprite_scale_x();
+        int64_t sprite_scale_x = renderer_sprite_scale_x_fp16_for_state(r, state);
         if (explosion_billboard) {
             sprite_scale_x = explosion_sprite_scale_x;
         }
-        int anchor_h = renderer_project_billboard_wall_y_size(&g_renderer, world_h, z_for_size) * SPRITE_SIZE_MULTIPLIER;
+        int anchor_h = renderer_project_billboard_wall_y_size(r, world_h, z_for_size) * SPRITE_SIZE_MULTIPLIER;
         int sprite_w = renderer_project_billboard_size(world_w, sprite_scale_x, z_for_size) * SPRITE_SIZE_MULTIPLIER;
         int sprite_h = renderer_project_billboard_size(world_h, sprite_scale_x, z_for_size) * SPRITE_SIZE_MULTIPLIER;
         if (explosion_billboard) {

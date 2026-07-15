@@ -295,6 +295,7 @@ static void init_instant_pop_slot(GameObject *shot, int gun_idx, int16_t zone,
     SHOT_SET_GRAV(*shot, 0);
     SHOT_SIZE(*shot) = (int8_t)gun_idx;
     SHOT_ANIM(*shot) = 0;
+    SHOT_SET_ANIM_ACCUM(*shot, 0);
     SHOT_SET_ACCYPOS(*shot, accypos);
     obj_sw(shot->raw + 4, (int16_t)(accypos >> 7));
     shot->obj.worry = 127;
@@ -2744,6 +2745,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         bullet->raw[14] = bullet_fly_src_cols[gun_idx]; /* src cols (from BulletSizes) */
         bullet->raw[15] = bullet_fly_src_rows[gun_idx]; /* src rows */
         SHOT_ANIM(*bullet) = 0;
+        SHOT_SET_ANIM_ACCUM(*bullet, 0);
 
         int shift = gun->bullet_speed;
         if (shift < 0) shift = 0;

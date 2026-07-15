@@ -182,6 +182,7 @@ static inline void obj_sl(uint8_t *p, int32_t v) {
 #define SHOT_YVEL(o)      obj_w((o).raw + 42)   /* td[24] abs 42 */
 #define SHOT_ACCYPOS(o)   obj_l((o).raw + 44)   /* td[26] abs 44 */
 #define SHOT_GRAV(o)      obj_w((o).raw + 54)   /* td[36] abs 54 */
+#define SHOT_ANIM_ACCUM(o) obj_w((o).raw + 56)  /* td[38] abs 56: Defs.i shotimpact, reused as visual cadence accumulator */
 #define SHOT_LIFE(o)      obj_w((o).raw + 58)   /* td[40] abs 58 */
 #define SHOT_FLAGS(o)     obj_w((o).raw + 60)   /* td[42] abs 60 */
 
@@ -190,6 +191,7 @@ static inline void obj_sl(uint8_t *p, int32_t v) {
 #define SHOT_SET_YVEL(o, v)    obj_sw((o).raw + 42, (int16_t)(v))
 #define SHOT_SET_ACCYPOS(o, v) obj_sl((o).raw + 44, (int32_t)(v))
 #define SHOT_SET_GRAV(o, v)    obj_sw((o).raw + 54, (int16_t)(v))
+#define SHOT_SET_ANIM_ACCUM(o, v) obj_sw((o).raw + 56, (int16_t)(v))
 #define SHOT_SET_LIFE(o, v)    obj_sw((o).raw + 58, (int16_t)(v))
 #define SHOT_SET_FLAGS(o, v)   obj_sw((o).raw + 60, (int16_t)(v))
 
