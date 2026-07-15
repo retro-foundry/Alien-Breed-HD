@@ -34,7 +34,7 @@ volume=100
 # Suggested web tuning range: 512..2048.
 audio_buffer_samples=0
 
-# Vertical projection scale (affects wall/floor/sprite vertical size vs depth).
+# Vertical projection scale (affects wall/floor vertical size vs depth).
 # 100 = default engine behavior; lower = flatter / wider vertical FOV feel, higher = taller.
 # Allowed range: 25..1000 (percent of engine default vertical scale).
 y_proj_scale=100

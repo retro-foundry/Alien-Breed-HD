@@ -10193,25 +10193,33 @@ static void renderer_resolve_billboard_world_size_for_spill(const uint8_t *obj,
     if (out_world_h) *out_world_h = world_h;
 }
 
-/* RockPop/Explosion world sizes are authored from Amiga BitMapObj tables where
- * both axes use the same <<7 scale.
- *
- * The port projects billboard width via runtime horizontal projection scaling,
- * but height goes through proj_y_scale. Convert Amiga-authored explosion height
- * into that Y domain using the current X sprite scale so explosions preserve the
- * original width:height relationship across aspect/render size changes. */
-static inline int explosion_world_h_to_port(const RendererState *r, int world_h_amiga, int sprite_scale_x)
+/* ObjDraw3.ChipRam.s BitMapObj scales both billboard axes from object bytes
+ * with the same <<7 / z projection step before drawing the full extents.
+ * Use the same runtime sprite scale for X and Y so billboards keep the original
+ * proportions instead of inheriting wall/floor vertical projection scale. */
+static inline int renderer_project_billboard_size(int world_size, int sprite_scale, int z)
 {
-    int32_t py = r->proj_y_scale;
+    int64_t projected;
+    if (world_size < 1) world_size = 1;
+    if (sprite_scale < 1) sprite_scale = 1;
+    if (z < 1) z = 1;
+    projected = ((int64_t)world_size * (int64_t)sprite_scale) / (int64_t)z;
+    if (projected < 1) projected = 1;
+    if (projected > INT_MAX) projected = INT_MAX;
+    return (int)projected;
+}
+
+static inline int renderer_project_billboard_wall_y_size(const RendererState *r, int world_size, int z)
+{
+    int64_t projected;
+    int32_t py = r ? r->proj_y_scale : PROJ_Y_SCALE;
+    if (world_size < 1) world_size = 1;
     if (py < 1) py = 1;
-    if (sprite_scale_x < 1) sprite_scale_x = 1;
-    {
-        int64_t denom = (int64_t)py * (int64_t)RENDER_SCALE;
-        int64_t corrected = ((int64_t)world_h_amiga * (int64_t)sprite_scale_x + (denom / 2)) / denom;
-        if (corrected < 1) corrected = 1;
-        if (corrected > 32767) corrected = 32767;
-        return (int)corrected;
-    }
+    if (z < 1) z = 1;
+    projected = ((int64_t)world_size * (int64_t)py * (int64_t)RENDER_SCALE) / (int64_t)z;
+    if (projected < 1) projected = 1;
+    if (projected > INT_MAX) projected = INT_MAX;
+    return (int)projected;
 }
 
 static int renderer_world_span_overlaps_room(int32_t center_world_y,
@@ -12438,13 +12446,15 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             int scr_y = (int)(((int64_t)rel_y_8 * (int64_t)r->proj_y_scale * (int64_t)RENDER_SCALE << ROT_Z_FRAC_BITS) / (int64_t)orp_z) + center_y;
             int z_for_size = ROT_Z_INT(orp_z);
             if (z_for_size < 1) z_for_size = 1;
-            int expl_h_port = explosion_world_h_to_port(r, expl_h, explosion_sprite_scale_x);
-            int sprite_w = (int)((int32_t)expl_w * explosion_sprite_scale_x / z_for_size) * SPRITE_SIZE_MULTIPLIER;
-            int sprite_h = (int)((int64_t)expl_h_port * (int64_t)r->proj_y_scale * (int64_t)RENDER_SCALE / z_for_size) * SPRITE_SIZE_MULTIPLIER;
+            int anchor_h = renderer_project_billboard_wall_y_size(r, expl_h, z_for_size) * SPRITE_SIZE_MULTIPLIER;
+            int sprite_w = renderer_project_billboard_size(expl_w, explosion_sprite_scale_x, z_for_size) * SPRITE_SIZE_MULTIPLIER;
+            int sprite_h = renderer_project_billboard_size(expl_h, explosion_sprite_scale_x, z_for_size) * SPRITE_SIZE_MULTIPLIER;
             sprite_w *= EXPLOSION_SIZE_CORRECTION;
             sprite_h *= EXPLOSION_SIZE_CORRECTION;
+            anchor_h *= EXPLOSION_SIZE_CORRECTION;
             if (sprite_w < 1) sprite_w = 1;
             if (sprite_h < 1) sprite_h = 1;
+            scr_y += (anchor_h - sprite_h) / 2;
 
             uint32_t ptr_off = 0;
             uint16_t down_strip = 0;
@@ -12622,7 +12632,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                                         (entry_src == DRAW_SRC_SHOT) ? 1 : 0,
                                                         &world_w, &world_h);
 
-        /* Screen size: width from Amiga (byte*128/z)*RENDER_SCALE; height uses proj_y_scale so billboard Y matches floor projection scale. */
+        /* Screen size: ObjDraw3 BitMapObj uses the same byte*128/z scale for width and height. */
         int explosion_billboard = 0;
         if (vect_num == 8) {
             if (obj_number == OBJ_NBR_BARREL) {
@@ -12634,16 +12644,16 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         }
 
         int sprite_scale_x = renderer_sprite_scale_x();
-        int world_h_for_proj = world_h;
         if (explosion_billboard) {
             sprite_scale_x = explosion_sprite_scale_x;
-            world_h_for_proj = explosion_world_h_to_port(&g_renderer, world_h, explosion_sprite_scale_x);
         }
-        int sprite_w = (int)((int32_t)world_w * sprite_scale_x / z_for_size) * SPRITE_SIZE_MULTIPLIER;
-        int sprite_h = (int)((int64_t)world_h_for_proj * (int64_t)g_renderer.proj_y_scale * (int64_t)RENDER_SCALE / z_for_size) * SPRITE_SIZE_MULTIPLIER;
+        int anchor_h = renderer_project_billboard_wall_y_size(&g_renderer, world_h, z_for_size) * SPRITE_SIZE_MULTIPLIER;
+        int sprite_w = renderer_project_billboard_size(world_w, sprite_scale_x, z_for_size) * SPRITE_SIZE_MULTIPLIER;
+        int sprite_h = renderer_project_billboard_size(world_h, sprite_scale_x, z_for_size) * SPRITE_SIZE_MULTIPLIER;
         if (explosion_billboard) {
             sprite_w *= EXPLOSION_SIZE_CORRECTION;
             sprite_h *= EXPLOSION_SIZE_CORRECTION;
+            anchor_h *= EXPLOSION_SIZE_CORRECTION;
         }
         if (sprite_w < 1) sprite_w = 1;
         if (sprite_h < 1) sprite_h = 1;
@@ -12700,6 +12710,9 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int32_t rel_y_8 = rel_y >> WORLD_Y_FRAC_BITS;
         int center_y = g_renderer.height / 2;
         int scr_y = (int)(((int64_t)rel_y_8 * (int64_t)g_renderer.proj_y_scale * (int64_t)RENDER_SCALE << ROT_Z_FRAC_BITS) / (int64_t)orp->z) + center_y;
+        /* Keep the BitMapObj bottom edge anchored to the wall/floor projection
+         * after applying Amiga-proportioned billboard height. */
+        scr_y += (anchor_h - sprite_h) / 2;
 
         const uint8_t *obj_pal = r->sprite_pal_data[vect_num];
         size_t obj_pal_size = r->sprite_pal_size[vect_num];
