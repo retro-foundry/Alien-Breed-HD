@@ -3432,6 +3432,22 @@ void object_handle_medikit(GameObject *obj, GameState *state)
     }
 }
 
+static bool object_take_ammo_clip(GameObject *obj, PlayerState *plr,
+                                  const GunDataEntry *guns, int gun_idx)
+{
+    if (!obj || !plr || !guns || gun_idx < 0 || gun_idx >= MAX_GUNS)
+        return false;
+    if (plr->gun_data[gun_idx].ammo >= AMMO_PICKUP_LIMIT)
+        return false;
+
+    /* Anims.s ItsAnAmmoClip reads byte 4(a6) from that gun's data and shifts it by 3. */
+    int16_t ammo_add = (int16_t)(((uint8_t)guns[gun_idx].ammo_in_clip) << 3);
+    plr->gun_data[gun_idx].ammo = (int16_t)(plr->gun_data[gun_idx].ammo + ammo_add);
+    OBJ_SET_ZONE(obj, -1);
+    audio_play_sample(11, 50);
+    return true;
+}
+
 /* -----------------------------------------------------------------------
  * Pickup: Ammo
  *
@@ -3449,26 +3465,14 @@ void object_handle_ammo(GameObject *obj, GameState *state)
 
     if (pickup_distance_check(obj, state, 1)) {
         if (ammo_type_valid) {
-            PlayerState *plr = &state->plr1;
-            int gun_idx = ammo_gun_type;
-            int16_t ammo = plr->gun_data[gun_idx].ammo;
-            ammo += AMMO_PER_CLIP * 8;
-            if (ammo > MAX_AMMO_DISPLAY) ammo = (int16_t)MAX_AMMO_DISPLAY;
-            plr->gun_data[gun_idx].ammo = ammo;
-            OBJ_SET_ZONE(obj, -1);
-            audio_play_sample(11, 50);
+            (void)object_take_ammo_clip(obj, &state->plr1, default_plr1_guns,
+                                        (int)ammo_gun_type);
         }
     }
     if (state->mode != MODE_SINGLE && pickup_distance_check(obj, state, 2)) {
         if (ammo_type_valid) {
-            PlayerState *plr = &state->plr2;
-            int gun_idx = ammo_gun_type;
-            int16_t ammo = plr->gun_data[gun_idx].ammo;
-            ammo += AMMO_PER_CLIP * 8;
-            if (ammo > MAX_AMMO_DISPLAY) ammo = (int16_t)MAX_AMMO_DISPLAY;
-            plr->gun_data[gun_idx].ammo = ammo;
-            OBJ_SET_ZONE(obj, -1);
-            audio_play_sample(11, 50);
+            (void)object_take_ammo_clip(obj, &state->plr2, default_plr2_guns,
+                                        (int)ammo_gun_type);
         }
     }
 }
@@ -3499,50 +3503,38 @@ void object_handle_key(GameObject *obj, GameState *state)
  *
  * Translated from Anims.s ItsABigGun (line ~1748-1890).
  * ----------------------------------------------------------------------- */
+static bool object_big_gun_pickup_indices(uint8_t pickup_idx, int *gun_idx, int *ammo_idx)
+{
+    /* Amiga uses PLR*_GunData+32 as the base, so authored IDs 0..6 map to gun slots 1..7. */
+    if (pickup_idx >= (uint8_t)(MAX_GUNS - 1))
+        return false;
+    if (gun_idx) *gun_idx = (int)pickup_idx + 1;
+    if (ammo_idx) *ammo_idx = (int)pickup_idx;
+    return true;
+}
+
+static bool object_take_big_gun(GameObject *obj, PlayerState *plr, uint8_t pickup_idx)
+{
+    int gun_idx = -1;
+    int ammo_idx = -1;
+    if (!obj || !plr || !object_big_gun_pickup_indices(pickup_idx, &gun_idx, &ammo_idx))
+        return false;
+
+    plr->gun_data[gun_idx].visible = -1;
+    /* Anims.s ItsABigGun adds AmmoInGuns words directly; it does not shift by 3. */
+    plr->gun_data[gun_idx].ammo = (int16_t)(plr->gun_data[gun_idx].ammo + ammo_in_guns[ammo_idx]);
+    OBJ_SET_ZONE(obj, -1);
+    audio_play_sample(4, 50);
+    return true;
+}
+
 void object_handle_big_gun(GameObject *obj, GameState *state)
 {
     if (pickup_distance_check(obj, state, 1)) {
-        int pickup_idx = (int)(uint8_t)obj->obj.can_see; /* Amiga ItsABigGun byte 17 */
-        int gun_idx = -1;
-        int ammo_idx = -1;
-        /* Amiga: a1 = PLR1_GunData+32 then index by pickup id (0..6) => gun slot 1..7.
-         * Keep pickup id 7 as compatibility fallback to gun slot 7. */
-        if (pickup_idx >= 0 && pickup_idx < (MAX_GUNS - 1)) {
-            gun_idx = pickup_idx + 1;
-            ammo_idx = pickup_idx;
-        } else if (pickup_idx == (MAX_GUNS - 1)) {
-            gun_idx = pickup_idx;
-            ammo_idx = pickup_idx;
-        }
-        if (gun_idx >= 0 && gun_idx < MAX_GUNS && ammo_idx >= 0 && ammo_idx < MAX_GUNS) {
-            PlayerState *plr = &state->plr1;
-            plr->gun_data[gun_idx].visible = -1; /* Mark as acquired */
-            /* Add some ammo */
-            int16_t ammo_add = ammo_in_guns[ammo_idx] * 8;
-            plr->gun_data[gun_idx].ammo += ammo_add;
-            OBJ_SET_ZONE(obj, -1);
-            audio_play_sample(4, 50);
-        }
+        (void)object_take_big_gun(obj, &state->plr1, (uint8_t)obj->obj.can_see);
     }
     if (state->mode != MODE_SINGLE && pickup_distance_check(obj, state, 2)) {
-        int pickup_idx = (int)(uint8_t)obj->obj.can_see;
-        int gun_idx = -1;
-        int ammo_idx = -1;
-        if (pickup_idx >= 0 && pickup_idx < (MAX_GUNS - 1)) {
-            gun_idx = pickup_idx + 1;
-            ammo_idx = pickup_idx;
-        } else if (pickup_idx == (MAX_GUNS - 1)) {
-            gun_idx = pickup_idx;
-            ammo_idx = pickup_idx;
-        }
-        if (gun_idx >= 0 && gun_idx < MAX_GUNS && ammo_idx >= 0 && ammo_idx < MAX_GUNS) {
-            PlayerState *plr = &state->plr2;
-            plr->gun_data[gun_idx].visible = -1;
-            int16_t ammo_add = ammo_in_guns[ammo_idx] * 8;
-            plr->gun_data[gun_idx].ammo += ammo_add;
-            OBJ_SET_ZONE(obj, -1);
-            audio_play_sample(4, 50);
-        }
+        (void)object_take_big_gun(obj, &state->plr2, (uint8_t)obj->obj.can_see);
     }
 }
 

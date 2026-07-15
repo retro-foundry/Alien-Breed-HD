@@ -1037,7 +1037,7 @@ const int num_enemy_types = sizeof(enemy_params) / sizeof(enemy_params[0]);
 /* Ammo graphic per gun type: from Anims.s AMGR */
 const int8_t ammo_graphic_table[8] = { 3, 4, 5, 0, 29, 0, 0, 28 };
 
-/* Ammo given per gun pickup: from Anims.s AmmoInGuns */
+/* Raw internal ammo added per gun pickup: from Anims.s AmmoInGuns */
 const int8_t ammo_in_guns[8] = { 0, 5, 1, 0, 1, 0, 0, 5 };
 
 /* -----------------------------------------------------------------------

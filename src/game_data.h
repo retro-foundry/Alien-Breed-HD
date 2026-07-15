@@ -218,13 +218,13 @@ extern const int num_enemy_types;
  * ----------------------------------------------------------------------- */
 #define HEAL_FACTOR         18      /* health restored by medikit */
 #define PICKUP_DISTANCE_SQ  10000   /* 100*100 squared distance for pickup */
-#define AMMO_PER_CLIP       8       /* rounds per ammo pickup (multiplied by 8) */
+#define AMMO_PICKUP_LIMIT   (80*8)  /* ItsAnAmmoClip only picks up below this internal ammo count */
 #define MAX_AMMO_DISPLAY    (999*8) /* 7992 max ammo (internal) */
 #define MAX_AMMO_RAW        999     /* max display ammo */
 
 /* Ammo type per gun (which ammo graphic to use) */
 extern const int8_t ammo_graphic_table[8];
-/* Ammo given by gun pickup */
+/* Raw internal ammo added by gun pickup */
 extern const int8_t ammo_in_guns[8];
 
 /* -----------------------------------------------------------------------
