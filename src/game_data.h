@@ -73,7 +73,7 @@ extern const char *gun_names[8];
 #define TKG_MOUSE_LOOK_GRENADE_LIFETIME 150
 #define TKG_MOUSE_LOOK_GRENADE_POWER 5
 #define TKG_MOUSE_LOOK_GRENADE_EXPLOSIVE_FORCE 30
-#define TKG_MOUSE_LOOK_GRENADE_SPAWN_Y_OFFSET (30 * 128)
+#define TKG_MOUSE_LOOK_PROJECTILE_SPAWN_Y_OFFSET (30 * 128)
 
 /* -----------------------------------------------------------------------
  * Gun animation data

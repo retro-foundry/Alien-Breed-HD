@@ -31,7 +31,9 @@
 #define TURN_STEP           10
 #define MOUSE_CLAMP         50
 #define MOUSE_LOOK_LIMIT    (RENDER_DEFAULT_HEIGHT / 2)
-#define MOUSE_AIM_SPEED_SCALE 128
+/* TKG modules/player.s plr_MouseControl uses Sys_MouseY*85 for fullscreen:
+ * "projectiles not having the same trajectory in full screen compared to small screen". */
+#define MOUSE_AIM_SPEED_SCALE 85
 #define MOUSE_AIM_SPEED_LIMIT (512 * 20)
 #define HEIGHT_STEP         1024
 #define BOBBLE_MASK         ANGLE_MASK
@@ -990,7 +992,7 @@ static void player_apply_mouse_look(PlayerState *plr, GameState *state, int16_t 
     bool look_was_clamped = (unclamped_look != (int32_t)clamped_look);
 
     /* AB3D2 modules/player.s plr_MouseControl adds mouse-Y delta directly to
-     * STOPOFFSET and scales that same source-space delta for PlrT_AimSpeed_l. */
+     * STOPOFFSET and scales that source-space delta for fullscreen projectile aim. */
     if (sim_aim && delta != 0) {
         int32_t aim = (int32_t)(*sim_aim) + delta * MOUSE_AIM_SPEED_SCALE;
         if (look_was_clamped) {
@@ -2757,10 +2759,11 @@ static int32_t player_projectile_spawn_y_for_shot(const GameState *state, int gu
                                                   const GunDataEntry *gun,
                                                   const PlayerState *plr)
 {
-    if (player_use_tkg_mouse_look_grenade(state, gun_idx, gun)) {
+    (void)gun_idx;
+    if (state && state->cfg_mouse_look && gun && gun->fire_bullet == 0) {
         /* TKG newplayershoot.s: tempyoff = PlrT_YOff_l + 10*128,
          * then firefive adds another 20*128 before ShotT_AccYPos_w. */
-        return plr->yoff + TKG_MOUSE_LOOK_GRENADE_SPAWN_Y_OFFSET;
+        return plr->yoff + TKG_MOUSE_LOOK_PROJECTILE_SPAWN_Y_OFFSET;
     }
     return plr->yoff + 40 * 128;
 }
