@@ -51,6 +51,8 @@ static const int8_t gun_key_map[6] = { 0, 7, 1, 4, 2, 3 };
 
 static int16_t player_current_mouse_aim_speed(const GameState *state, int plr_num);
 static int32_t player_mouse_look_ray_y_delta_at_dist(int16_t aim_speed, int32_t doubled_dist);
+static int16_t player_mouse_look_ray_axis_at_dist(int16_t origin, int16_t dir, int32_t doubled_dist);
+static int16_t player_clamp_i16(int32_t value);
 
 static int16_t player_room_zone_word(const uint8_t *room)
 {
@@ -184,10 +186,11 @@ static int16_t zone_from_room_or_fallback(LevelState *level, const uint8_t *room
 static bool hitscan_target_has_line_of_sight(GameState *state, const PlayerState *plr,
                                              const uint8_t *from_room,
                                              int16_t viewer_x, int16_t viewer_z, int16_t viewer_y,
-                                             const GameObject *target)
+                                             const GameObject *target,
+                                             int16_t target_x, int16_t target_z, int16_t target_y)
 {
     if (!state || !plr || !from_room || !target) return false;
-    if (!state->level.data || !state->level.object_points) return false;
+    if (!state->level.data) return false;
 
     int zone_slots = level_zone_slot_count(&state->level);
     int target_zone = level_connect_to_zone_index(&state->level, OBJ_ZONE(target));
@@ -199,12 +202,7 @@ static bool hitscan_target_has_line_of_sight(GameState *state, const PlayerState
     if (!to_room) return false;
 
     int16_t target_cid = OBJ_CID(target);
-    if (target_cid < 0 || target_cid >= state->level.num_object_points) return false;
-
-    const uint8_t *target_pt = state->level.object_points + (uint32_t)(uint16_t)target_cid * 8u;
-    int16_t target_x = obj_w(target_pt + 0);
-    int16_t target_z = obj_w(target_pt + 4);
-    int16_t target_y = obj_w(target->raw + 4);
+    if (target_cid < 0) return false;
     int16_t target_zone_id = player_room_zone_word(to_room);
 
     return can_it_be_seen(&state->level,
@@ -268,7 +266,8 @@ static bool player_contact_target_overlap(const GameState *state, const PlayerSt
 /* Matches PlayerShoot.s MISSINSTANT path:
  * repeated MoveObject steps until hitwall, then use impact coords for pop sprite. */
 static bool trace_instant_miss_path(GameState *state, const PlayerState *plr,
-                                    int16_t init_newx, int16_t init_newz, int32_t init_newy,
+                                    int16_t init_newx, int16_t init_newz,
+                                    int32_t init_oldy, int32_t init_newy,
                                     bool use_wall_hit_y,
                                     int16_t *out_x, int16_t *out_z, int32_t *out_y,
                                     uint8_t **out_room, int8_t *out_in_top)
@@ -295,7 +294,7 @@ static bool trace_instant_miss_path(GameState *state, const PlayerState *plr,
     int16_t oldz = (int16_t)(plr->zoff >> 16);
     int16_t newx = init_newx;
     int16_t newz = init_newz;
-    int32_t oldy = plr->yoff + 20 * 128;
+    int32_t oldy = init_oldy;
     int32_t newy = init_newy;
     int8_t in_top = plr->stood_in_top;
 
@@ -356,6 +355,12 @@ static void init_instant_pop_slot(GameObject *shot, int gun_idx, int16_t zone,
     shot->obj.worry = 127;
 }
 
+static int32_t player_instant_y_spread_from_rand(int32_t rand_val)
+{
+    /* PlayerShoot.s nothingtoshoot masks GetRand with #$fff, then subtracts #$800. */
+    return (int32_t)((rand_val & 0x0FFF) - 0x800);
+}
+
 /* PlayerShoot.s PLR1HITINSTANT/PLR2HITINSTANT behavior:
  * find free slot, spawn pop at target, then apply damage+impact push. */
 static void spawn_instant_hit_effect(GameState *state, const PlayerState *plr, int gun_idx,
@@ -375,14 +380,17 @@ static void spawn_instant_hit_effect(GameState *state, const PlayerState *plr, i
 
     obj_sw(impact->raw, saved_cid);
 
-    {
+    if (saved_cid >= 0 && state->level.object_points &&
+        saved_cid < state->level.num_object_points) {
         int16_t target_cid = OBJ_CID(target);
-        if (saved_cid >= 0 && target_cid >= 0 &&
-            state->level.object_points &&
-            saved_cid < state->level.num_object_points &&
-            target_cid < state->level.num_object_points) {
+        uint8_t *dst = state->level.object_points + (uint32_t)(uint16_t)saved_cid * 8u;
+        if (state->cfg_mouse_look && doubled_dist > 0) {
+            int16_t origin_x = (int16_t)(plr->xoff >> 16);
+            int16_t origin_z = (int16_t)(plr->zoff >> 16);
+            obj_sw(dst, player_mouse_look_ray_axis_at_dist(origin_x, dir_x, doubled_dist));
+            obj_sw(dst + 4, player_mouse_look_ray_axis_at_dist(origin_z, dir_z, doubled_dist));
+        } else if (target_cid >= 0 && target_cid < state->level.num_object_points) {
             const uint8_t *src = state->level.object_points + (uint32_t)(uint16_t)target_cid * 8u;
-            uint8_t *dst = state->level.object_points + (uint32_t)(uint16_t)saved_cid * 8u;
             dst[0] = src[0]; dst[1] = src[1];
             dst[4] = src[4]; dst[5] = src[5];
         }
@@ -428,13 +436,14 @@ static void spawn_instant_miss_effect_target(GameState *state, const PlayerState
     int16_t tz = obj_w(target_pt + 4);
     int16_t newx = (int16_t)(oldx + ((int16_t)(tx - oldx) >> 1));
     int16_t newz = (int16_t)(oldz + ((int16_t)(tz - oldz) >> 1));
+    int32_t oldy = plr->yoff + 20 * 128;
     int32_t newy = ((int32_t)obj_w(target->raw + 4)) << 7;
 
     int16_t hit_x = 0, hit_z = 0;
     int32_t hit_y = 0;
     uint8_t *hit_room = NULL;
     int8_t hit_in_top = plr->stood_in_top;
-    if (!trace_instant_miss_path(state, plr, newx, newz, newy, false,
+    if (!trace_instant_miss_path(state, plr, newx, newz, oldy, newy, false,
                                  &hit_x, &hit_z, &hit_y, &hit_room, &hit_in_top))
         return;
 
@@ -458,7 +467,8 @@ static void spawn_instant_miss_effect_target(GameState *state, const PlayerState
  * fire forward, random vertical offset, trace until wall hit, spawn pop at wallhitheight. */
 static void spawn_instant_miss_effect_no_target(GameState *state, const PlayerState *plr,
                                                 int plr_num, int gun_idx,
-                                                int16_t sin_val, int16_t cos_val)
+                                                int16_t sin_val, int16_t cos_val,
+                                                int32_t spread_y)
 {
     if (!state || !plr) return;
     if (gun_idx < 0 || gun_idx >= MAX_BULLET_ANIM_IDX) return;
@@ -469,20 +479,21 @@ static void spawn_instant_miss_effect_no_target(GameState *state, const PlayerSt
     int16_t newx = (int16_t)(oldx + (sin_val >> 7));
     int16_t newz = (int16_t)(oldz + (cos_val >> 7));
     int32_t oldy = plr->yoff + 20 * 128;
-    int32_t newy = oldy + (int32_t)((rand() & 0x0FFF) - 0x800);
+    int32_t newy = oldy + spread_y;
     if (state->cfg_mouse_look) {
         int16_t aim_speed = player_current_mouse_aim_speed(state, plr_num);
         oldy = plr->yoff;
         /* The first instant trace step is 128 world units, i.e. doubled_dist=256
-         * in PlayerShoot.s/CalcPLR*InLine scale. */
-        newy = oldy + player_mouse_look_ray_y_delta_at_dist(aim_speed, 256);
+         * in PlayerShoot.s/CalcPLR*InLine scale. Keep the original #$fff/#$800
+         * vertical miss spread around that fixed-reticle ray. */
+        newy = oldy + player_mouse_look_ray_y_delta_at_dist(aim_speed, 256) + spread_y;
     }
 
     int16_t hit_x = 0, hit_z = 0;
     int32_t hit_y = 0;
     uint8_t *hit_room = NULL;
     int8_t hit_in_top = plr->stood_in_top;
-    if (!trace_instant_miss_path(state, plr, newx, newz, newy, true,
+    if (!trace_instant_miss_path(state, plr, newx, newz, oldy, newy, true,
                                  &hit_x, &hit_z, &hit_y, &hit_room, &hit_in_top))
         return;
 
@@ -868,6 +879,13 @@ static int16_t player_clamp_mouse_aim_speed(int32_t aim_speed)
     return (int16_t)aim_speed;
 }
 
+static int16_t player_clamp_i16(int32_t value)
+{
+    if (value > INT16_MAX) value = INT16_MAX;
+    if (value < INT16_MIN) value = INT16_MIN;
+    return (int16_t)value;
+}
+
 static int player_round_div_i64(int64_t n, int64_t d)
 {
     if (d <= 0) return 0;
@@ -926,6 +944,17 @@ static int32_t player_mouse_look_ray_y_delta_at_dist(int16_t aim_speed, int32_t 
     /* CalcPLR*InLine/PlayerShoot.s use doubled forward distance. AimSpeed is
      * PlrT_AimSpeed_l in TKG newplayershoot.s scale, so y_delta = aim * dist / 256. */
     return player_round_div_i64((int64_t)aim_speed * (int64_t)doubled_dist, 256);
+}
+
+static int16_t player_mouse_look_ray_axis_at_dist(int16_t origin, int16_t dir, int32_t doubled_dist)
+{
+    if (doubled_dist <= 0) return origin;
+
+    /* CalcPLR*InLine distance is doubled before PlayerShoot.s aim math. Runtime
+     * sin/cos are half-scale, so convert back to world units before stepping. */
+    int32_t world_dist = (doubled_dist + 1) / 2;
+    int32_t delta = player_round_div_i64((int64_t)dir * (int64_t)world_dist, 16384);
+    return player_clamp_i16((int32_t)origin + delta);
 }
 
 static int player_input_index(const GameState *state, const PlayerState *plr)
@@ -2946,7 +2975,9 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         hitscan_from_room = resolve_player_room_ptr(state, plr);
         hitscan_viewer_x = (int16_t)(plr->xoff >> 16);
         hitscan_viewer_z = (int16_t)(plr->zoff >> 16);
-        hitscan_viewer_y = (int16_t)((plr->yoff + 20 * 128) >> 7);
+        hitscan_viewer_y = state->cfg_mouse_look ?
+            player_clamp_i16(plr->yoff >> 7) :
+            (int16_t)((plr->yoff + 20 * 128) >> 7);
     }
 
     /* Find closest target in line of fire; barrels win over other types unless
@@ -3018,10 +3049,30 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
             }
 
             if (hitscan_from_room && !contact_target) {
+                int16_t los_target_x = 0;
+                int16_t los_target_z = 0;
+                int16_t los_target_y = obj_y;
+                bool have_los_target_point = false;
+                if (state->level.object_points && obj_cid >= 0 &&
+                    obj_cid < state->level.num_object_points) {
+                    const uint8_t *pt = state->level.object_points + (uint32_t)(uint16_t)obj_cid * 8u;
+                    los_target_x = obj_w(pt + 0);
+                    los_target_z = obj_w(pt + 4);
+                    have_los_target_point = true;
+                }
+                if (manual_hitscan_aim) {
+                    los_target_x = player_mouse_look_ray_axis_at_dist(hitscan_viewer_x, sin_val, dist);
+                    los_target_z = player_mouse_look_ray_axis_at_dist(hitscan_viewer_z, cos_val, dist);
+                    los_target_y = player_clamp_i16(
+                        (plr->yoff + player_mouse_look_ray_y_delta_at_dist(
+                            player_current_mouse_aim_speed(state, plr_num), dist)) >> 7);
+                    have_los_target_point = true;
+                }
+                if (!have_los_target_point) continue;
                 if (!hitscan_target_has_line_of_sight(state, plr,
                                                       hitscan_from_room,
                                                       hitscan_viewer_x, hitscan_viewer_z, hitscan_viewer_y,
-                                                      obj))
+                                                      obj, los_target_x, los_target_z, los_target_y))
                     continue;
             }
 
@@ -3115,7 +3166,8 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         if (closest_idx < 0 || !state->level.object_data || !state->level.object_points) {
             /* Amiga nothingtoshoot instant branch: one miss effect straight ahead. */
             spawn_instant_miss_effect_no_target(state, plr, plr_num,
-                                                gun_idx, sin_val, cos_val);
+                                                gun_idx, sin_val, cos_val,
+                                                player_instant_y_spread_from_rand(rand()));
             return;
         }
 
@@ -3123,7 +3175,8 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         int16_t target_cid = OBJ_CID(target);
         if (target_cid < 0 || target_cid >= state->level.num_object_points) {
             spawn_instant_miss_effect_no_target(state, plr, plr_num,
-                                                gun_idx, sin_val, cos_val);
+                                                gun_idx, sin_val, cos_val,
+                                                player_instant_y_spread_from_rand(rand()));
             return;
         }
 
@@ -3145,6 +3198,10 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
                     spawn_instant_hit_effect(state, plr, gun_idx, target,
                                              gun->shot_power, plr_num, closest_dist,
                                              (int16_t)dir_x, (int16_t)dir_z);
+                } else if (state->cfg_mouse_look) {
+                    spawn_instant_miss_effect_no_target(state, plr, plr_num,
+                                                        gun_idx, sin_val, cos_val,
+                                                        player_instant_y_spread_from_rand(rand_val));
                 } else {
                     spawn_instant_miss_effect_target(state, plr, gun_idx, target);
                 }
