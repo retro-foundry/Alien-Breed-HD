@@ -165,6 +165,7 @@ static bool g_automap_pgup_requested = false;
 static bool g_automap_pgdn_requested = false;
 static bool g_fullscreen_toggle_requested = false;
 static uint8_t g_keyboard_keys[128];
+static uint8_t g_keyboard_pressed[128];
 static uint8_t g_mouse_keys[128];
 static uint8_t g_gamepad_keys[128];
 
@@ -229,6 +230,7 @@ static void input_merge_key_sources(uint8_t *key_map)
 static void input_clear_key_sources(void)
 {
     memset(g_keyboard_keys, 0, sizeof(g_keyboard_keys));
+    memset(g_keyboard_pressed, 0, sizeof(g_keyboard_pressed));
     memset(g_mouse_keys, 0, sizeof(g_mouse_keys));
     memset(g_gamepad_keys, 0, sizeof(g_gamepad_keys));
 }
@@ -537,6 +539,7 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
             uint8_t amiga = sdl_to_amiga(ev.key.keysym.scancode);
             if (amiga != 0xFF) {
                 input_set_key_state(g_keyboard_keys, amiga, true);
+                g_keyboard_pressed[amiga] = 1;
                 if (last_pressed) *last_pressed = amiga;
             }
             break;
@@ -679,6 +682,13 @@ bool input_gamepad_duck_toggle_requested(void)
 {
     if (g_gamepad_duck_toggle_queue == 0) return false;
     g_gamepad_duck_toggle_queue--;
+    return true;
+}
+
+bool input_consume_key_press(uint8_t keycode)
+{
+    if (keycode >= 128 || !g_keyboard_pressed[keycode]) return false;
+    g_keyboard_pressed[keycode] = 0;
     return true;
 }
 

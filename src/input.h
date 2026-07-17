@@ -45,6 +45,9 @@ void input_read_joy2(JoyState *out);
 bool input_gamepad_duck_toggle_requested(void);
 int16_t input_consume_gamepad_weapon_cycle_steps(void);
 
+/* Keyboard one-shot key-down actions latched between display frames and logic ticks. */
+bool input_consume_key_press(uint8_t keycode);
+
 /* Convenience: check if a specific key is pressed */
 bool input_key_pressed(const uint8_t *key_map, uint8_t keycode);
 

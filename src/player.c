@@ -549,11 +549,10 @@ static void player_always_keys(PlayerState *plr, uint8_t *key_map,
                                 const KeyBindings *keys, uint8_t *old_space,
                                 const GameState *state)
 {
-    player_ensure_valid_weapon_selection(plr);
+    bool keyboard_duck_tap;
+    bool gamepad_duck_tap;
 
-    if (input_gamepad_duck_toggle_requested()) {
-        key_map[keys->duck] = 1;
-    }
+    player_ensure_valid_weapon_selection(plr);
 
     /* Operate/Space - tap detection */
     uint8_t space_state = key_map[keys->operate];
@@ -562,9 +561,12 @@ static void player_always_keys(PlayerState *plr, uint8_t *key_map,
     }
     *old_space = space_state;
 
-    /* Duck toggle */
-    if (key_map[keys->duck]) {
-        /* Amiga PLR*_alwayskeys clears duck key after reading to make it a toggle. */
+    /* Duck toggle. The Amiga keyboard path clears KeyMap[duck] after reading it,
+     * while CD32Joy.s debounces the button with .ducklast. SDL key state is merged
+     * from held sources every display frame, so consume latched key-down events here. */
+    keyboard_duck_tap = input_consume_key_press(keys->duck);
+    gamepad_duck_tap = input_gamepad_duck_toggle_requested();
+    if (keyboard_duck_tap || gamepad_duck_tap) {
         key_map[keys->duck] = 0;
         plr->s_targheight = PLAYER_HEIGHT;
         plr->ducked = !plr->ducked;
@@ -1216,10 +1218,11 @@ static void player_sim_control(PlayerState *plr, const ControlMode *ctrl,
                                 GameState *state,
                                 int16_t temp_frames)
 {
-    static uint8_t old_space = 0;
+    static uint8_t old_space[2] = {0, 0};
+    int input_idx = player_input_index(state, plr);
 
     /* Always-active keys */
-    player_always_keys(plr, key_map, keys, &old_space, state);
+    player_always_keys(plr, key_map, keys, &old_space[input_idx], state);
 
     /* Dispatch based on control mode */
     if (ctrl->mouse_kbd) {
