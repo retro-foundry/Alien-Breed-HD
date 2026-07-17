@@ -263,6 +263,7 @@ if(EMSCRIPTEN)
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/emscripten_sync_data.cmake
     DEPENDS
       "${CMAKE_CURRENT_SOURCE_DIR}/cmake/emscripten_sync_data.cmake"
+      "${CMAKE_CURRENT_SOURCE_DIR}/ab3d.ini.template"
       "${CMAKE_CURRENT_SOURCE_DIR}/tools/raw_to_wav.py"
       ${_AB3D_AMIGA_PRELOAD}
     COMMENT "Stage em_preload/ for WebAssembly (MEMFS)"
@@ -313,6 +314,12 @@ if(EMSCRIPTEN)
   set_target_properties(ab3d1 PROPERTIES
     OUTPUT_NAME "index"
     SUFFIX ".html"
+  )
+  add_custom_command(TARGET ab3d1 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${AB3D_EMPRELOAD}/ab3d.ini"
+            "$<TARGET_FILE_DIR:ab3d1>/ab3d.ini"
+    COMMENT "Copy web ab3d.ini defaults beside index.html"
   )
   if(NOT AB3D_NO_THREADS)
     add_custom_command(TARGET ab3d1 POST_BUILD

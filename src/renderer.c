@@ -3693,7 +3693,11 @@ static void renderer_log_world_zone_draw(uint32_t frame_idx,
 static inline int project_x_to_pixels(int32_t vx, int32_t vz)
 {
     if (vz <= 0) return (vx >= 0) ? g_renderer.width : -g_renderer.width;
-    int center_x = (g_renderer.width * 47) / 96;
+    int center_x = g_renderer.view_center_x;
+    int w = g_renderer.width;
+    if (w < 1) w = 1;
+    if (center_x < 0 || center_x >= w)
+        center_x = (w * 47) / 96;
     int proj_x = renderer_proj_x_scale_px();
     return (int)(((int64_t)vx * (int64_t)proj_x << ROT_Z_FRAC_BITS) / (int64_t)vz) + center_x;
 }
@@ -3819,7 +3823,9 @@ static inline void renderer_floor_prepare_common(FloorDrawCommon *common,
 
     common->width = (rs->width > 0) ? rs->width : 1;
     common->base_w = renderer_clamp_base_width(g_proj_base_width);
-    common->center_x = (common->width * 47) / 96;
+    common->center_x = rs->view_center_x;
+    if (common->center_x < 0 || common->center_x >= common->width)
+        common->center_x = (common->width * 47) / 96;
     common->scaleval = scaleval;
     common->cam_scale = renderer_floor_compute_cam_scale(scaleval);
     common->cos_v = ((int32_t)rs->cosval) << 1;
@@ -4471,6 +4477,7 @@ void renderer_init(void)
     automap_door_lookup_release();
     automap_key_mask_cache_reset();
     allocate_buffers(RENDER_WIDTH, RENDER_HEIGHT);
+    g_renderer.view_center_x = (g_renderer.width * 47) / 96;
     g_automap_mutex = SDL_CreateMutex();
     if (!g_automap_mutex) {
         printf("[RENDERER] Warning: automap mutex unavailable (possible data races with threaded draw)\n");
@@ -4487,6 +4494,7 @@ void renderer_resize(int w, int h)
     if (h > RENDER_INTERNAL_MAX_DIM) h = RENDER_INTERNAL_MAX_DIM;
     free_buffers();
     allocate_buffers(w, h);
+    g_renderer.view_center_x = (g_renderer.width * 47) / 96;
 }
 
 void renderer_shutdown(void)
@@ -4580,6 +4588,7 @@ static int s_sky_mode = 2;
 /* Cached sky column count: depends on width + projection (recomputed when width changes). */
 static int s_cached_sky_view_cols = 0;
 static int s_cached_sky_view_cols_w = -1;
+static int s_cached_sky_view_cols_center_x = -1;
 static uint32_t s_sky_argb[256];
 static uint16_t s_sky_cw[256];
 
@@ -4804,8 +4813,11 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
     int sky_h = h;
     /* Match sky horizontal span to the renderer's actual projection FOV (cached: same for all strips). */
     int sky_view_cols;
-    if (w != s_cached_sky_view_cols_w) {
-        int center_x = (w * 47) / 96;
+    int center_x = g_renderer.view_center_x;
+    if (center_x < 0 || center_x >= w)
+        center_x = (w * 47) / 96;
+    if (w != s_cached_sky_view_cols_w ||
+        center_x != s_cached_sky_view_cols_center_x) {
         int left_px = center_x;
         int right_px = (w - 1) - center_x;
         const double focal_px = (double)(64 * renderer_proj_x_scale_px());
@@ -4818,6 +4830,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
         if (sky_view_cols > SKY_PAN_WIDTH) sky_view_cols = SKY_PAN_WIDTH;
         s_cached_sky_view_cols = sky_view_cols;
         s_cached_sky_view_cols_w = w;
+        s_cached_sky_view_cols_center_x = center_x;
     } else {
         sky_view_cols = s_cached_sky_view_cols;
     }
@@ -6580,8 +6593,11 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
         int32_t u0_fp = (int32_t)(((int64_t)(angpos & 8191) * ((int64_t)SKY_PAN_WIDTH << 16)) / 8192);
         int sky_h = h;
         int sky_view_cols;
-        if (w != s_cached_sky_view_cols_w) {
-            int center_x = (w * 47) / 96;
+        int center_x = g_renderer.view_center_x;
+        if (center_x < 0 || center_x >= w)
+            center_x = (w * 47) / 96;
+        if (w != s_cached_sky_view_cols_w ||
+            center_x != s_cached_sky_view_cols_center_x) {
             int left_px = center_x;
             int right_px = (w - 1) - center_x;
             const double focal_px = (double)(64 * renderer_proj_x_scale_px());
@@ -6594,6 +6610,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
             if (sky_view_cols > SKY_PAN_WIDTH) sky_view_cols = SKY_PAN_WIDTH;
             s_cached_sky_view_cols = sky_view_cols;
             s_cached_sky_view_cols_w = w;
+            s_cached_sky_view_cols_center_x = center_x;
         } else {
             sky_view_cols = s_cached_sky_view_cols;
         }
@@ -15457,6 +15474,7 @@ void renderer_draw_display(GameState *state)
     int16_t ang = renderer_interp_angle(plr->oldangpos, plr->angpos, view_alpha);
     int16_t sky_angpos = ang;
     r->sky_frame_angpos = sky_angpos;
+    r->view_center_x = state->cfg_mouse_look ? (w / 2) : ((w * 47) / 96);
     {
         int64_t scaled = (int64_t)view_look_y * (int64_t)h;
         int look_px = (int)((scaled >= 0)

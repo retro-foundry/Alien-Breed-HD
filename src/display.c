@@ -2513,6 +2513,92 @@ static void display_fps_overlay(const GameState *state)
     }
 }
 
+typedef struct {
+    Uint8 r, g, b;
+} DisplayCrosshairRgb;
+
+/* Ported from TKG modules/draw.s Draw_Crosshair / Draw_CrosshairPens_vb.
+ * TKG stores palette pens; the modern overlay draws the same 0..7 slots as RGB. */
+static const uint8_t k_tkg_crosshair_pens[8] = {
+    0, 255, 254, 190, 25, 250, 133, 69
+};
+
+static const DisplayCrosshairRgb k_tkg_crosshair_rgb[8] = {
+    {   0,   0,   0 }, /* off */
+    {   0, 255,   0 }, /* intense green */
+    {   0, 176,   0 }, /* mid green */
+    { 255, 255,   0 }, /* intense yellow */
+    { 216, 216, 216 }, /* bright grey */
+    { 255,   0,   0 }, /* intense red */
+    { 128, 224, 255 }, /* ice blue */
+    {   0,  64, 255 }  /* intense blue */
+};
+
+static int display_round_div_i64(int64_t n, int d)
+{
+    if (d <= 0) return 0;
+    return (int)((n >= 0)
+        ? ((n + d / 2) / d)
+        : ((n - d / 2) / d));
+}
+
+static int display_clamp_int(int v, int lo, int hi)
+{
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+static void display_crosshair_dot(int cx, int cy, int dot, Uint8 r, Uint8 g, Uint8 b)
+{
+    SDL_Rect rr;
+    if (dot < 1) dot = 1;
+    rr.x = cx - dot / 2;
+    rr.y = cy - dot / 2;
+    rr.w = dot;
+    rr.h = dot;
+    display_overlay_fill_rect_abs(&rr, r, g, b, 255);
+}
+
+static void display_crosshair_sdl_overlay(const GameState *state)
+{
+    if (!state || !g_sdl_ren) return;
+
+    uint8_t slot = (uint8_t)(state->cfg_crosshair_colour & 7u);
+    if (slot == 0 || k_tkg_crosshair_pens[slot] == 0) return;
+
+    int pw = g_present_dst_rect.w;
+    int ph = g_present_dst_rect.h;
+    if (pw < 16 || ph < 16) return;
+
+    int cx = g_present_dst_rect.x + pw / 2;
+    int cy = g_present_dst_rect.y + ph / 2;
+
+    int margin = 5;
+    int unit = display_round_div_i64((int64_t)ph, RENDER_DEFAULT_HEIGHT);
+    if (unit < 1) unit = 1;
+    if (unit > 4) unit = 4;
+    int dot = unit;
+
+    cx = display_clamp_int(cx, g_present_dst_rect.x + margin * unit,
+                           g_present_dst_rect.x + pw - 1 - margin * unit);
+    cy = display_clamp_int(cy, g_present_dst_rect.y + margin * unit,
+                           g_present_dst_rect.y + ph - 1 - margin * unit);
+
+    const DisplayCrosshairRgb rgb = k_tkg_crosshair_rgb[slot];
+    static const int8_t offsets[8][2] = {
+        { -4, -4 }, {  4, -4 },
+        { -2, -2 }, {  2, -2 },
+        { -2,  2 }, {  2,  2 },
+        { -4,  4 }, {  4,  4 }
+    };
+    for (int i = 0; i < 8; i++) {
+        display_crosshair_dot(cx + offsets[i][0] * unit,
+                              cy + offsets[i][1] * unit,
+                              dot, rgb.r, rgb.g, rgb.b);
+    }
+}
+
 static void display_hud_stats_sdl_overlay(const GameState *state)
 {
     if (!state || !g_sdl_ren) return;
@@ -2966,6 +3052,7 @@ static void display_present_cw_frame(GameState *state)
     if (state) {
         display_hud_stats_sdl_overlay(state);
         display_key_hud_sdl_overlay(state);
+        display_crosshair_sdl_overlay(state);
         if (state->automap_visible)
             display_automap_sdl_overlay(state);
         display_fps_overlay(state);

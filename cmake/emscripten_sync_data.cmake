@@ -50,6 +50,12 @@ if(EXISTS "${AB3D_SRC_DIR}/ab3d.ini.template")
             "${AB3D_SRC_DIR}/ab3d.ini.template"
             "${OUT}/ab3d.ini"
   )
+  # Web builds default to the TKG-style mouse-look shooting path. In the runtime,
+  # mouse_look=1 disables AB3D I fixed-view auto aim and uses the manual aim path.
+  file(APPEND "${OUT}/ab3d.ini"
+       "\n# Web build defaults.\n"
+       "mouse_look=1\n"
+       "crosshair=1\n")
 endif()
 if(EXISTS "${AB3D_SRC_DIR}/README.txt")
   execute_process(

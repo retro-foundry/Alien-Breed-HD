@@ -358,7 +358,7 @@ typedef struct {
     bool            cfg_post_tint;        /* 1 = underwater fillscrnwater software post-pass */
     bool            cfg_weapon_post_gl;   /* 1 = draw weapon + underwater tint via pre-baked GL textures */
 
-    /* AB3D2 mouse-look projectile aim speed. Kept at the end so v5 full saves
+    /* AB3D2 mouse-look projectile aim speed. Kept here so v5/v6 full saves
      * still map the earlier raw GameState bytes onto the same fields. */
     int16_t         plr1_aim_speed;
     int16_t         plr1_s_aim_speed;
@@ -366,6 +366,8 @@ typedef struct {
     int16_t         plr2_aim_speed;
     int16_t         plr2_s_aim_speed;
     int16_t         plr2_p_aim_speed;
+
+    uint8_t         cfg_crosshair_colour; /* TKG Draw_Crosshair colour slot: 0=off, 1..7 */
 
 } GameState;
 

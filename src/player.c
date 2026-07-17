@@ -31,10 +31,6 @@
 #define TURN_STEP           10
 #define MOUSE_CLAMP         50
 #define MOUSE_LOOK_LIMIT    (RENDER_DEFAULT_HEIGHT / 2)
-/* TKG modules/player.s plr_MouseControl uses Sys_MouseY*85 for fullscreen:
- * "projectiles not having the same trajectory in full screen compared to small screen". */
-#define MOUSE_AIM_SPEED_SCALE 85
-#define MOUSE_AIM_SPEED_LIMIT (512 * 20)
 #define HEIGHT_STEP         1024
 #define BOBBLE_MASK         ANGLE_MASK
 #define CLUMP_MASK          4095
@@ -52,6 +48,9 @@
  * key1 pistol, key2 shotgun, key3 plasma, key4 grenade, key5 rocket, key6 flamethrower. */
 static const int8_t gun_key_map[6] = { 0, 7, 1, 4, 2, 3 };
 #define GUN_KEY_COUNT ((int)(sizeof(gun_key_map) / sizeof(gun_key_map[0])))
+
+static int16_t player_current_mouse_aim_speed(const GameState *state, int plr_num);
+static int32_t player_mouse_look_ray_y_delta_at_dist(int16_t aim_speed, int32_t doubled_dist);
 
 static int16_t player_room_zone_word(const uint8_t *room)
 {
@@ -361,6 +360,7 @@ static void init_instant_pop_slot(GameObject *shot, int gun_idx, int16_t zone,
  * find free slot, spawn pop at target, then apply damage+impact push. */
 static void spawn_instant_hit_effect(GameState *state, const PlayerState *plr, int gun_idx,
                                      GameObject *target, int8_t shot_power,
+                                     int plr_num, int32_t doubled_dist,
                                      int16_t dir_x, int16_t dir_z)
 {
     if (!state || !plr || !target) return;
@@ -389,9 +389,12 @@ static void spawn_instant_hit_effect(GameState *state, const PlayerState *plr, i
     }
 
     {
-        int16_t target_y = obj_w(target->raw + 4);
-        init_instant_pop_slot(impact, gun_idx, OBJ_ZONE(target), target->obj.in_top,
-                              ((int32_t)target_y) << 7);
+        int32_t impact_y = ((int32_t)obj_w(target->raw + 4)) << 7;
+        if (state->cfg_mouse_look && doubled_dist > 0) {
+            int16_t aim_speed = player_current_mouse_aim_speed(state, plr_num);
+            impact_y = plr->yoff + player_mouse_look_ray_y_delta_at_dist(aim_speed, doubled_dist);
+        }
+        init_instant_pop_slot(impact, gun_idx, OBJ_ZONE(target), target->obj.in_top, impact_y);
     }
 
     {
@@ -454,7 +457,8 @@ static void spawn_instant_miss_effect_target(GameState *state, const PlayerState
 /* PlayerShoot.s nothingtoshoot path for instant weapons:
  * fire forward, random vertical offset, trace until wall hit, spawn pop at wallhitheight. */
 static void spawn_instant_miss_effect_no_target(GameState *state, const PlayerState *plr,
-                                                int gun_idx, int16_t sin_val, int16_t cos_val)
+                                                int plr_num, int gun_idx,
+                                                int16_t sin_val, int16_t cos_val)
 {
     if (!state || !plr) return;
     if (gun_idx < 0 || gun_idx >= MAX_BULLET_ANIM_IDX) return;
@@ -466,6 +470,13 @@ static void spawn_instant_miss_effect_no_target(GameState *state, const PlayerSt
     int16_t newz = (int16_t)(oldz + (cos_val >> 7));
     int32_t oldy = plr->yoff + 20 * 128;
     int32_t newy = oldy + (int32_t)((rand() & 0x0FFF) - 0x800);
+    if (state->cfg_mouse_look) {
+        int16_t aim_speed = player_current_mouse_aim_speed(state, plr_num);
+        oldy = plr->yoff;
+        /* The first instant trace step is 128 world units, i.e. doubled_dist=256
+         * in PlayerShoot.s/CalcPLR*InLine scale. */
+        newy = oldy + player_mouse_look_ray_y_delta_at_dist(aim_speed, 256);
+    }
 
     int16_t hit_x = 0, hit_z = 0;
     int32_t hit_y = 0;
@@ -852,14 +863,69 @@ static int16_t player_clamp_mouse_look(int32_t look_y)
 
 static int16_t player_clamp_mouse_aim_speed(int32_t aim_speed)
 {
-    if (aim_speed > MOUSE_AIM_SPEED_LIMIT) aim_speed = MOUSE_AIM_SPEED_LIMIT;
-    if (aim_speed < -MOUSE_AIM_SPEED_LIMIT) aim_speed = -MOUSE_AIM_SPEED_LIMIT;
+    if (aim_speed > INT16_MAX) aim_speed = INT16_MAX;
+    if (aim_speed < INT16_MIN) aim_speed = INT16_MIN;
     return (int16_t)aim_speed;
 }
 
-static int16_t player_mouse_aim_speed_from_look(int16_t look_y)
+static int player_round_div_i64(int64_t n, int64_t d)
 {
-    return player_clamp_mouse_aim_speed((int32_t)look_y * MOUSE_AIM_SPEED_SCALE);
+    if (d <= 0) return 0;
+    return (int)((n >= 0)
+        ? ((n + d / 2) / d)
+        : ((n - d / 2) / d));
+}
+
+static int32_t player_current_proj_y_scale(const GameState *state)
+{
+    int h = renderer_get_height();
+    if (h < 1) h = RENDER_DEFAULT_HEIGHT;
+
+    /* Keep this in lock-step with renderer_draw_display's vertical scale setup. */
+    int32_t proj_y_scale = (int32_t)(((int64_t)PROJ_Y_SCALE * (int64_t)h) /
+                                     RENDER_DEFAULT_HEIGHT);
+    if (proj_y_scale < 1) proj_y_scale = 1;
+
+    if (state) {
+        int ypct = (int)state->cfg_y_proj_scale;
+        if (ypct < 1) ypct = 1;
+        proj_y_scale = (int32_t)(((int64_t)proj_y_scale * (int64_t)ypct + 50) / 100);
+        if (proj_y_scale < 1) proj_y_scale = 1;
+    }
+    return proj_y_scale;
+}
+
+static int16_t player_mouse_aim_speed_from_look(const GameState *state, int16_t look_y)
+{
+    int h = renderer_get_height();
+    if (h < 1) h = RENDER_DEFAULT_HEIGHT;
+
+    /* Deliberate modern fixed-crosshair mode:
+     * TKG modules/player.s drives PlrT_AimSpeed_l from raw mouse delta and
+     * modules/draw.s Draw_Crosshair offsets the reticle with STOPOFFSET. This
+     * port keeps the reticle fixed, so derive PlrT_AimSpeed_l from the fixed
+     * screen centre relative to the shifted projection centre instead. The
+     * resulting AimSpeed still feeds TKG newplayershoot.s's bulyspd shift. */
+    int look_px = player_round_div_i64((int64_t)look_y * (int64_t)h,
+                                       RENDER_DEFAULT_HEIGHT);
+    int32_t proj_y_scale = player_current_proj_y_scale(state);
+    int32_t aim_speed = player_round_div_i64((int64_t)look_px * 32768,
+                                             (int64_t)proj_y_scale * RENDER_SCALE);
+    return player_clamp_mouse_aim_speed(aim_speed);
+}
+
+static int16_t player_current_mouse_aim_speed(const GameState *state, int plr_num)
+{
+    if (!state) return 0;
+    return (plr_num == 2) ? state->plr2_p_aim_speed : state->plr1_p_aim_speed;
+}
+
+static int32_t player_mouse_look_ray_y_delta_at_dist(int16_t aim_speed, int32_t doubled_dist)
+{
+    if (doubled_dist <= 0) return 0;
+    /* CalcPLR*InLine/PlayerShoot.s use doubled forward distance. AimSpeed is
+     * PlrT_AimSpeed_l in TKG newplayershoot.s scale, so y_delta = aim * dist / 256. */
+    return player_round_div_i64((int64_t)aim_speed * (int64_t)doubled_dist, 256);
 }
 
 static int player_input_index(const GameState *state, const PlayerState *plr)
@@ -943,6 +1009,7 @@ static void player_clear_mouse_look_aim_state(GameState *state)
 static void player_sync_mouse_look_aim_after_load(GameState *state, bool derive_from_look)
 {
     if (!state) return;
+    (void)derive_from_look;
 
     PlayerState *plrs[2] = { &state->plr1, &state->plr2 };
     int16_t *aims[2] = { &state->plr1_aim_speed, &state->plr2_aim_speed };
@@ -963,16 +1030,9 @@ static void player_sync_mouse_look_aim_after_load(GameState *state, bool derive_
             continue;
         }
 
-        if (derive_from_look) {
-            *aims[i] = 0;
-            *sim_aims[i] = 0;
-            *snap_aims[i] = 0;
-        }
-        if (derive_from_look && look_y != 0) {
-            *aims[i] = player_mouse_aim_speed_from_look(look_y);
-        }
-        if (*sim_aims[i] == 0) *sim_aims[i] = *aims[i];
-        if (*snap_aims[i] == 0) *snap_aims[i] = *sim_aims[i];
+        *aims[i] = player_mouse_aim_speed_from_look(state, look_y);
+        *sim_aims[i] = *aims[i];
+        *snap_aims[i] = *sim_aims[i];
     }
 }
 
@@ -989,18 +1049,10 @@ static void player_apply_mouse_look(PlayerState *plr, GameState *state, int16_t 
     if (state->cfg_mouse_look_invert_y) delta = -delta;
     int32_t unclamped_look = (int32_t)plr->s_look_y + delta;
     int16_t clamped_look = player_clamp_mouse_look(unclamped_look);
-    bool look_was_clamped = (unclamped_look != (int32_t)clamped_look);
-
-    /* AB3D2 modules/player.s plr_MouseControl adds mouse-Y delta directly to
-     * STOPOFFSET and scales that source-space delta for fullscreen projectile aim. */
-    if (sim_aim && delta != 0) {
-        int32_t aim = (int32_t)(*sim_aim) + delta * MOUSE_AIM_SPEED_SCALE;
-        if (look_was_clamped) {
-            aim = (delta > 0) ? MOUSE_AIM_SPEED_LIMIT : -MOUSE_AIM_SPEED_LIMIT;
-        }
-        *sim_aim = player_clamp_mouse_aim_speed(aim);
-    }
     plr->s_look_y = clamped_look;
+    if (sim_aim) {
+        *sim_aim = player_mouse_aim_speed_from_look(state, clamped_look);
+    }
 }
 
 static void player_mouse_kbd_control(PlayerState *plr, const uint8_t *key_map,
@@ -1669,7 +1721,7 @@ void player2_control(GameState *state)
  * Legacy format (magic "AB3D") remains readable for old position-only saves. */
 #define SAVE_MAGIC_LEGACY "AB3D"
 #define SAVE_MAGIC_FULL   "AB3S"
-#define SAVE_VERSION_FULL 6u
+#define SAVE_VERSION_FULL 7u
 #define SAVE_FILE_SUBPATH "savegame.bin"
 #define SAVE_MAX_TABLE_ENTRIES 4096
 #define SAVE_MAX_CHUNK_BYTES (256u * 1024u * 1024u)
@@ -1981,6 +2033,7 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     bool    ini_cfg_all_keys = state->cfg_all_keys;
     bool    ini_cfg_mouse_look = state->cfg_mouse_look;
     bool    ini_cfg_mouse_look_invert_y = state->cfg_mouse_look_invert_y;
+    uint8_t ini_cfg_crosshair_colour = state->cfg_crosshair_colour;
     int16_t ini_cfg_render_width = state->cfg_render_width;
     int16_t ini_cfg_render_height = state->cfg_render_height;
     int16_t ini_cfg_supersampling = state->cfg_supersampling;
@@ -2006,6 +2059,7 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     state->cfg_all_keys = ini_cfg_all_keys;
     state->cfg_mouse_look = ini_cfg_mouse_look;
     state->cfg_mouse_look_invert_y = ini_cfg_mouse_look_invert_y;
+    state->cfg_crosshair_colour = ini_cfg_crosshair_colour;
     state->cfg_render_width = ini_cfg_render_width;
     state->cfg_render_height = ini_cfg_render_height;
     state->cfg_supersampling = ini_cfg_supersampling;
@@ -2469,9 +2523,7 @@ static void player_seed_facing_and_snapshots(GameState *state)
             *sim_aims[i] = 0;
             *snap_aims[i] = 0;
         } else {
-            if (*aims[i] == 0 && *sim_aims[i] == 0 && *snap_aims[i] == 0 && plr->look_y != 0) {
-                *aims[i] = player_mouse_aim_speed_from_look(plr->look_y);
-            }
+            *aims[i] = player_mouse_aim_speed_from_look(state, plr->look_y);
             *sim_aims[i] = *aims[i];
             *snap_aims[i] = *sim_aims[i];
         }
@@ -2761,9 +2813,11 @@ static int32_t player_projectile_spawn_y_for_shot(const GameState *state, int gu
 {
     (void)gun_idx;
     if (state && state->cfg_mouse_look && gun && gun->fire_bullet == 0) {
-        /* TKG newplayershoot.s: tempyoff = PlrT_YOff_l + 10*128,
-         * then firefive adds another 20*128 before ShotT_AccYPos_w. */
-        return plr->yoff + TKG_MOUSE_LOOK_PROJECTILE_SPAWN_Y_OFFSET;
+        /* TKG newplayershoot.s launches from PlrT_YOff_l + 30*128, which
+         * matches its moving reticle. Fixed-centre crosshair mode must spawn
+         * projectiles on the sight ray or nearby impacts cannot land on the
+         * reticle at every distance. */
+        return plr->yoff;
     }
     return plr->yoff + 40 * 128;
 }
@@ -2783,35 +2837,24 @@ static int16_t player_mouse_look_projectile_yvel(int16_t bulyspd)
 static bool player_mouse_look_target_in_vertical_aim(const GameState *state,
                                                      const PlayerState *plr,
                                                      int plr_num,
-                                                     const GunDataEntry *gun,
                                                      int obj_type,
                                                      int32_t ydiff,
                                                      int32_t dist)
 {
-    if (!state || !plr || !gun || dist <= 0) return false;
-
-    int shift = gun->bullet_speed;
-    if (shift < 0) shift = 0;
-    if (shift > 15) shift = 15;
-
-    int32_t aim_dist = dist >> shift;
-    if (aim_dist < 1) aim_dist = 1;
-
-    /* AB3D2 newplayershoot.s Prefs_NoAutoAim_b keeps PlrT_AimSpeed_l as the
-     * source of bulyspd instead of using the PlayerShoot.s targetydiff solve.
-     * For instant weapons, use the same scale as a manual vertical hit test. */
-    int32_t manual_bulyspd = player_sequel_mouse_aim_bulyspd(state, plr_num, gun->bullet_speed);
-    int64_t aimed_ydiff = (int64_t)manual_bulyspd * (int64_t)aim_dist;
-
-    int64_t target_ydiff = (int64_t)ydiff - (int64_t)plr->height + (int64_t)(18 * 256);
-    int64_t delta = target_ydiff - aimed_ydiff;
-    if (delta < 0) delta = -delta;
+    if (!state || !plr || dist <= 0) return false;
 
     int32_t half_height = 40;
     if (obj_type >= 0 && obj_type <= 20)
         half_height = col_box_table[obj_type].half_height;
 
-    return delta <= ((int64_t)half_height << 7);
+    int64_t target_center_y = (int64_t)plr->yoff + (int64_t)ydiff;
+    int64_t target_half_y = (int64_t)half_height << 7;
+    int16_t aim_speed = player_current_mouse_aim_speed(state, plr_num);
+    int64_t ray_y = (int64_t)plr->yoff +
+                    (int64_t)player_mouse_look_ray_y_delta_at_dist(aim_speed, dist);
+
+    return ray_y >= (target_center_y - target_half_y) &&
+           ray_y <= (target_center_y + target_half_y);
 }
 
 static void player_shoot_internal(GameState *state, PlayerState *plr,
@@ -2967,8 +3010,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
             if (!contact_target) {
                 if (manual_hitscan_aim) {
                     if (!player_mouse_look_target_in_vertical_aim(state, plr, plr_num,
-                                                                  gun, obj_type,
-                                                                  ydiff, dist))
+                                                                  obj_type, ydiff, dist))
                         continue;
                 } else if ((abs_ydiff / 44) > dist) {
                     continue;
@@ -3072,14 +3114,16 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         if (num_pellets < 1) num_pellets = 1;
         if (closest_idx < 0 || !state->level.object_data || !state->level.object_points) {
             /* Amiga nothingtoshoot instant branch: one miss effect straight ahead. */
-            spawn_instant_miss_effect_no_target(state, plr, gun_idx, sin_val, cos_val);
+            spawn_instant_miss_effect_no_target(state, plr, plr_num,
+                                                gun_idx, sin_val, cos_val);
             return;
         }
 
         GameObject *target = (GameObject *)(state->level.object_data + closest_idx * OBJECT_SIZE);
         int16_t target_cid = OBJ_CID(target);
         if (target_cid < 0 || target_cid >= state->level.num_object_points) {
-            spawn_instant_miss_effect_no_target(state, plr, gun_idx, sin_val, cos_val);
+            spawn_instant_miss_effect_no_target(state, plr, plr_num,
+                                                gun_idx, sin_val, cos_val);
             return;
         }
 
@@ -3099,7 +3143,8 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
 
                 if (hit) {
                     spawn_instant_hit_effect(state, plr, gun_idx, target,
-                                             gun->shot_power, (int16_t)dir_x, (int16_t)dir_z);
+                                             gun->shot_power, plr_num, closest_dist,
+                                             (int16_t)dir_x, (int16_t)dir_z);
                 } else {
                     spawn_instant_miss_effect_target(state, plr, gun_idx, target);
                 }
@@ -3186,7 +3231,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         SHOT_SET_GRAV(*bullet, player_projectile_gravity_for_shot(state, gun_idx, gun));
         SHOT_SET_FLAGS(*bullet, gun->shot_flags);
         /* Fixed view keeps AB3D I's +40*128 projectile spawn height; mouse-look
-         * grenades use the TKG launch height resolved in the helper above. */
+         * starts on the fixed crosshair sight ray. */
         int32_t spawn_y = player_projectile_spawn_y_for_shot(state, gun_idx, gun, plr);
         SHOT_SET_ACCYPOS(*bullet, spawn_y);
         obj_sw(bullet->raw + 4, (int16_t)(spawn_y >> 7));

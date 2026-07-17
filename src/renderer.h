@@ -211,6 +211,7 @@ typedef struct {
     int16_t xoff34, zoff34;   /* 3/4 offsets */
     int32_t xwobble;          /* Head bob X wobble */
     int16_t sky_frame_angpos; /* sky pan angle for current frame (backdrop ceiling polys) */
+    int     view_center_x;    /* World projection X centre; mouse-look uses true screen centre */
     int     view_center_y;    /* World projection center after optional AB3D2-style look offset */
 
     /* Rotated geometry */
