@@ -3611,6 +3611,50 @@ static bool bullet_segment_hits_target_radius(int32_t sx, int32_t sz,
  *
  * Translated from Anims.s ItsABullet (line ~2774-3384).
  * ----------------------------------------------------------------------- */
+static bool object_is_player_shot_slot(const GameState *state, const GameObject *obj)
+{
+    if (!state || !obj || !state->level.player_shot_data) return false;
+
+    const uint8_t *base = state->level.player_shot_data;
+    const uint8_t *ptr = obj->raw;
+    const uint8_t *end = base + (size_t)PLAYER_SHOT_SLOT_COUNT * OBJECT_SIZE;
+    if (ptr < base || ptr >= end) return false;
+
+    return (((size_t)(ptr - base)) % OBJECT_SIZE) == 0;
+}
+
+static int16_t object_player_shot_lifetime(const GameState *state,
+                                           const GameObject *obj,
+                                           int8_t shot_size)
+{
+    int16_t max_life = default_plr1_guns[shot_size].bullet_lifetime;
+
+    if (state && state->cfg_mouse_look &&
+        shot_size == AB3D_GUN_GRENADE_LAUNCHER &&
+        object_is_player_shot_slot(state, obj)) {
+        /* TKG media/includes/test.lnk BulT_Lifetime_l for the Grenade bullet. */
+        return TKG_MOUSE_LOOK_GRENADE_LIFETIME;
+    }
+
+    return max_life;
+}
+
+static int16_t object_shot_explosive_force(const GameState *state,
+                                           const GameObject *obj,
+                                           int8_t shot_size)
+{
+    int16_t force = bullet_types[shot_size].explosive_force;
+
+    if (state && state->cfg_mouse_look &&
+        shot_size == AB3D_GUN_GRENADE_LAUNCHER &&
+        object_is_player_shot_slot(state, obj)) {
+        /* TKG media/includes/test.lnk BulT_ExplosiveForce_l for the Grenade bullet. */
+        return TKG_MOUSE_LOOK_GRENADE_EXPLOSIVE_FORCE;
+    }
+
+    return force;
+}
+
 void object_handle_bullet(GameObject *obj, GameState *state)
 {
     int32_t xvel = SHOT_XVEL(*obj);
@@ -3683,7 +3727,7 @@ void object_handle_bullet(GameObject *obj, GameState *state)
 
     /* Check lifetime against gun data */
     if (shot_size >= 0 && shot_size < 8) {
-        int16_t max_life = default_plr1_guns[shot_size].bullet_lifetime;
+        int16_t max_life = object_player_shot_lifetime(state, obj, shot_size);
         /* Amiga ItsABullet times out only once shotlife exceeds max life
          * (cmp.w shotlife,maxlife ; bge notdone). */
         if (max_life >= 0 && life > max_life) {
@@ -4037,8 +4081,10 @@ void object_handle_bullet(GameObject *obj, GameState *state)
                 audio_play_sample(13, 64);  /* splotch */
             }
 
-            if (shot_size >= 0 && shot_size < 8 &&
-                bullet_types[shot_size].explosive_force > 0) {
+            int16_t timeout_explosive_force =
+                (shot_size >= 0 && shot_size < 8) ?
+                object_shot_explosive_force(state, obj, shot_size) : 0;
+            if (timeout_explosive_force > 0) {
                 int16_t blast_zone = OBJ_ZONE(obj);
                 int8_t blast_top = obj->obj.in_top;
                 if (ctx.objroom && state->level.data) {
@@ -4052,7 +4098,7 @@ void object_handle_bullet(GameObject *obj, GameState *state)
                     blast_top = ctx.stood_in_top;
                 }
                 compute_blast(state, ctx.newx, ctx.newz, accypos,
-                              bullet_types[shot_size].explosive_force,
+                              timeout_explosive_force,
                               blast_zone, blast_top);
             }
             /* Position already committed at lab above. */
@@ -4060,8 +4106,10 @@ void object_handle_bullet(GameObject *obj, GameState *state)
         return;
     }
 
-    bool explosive_projectile_hit = (shot_size >= 0 && shot_size < 8 &&
-                                     bullet_types[shot_size].explosive_force > 0);
+    int16_t hit_explosive_force =
+        (shot_size >= 0 && shot_size < 8) ?
+        object_shot_explosive_force(state, obj, shot_size) : 0;
+    bool explosive_projectile_hit = hit_explosive_force > 0;
 
     /* HIT! Apply damage */
     best_target->raw[19] = damage_accumulate_u8(best_target->raw[19],
@@ -4100,7 +4148,7 @@ void object_handle_bullet(GameObject *obj, GameState *state)
             blast_top = ctx.stood_in_top;
         }
         compute_blast(state, best_hit_x, best_hit_z, accypos,
-                      bullet_types[shot_size].explosive_force,
+                      hit_explosive_force,
                       blast_zone, blast_top);
     }
 

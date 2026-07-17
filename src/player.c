@@ -2715,15 +2715,63 @@ static int16_t player_legacy_projectile_yvel(const GunDataEntry *gun, int16_t bu
     return final_yvel;
 }
 
-static int16_t player_mouse_look_projectile_yvel(const GunDataEntry *gun, int16_t bulyspd)
+static bool player_use_tkg_mouse_look_grenade(const GameState *state, int gun_idx,
+                                              const GunDataEntry *gun)
+{
+    return state && state->cfg_mouse_look &&
+           gun_idx == AB3D_GUN_GRENADE_LAUNCHER &&
+           gun && gun->fire_bullet == 0;
+}
+
+static int16_t player_fire_delay_for_shot(const GameState *state, int gun_idx,
+                                          const GunDataEntry *gun)
+{
+    if (player_use_tkg_mouse_look_grenade(state, gun_idx, gun)) {
+        /* TKG media/includes/test.lnk GLFT_ShootDefs_l: Grenade Launcher delay. */
+        return TKG_MOUSE_LOOK_GRENADE_DELAY;
+    }
+    return gun->fire_delay;
+}
+
+static int16_t player_projectile_gravity_for_shot(const GameState *state, int gun_idx,
+                                                  const GunDataEntry *gun)
+{
+    if (player_use_tkg_mouse_look_grenade(state, gun_idx, gun)) {
+        /* TKG media/includes/test.lnk BulT_Gravity_l for the Grenade bullet. */
+        return TKG_MOUSE_LOOK_GRENADE_GRAVITY;
+    }
+    return gun->shot_gravity;
+}
+
+static int8_t player_projectile_power_for_shot(const GameState *state, int gun_idx,
+                                               const GunDataEntry *gun)
+{
+    if (player_use_tkg_mouse_look_grenade(state, gun_idx, gun)) {
+        /* TKG media/includes/test.lnk BulT_HitDamage_l for the Grenade bullet. */
+        return TKG_MOUSE_LOOK_GRENADE_POWER;
+    }
+    return gun->shot_power;
+}
+
+static int32_t player_projectile_spawn_y_for_shot(const GameState *state, int gun_idx,
+                                                  const GunDataEntry *gun,
+                                                  const PlayerState *plr)
+{
+    if (player_use_tkg_mouse_look_grenade(state, gun_idx, gun)) {
+        /* TKG newplayershoot.s: tempyoff = PlrT_YOff_l + 10*128,
+         * then firefive adds another 20*128 before ShotT_AccYPos_w. */
+        return plr->yoff + TKG_MOUSE_LOOK_GRENADE_SPAWN_Y_OFFSET;
+    }
+    return plr->yoff + 40 * 128;
+}
+
+static int16_t player_mouse_look_projectile_yvel(int16_t bulyspd)
 {
     /* AB3D2 newplayershoot.s firefive clamps AimSpeed-derived bulyspd to
-     * +-20*128. Keep AB3D I PlayerShoot.s offset 20 weapon launch data after
-     * that clamp so grenades retain their original upward lob. */
+     * +-20*128 and deliberately leaves G_InitialYVel commented out. */
     int32_t final_yvel = bulyspd;
     if (final_yvel > 20 * 128) final_yvel = 20 * 128;
     if (final_yvel < -20 * 128) final_yvel = -20 * 128;
-    if (gun) final_yvel += (int32_t)gun->bullet_y_offset;
     if (final_yvel > 32767) final_yvel = 32767;
     if (final_yvel < -32768) final_yvel = -32768;
     return (int16_t)final_yvel;
@@ -2809,7 +2857,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     }
 
     /* Set fire rate delay */
-    plr->time_to_shoot = gun->fire_delay;
+    plr->time_to_shoot = player_fire_delay_for_shot(state, gun_idx, gun);
 
     /* Play gun sound */
     audio_play_sample(gun->gun_sample, 64);
@@ -3126,18 +3174,17 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         SHOT_SET_XVEL(*bullet, xvel);
         SHOT_SET_ZVEL(*bullet, zvel);
         int16_t final_yvel = state->cfg_mouse_look ?
-            player_mouse_look_projectile_yvel(gun, bulyspd) :
+            player_mouse_look_projectile_yvel(bulyspd) :
             player_legacy_projectile_yvel(gun, bulyspd);
         SHOT_SET_YVEL(*bullet, final_yvel);
-        SHOT_POWER(*bullet) = gun->shot_power;
+        SHOT_POWER(*bullet) = player_projectile_power_for_shot(state, gun_idx, gun);
         SHOT_STATUS(*bullet) = 0;
         SHOT_SET_LIFE(*bullet, 0);
-        SHOT_SET_GRAV(*bullet, gun->shot_gravity);
+        SHOT_SET_GRAV(*bullet, player_projectile_gravity_for_shot(state, gun_idx, gun));
         SHOT_SET_FLAGS(*bullet, gun->shot_flags);
-        /* PlayerShoot.s stores tempyoff = PLR_yoff + 20*128 before the fire
-         * path; PLR1FIREBULLET adds another 20*128 for projectile accypos
-         * and immediately mirrors accypos>>7 into object Y. */
-        int32_t spawn_y = plr->yoff + 40 * 128;
+        /* Fixed view keeps AB3D I's +40*128 projectile spawn height; mouse-look
+         * grenades use the TKG launch height resolved in the helper above. */
+        int32_t spawn_y = player_projectile_spawn_y_for_shot(state, gun_idx, gun, plr);
         SHOT_SET_ACCYPOS(*bullet, spawn_y);
         obj_sw(bullet->raw + 4, (int16_t)(spawn_y >> 7));
         NASTY_SET_EFLAGS(*bullet, enemy_flags);

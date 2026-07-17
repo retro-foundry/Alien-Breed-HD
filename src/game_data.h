@@ -65,6 +65,16 @@ extern const GunDataEntry default_plr2_guns[8];
 /* Gun names for debugging */
 extern const char *gun_names[8];
 
+/* AB3D I gun index for the grenade launcher. TKG's launcher data is used only
+ * by the optional mouse-look shooting path; fixed-view AB3D I data stays as-is. */
+#define AB3D_GUN_GRENADE_LAUNCHER 4
+#define TKG_MOUSE_LOOK_GRENADE_DELAY 75
+#define TKG_MOUSE_LOOK_GRENADE_GRAVITY 20
+#define TKG_MOUSE_LOOK_GRENADE_LIFETIME 150
+#define TKG_MOUSE_LOOK_GRENADE_POWER 5
+#define TKG_MOUSE_LOOK_GRENADE_EXPLOSIVE_FORCE 30
+#define TKG_MOUSE_LOOK_GRENADE_SPAWN_Y_OFFSET (30 * 128)
+
 /* -----------------------------------------------------------------------
  * Gun animation data
  * Translated from AB3DI.s GunAnims (~line 2662-2688)
