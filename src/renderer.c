@@ -15486,6 +15486,7 @@ void renderer_draw_display(GameState *state)
         r->view_center_y = center_y;
     }
 
+    r->view_angpos = ang;
     r->sinval = sin_lookup(ang);
     r->cosval = cos_lookup(ang);
 

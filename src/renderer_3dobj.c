@@ -445,8 +445,8 @@ int32_t poly_object_front_z_for_sort(const uint8_t *obj, const ObjRotatedPoint *
     if (frame_byte_off < 0 || frame_byte_off + np * 6 > (int)vo->size) return orp->z;
 
     int16_t facing = vec_rd16(obj + 30);
-    const PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
-    int viewer_ang = (int)(plr->angpos & ANGLE_MASK);
+    const RendererState *r = &g_renderer;
+    int viewer_ang = (int)(r->view_angpos & ANGLE_MASK);
     int rel_ang = (int)facing - ANGLE_90 - viewer_ang;
     rel_ang &= ANGLE_MASK;
 
@@ -498,8 +498,7 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
      * where angpos uses byte-indexed sine table (even entries only).
      * We read objVectFacing from offset 30 (a2-field before a0 advanced). */
     int16_t facing  = vec_rd16(obj + 30);  /* objVectFacing */
-    PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
-    int viewer_ang  = (int)(plr->angpos & ANGLE_MASK); /* 0..8191 */
+    int viewer_ang  = (int)(r->view_angpos & ANGLE_MASK); /* 0..8191 */
     /* Amiga subtracts 2048 (= ANGLE_90 bytes = 90 degrees) before viewer angle */
     int rel_ang = (int)facing - ANGLE_90 - viewer_ang;
     rel_ang &= ANGLE_MASK;   /* wrap to 0..8191 */
@@ -566,10 +565,10 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
     int32_t xpos_mid = orp->x_fine;     /* 32-bit view X of object centre */
     int32_t zpos_mid = orp->z;          /* view Z of object centre  */
     int W = r->width, H = r->height;
-    /* Match wall/sprite optical center (Amiga 47/96), not geometric half-width.
-     * Using W/2 introduces a constant screen-space offset that appears as larger
-     * world-space drift at longer distances. */
-    int center_x = (W * 47) / 96;
+    /* Match the active world projection centre. Fixed view is the Amiga 47/96
+     * centre; fixed-crosshair mouse look uses the true screen centre. */
+    int center_x = r->view_center_x;
+    if (center_x < 0 || center_x > W) center_x = (W * 47) / 96;
     int center_y = r->view_center_y;
     if (center_y < 0 || center_y > H) center_y = H / 2;
     int proj_xs = poly_proj_x_scale_px(r, state);

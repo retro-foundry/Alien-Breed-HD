@@ -203,6 +203,7 @@ typedef struct {
     uint16_t *cw_back_buffer;
 
     /* View transform */
+    int16_t view_angpos;     /* Render-frame view angle; ObjDraw3 PolygonObj uses global angpos */
     int16_t sinval, cosval;   /* Sin/cos of view angle */
     int16_t xoff, zoff;       /* Camera X/Z */
     int32_t yoff;             /* Camera Y (fixed) */
