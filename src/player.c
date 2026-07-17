@@ -2680,9 +2680,10 @@ void player_init_from_level(GameState *state)
  * 1. Decrement fire rate timer
  * 2. Check if player clicked/held fire
  * 3. Check ammo
- * 4. For instant weapons: auto-aim, trace, apply damage
- * 5. For projectile weapons: create bullet in PlayerShotData
- * 6. Play sound, animate gun
+ * 4. For fixed view: auto-aim, trace, apply damage
+ * 5. For mouse look: bypass auto-aim and use look-derived projectile Y aim
+ * 6. For projectile weapons: create bullet in PlayerShotData
+ * 7. Play sound, animate gun
  * ----------------------------------------------------------------------- */
 static int16_t player_sequel_mouse_aim_bulyspd(const GameState *state, int plr_num,
                                                int16_t bullet_speed)
@@ -2792,7 +2793,9 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     int32_t dir_x = sin_val;
     int32_t dir_z = cos_val;
 
-    /* 5. Auto-aim system */
+    /* 5. Auto-aim system. AB3D I PlayerShoot.s always scans CalcPLR*InLine
+     * targets; mouse-look mode deliberately disables that target assist. */
+    bool auto_aim_enabled = !state->cfg_mouse_look;
     int16_t bulyspd = 0; /* bullet Y velocity for vertical auto-aim */
 
     int8_t *obs_in_line = (plr_num == 1) ? plr1_obs_in_line : plr2_obs_in_line;
@@ -2807,7 +2810,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     int16_t hitscan_viewer_x = 0;
     int16_t hitscan_viewer_z = 0;
     int16_t hitscan_viewer_y = 0;
-    if (gun->fire_bullet != 0) {
+    if (auto_aim_enabled && gun->fire_bullet != 0) {
         hitscan_from_room = resolve_player_room_ptr(state, plr);
         hitscan_viewer_x = (int16_t)(plr->xoff >> 16);
         hitscan_viewer_z = (int16_t)(plr->zoff >> 16);
@@ -2831,7 +2834,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     bool have_barrel_player_dist = false;
     bool has_target = false;
 
-    if (state->level.object_data) {
+    if (auto_aim_enabled && state->level.object_data) {
         for (int i = 0; i < MAX_OBJECTS; i++) {
             GameObject *obj = (GameObject*)(state->level.object_data + i * OBJECT_SIZE);
             int16_t obj_cid = OBJ_CID(obj);
