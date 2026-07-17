@@ -2681,7 +2681,7 @@ void player_init_from_level(GameState *state)
  * 2. Check if player clicked/held fire
  * 3. Check ammo
  * 4. For fixed view: auto-aim, trace, apply damage
- * 5. For mouse look: bypass auto-aim and use look-derived projectile Y aim
+ * 5. For mouse look: use look-derived Y aim instead of target-derived auto-aim
  * 6. For projectile weapons: create bullet in PlayerShotData
  * 7. Play sound, animate gun
  * ----------------------------------------------------------------------- */
@@ -2727,6 +2727,40 @@ static int16_t player_mouse_look_projectile_yvel(const GunDataEntry *gun, int16_
     if (final_yvel > 32767) final_yvel = 32767;
     if (final_yvel < -32768) final_yvel = -32768;
     return (int16_t)final_yvel;
+}
+
+static bool player_mouse_look_target_in_vertical_aim(const GameState *state,
+                                                     const PlayerState *plr,
+                                                     int plr_num,
+                                                     const GunDataEntry *gun,
+                                                     int obj_type,
+                                                     int32_t ydiff,
+                                                     int32_t dist)
+{
+    if (!state || !plr || !gun || dist <= 0) return false;
+
+    int shift = gun->bullet_speed;
+    if (shift < 0) shift = 0;
+    if (shift > 15) shift = 15;
+
+    int32_t aim_dist = dist >> shift;
+    if (aim_dist < 1) aim_dist = 1;
+
+    /* AB3D2 newplayershoot.s Prefs_NoAutoAim_b keeps PlrT_AimSpeed_l as the
+     * source of bulyspd instead of using the PlayerShoot.s targetydiff solve.
+     * For instant weapons, use the same scale as a manual vertical hit test. */
+    int32_t manual_bulyspd = player_sequel_mouse_aim_bulyspd(state, plr_num, gun->bullet_speed);
+    int64_t aimed_ydiff = (int64_t)manual_bulyspd * (int64_t)aim_dist;
+
+    int64_t target_ydiff = (int64_t)ydiff - (int64_t)plr->height + (int64_t)(18 * 256);
+    int64_t delta = target_ydiff - aimed_ydiff;
+    if (delta < 0) delta = -delta;
+
+    int32_t half_height = 40;
+    if (obj_type >= 0 && obj_type <= 20)
+        half_height = col_box_table[obj_type].half_height;
+
+    return delta <= ((int64_t)half_height << 7);
 }
 
 static void player_shoot_internal(GameState *state, PlayerState *plr,
@@ -2793,9 +2827,13 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     int32_t dir_x = sin_val;
     int32_t dir_z = cos_val;
 
-    /* 5. Auto-aim system. AB3D I PlayerShoot.s always scans CalcPLR*InLine
-     * targets; mouse-look mode deliberately disables that target assist. */
+    /* 5. Auto-aim system. AB3D I PlayerShoot.s scans CalcPLR*InLine targets
+     * and solves bulyspd from targetydiff. Mouse-look mode still needs a
+     * target-under-crosshair test for instant weapons, but it must not derive
+     * vertical aim from that target. */
     bool auto_aim_enabled = !state->cfg_mouse_look;
+    bool manual_hitscan_aim = state->cfg_mouse_look && gun->fire_bullet != 0;
+    bool target_scan_enabled = auto_aim_enabled || manual_hitscan_aim;
     int16_t bulyspd = 0; /* bullet Y velocity for vertical auto-aim */
 
     int8_t *obs_in_line = (plr_num == 1) ? plr1_obs_in_line : plr2_obs_in_line;
@@ -2810,7 +2848,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     int16_t hitscan_viewer_x = 0;
     int16_t hitscan_viewer_z = 0;
     int16_t hitscan_viewer_y = 0;
-    if (auto_aim_enabled && gun->fire_bullet != 0) {
+    if (target_scan_enabled && gun->fire_bullet != 0) {
         hitscan_from_room = resolve_player_room_ptr(state, plr);
         hitscan_viewer_x = (int16_t)(plr->xoff >> 16);
         hitscan_viewer_z = (int16_t)(plr->zoff >> 16);
@@ -2834,7 +2872,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     bool have_barrel_player_dist = false;
     bool has_target = false;
 
-    if (auto_aim_enabled && state->level.object_data) {
+    if (target_scan_enabled && state->level.object_data) {
         for (int i = 0; i < MAX_OBJECTS; i++) {
             GameObject *obj = (GameObject*)(state->level.object_data + i * OBJECT_SIZE);
             int16_t obj_cid = OBJ_CID(obj);
@@ -2875,7 +2913,16 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
             int16_t obj_y = obj_w(obj->raw + 4);
             int32_t ydiff = ((int32_t)obj_y << 7) - plr->yoff;
             int32_t abs_ydiff = (ydiff < 0) ? -ydiff : ydiff;
-            if (!contact_target && (abs_ydiff / 44) > dist) continue;
+            if (!contact_target) {
+                if (manual_hitscan_aim) {
+                    if (!player_mouse_look_target_in_vertical_aim(state, plr, plr_num,
+                                                                  gun, obj_type,
+                                                                  ydiff, dist))
+                        continue;
+                } else if ((abs_ydiff / 44) > dist) {
+                    continue;
+                }
+            }
 
             if (hitscan_from_room && !contact_target) {
                 if (!hitscan_target_has_line_of_sight(state, plr,
@@ -2950,7 +2997,7 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     has_target = (closest_idx >= 0 && closest_dist > 0 && state->level.object_data);
     /* Calculate vertical aim toward target (PlayerShoot.s lines 99-139). */
     {
-        if (has_target) {
+        if (auto_aim_enabled && has_target) {
             int32_t target_ydiff = closest_target_ydiff;
             int32_t aim_dist = closest_dist;
 
