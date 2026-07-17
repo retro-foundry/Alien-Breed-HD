@@ -74,6 +74,8 @@ weapon_post_gl=1
 
 # Internal software render resolution (game draws at this size). The window is
 # scaled to fit, centered, preserving aspect ratio (letterboxing as needed).
+# The 3D projection keeps the Amiga large-screen shape height-relative, so
+# widescreen resolutions add side view instead of stretching the original view.
 render_width=1920
 render_height=1080
 

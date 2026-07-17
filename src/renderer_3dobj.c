@@ -183,8 +183,8 @@ static inline int poly_clamp_base_width(int w)
     return w;
 }
 
-/* Match renderer.c horizontal projection behavior so same-aspect resolutions
- * keep identical on-screen geometry, regardless of render size. */
+/* Match renderer.c horizontal projection behavior: preserve the Amiga 96x80
+ * large-screen shape and add side view on wider render targets. */
 static inline int poly_effective_base_width(const GameState *state)
 {
     int w = RENDER_DEFAULT_WIDTH;
@@ -196,7 +196,7 @@ static inline int poly_effective_base_width(const GameState *state)
     if (w < 1) w = 1;
     if (h < 1) h = 1;
     {
-        int64_t scaled = ((int64_t)w * 1080 + (int64_t)h / 2) / (int64_t)h;
+        int64_t scaled = ((int64_t)w * (int64_t)RENDER_DEFAULT_HEIGHT + (int64_t)h / 2) / (int64_t)h;
         if (scaled < 1) scaled = 1;
         if (scaled > INT_MAX) scaled = INT_MAX;
         w = (int)scaled;

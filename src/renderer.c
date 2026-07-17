@@ -287,9 +287,23 @@ static inline int16_t renderer_interp_angle(int16_t from, int16_t to, float alph
     return (int16_t)((a0 + (int32_t)((double)delta * (double)alpha)) & ANGLE_MASK);
 }
 
-/* Keep projection stable when users change render size at the same aspect
- * (e.g. 1280x720 <-> 1920x1080 <-> 3840x2160). Normalize logical width to a
- * fixed 1080-high baseline so same-aspect resolutions share one X-FOV. */
+/* Preserve the Amiga large-screen source shape. ScreenSetup.s builds 80 logical
+ * rows three scanlines apart, and AB3DI.s scrnTab maps 96 logical columns with
+ * the same 3x expansion. Wider render targets therefore add side view instead
+ * of stretching the original 96x80 projection. */
+static inline int renderer_proj_effective_base_width_from_dims(int w, int h)
+{
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    {
+        int64_t scaled = ((int64_t)w * (int64_t)RENDER_DEFAULT_HEIGHT + (int64_t)h / 2) / (int64_t)h;
+        if (scaled < 1) scaled = 1;
+        if (scaled > INT_MAX) scaled = INT_MAX;
+        w = (int)scaled;
+    }
+    return renderer_clamp_base_width(w);
+}
+
 static inline int renderer_proj_effective_base_width_from_state(const GameState *state)
 {
     int w = RENDER_DEFAULT_WIDTH;
@@ -298,15 +312,7 @@ static inline int renderer_proj_effective_base_width_from_state(const GameState 
         w = (int)state->cfg_render_width;
         h = (int)state->cfg_render_height;
     }
-    if (w < 1) w = 1;
-    if (h < 1) h = 1;
-    {
-        int64_t scaled = ((int64_t)w * 1080 + (int64_t)h / 2) / (int64_t)h;
-        if (scaled < 1) scaled = 1;
-        if (scaled > INT_MAX) scaled = INT_MAX;
-        w = (int)scaled;
-    }
-    return renderer_clamp_base_width(w);
+    return renderer_proj_effective_base_width_from_dims(w, h);
 }
 
 static inline int renderer_proj_x_scale_px_for_state(const RendererState *r, const GameState *state)
@@ -4477,6 +4483,7 @@ void renderer_init(void)
     automap_door_lookup_release();
     automap_key_mask_cache_reset();
     allocate_buffers(RENDER_WIDTH, RENDER_HEIGHT);
+    g_proj_base_width = renderer_proj_effective_base_width_from_dims(g_renderer.width, g_renderer.height);
     g_renderer.view_center_x = (g_renderer.width * 47) / 96;
     g_automap_mutex = SDL_CreateMutex();
     if (!g_automap_mutex) {
@@ -4494,6 +4501,7 @@ void renderer_resize(int w, int h)
     if (h > RENDER_INTERNAL_MAX_DIM) h = RENDER_INTERNAL_MAX_DIM;
     free_buffers();
     allocate_buffers(w, h);
+    g_proj_base_width = renderer_proj_effective_base_width_from_dims(g_renderer.width, g_renderer.height);
     g_renderer.view_center_x = (g_renderer.width * 47) / 96;
 }
 
@@ -4588,6 +4596,7 @@ static int s_sky_mode = 2;
 /* Cached sky column count: depends on width + projection (recomputed when width changes). */
 static int s_cached_sky_view_cols = 0;
 static int s_cached_sky_view_cols_w = -1;
+static int s_cached_sky_view_cols_h = -1;
 static int s_cached_sky_view_cols_center_x = -1;
 static uint32_t s_sky_argb[256];
 static uint16_t s_sky_cw[256];
@@ -4817,6 +4826,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
     if (center_x < 0 || center_x >= w)
         center_x = (w * 47) / 96;
     if (w != s_cached_sky_view_cols_w ||
+        h != s_cached_sky_view_cols_h ||
         center_x != s_cached_sky_view_cols_center_x) {
         int left_px = center_x;
         int right_px = (w - 1) - center_x;
@@ -4830,6 +4840,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
         if (sky_view_cols > SKY_PAN_WIDTH) sky_view_cols = SKY_PAN_WIDTH;
         s_cached_sky_view_cols = sky_view_cols;
         s_cached_sky_view_cols_w = w;
+        s_cached_sky_view_cols_h = h;
         s_cached_sky_view_cols_center_x = center_x;
     } else {
         sky_view_cols = s_cached_sky_view_cols;
@@ -6597,6 +6608,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
         if (center_x < 0 || center_x >= w)
             center_x = (w * 47) / 96;
         if (w != s_cached_sky_view_cols_w ||
+            h != s_cached_sky_view_cols_h ||
             center_x != s_cached_sky_view_cols_center_x) {
             int left_px = center_x;
             int right_px = (w - 1) - center_x;
@@ -6610,6 +6622,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
             if (sky_view_cols > SKY_PAN_WIDTH) sky_view_cols = SKY_PAN_WIDTH;
             s_cached_sky_view_cols = sky_view_cols;
             s_cached_sky_view_cols_w = w;
+            s_cached_sky_view_cols_h = h;
             s_cached_sky_view_cols_center_x = center_x;
         } else {
             sky_view_cols = s_cached_sky_view_cols;
@@ -15418,8 +15431,8 @@ void renderer_draw_display(GameState *state)
     }
 
     /* 1. Projection setup.
-     * Horizontal projection uses a normalized logical width so supersampling changes
-     * detail only, and UHD (same aspect) keeps the same on-screen geometry. */
+     * Horizontal projection is height-relative to preserve the Amiga large-screen
+     * source shape; wider targets add side view without stretching it. */
     int w = (r->width  > 0) ? r->width  : 1;
     int h = (r->height > 0) ? r->height : 1;
     if (state) g_proj_base_width = renderer_proj_effective_base_width_from_state(state);
