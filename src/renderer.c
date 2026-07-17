@@ -3820,7 +3820,11 @@ static inline void renderer_floor_prepare_common(FloorDrawCommon *common,
                                                  int32_t floor_height,
                                                  int16_t scaleval)
 {
-    int32_t fh_8 = floor_height >> (WORLD_Y_FRAC_BITS - 1);
+    /* Keep the established Floor Parallax Fix 2x distance scale, but quantize
+     * view-height changes to the same 1/256 world-Y unit used by wall/floor edge
+     * projection. AB3DI.s DrawDisplay builds flooryoff from yoff>>8 before
+     * itsafloordraw, so sub-unit bob must not move floor UVs ahead of walls. */
+    int32_t fh_8 = (floor_height >> WORLD_Y_FRAC_BITS) << 1;
     uint64_t dist_num_abs;
     int64_t dist_num = (int64_t)fh_8 * (int64_t)rs->proj_y_scale * (int64_t)RENDER_SCALE;
 
@@ -6823,9 +6827,6 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     /* Fallback grayscale only (when no floor palette is loaded). */
     int zone_d6 = brightness * 2;
 
-    /* UV distance path (kept separate from brightness falloff):
-     * Use a half-step conversion on the world-space height so floor/ceiling texel
-     * size lands between the old over-zoomed and the recent under-zoomed result. */
     int32_t dist = renderer_floor_compute_dist(rs, &floor_common, row_dist);
 
     /* Amiga formula: d6 = (dist >> 7) + zone_bright. Higher d6 = darker. */
