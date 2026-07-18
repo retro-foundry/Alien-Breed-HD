@@ -12242,9 +12242,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         objs[obj_count].src = DRAW_SRC_OBJECT;
         objs[obj_count].idx = obj_idx;
         objs[obj_count].source_zone = obj_zone;
-        objs[obj_count].z = is_poly_object
-            ? poly_object_front_z_for_sort(obj, orp, state)
-            : orp->z;
+        objs[obj_count].z = orp->z;
         objs[obj_count].clip_left = draw_clip_left;
         objs[obj_count].clip_right = draw_clip_right;
         objs[obj_count].zone_top_world = draw_zone_top;
