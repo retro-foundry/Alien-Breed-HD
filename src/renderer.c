@@ -9094,23 +9094,17 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     const int mark_sprite_pick_zone_none = (g_debug_spill_visualize && pick_zone) ? 1 : 0;
     const int fast_common_no_spill =
         (!have_pick) ? 1 : 0;
-    const int have_geometric_zone_clip = 0;
+    const int have_geometric_zone_clip =
+        (is_spill && geom_clip_level && geom_clip_zone >= 0 &&
+         billboard_world_w > 0 && width > 0) ? 1 : 0;
     int geom_dx_starts[RENDERER_GEOM_CLIP_MAX_SPANS];
     int geom_dx_ends[RENDERER_GEOM_CLIP_MAX_SPANS];
-    double geom_t_starts[RENDERER_GEOM_CLIP_MAX_SPANS];
-    double geom_t_ends[RENDERER_GEOM_CLIP_MAX_SPANS];
     int geom_dx_count = 1;
     int geom_dx_idx = 0;
-    int geom_src_col_span = -1;
-    int64_t geom_src_col_fp = 0;
-    int64_t geom_src_col_step = 0;
 
     geom_dx_starts[0] = dx_start;
     geom_dx_ends[0] = dx_end;
-    geom_t_starts[0] = (width > 0) ? ((double)dx_start / (double)width) : 0.0;
-    geom_t_ends[0] = (width > 0) ? ((double)dx_end / (double)width) : 1.0;
     if (have_geometric_zone_clip) {
-        const double inv_width = 1.0 / (double)width;
         int32_t half_span_world = billboard_world_w / 2;
         int64_t off_x64;
         int64_t off_z64;
@@ -9146,8 +9140,8 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                                                 width,
                                                                 geom_dx_starts,
                                                                 geom_dx_ends,
-                                                                geom_t_starts,
-                                                                geom_t_ends,
+                                                                NULL,
+                                                                NULL,
                                                                 RENDERER_GEOM_CLIP_MAX_SPANS);
         if (geom_dx_count <= 0) {
             if (profile_collect_stats) {
@@ -9165,27 +9159,17 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
             for (int gi = 0; gi < geom_dx_count; gi++) {
                 int s = geom_dx_starts[gi];
                 int e = geom_dx_ends[gi];
-                double ts = geom_t_starts[gi];
-                double te = geom_t_ends[gi];
                 if (s < dx_start) s = dx_start;
                 if (e > dx_end) e = dx_end;
-                if (ts < (double)s * inv_width) ts = (double)s * inv_width;
-                if (te > (double)e * inv_width) te = (double)e * inv_width;
-                if (te <= ts) continue;
                 if (e <= s) continue;
 
                 if (sliced_count > 0 && s <= geom_dx_ends[sliced_count - 1]) {
                     if (e > geom_dx_ends[sliced_count - 1]) {
                         geom_dx_ends[sliced_count - 1] = e;
                     }
-                    if (te > geom_t_ends[sliced_count - 1]) {
-                        geom_t_ends[sliced_count - 1] = te;
-                    }
                 } else {
                     geom_dx_starts[sliced_count] = s;
                     geom_dx_ends[sliced_count] = e;
-                    geom_t_starts[sliced_count] = ts;
-                    geom_t_ends[sliced_count] = te;
                     sliced_count++;
                 }
             }
@@ -9221,10 +9205,14 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
 
     int32_t src_col_fp = (int32_t)dx_start * src_col_step;
 
-    /* --- Column loop --- */
+    /* --- Column loop ---
+     * Spill geometry is a draw mask only; source columns still follow the
+     * normal BitMapObj DDA across the full projected billboard. */
     for (int dx = dx_start; dx < dx_end; dx++) {
         const int screen_col = sx + dx;
-        int src_col;
+        int src_col = src_col_fp >> 16;
+        src_col_fp += src_col_step;
+
         if (have_geometric_zone_clip) {
             while (geom_dx_idx < geom_dx_count && dx >= geom_dx_ends[geom_dx_idx]) {
                 geom_dx_idx++;
@@ -9237,25 +9225,6 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                 }
                 continue;
             }
-
-            if (geom_src_col_span != geom_dx_idx) {
-                int span_width = geom_dx_ends[geom_dx_idx] - geom_dx_starts[geom_dx_idx];
-                double span_t0 = geom_t_starts[geom_dx_idx];
-                double span_t1 = geom_t_ends[geom_dx_idx];
-                double eff_cols_d = (double)eff_cols;
-
-                geom_src_col_fp = (int64_t)llround(span_t0 * eff_cols_d * 65536.0);
-                geom_src_col_step = (span_width > 0)
-                    ? (int64_t)llround(((span_t1 - span_t0) * eff_cols_d * 65536.0) / (double)span_width)
-                    : 0;
-                geom_src_col_span = geom_dx_idx;
-            }
-
-            src_col = (int)(geom_src_col_fp >> 16);
-            geom_src_col_fp += geom_src_col_step;
-        } else {
-            src_col = src_col_fp >> 16;
-            src_col_fp += src_col_step;
         }
 
         if (src_col >= eff_cols) src_col = eff_cols - 1;
@@ -10477,11 +10446,9 @@ static int renderer_spill_draw_still_valid(const GameState *state,
     return 1;
 }
 
-/* Narrow spill draw clip bounds to only the screen columns where the billboard
- * lateral segment geometrically overlaps the destination zone polygon. This is
- * the definitive smear prevention: no matter what heuristic gates the spill
- * passes, the sprite can only draw in columns where its world footprint
- * actually lies inside the destination zone. */
+/* Narrow spill draw clip bounds to the envelope of screen columns where the
+ * billboard lateral segment overlaps the destination zone polygon. The exact
+ * per-span mask is applied later in renderer_draw_sprite_ctx. */
 static void renderer_spill_narrow_clip_to_zone_geometry(
     const LevelState *level,
     int16_t draw_zone,
