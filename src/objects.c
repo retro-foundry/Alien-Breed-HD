@@ -3235,9 +3235,8 @@ void object_handle_gas_pipe(GameObject *obj, GameState *state)
     enum {
         /* Defs.i: SecTimer=40 (td+22), ThirdTimer=52 (td+34), FourthTimer=54 (td+36). */
         GAS_PIPE_SEC_TIMER_OFF = 22,
-        /* Fixed 50 Hz logic makes the stock 10-tick burst gap read slightly hotter
-         * than on original hardware. One extra tick restores the older feel. */
-        GAS_PIPE_BURST_GAP_TICKS = 11
+        /* Anims.s: ItsAGasPipe writes #10 to FourthTimer before and during bursts. */
+        GAS_PIPE_BURST_GAP_TICKS = 10
     };
 
     obj->obj.worry = 0;
