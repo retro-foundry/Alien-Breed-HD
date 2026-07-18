@@ -736,7 +736,7 @@ static AutomapStagedWall *g_automap_stage_walls[RENDERER_AUTOMAP_STAGE_SLOT_COUN
 static uint32_t g_automap_stage_counts[RENDERER_AUTOMAP_STAGE_SLOT_COUNT];
 static uint32_t g_automap_stage_caps[RENDERER_AUTOMAP_STAGE_SLOT_COUNT];
 
-/* Synthesized backdrop sky-hole polygons, built once per level load. */
+/* Synthesized backdrop ceiling polygons, built once per level load. */
 typedef struct {
     int16_t sides;
     int16_t pt_indices[100];
@@ -6564,9 +6564,9 @@ void renderer_draw_wall(int32_t x1, int32_t z1, int32_t x2, int32_t z2,
 }
 
 /* -----------------------------------------------------------------------
- * Sky ceiling span (screen-space)
+ * Backdrop ceiling span (screen-space)
  *
- * Used for synthesized backdrop hole-fill spans. Explicit roof polygons
+ * Used for synthesized backdrop ceiling spans. Explicit roof polygons
  * are still rendered by the normal floor/roof span path.
  * ----------------------------------------------------------------------- */
 static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
@@ -13544,7 +13544,7 @@ static int zone_stream_has_entry_type(const uint8_t *gfx_data, int16_t want_type
     return found;
 }
 
-/* Rasterize a floor-outline polygon at zone_roof height as a sky ceiling.
+/* Rasterize a floor-outline polygon at zone_roof height as a backdrop ceiling.
  * pt_indices/sides come directly from the type-1 (floor) polygon already read. */
 static void renderer_tessellate_sky_ceiling_ctx(RenderSliceContext *ctx,
                                                 const int16_t *pt_indices, int sides,
@@ -13752,8 +13752,6 @@ void renderer_build_level_sky_cache(const LevelState *level)
         const uint8_t *zgraph = level->zone_graph_adds + (size_t)zone_id * 8u;
         int32_t lower_gfx_off = rd32(zgraph);
         int32_t upper_gfx_off = rd32(zgraph + 4);
-        int32_t lower_roof_y = rd32(zone_data + ZONE_OFF_ROOF);
-        int32_t upper_roof_raw = rd32(zone_data + ZONE_OFF_UPPER_ROOF);
         const uint8_t *lower_gfx_data = NULL;
         const uint8_t *upper_gfx_data = NULL;
         int zone_backdrop_flag = (rd16(zone_data + ZONE_OFF_BACK) != 0);
@@ -13797,10 +13795,8 @@ void renderer_build_level_sky_cache(const LevelState *level)
                 }
             }
 
-            int32_t stream_roof_y = use_upper ? upper_roof_raw : lower_roof_y;
-            int roof_open_to_sky = (stream_roof_y < 0) ? 1 : 0;
             int synth_enabled =
-                ((zone_backdrop_flag || stream_has_backdrop_marker) && roof_open_to_sky) ? 1 : 0;
+                (zone_backdrop_flag || stream_has_backdrop_marker) ? 1 : 0;
             RendererSkyBuildDebug dbg = {0};
 
             if (synth_enabled) {
@@ -13825,8 +13821,6 @@ static void renderer_draw_zone_backdrop_sky_ctx(RenderSliceContext *ctx,
                                                 int16_t zone_id, int use_upper,
                                                 int32_t zone_roof, int32_t y_off)
 {
-    /* Backdrop sky is only valid for open roofs (same rule for lower and upper). */
-    if (zone_roof >= 0) return;
     if (!ctx || !g_level_sky_cache_buckets || !g_level_sky_cache_polys) return;
     if (zone_id < 0 || zone_id >= g_level_sky_cache_zone_slots) return;
 
@@ -14185,7 +14179,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
              *   ypos (word): floor height
              *   num_sides-1 (word): number of polygon sides minus 1
              *   point_indices (word * (sides)): vertex indices
-             *   extra_data (10 bytes): skip over
+             *   extra_data (8 bytes): skip over
              */
             int16_t ypos = rd16(ptr);
             ptr += 2;

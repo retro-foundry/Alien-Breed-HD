@@ -1476,7 +1476,7 @@ static size_t zone_gfx_payload_skip(int16_t entry_type, const uint8_t *data)
         int sides = (int)nsm1 + 1;
         if (sides < 0) sides = 0;
         if (sides > 100) sides = 100;
-        return (size_t)(4 + 2 * sides + 10);
+        return (size_t)(4 + 2 * sides + 8);
     }
     default: return 0;
     }

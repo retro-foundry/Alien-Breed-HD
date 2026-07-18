@@ -338,7 +338,7 @@ void renderer_swap(void);
  * Translated from AB3DI.s DrawDisplay.
  * After this call, g_renderer.buffer contains the rendered frame. */
 void renderer_draw_display(GameState *state);
-/* Build/reset synthesized backdrop sky-hole polygons for the currently loaded level.
+/* Build/reset synthesized backdrop ceiling polygons for the currently loaded level.
  * Build once after level parse/load, then draw from cache each frame. */
 void renderer_build_level_sky_cache(const LevelState *level);
 void renderer_reset_level_sky_cache(void);
