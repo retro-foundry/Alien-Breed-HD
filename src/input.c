@@ -109,6 +109,11 @@ static void input_set_key_state(uint8_t *map, uint8_t keycode, bool down)
     map[keycode] = down ? 1u : 0u;
 }
 
+static bool input_caps_lock_run_active(void)
+{
+    return (SDL_GetModState() & KMOD_CAPS) != 0;
+}
+
 static int16_t input_axis_with_deadzone(Sint16 raw, int deadzone)
 {
     int v = (int)raw;
@@ -221,9 +226,15 @@ static void input_force_cursor_visible(void)
 
 static void input_merge_key_sources(uint8_t *key_map)
 {
+    uint8_t caps_lock_run;
+
     if (!key_map) return;
+    caps_lock_run = input_caps_lock_run_active() ? 1u : 0u;
     for (int i = 0; i < 128; i++) {
         key_map[i] = (uint8_t)(g_keyboard_keys[i] || g_mouse_keys[i] || g_gamepad_keys[i]);
+    }
+    if (caps_lock_run) {
+        key_map[AMIGA_KEY_RSHIFT] = 1u;
     }
 }
 

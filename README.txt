@@ -8,7 +8,7 @@ MOVEMENT
 - D or / : Strafe right
 - Left Arrow / Right Arrow: Turn left/right
 - Mouse X: Turn left/right (when mouse is captured)
-- Shift (Left or Right): Run
+- Shift (Left or Right), or Caps Lock while enabled: Run
 - C: Duck (toggle)
 - L: Look behind
 
