@@ -838,8 +838,10 @@ void io_release_level_memory(LevelState *level)
         free(level->lift_wall_list);
         free(level->lift_wall_list_offsets);
     }
+    free(level->lift_initial_positions);
     level->lift_wall_list = NULL;
     level->lift_wall_list_offsets = NULL;
+    level->lift_initial_positions = NULL;
     level->lift_wall_list_owned = false;
     level->num_lifts = 0;
     if (level->switch_data_owned && level->switch_data) {

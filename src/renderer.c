@@ -12938,14 +12938,20 @@ static int renderer_lift_wall_texture_info_for_gfx_off(const LevelState *level,
         return 0;
 
     /* LiftRoutine in amiga/Anims.s writes gfx_base + (-(lift_pos>>8) & 255)
-     * to wall_rec+10, and writes lift_pos to wall_rec+20. objects.c keeps the
-     * moving wall height patch but leaves +10 alone so tex_id is not clobbered;
-     * synthesize the packed texture words here for the wall drawer instead. */
+     * to wall_rec+10, and writes lift_pos to wall_rec+20. The PC port keeps the
+     * moving wall height patch in objects.c, then synthesizes the packed texture
+     * words here with the lift's original rest position as the phase base. */
     const uint8_t *lst = level->lift_wall_list;
     for (int li = 0; li < level->num_lifts; li++) {
         const uint8_t *lift = level->lift_data + (size_t)li * LIFT_ENTRY_SIZE;
         int32_t lift_pos = rd32(lift + 4);
-        uint32_t tex_scroll = (uint32_t)((-(int16_t)(lift_pos >> 8)) & 0x00FF);
+        int32_t lift_base = (level->lift_initial_positions != NULL)
+                                ? level->lift_initial_positions[li]
+                                : 0;
+        int16_t lift_phase = (int16_t)(lift_pos >> 8);
+        int16_t lift_base_phase = (int16_t)(lift_base >> 8);
+        int16_t rel_phase = (int16_t)(lift_phase - lift_base_phase);
+        uint32_t tex_scroll = (uint32_t)((-(int16_t)rel_phase) & 0x00FF);
         uint32_t start = level->lift_wall_list_offsets[li];
         uint32_t end = level->lift_wall_list_offsets[li + 1];
         for (uint32_t j = start; j < end; j++) {

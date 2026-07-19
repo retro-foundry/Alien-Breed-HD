@@ -368,6 +368,7 @@ int level_parse(LevelState *level)
     /* Long 4: Offset to lifts - Amiga format (match standalone): 999 terminator, 18-byte header + variable wall list */
     level->lift_wall_list = NULL;
     level->lift_wall_list_offsets = NULL;
+    level->lift_initial_positions = NULL;
     level->num_lifts = 0;
     level->lift_wall_list_owned = false;
     level->water_list = NULL;
@@ -402,7 +403,8 @@ int level_parse(LevelState *level)
                 uint8_t *buf = (uint8_t *)malloc((size_t)(nl + 1) * 20u);
                 uint8_t *wall_list = (total_lift_walls > 0) ? (uint8_t *)malloc((size_t)total_lift_walls * 10u) : NULL;
                 uint32_t *wall_offsets = (nl > 0) ? (uint32_t *)malloc((size_t)(nl + 1) * sizeof(uint32_t)) : NULL;
-                if (buf && (total_lift_walls == 0 || (wall_list && wall_offsets))) {
+                int32_t *initial_positions = (int32_t *)malloc((size_t)nl * sizeof(int32_t));
+                if (buf && initial_positions && (total_lift_walls == 0 || (wall_list && wall_offsets))) {
                     const uint8_t *s = lift_src;
                     int out_idx = 0;
                     uint32_t wall_index = 0;
@@ -427,6 +429,7 @@ int level_parse(LevelState *level)
                             write_word_be(t + 0, (int16_t)zidx);
                             write_word_be(t + 2, lift_mode);
                             write_long_be(t + 4, (int32_t)curr * 64);
+                            initial_positions[out_idx] = (int32_t)curr * 64;
                             write_word_be(t + 8, dir);
                             write_long_be(t + 10, (int32_t)top * 64);  /* lift_top = low position (×64, same as door) */
                             write_long_be(t + 14, (int32_t)bottom * 64);     /* lift_bot = high position (×64) */
@@ -441,8 +444,10 @@ int level_parse(LevelState *level)
                     level->num_lifts = out_idx;
                     level->lift_wall_list = wall_list;
                     level->lift_wall_list_offsets = wall_offsets;
+                    level->lift_initial_positions = initial_positions;
                     level->lift_wall_list_owned = true;
                 } else {
+                    free(initial_positions);
                     free(wall_list);
                     free(wall_offsets);
                     if (buf) free(buf);

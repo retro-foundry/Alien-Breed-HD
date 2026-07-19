@@ -192,6 +192,7 @@ typedef struct {
     /* Amiga lift wall list: same 10-byte entry layout as door wall list. */
     uint8_t         *lift_wall_list;
     uint32_t        *lift_wall_list_offsets; /* [num_lifts+1] */
+    int32_t         *lift_initial_positions;  /* [num_lifts], original curr position (*64) */
     int              num_lifts;
     bool             lift_wall_list_owned;
 

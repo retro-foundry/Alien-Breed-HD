@@ -4666,11 +4666,9 @@ void lift_routine(GameState *state)
                 }
                 if (gfx_off >= 0) {
                     uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
-                    /* Amiga LiftRoutine does move.l a2,10(a1) (packed ptr into +10/+12), but this port's
-                     * wall drawer reads +10 as totalyoff (word) and +12 as tex_id (word). Writing a
-                     * full long here clobbers tex_id and breaks lift wall texture/scrolling (regression
-                     * from "Water Rendering Fixes"). Scroll/clipping is driven via wall_rec+20 and the
-                     * renderer lift-zone path (door_yoff_add). Do not patch wall_rec+10 for lifts. */
+                    /* Amiga LiftRoutine also does move.l a2,10(a1) for the packed texture reference.
+                     * The PC renderer needs the stable decoded texture id from the level stream, so it
+                     * synthesizes that packed lift texture reference at draw time from the wall list. */
                     (void)gfx_base;
                     wbe32(wall_rec + 20, lift_pos);
                 }
