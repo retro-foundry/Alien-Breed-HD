@@ -187,11 +187,13 @@ typedef struct {
      * door_wall_list_offsets[i] = first entry index for door i. */
     uint8_t         *door_wall_list;
     uint32_t        *door_wall_list_offsets; /* [num_doors+1]: start index per door (offsets[i+1]-offsets[i] = count) */
+    int16_t         *door_wall_texture_heights; /* [door_wall_list_offsets[num_doors]], authored wall span in texels */
     int              num_doors;            /* number of door entries in door_data */
 
     /* Amiga lift wall list: same 10-byte entry layout as door wall list. */
     uint8_t         *lift_wall_list;
     uint32_t        *lift_wall_list_offsets; /* [num_lifts+1] */
+    int16_t         *lift_wall_texture_heights; /* [lift_wall_list_offsets[num_lifts]], authored wall span in texels */
     int32_t         *lift_initial_positions;  /* [num_lifts], original curr position (*64) */
     int              num_lifts;
     bool             lift_wall_list_owned;

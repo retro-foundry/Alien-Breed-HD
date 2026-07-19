@@ -12885,13 +12885,119 @@ static int zone_has_lift(const uint8_t *lift_data, int16_t zone_id)
     return 0;
 }
 
+static int16_t renderer_wall_texture_period_height(uint8_t valshift)
+{
+    if (valshift >= 15)
+        return INT16_MAX;
+    return (int16_t)(1 << valshift);
+}
+
+static int16_t renderer_scaled_dynamic_wall_texture_height(int16_t live_height,
+                                                           int16_t authored_height,
+                                                           uint8_t valshift)
+{
+    int32_t live = live_height;
+    int32_t authored = authored_height;
+    int32_t period = renderer_wall_texture_period_height(valshift);
+    int64_t scaled;
+
+    if (live < 1) live = 1;
+    if (authored < 1) authored = live;
+    if (period < 1) period = live;
+
+    scaled = ((int64_t)live * (int64_t)period + authored / 2) / authored;
+    if (scaled < 1) scaled = 1;
+    if (scaled > INT16_MAX) scaled = INT16_MAX;
+    return (int16_t)scaled;
+}
+
+static int renderer_door_zone_motion_height_for_zone(const LevelState *level,
+                                                     int16_t zone_id,
+                                                     int16_t *out_motion_height)
+{
+    if (out_motion_height) *out_motion_height = 0;
+    if (!level || !out_motion_height || !level->door_data || level->num_doors <= 0)
+        return 0;
+
+    const uint8_t *door = level->door_data;
+    for (int di = 0; di < level->num_doors; di++, door += 22u) {
+        if (rd16(door + 0u) != zone_id)
+            continue;
+
+        int32_t top = rd32(door + 10u);
+        int32_t bot = rd32(door + 14u);
+        int32_t h = (bot - top) >> 8;
+        if (h > 0 && h <= INT16_MAX) {
+            *out_motion_height = (int16_t)h;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int renderer_lift_zone_motion_height_for_zone(const LevelState *level,
+                                                     int16_t zone_id,
+                                                     int16_t *out_motion_height)
+{
+    if (out_motion_height) *out_motion_height = 0;
+    if (!level || !out_motion_height || !level->lift_data || level->num_lifts <= 0)
+        return 0;
+
+    const uint8_t *lift = level->lift_data;
+    for (int li = 0; li < level->num_lifts; li++, lift += LIFT_ENTRY_SIZE) {
+        if (rd16(lift + 0u) != zone_id)
+            continue;
+
+        int32_t top = rd32(lift + 10u);
+        int32_t bot = rd32(lift + 14u);
+        int32_t h = (bot - top) >> 8;
+        if (h > 0 && h <= INT16_MAX) {
+            *out_motion_height = (int16_t)h;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int renderer_door_wall_texture_height_for_gfx_off(const LevelState *level,
+                                                         uint32_t gfx_off,
+                                                         int16_t *out_wall_height_for_tex)
+{
+    if (out_wall_height_for_tex) *out_wall_height_for_tex = 0;
+    if (!level || !out_wall_height_for_tex ||
+        !level->door_wall_list || !level->door_wall_list_offsets ||
+        !level->door_wall_texture_heights || level->num_doors <= 0) {
+        return 0;
+    }
+
+    const uint8_t *lst = level->door_wall_list;
+    for (int di = 0; di < level->num_doors; di++) {
+        uint32_t start = level->door_wall_list_offsets[di];
+        uint32_t end = level->door_wall_list_offsets[di + 1];
+        for (uint32_t j = start; j < end; j++) {
+            const uint8_t *ent = lst + (size_t)j * 10u;
+            uint32_t ent_gfx = (uint32_t)rd32(ent + 2);
+            if (ent_gfx == gfx_off) {
+                int16_t h = level->door_wall_texture_heights[j];
+                if (h > 0) {
+                    *out_wall_height_for_tex = h;
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 static int renderer_lift_wall_texture_info_for_gfx_off(const LevelState *level,
                                                         uint32_t gfx_off,
                                                         int16_t *out_totalyoff,
-                                                        int16_t *out_fromtile)
+                                                        int16_t *out_fromtile,
+                                                        int16_t *out_wall_height_for_tex)
 {
     if (out_totalyoff) *out_totalyoff = 0;
     if (out_fromtile) *out_fromtile = 0;
+    if (out_wall_height_for_tex) *out_wall_height_for_tex = 0;
     if (!level || !out_totalyoff || !out_fromtile ||
         !level->lift_wall_list || !level->lift_wall_list_offsets || !level->lift_data) {
         return 0;
@@ -12916,6 +13022,11 @@ static int renderer_lift_wall_texture_info_for_gfx_off(const LevelState *level,
                 int16_t fromtile_word = (int16_t)(packed >> 16);
                 *out_fromtile = (int16_t)((int32_t)fromtile_word * 16);
                 *out_totalyoff = (int16_t)(packed & 0xFFFFu);
+                if (out_wall_height_for_tex && level->lift_wall_texture_heights) {
+                    int16_t h = level->lift_wall_texture_heights[j];
+                    if (h > 0)
+                        *out_wall_height_for_tex = h;
+                }
                 return 1;
             }
         }
@@ -14003,6 +14114,34 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                         if (wall_height_for_tex < 1) wall_height_for_tex = 1;
                     }
                 }
+                else if (has_door_wall_list && tex_id != SWITCHES_WALL_TEX_ID) {
+                    int16_t door_wall_height_for_tex = 0;
+                    if (renderer_door_wall_texture_height_for_gfx_off(level, wall_gfx_off,
+                                                                       &door_wall_height_for_tex)) {
+                        /* Anims.s DoorRoutine patches the moving wall edge each frame. Keep
+                         * texture scale tied to the VALSHIFT period, scaled by the live panel
+                         * fraction from the authored wall span captured at level load. */
+                        wall_height_for_tex =
+                            renderer_scaled_dynamic_wall_texture_height(wall_height_for_tex,
+                                                                        door_wall_height_for_tex,
+                                                                        use_valshift);
+                    } else if (!use_upper) {
+                        int16_t door_zone_height_for_tex = 0;
+                        int32_t abs_topwall = topwall + y_off;
+                        int32_t abs_botwall = botwall + y_off;
+                        int32_t live_zone_roof = rd32(zone_data + 6);
+                        int32_t live_zone_floor = rd32(zone_data + 2);
+                        if (abs_topwall == live_zone_roof &&
+                            abs_botwall == live_zone_floor &&
+                            renderer_door_zone_motion_height_for_zone(level, zone_id,
+                                                                       &door_zone_height_for_tex)) {
+                            wall_height_for_tex =
+                                renderer_scaled_dynamic_wall_texture_height(wall_height_for_tex,
+                                                                            door_zone_height_for_tex,
+                                                                            use_valshift);
+                        }
+                    }
+                }
 
                 /* Switch walls (tex_id 11): same texture has on/off states.
                  * State is in wall first word bit 1 (p1 & 2): set = on, clear = off.
@@ -14013,11 +14152,33 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 if (has_lift_wall_list && tex_id != SWITCHES_WALL_TEX_ID) {
                     int16_t lift_totalyoff = 0;
                     int16_t lift_fromtile = 0;
+                    int16_t lift_wall_height_for_tex = 0;
                     if (renderer_lift_wall_texture_info_for_gfx_off(level, wall_gfx_off,
                                                                      &lift_totalyoff,
-                                                                     &lift_fromtile)) {
+                                                                     &lift_fromtile,
+                                                                     &lift_wall_height_for_tex)) {
                         eff_totalyoff = lift_totalyoff;
                         eff_fromtile = lift_fromtile;
+                        if (lift_wall_height_for_tex > 0)
+                            wall_height_for_tex =
+                                renderer_scaled_dynamic_wall_texture_height(wall_height_for_tex,
+                                                                            lift_wall_height_for_tex,
+                                                                            use_valshift);
+                    } else if (!use_upper) {
+                        int16_t lift_zone_height_for_tex = 0;
+                        int32_t abs_topwall = topwall + y_off;
+                        int32_t abs_botwall = botwall + y_off;
+                        int32_t live_zone_roof = rd32(zone_data + 6);
+                        int32_t live_zone_floor = rd32(zone_data + 2);
+                        if (abs_topwall == live_zone_roof &&
+                            abs_botwall == live_zone_floor &&
+                            renderer_lift_zone_motion_height_for_zone(level, zone_id,
+                                                                       &lift_zone_height_for_tex)) {
+                            wall_height_for_tex =
+                                renderer_scaled_dynamic_wall_texture_height(wall_height_for_tex,
+                                                                            lift_zone_height_for_tex,
+                                                                            use_valshift);
+                        }
                     }
                 }
 

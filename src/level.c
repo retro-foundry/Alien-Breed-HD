@@ -171,24 +171,50 @@ static AB3D_ATTR_UNUSED const uint8_t *skip_amiga_wall_list(const uint8_t *p)
     return p + 2;
 }
 
+static int16_t amiga_dynamic_wall_texture_height(const uint8_t *graphics,
+                                                 size_t graphics_size,
+                                                 int32_t gfx_off)
+{
+    if (!graphics || graphics_size == 0 || gfx_off < 0)
+        return 0;
+
+    size_t off = (size_t)(uint32_t)gfx_off;
+    if (off > graphics_size || 28u > graphics_size - off)
+        return 0;
+
+    int32_t top = read_long(graphics + off + 20u);
+    int32_t bot = read_long(graphics + off + 24u);
+    int32_t h = (bot - top) >> 8;
+    if (h < 1 || h > INT16_MAX)
+        return 0;
+    return (int16_t)h;
+}
+
 /* Parse one door/lift wall list; return number of wall entries, advance *p to next door.
  * If dst is non-NULL, write packed entries:
  *   +0: fline (be16)
  *   +2: ptr_to_wall_rec (be32)   [Anims.s first long -> a1]
  *   +6: gfx_base_offset (be32)   [Anims.s second long -> a2]
  * Total: 10 bytes per entry. */
-static int parse_amiga_door_wall_list(const uint8_t **p, uint8_t *dst, int max_entries)
+static int parse_amiga_door_wall_list(const uint8_t **p, uint8_t *dst,
+                                      int16_t *texture_heights,
+                                      const uint8_t *graphics,
+                                      size_t graphics_size,
+                                      int max_entries)
 {
     const uint8_t *q = *p;
     int n = 0;
     while (n < max_entries) {
         int16_t w = read_word(q);
         if (w < 0) break;
+        int32_t gfx_off = read_long(q + 2);
         if (dst) {
             write_word_be(dst + n * 10, w);
-            write_long_be(dst + n * 10 + 2, read_long(q + 2));
+            write_long_be(dst + n * 10 + 2, gfx_off);
             write_long_be(dst + n * 10 + 6, read_long(q + 6));
         }
+        if (texture_heights)
+            texture_heights[n] = amiga_dynamic_wall_texture_height(graphics, graphics_size, gfx_off);
         n++;
         q += 2 + 4 + 4;
     }
@@ -286,6 +312,7 @@ int level_parse(LevelState *level)
     /* Doors: Amiga format (match standalone). 999 terminator; 18-byte header + variable wall list. */
     level->door_wall_list = NULL;
     level->door_wall_list_offsets = NULL;
+    level->door_wall_texture_heights = NULL;
     level->door_wall_list_owned = false;
     level->num_doors = 0;
     if (door_offset <= 16) {
@@ -302,7 +329,7 @@ int level_parse(LevelState *level)
             const uint8_t *d = door_src;
             while (read_word(d) != 999) {
                 const uint8_t *wall_start = d + 18;
-                int nw = parse_amiga_door_wall_list(&wall_start, NULL, 64);
+                int nw = parse_amiga_door_wall_list(&wall_start, NULL, NULL, NULL, 0, 64);
                 total_walls += nw;
                 nd++;
                 d = wall_start;
@@ -313,7 +340,10 @@ int level_parse(LevelState *level)
                 uint8_t *buf = (uint8_t *)malloc((size_t)(nd + 1) * 22u);
                 uint8_t *wall_list = (total_walls > 0) ? (uint8_t *)malloc((size_t)total_walls * 10u) : NULL;
                 uint32_t *wall_offsets = (nd > 0) ? (uint32_t *)malloc((size_t)(nd + 1) * sizeof(uint32_t)) : NULL;
-                if (buf && (total_walls == 0 || (wall_list && wall_offsets))) {
+                int16_t *wall_texture_heights = (total_walls > 0)
+                    ? (int16_t *)malloc((size_t)total_walls * sizeof(int16_t))
+                    : NULL;
+                if (buf && (total_walls == 0 || (wall_list && wall_offsets && wall_texture_heights))) {
                     const uint8_t *s = door_src;
                     int out_idx = 0;
                     uint32_t wall_index = 0;
@@ -327,7 +357,11 @@ int level_parse(LevelState *level)
                         int16_t door_mode = read_word(s + 16); /* high byte=open mode, low byte=close mode */
                         const uint8_t *wall_start = s + 18;
                         uint32_t door_start = wall_index;
-                        int nw = parse_amiga_door_wall_list(&wall_start, wall_list ? wall_list + wall_index * 10 : NULL, 64);
+                        int nw = parse_amiga_door_wall_list(&wall_start,
+                                                            wall_list ? wall_list + wall_index * 10 : NULL,
+                                                            wall_texture_heights ? wall_texture_heights + wall_index : NULL,
+                                                            lg, level->graphics_byte_count,
+                                                            64);
                         wall_index += nw;
                         s = wall_start;
                         if (zone >= 0 && zone < num_zones) {
@@ -352,8 +386,10 @@ int level_parse(LevelState *level)
                     level->num_doors = out_idx;
                     level->door_wall_list = wall_list;
                     level->door_wall_list_offsets = wall_offsets;
+                    level->door_wall_texture_heights = wall_texture_heights;
                     level->door_wall_list_owned = true;
                 } else {
+                    free(wall_texture_heights);
                     free(wall_list);
                     free(wall_offsets);
                     if (buf) free(buf);
@@ -368,6 +404,7 @@ int level_parse(LevelState *level)
     /* Long 4: Offset to lifts - Amiga format (match standalone): 999 terminator, 18-byte header + variable wall list */
     level->lift_wall_list = NULL;
     level->lift_wall_list_offsets = NULL;
+    level->lift_wall_texture_heights = NULL;
     level->lift_initial_positions = NULL;
     level->num_lifts = 0;
     level->lift_wall_list_owned = false;
@@ -387,7 +424,7 @@ int level_parse(LevelState *level)
             const uint8_t *d = lift_src;
             while (read_word(d) != 999) {
                 const uint8_t *wall_start = d + 18;
-                int nw = parse_amiga_door_wall_list(&wall_start, NULL, 64);
+                int nw = parse_amiga_door_wall_list(&wall_start, NULL, NULL, NULL, 0, 64);
                 total_lift_walls += nw;
                 nl++;
                 d = wall_start;
@@ -403,8 +440,12 @@ int level_parse(LevelState *level)
                 uint8_t *buf = (uint8_t *)malloc((size_t)(nl + 1) * 20u);
                 uint8_t *wall_list = (total_lift_walls > 0) ? (uint8_t *)malloc((size_t)total_lift_walls * 10u) : NULL;
                 uint32_t *wall_offsets = (nl > 0) ? (uint32_t *)malloc((size_t)(nl + 1) * sizeof(uint32_t)) : NULL;
+                int16_t *wall_texture_heights = (total_lift_walls > 0)
+                    ? (int16_t *)malloc((size_t)total_lift_walls * sizeof(int16_t))
+                    : NULL;
                 int32_t *initial_positions = (int32_t *)malloc((size_t)nl * sizeof(int32_t));
-                if (buf && initial_positions && (total_lift_walls == 0 || (wall_list && wall_offsets))) {
+                if (buf && initial_positions &&
+                    (total_lift_walls == 0 || (wall_list && wall_offsets && wall_texture_heights))) {
                     const uint8_t *s = lift_src;
                     int out_idx = 0;
                     uint32_t wall_index = 0;
@@ -418,7 +459,11 @@ int level_parse(LevelState *level)
                         int16_t lift_mode = read_word(s + 16); /* high byte=top behavior, low byte=bottom behavior */
                         const uint8_t *wall_start = s + 18;
                         uint32_t lift_start = wall_index;
-                        int nw = parse_amiga_door_wall_list(&wall_start, wall_list ? wall_list + wall_index * 10 : NULL, 64);
+                        int nw = parse_amiga_door_wall_list(&wall_start,
+                                                            wall_list ? wall_list + wall_index * 10 : NULL,
+                                                            wall_texture_heights ? wall_texture_heights + wall_index : NULL,
+                                                            lg, level->graphics_byte_count,
+                                                            64);
                         wall_index += nw;
                         s = wall_start;
                         int zidx = (zone >= 0 && zone < num_zones) ? (int)zone :
@@ -444,10 +489,12 @@ int level_parse(LevelState *level)
                     level->num_lifts = out_idx;
                     level->lift_wall_list = wall_list;
                     level->lift_wall_list_offsets = wall_offsets;
+                    level->lift_wall_texture_heights = wall_texture_heights;
                     level->lift_initial_positions = initial_positions;
                     level->lift_wall_list_owned = true;
                 } else {
                     free(initial_positions);
+                    free(wall_texture_heights);
                     free(wall_list);
                     free(wall_offsets);
                     if (buf) free(buf);

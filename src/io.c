@@ -830,17 +830,21 @@ void io_release_level_memory(LevelState *level)
         free(level->door_wall_list);
         free(level->door_wall_list_offsets);
     }
+    free(level->door_wall_texture_heights);
     level->door_wall_list = NULL;
     level->door_wall_list_offsets = NULL;
+    level->door_wall_texture_heights = NULL;
     level->door_wall_list_owned = false;
     level->num_doors = 0;
     if (level->lift_wall_list_owned) {
         free(level->lift_wall_list);
         free(level->lift_wall_list_offsets);
     }
+    free(level->lift_wall_texture_heights);
     free(level->lift_initial_positions);
     level->lift_wall_list = NULL;
     level->lift_wall_list_offsets = NULL;
+    level->lift_wall_texture_heights = NULL;
     level->lift_initial_positions = NULL;
     level->lift_wall_list_owned = false;
     level->num_lifts = 0;
