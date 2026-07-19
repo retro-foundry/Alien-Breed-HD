@@ -8,6 +8,7 @@
 
 #include "input.h"
 #include "display.h"
+#include "game_state.h"
 #include <SDL.h>
 #include <limits.h>
 #include <stdio.h>
@@ -67,7 +68,7 @@ static uint8_t sdl_to_amiga(SDL_Scancode sc)
     case SDL_SCANCODE_RIGHT:    return AMIGA_KEY_RIGHT;
     case SDL_SCANCODE_A:        return AMIGA_KEY_PERIOD;   /* WASD: A = strafe left */
     case SDL_SCANCODE_D:        return AMIGA_KEY_SLASH;    /* WASD: D = strafe right -- override duck */
-    case SDL_SCANCODE_LSHIFT:   return AMIGA_KEY_RSHIFT;   /* Shift = run */
+    case SDL_SCANCODE_LSHIFT:   return AMIGA_KEY_RSHIFT;   /* Shift = run/walk modifier */
     case SDL_SCANCODE_RSHIFT:   return AMIGA_KEY_RSHIFT;
     case SDL_SCANCODE_LALT:     return AMIGA_KEY_RALT;     /* Alt = fire */
     case SDL_SCANCODE_RALT:     return AMIGA_KEY_RALT;
@@ -107,11 +108,6 @@ static void input_set_key_state(uint8_t *map, uint8_t keycode, bool down)
 {
     if (!map || keycode >= 128) return;
     map[keycode] = down ? 1u : 0u;
-}
-
-static bool input_caps_lock_run_active(void)
-{
-    return (SDL_GetModState() & KMOD_CAPS) != 0;
 }
 
 static int16_t input_axis_with_deadzone(Sint16 raw, int deadzone)
@@ -226,15 +222,9 @@ static void input_force_cursor_visible(void)
 
 static void input_merge_key_sources(uint8_t *key_map)
 {
-    uint8_t caps_lock_run;
-
     if (!key_map) return;
-    caps_lock_run = input_caps_lock_run_active() ? 1u : 0u;
     for (int i = 0; i < 128; i++) {
         key_map[i] = (uint8_t)(g_keyboard_keys[i] || g_mouse_keys[i] || g_gamepad_keys[i]);
-    }
-    if (caps_lock_run) {
-        key_map[AMIGA_KEY_RSHIFT] = 1u;
     }
 }
 
@@ -352,7 +342,7 @@ static void input_update_gamepad(uint8_t *last_pressed)
     move_mag = input_abs_i32((int)lx);
     if (input_abs_i32((int)ly) > move_mag) move_mag = input_abs_i32((int)ly);
     run_held = SDL_GameControllerGetButton(g_gamepad, SDL_CONTROLLER_BUTTON_LEFTSTICK) != 0 ||
-               move_mag >= PAD_RUN_AXIS_THRESHOLD;
+               (!g_state.cfg_run_default && move_mag >= PAD_RUN_AXIS_THRESHOLD);
     if (run_held) input_set_key_state(g_gamepad_keys, AMIGA_KEY_RSHIFT, true);
 
     fire_held = (rt >= PAD_TRIGGER_FIRE_THRESHOLD);

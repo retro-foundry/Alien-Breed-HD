@@ -125,6 +125,9 @@ static void apply_line(GameState *state, char *line)
         state->cfg_mouse_look = parse_bool(val) ? true : false;
     } else if (strcmp(key, "mouse_look_invert_y") == 0) {
         state->cfg_mouse_look_invert_y = parse_bool(val) ? true : false;
+    } else if (strcmp(key, "run_default") == 0 ||
+               strcmp(key, "always_run") == 0) {
+        state->cfg_run_default = parse_bool(val) ? true : false;
     } else if (strcmp(key, "crosshair") == 0 ||
                strcmp(key, "crosshair_colour") == 0 ||
                strcmp(key, "crosshair_color") == 0 ||
@@ -228,7 +231,7 @@ static void apply_runtime_constraints(GameState *state)
 static void log_effective_settings(const GameState *state, const char *source_label)
 {
     if (state->cfg_start_level >= 0) {
-        printf("[SETTINGS] %s: start_level=%d infinite_health=%d infinite_ammo=%d all_weapons=%d all_keys=%d mouse_look=%d mouse_look_invert_y=%d crosshair=%d display_mode=%s render=%dx%d supersampling=%d render_threads=%d render_threads_max=%d volume=%d audio_buffer_samples=%d y_proj_scale=%d billboard_sprite_rendering_enhancement=%d weapon_draw=%d post_tint=%d weapon_post_gl=%d show_fps=%d\n",
+        printf("[SETTINGS] %s: start_level=%d infinite_health=%d infinite_ammo=%d all_weapons=%d all_keys=%d mouse_look=%d mouse_look_invert_y=%d run_default=%d crosshair=%d display_mode=%s render=%dx%d supersampling=%d render_threads=%d render_threads_max=%d volume=%d audio_buffer_samples=%d y_proj_scale=%d billboard_sprite_rendering_enhancement=%d weapon_draw=%d post_tint=%d weapon_post_gl=%d show_fps=%d\n",
                source_label,
                (int)state->cfg_start_level + 1,
                state->infinite_health ? 1 : 0,
@@ -237,6 +240,7 @@ static void log_effective_settings(const GameState *state, const char *source_la
                state->cfg_all_keys ? 1 : 0,
                state->cfg_mouse_look ? 1 : 0,
                state->cfg_mouse_look_invert_y ? 1 : 0,
+               state->cfg_run_default ? 1 : 0,
                (int)state->cfg_crosshair_colour,
                display_mode_to_text(state->cfg_display_mode),
                (int)state->cfg_render_width,
@@ -253,7 +257,7 @@ static void log_effective_settings(const GameState *state, const char *source_la
                state->cfg_weapon_post_gl ? 1 : 0,
                state->cfg_show_fps ? 1 : 0);
     } else {
-         printf("[SETTINGS] %s: start_level=default infinite_health=%d infinite_ammo=%d all_weapons=%d all_keys=%d mouse_look=%d mouse_look_invert_y=%d crosshair=%d display_mode=%s render=%dx%d supersampling=%d render_threads=%d render_threads_max=%d volume=%d audio_buffer_samples=%d y_proj_scale=%d billboard_sprite_rendering_enhancement=%d weapon_draw=%d post_tint=%d weapon_post_gl=%d show_fps=%d\n",
+         printf("[SETTINGS] %s: start_level=default infinite_health=%d infinite_ammo=%d all_weapons=%d all_keys=%d mouse_look=%d mouse_look_invert_y=%d run_default=%d crosshair=%d display_mode=%s render=%dx%d supersampling=%d render_threads=%d render_threads_max=%d volume=%d audio_buffer_samples=%d y_proj_scale=%d billboard_sprite_rendering_enhancement=%d weapon_draw=%d post_tint=%d weapon_post_gl=%d show_fps=%d\n",
                source_label,
                state->infinite_health ? 1 : 0,
                state->infinite_ammo ? 1 : 0,
@@ -261,6 +265,7 @@ static void log_effective_settings(const GameState *state, const char *source_la
                state->cfg_all_keys ? 1 : 0,
                state->cfg_mouse_look ? 1 : 0,
                state->cfg_mouse_look_invert_y ? 1 : 0,
+               state->cfg_run_default ? 1 : 0,
                (int)state->cfg_crosshair_colour,
                display_mode_to_text(state->cfg_display_mode),
                (int)state->cfg_render_width,

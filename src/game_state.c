@@ -85,6 +85,7 @@ void game_state_init(GameState *state)
     state->cfg_post_tint = true;
     state->cfg_weapon_post_gl = false;
     state->cfg_crosshair_colour = 0;
+    state->cfg_run_default = true;
 }
 
 /*

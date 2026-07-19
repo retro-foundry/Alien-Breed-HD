@@ -54,6 +54,15 @@ static int32_t player_mouse_look_ray_y_delta_at_dist(int16_t aim_speed, int32_t 
 static int16_t player_mouse_look_ray_axis_at_dist(int16_t origin, int16_t dir, int32_t doubled_dist);
 static int16_t player_clamp_i16(int32_t value);
 
+static bool player_should_run(const GameState *state, const uint8_t *key_map,
+                              const KeyBindings *keys)
+{
+    bool modifier_down = key_map && keys && keys->run < 128 && key_map[keys->run];
+    if (state && state->cfg_run_default)
+        return !modifier_down;
+    return modifier_down;
+}
+
 static int16_t player_room_zone_word(const uint8_t *room)
 {
     if (!room) return -1;
@@ -644,13 +653,14 @@ static void player_always_keys(PlayerState *plr, uint8_t *key_map,
  * Translated from Plr1Control.s PLR1_keyboard_control (~line 337-547)
  * ----------------------------------------------------------------------- */
 static void player_keyboard_control(PlayerState *plr, const uint8_t *key_map,
-                                     const KeyBindings *keys, int16_t temp_frames)
+                                     const KeyBindings *keys, const GameState *state,
+                                     int16_t temp_frames)
 {
     int16_t max_turn = MAX_TURN_WALK;
     int16_t move_speed = WALK_SPEED;
 
-    /* Running */
-    if (key_map[keys->run]) {
+    /* Run/walk modifier */
+    if (player_should_run(state, key_map, keys)) {
         max_turn = MAX_TURN_RUN;
         move_speed = RUN_SPEED;
     }
@@ -1104,8 +1114,8 @@ static void player_mouse_kbd_control(PlayerState *plr, const uint8_t *key_map,
 
     int16_t move_speed = WALK_SPEED;
 
-    /* Running (shift) */
-    if (key_map[keys->run]) {
+    /* Run/walk modifier */
+    if (player_should_run(state, key_map, keys)) {
         move_speed = RUN_SPEED;
     }
 
@@ -1232,10 +1242,10 @@ static void player_sim_control(PlayerState *plr, const ControlMode *ctrl,
         player_mouse_control(plr, key_map, keys, temp_frames);
     } else if (ctrl->keys) {
         player_reset_mouse_look_aim(plr, state);
-        player_keyboard_control(plr, key_map, keys, temp_frames);
+        player_keyboard_control(plr, key_map, keys, state, temp_frames);
     } else if (ctrl->joy) {
         player_reset_mouse_look_aim(plr, state);
-        player_keyboard_control(plr, key_map, keys, temp_frames);
+        player_keyboard_control(plr, key_map, keys, state, temp_frames);
     } else {
         /* Default: mouse + keyboard */
         player_mouse_kbd_control(plr, key_map, keys, state, temp_frames);
@@ -2065,6 +2075,7 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     bool    ini_cfg_all_keys = state->cfg_all_keys;
     bool    ini_cfg_mouse_look = state->cfg_mouse_look;
     bool    ini_cfg_mouse_look_invert_y = state->cfg_mouse_look_invert_y;
+    bool    ini_cfg_run_default = state->cfg_run_default;
     uint8_t ini_cfg_crosshair_colour = state->cfg_crosshair_colour;
     int16_t ini_cfg_render_width = state->cfg_render_width;
     int16_t ini_cfg_render_height = state->cfg_render_height;
@@ -2091,6 +2102,7 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     state->cfg_all_keys = ini_cfg_all_keys;
     state->cfg_mouse_look = ini_cfg_mouse_look;
     state->cfg_mouse_look_invert_y = ini_cfg_mouse_look_invert_y;
+    state->cfg_run_default = ini_cfg_run_default;
     state->cfg_crosshair_colour = ini_cfg_crosshair_colour;
     state->cfg_render_width = ini_cfg_render_width;
     state->cfg_render_height = ini_cfg_render_height;

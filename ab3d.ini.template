@@ -27,6 +27,10 @@ mouse_look=1
 # 1 = invert mouse-look Y when mouse_look=1.
 mouse_look_invert_y=0
 
+# 1 = run by default; hold Shift to walk.
+# 0 = original-style walk by default; hold Shift to run.
+run_default=1
+
 # TKG-style crosshair colour.
 # 0 = off, 1 = intense green, 2 = mid green, 3 = intense yellow, 4 = bright grey,
 # 5 = intense red, 6 = ice blue, 7 = intense blue.
