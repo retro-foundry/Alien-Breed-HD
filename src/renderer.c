@@ -12071,7 +12071,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
     const int16_t billboard_view_right_x = (int16_t)(r->cosval / 2);
     const int16_t billboard_view_right_z = (int16_t)(-r->sinval / 2);
 
-    /* Build one depth-sorted list for sprites and particles so painter order is consistent. */
+    /* Build one depth-sorted list for objects and particles so painter order is consistent. */
     enum {
         DRAW_SRC_OBJECT = RENDERER_F2_SPRITE_SOURCE_OBJECT,
         DRAW_SRC_SHOT = RENDERER_F2_SPRITE_SOURCE_SHOT,
@@ -12081,7 +12081,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int src;
         int idx;
         int16_t source_zone;
-        int32_t z;
+        int32_t z;  /* Amiga ObjDraw depthtable key: rotated Z word. */
         int16_t clip_left;
         int16_t clip_right;
         int32_t zone_top_world;
@@ -12125,13 +12125,18 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         int spill_world_w = 32, spill_world_h = 32;
         renderer_resolve_billboard_world_size_for_spill(obj, 0, &spill_world_w, &spill_world_h);
 
-        /* Basic spill mode: allow the current zone to draw directly adjacent
-         * source zones as spill candidates. */
+        ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
+        int is_poly_object = ((uint8_t)obj[6] == (uint8_t)OBJ_3D_SPRITE);
+
+        /* Basic spill mode is only for bitmap billboards. ObjDraw3 inserts
+         * objects whose GraphicRoom matches currzone, then PolygonObj draws
+         * from that owned-zone pass; it has no adjacent-zone redraw path. */
         int16_t obj_zone = rd16(obj + 12);
         int in_this_zone = (obj_zone == (int16_t)zone_id);
         int obj_on_upper = (obj[obj_off_in_top] != 0);
         if (obj_zone < 0) continue;
         if (!in_this_zone) {
+            if (is_poly_object) continue;
             if (!renderer_zone_list_contains(adjacent_source_zones, adjacent_source_count, obj_zone))
                 continue;
             if (!renderer_spill_zone_order_allows(state, obj_zone, zone_id))
@@ -12180,8 +12185,6 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             if ((draw_zone_bot - draw_zone_top) < ((int32_t)(spill_world_h >> 1) << WORLD_Y_FRAC_BITS))
                 continue;
         }
-        ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
-        int is_poly_object = ((uint8_t)obj[6] == (uint8_t)OBJ_3D_SPRITE);
         {
             /* Amiga parity:
              * - BitMapObj: near reject at z <= 50
@@ -12190,8 +12193,9 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             if (orp->z <= near_clip_z) continue;
         }
 
-        /* Skip early when this object cannot affect this column strip. */
-        {
+        /* BitMapObj cull: skip early when a billboard cannot affect this
+         * column strip. PolygonObj clips its projected polygons directly. */
+        if (!is_poly_object) {
             int world_w = spill_world_w;
             int z_for_size = ROT_Z_INT(orp->z);
             if (z_for_size < 1) z_for_size = 1;
@@ -12206,7 +12210,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         objs[obj_count].src = DRAW_SRC_OBJECT;
         objs[obj_count].idx = obj_idx;
         objs[obj_count].source_zone = obj_zone;
-        objs[obj_count].z = orp->z;
+        objs[obj_count].z = ROT_Z_INT(orp->z);
         objs[obj_count].clip_left = draw_clip_left;
         objs[obj_count].clip_right = draw_clip_right;
         objs[obj_count].zone_top_world = draw_zone_top;
@@ -12287,7 +12291,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             objs[obj_count].src = DRAW_SRC_SHOT;
             objs[obj_count].idx = slot + ((pool == 0) ? 0 : NASTY_SHOT_SLOT_COUNT);
             objs[obj_count].source_zone = shot_zone;
-            objs[obj_count].z = orp->z;
+            objs[obj_count].z = ROT_Z_INT(orp->z);
             objs[obj_count].clip_left = draw_clip_left;
             objs[obj_count].clip_right = draw_clip_right;
             objs[obj_count].zone_top_world = draw_zone_top;
@@ -12378,7 +12382,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             objs[obj_count].src = DRAW_SRC_EXPLOSION;
             objs[obj_count].idx = ei;
             objs[obj_count].source_zone = expl_zone;
-            objs[obj_count].z = orp_z;
+            objs[obj_count].z = ROT_Z_INT(orp_z);
             objs[obj_count].clip_left = draw_clip_left;
             objs[obj_count].clip_right = draw_clip_right;
             objs[obj_count].zone_top_world = draw_zone_top;
@@ -12388,11 +12392,12 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         }
     }
 
-    /* Insertion sort by Z descending (farthest first - painter's algorithm). */
+    /* Insertion sort by integer Z descending (farthest first). ObjDraw's
+     * cmp/blt loop inserts equal-depth objects ahead of older entries. */
     for (int i = 1; i < obj_count; i++) {
         ObjEntry key = objs[i];
         int j = i - 1;
-        while (j >= 0 && objs[j].z < key.z) {
+        while (j >= 0 && objs[j].z <= key.z) {
             objs[j + 1] = objs[j];
             j--;
         }
