@@ -12885,44 +12885,6 @@ static int zone_has_lift(const uint8_t *lift_data, int16_t zone_id)
     return 0;
 }
 
-static int16_t renderer_wall_texture_period_height(uint8_t valshift)
-{
-    if (valshift >= 15)
-        return INT16_MAX;
-    return (int16_t)(1 << valshift);
-}
-
-static int renderer_door_wall_matches_gfx_off(const LevelState *level, uint32_t gfx_off)
-{
-    uint16_t dummy_flags = 0;
-
-    if (!level || !level->door_wall_list || !level->door_wall_list_offsets || !level->door_data)
-        return 0;
-    if (level->num_doors <= 0)
-        return 0;
-
-    if (automap_door_lookup_matches_level(level) &&
-        !automap_door_lookup_get_flags_by_gfx_fast(level, gfx_off, &dummy_flags)) {
-        return 0;
-    }
-
-    /* DoorRoutine in amiga/Anims.s writes door wall records from door_wall_list.
-     * Linked panel texture scale is applied at the draw site from VALSHIFT,
-     * mirroring WallRoutine3.ChipMem.s masking by VALAND/VALSHIFT. */
-    const uint8_t *lst = level->door_wall_list;
-    for (int di = 0; di < level->num_doors; di++) {
-        uint32_t start = level->door_wall_list_offsets[di];
-        uint32_t end = level->door_wall_list_offsets[di + 1];
-        for (uint32_t j = start; j < end; j++) {
-            const uint8_t *ent = lst + (size_t)j * 10u;
-            uint32_t ent_gfx = (uint32_t)rd32(ent + 2);
-            if (ent_gfx == gfx_off)
-                return 1;
-        }
-    }
-    return 0;
-}
-
 static int renderer_lift_wall_texture_info_for_gfx_off(const LevelState *level,
                                                         uint32_t gfx_off,
                                                         int16_t *out_totalyoff,
@@ -13996,7 +13958,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
 
                 int16_t wall_top = (int16_t)(topwall >> 8);
                 int16_t wall_bot = (int16_t)(botwall >> 8);
-                /* Original level height for texture step (before any door override). */
+                /* Live wall height for texture step. DoorRoutine/LiftRoutine patch the moving edge;
+                 * the texture phase comes from totalyoff, as in WallRoutine3.ChipMem.s. */
                 int16_t wall_height_for_tex = (int16_t)((botwall - topwall) >> 8);
                 if (wall_height_for_tex < 1) wall_height_for_tex = 1;
                 int32_t door_yoff_add = 0;
@@ -14049,11 +14012,6 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     }
                 }
 
-                if (has_door_wall_list && tex_id != SWITCHES_WALL_TEX_ID) {
-                    if (renderer_door_wall_matches_gfx_off(level, wall_gfx_off))
-                        wall_height_for_tex = renderer_wall_texture_period_height(use_valshift);
-                }
-
                 /* Switch walls (tex_id 11): same texture has on/off states.
                  * State is in wall first word bit 1 (p1 & 2): set = on, clear = off.
                  * Texture layout: off = left half (fromtile), on = right half (fromtile + 32).
@@ -14068,7 +14026,6 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                                      &lift_fromtile)) {
                         eff_totalyoff = lift_totalyoff;
                         eff_fromtile = lift_fromtile;
-                        wall_height_for_tex = renderer_wall_texture_period_height(use_valshift);
                     }
                 }
 
