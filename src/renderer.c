@@ -12911,8 +12911,20 @@ static int16_t renderer_scaled_dynamic_wall_texture_height(int16_t live_height,
     return (int16_t)scaled;
 }
 
-static int renderer_door_zone_motion_height_for_zone(const LevelState *level,
+static int renderer_dynamic_span_height(int32_t top, int32_t bot, int16_t *out_height)
+{
+    int32_t h = (bot - top) >> 8;
+    if (out_height) *out_height = 0;
+    if (!out_height || h < 1 || h > INT16_MAX)
+        return 0;
+    *out_height = (int16_t)h;
+    return 1;
+}
+
+static int renderer_door_zone_wall_height_for_bounds(const LevelState *level,
                                                      int16_t zone_id,
+                                                     int32_t wall_top,
+                                                     int32_t wall_bot,
                                                      int16_t *out_motion_height)
 {
     if (out_motion_height) *out_motion_height = 0;
@@ -12926,21 +12938,23 @@ static int renderer_door_zone_motion_height_for_zone(const LevelState *level,
 
         int32_t top = rd32(door + 10u);
         int32_t bot = rd32(door + 14u);
-        int32_t h = (bot - top) >> 8;
-        if (h > 0 && h <= INT16_MAX) {
-            *out_motion_height = (int16_t)h;
-            return 1;
-        }
+        if (wall_top == top && wall_bot == bot)
+            return renderer_dynamic_span_height(top, bot, out_motion_height);
     }
     return 0;
 }
 
-static int renderer_lift_zone_motion_height_for_zone(const LevelState *level,
+static int renderer_lift_zone_wall_height_for_bounds(const LevelState *level,
                                                      int16_t zone_id,
+                                                     int32_t wall_top,
+                                                     int32_t wall_bot,
+                                                     int32_t zone_roof,
                                                      int16_t *out_motion_height)
 {
     if (out_motion_height) *out_motion_height = 0;
     if (!level || !out_motion_height || !level->lift_data || level->num_lifts <= 0)
+        return 0;
+    if (wall_top != zone_roof)
         return 0;
 
     const uint8_t *lift = level->lift_data;
@@ -12950,11 +12964,8 @@ static int renderer_lift_zone_motion_height_for_zone(const LevelState *level,
 
         int32_t top = rd32(lift + 10u);
         int32_t bot = rd32(lift + 14u);
-        int32_t h = (bot - top) >> 8;
-        if (h > 0 && h <= INT16_MAX) {
-            *out_motion_height = (int16_t)h;
-            return 1;
-        }
+        if (wall_bot == top || wall_bot == bot)
+            return renderer_dynamic_span_height(top, bot, out_motion_height);
     }
     return 0;
 }
@@ -14129,12 +14140,9 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                         int16_t door_zone_height_for_tex = 0;
                         int32_t abs_topwall = topwall + y_off;
                         int32_t abs_botwall = botwall + y_off;
-                        int32_t live_zone_roof = rd32(zone_data + 6);
-                        int32_t live_zone_floor = rd32(zone_data + 2);
-                        if (abs_topwall == live_zone_roof &&
-                            abs_botwall == live_zone_floor &&
-                            renderer_door_zone_motion_height_for_zone(level, zone_id,
-                                                                       &door_zone_height_for_tex)) {
+                        if (renderer_door_zone_wall_height_for_bounds(level, zone_id,
+                                                                      abs_topwall, abs_botwall,
+                                                                      &door_zone_height_for_tex)) {
                             wall_height_for_tex =
                                 renderer_scaled_dynamic_wall_texture_height(wall_height_for_tex,
                                                                             door_zone_height_for_tex,
@@ -14169,11 +14177,10 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                         int32_t abs_topwall = topwall + y_off;
                         int32_t abs_botwall = botwall + y_off;
                         int32_t live_zone_roof = rd32(zone_data + 6);
-                        int32_t live_zone_floor = rd32(zone_data + 2);
-                        if (abs_topwall == live_zone_roof &&
-                            abs_botwall == live_zone_floor &&
-                            renderer_lift_zone_motion_height_for_zone(level, zone_id,
-                                                                       &lift_zone_height_for_tex)) {
+                        if (renderer_lift_zone_wall_height_for_bounds(level, zone_id,
+                                                                      abs_topwall, abs_botwall,
+                                                                      live_zone_roof,
+                                                                      &lift_zone_height_for_tex)) {
                             wall_height_for_tex =
                                 renderer_scaled_dynamic_wall_texture_height(wall_height_for_tex,
                                                                             lift_zone_height_for_tex,
