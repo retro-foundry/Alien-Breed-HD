@@ -88,6 +88,7 @@ void game_state_init(GameState *state)
     state->cfg_run_default = true;
     state->plr1_clumptime = 0;
     state->plr2_clumptime = 0;
+    state->cfg_footsteps_water_only = false;
 }
 
 /*

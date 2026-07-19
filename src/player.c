@@ -230,6 +230,7 @@ static void player_play_footstep(PlayerState *plr, GameState *state)
 
     int sample_id = (int)noise_selector + FOOTSTEP_SAMPLE_OFFSET;
     if (sample_id < 0 || sample_id >= FOOTSTEP_SFX_COUNT) return;
+    if (state->cfg_footsteps_water_only && sample_id != FOOTSTEP_WATER_SAMPLE) return;
     audio_play_sample(sample_id, player_amiga_noisevol_to_pc(FOOTSTEP_NOISEVOL));
 }
 
@@ -2147,6 +2148,7 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     bool    ini_cfg_mouse_look = state->cfg_mouse_look;
     bool    ini_cfg_mouse_look_invert_y = state->cfg_mouse_look_invert_y;
     bool    ini_cfg_run_default = state->cfg_run_default;
+    bool    ini_cfg_footsteps_water_only = state->cfg_footsteps_water_only;
     uint8_t ini_cfg_crosshair_colour = state->cfg_crosshair_colour;
     int16_t ini_cfg_render_width = state->cfg_render_width;
     int16_t ini_cfg_render_height = state->cfg_render_height;
@@ -2174,6 +2176,7 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     state->cfg_mouse_look = ini_cfg_mouse_look;
     state->cfg_mouse_look_invert_y = ini_cfg_mouse_look_invert_y;
     state->cfg_run_default = ini_cfg_run_default;
+    state->cfg_footsteps_water_only = ini_cfg_footsteps_water_only;
     state->cfg_crosshair_colour = ini_cfg_crosshair_colour;
     state->cfg_render_width = ini_cfg_render_width;
     state->cfg_render_height = ini_cfg_render_height;

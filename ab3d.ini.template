@@ -31,6 +31,11 @@ mouse_look_invert_y=0
 # 0 = original-style walk by default; hold Shift to run.
 run_default=1
 
+# 1 = suppress normal/clop/clank/muffled footstep sounds; water splashes still play.
+# 0 = play original material-specific footstep sounds.
+# Alias: water_footsteps_only.
+footsteps_water_only=0
+
 # TKG-style crosshair colour.
 # 0 = off, 1 = intense green, 2 = mid green, 3 = intense yellow, 4 = bright grey,
 # 5 = intense red, 6 = ice blue, 7 = intense blue.
