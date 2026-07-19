@@ -218,9 +218,6 @@ static uint8_t *g_pick_player_back_buffer = NULL;
 static int g_pick_capture_armed = 0;
 static int g_pick_capture_active = 0;
 static int g_pick_last_frame_valid = 0;
-static int g_renderfix_l6_zone120_seen = 0;
-static int g_renderfix_l6_zone123_seen = 0;
-static int g_renderfix_l12_zone72_seen = 0;
 /* Set per-frame in renderer_draw_display; hot paths read it via RenderSliceContext. */
 static int g_renderer_profile_collect_stats = 0;
 
@@ -12888,47 +12885,14 @@ static int zone_has_lift(const uint8_t *lift_data, int16_t zone_id)
     return 0;
 }
 
-static int renderer_edge_match(int16_t a1, int16_t a2, int16_t b1, int16_t b2)
+static int16_t renderer_wall_texture_period_height(uint8_t valshift)
 {
-    return ((a1 == b1 && a2 == b2) || (a1 == b2 && a2 == b1)) ? 1 : 0;
+    if (valshift >= 15)
+        return INT16_MAX;
+    return (int16_t)(1 << valshift);
 }
 
-static int renderer_level4_adjacent_door_wall_match(int16_t p1, int16_t p2, int16_t tex_id)
-{
-    /* Level 4 zone 124 doorway cluster:
-     * points 266..269 form the door ring and can appear in adjacent streams
-     * with different wall textures depending on view/zone side. */
-    if (tex_id == 1 || tex_id == 6 || tex_id == 8) {
-        int16_t d = (int16_t)(p1 - p2);
-        if (d < 0) d = (int16_t)(-d);
-        if (p1 >= 266 && p1 <= 269 &&
-            p2 >= 266 && p2 <= 269 &&
-            (d == 1 || d == 3)) {
-            return 1;
-        }
-    }
-
-    if (tex_id == 1) {
-        if (renderer_edge_match(p1, p2, 25, 23)) return 1;
-        if (renderer_edge_match(p1, p2, 24, 26)) return 1;
-        if (renderer_edge_match(p1, p2, 33, 32)) return 1;
-        if (renderer_edge_match(p1, p2, 269, 268)) return 1; /* zone 124 doorway */
-        if (renderer_edge_match(p1, p2, 267, 266)) return 1; /* zone 124 doorway */
-    }
-    if (tex_id == 6) {
-        if (renderer_edge_match(p1, p2, 23, 21)) return 1;
-        if (renderer_edge_match(p1, p2, 22, 24)) return 1;
-        if (renderer_edge_match(p1, p2, 34, 33)) return 1;
-    }
-    if (tex_id == 8) {
-        if (renderer_edge_match(p1, p2, 24, 23)) return 1;
-    }
-    return 0;
-}
-
-static int renderer_wall_gfx_off_matches_door_zone(const LevelState *level,
-                                                    uint32_t gfx_off,
-                                                    int16_t door_zone_id)
+static int renderer_door_wall_matches_gfx_off(const LevelState *level, uint32_t gfx_off)
 {
     uint16_t dummy_flags = 0;
 
@@ -12937,19 +12901,16 @@ static int renderer_wall_gfx_off_matches_door_zone(const LevelState *level,
     if (level->num_doors <= 0)
         return 0;
 
-    if (automap_door_lookup_get_flags_fast(level, door_zone_id, gfx_off, &dummy_flags))
-        return 1;
-
-    /* Cache ready + miss => definitely not this door zone. */
-    if (automap_door_lookup_matches_level(level))
+    if (automap_door_lookup_matches_level(level) &&
+        !automap_door_lookup_get_flags_by_gfx_fast(level, gfx_off, &dummy_flags)) {
         return 0;
+    }
 
+    /* DoorRoutine in amiga/Anims.s writes door wall records from door_wall_list.
+     * Linked panel texture scale is applied at the draw site from VALSHIFT,
+     * mirroring WallRoutine3.ChipMem.s masking by VALAND/VALSHIFT. */
     const uint8_t *lst = level->door_wall_list;
     for (int di = 0; di < level->num_doors; di++) {
-        int16_t zone_id = rd16(level->door_data + (size_t)di * 22u + 0u);
-        if (zone_id != door_zone_id)
-            continue;
-
         uint32_t start = level->door_wall_list_offsets[di];
         uint32_t end = level->door_wall_list_offsets[di + 1];
         for (uint32_t j = start; j < end; j++) {
@@ -12957,6 +12918,46 @@ static int renderer_wall_gfx_off_matches_door_zone(const LevelState *level,
             uint32_t ent_gfx = (uint32_t)rd32(ent + 2);
             if (ent_gfx == gfx_off)
                 return 1;
+        }
+    }
+    return 0;
+}
+
+static int renderer_lift_wall_texture_info_for_gfx_off(const LevelState *level,
+                                                        uint32_t gfx_off,
+                                                        int16_t *out_totalyoff,
+                                                        int16_t *out_fromtile)
+{
+    if (out_totalyoff) *out_totalyoff = 0;
+    if (out_fromtile) *out_fromtile = 0;
+    if (!level || !out_totalyoff || !out_fromtile ||
+        !level->lift_wall_list || !level->lift_wall_list_offsets || !level->lift_data) {
+        return 0;
+    }
+    if (level->num_lifts <= 0)
+        return 0;
+
+    /* LiftRoutine in amiga/Anims.s writes gfx_base + (-(lift_pos>>8) & 255)
+     * to wall_rec+10, and writes lift_pos to wall_rec+20. objects.c keeps the
+     * moving wall height patch but leaves +10 alone so tex_id is not clobbered;
+     * synthesize the packed texture words here for the wall drawer instead. */
+    const uint8_t *lst = level->lift_wall_list;
+    for (int li = 0; li < level->num_lifts; li++) {
+        const uint8_t *lift = level->lift_data + (size_t)li * LIFT_ENTRY_SIZE;
+        int32_t lift_pos = rd32(lift + 4);
+        uint32_t tex_scroll = (uint32_t)((-(int16_t)(lift_pos >> 8)) & 0x00FF);
+        uint32_t start = level->lift_wall_list_offsets[li];
+        uint32_t end = level->lift_wall_list_offsets[li + 1];
+        for (uint32_t j = start; j < end; j++) {
+            const uint8_t *ent = lst + (size_t)j * 10u;
+            uint32_t ent_gfx = (uint32_t)rd32(ent + 2);
+            if (ent_gfx == gfx_off) {
+                uint32_t packed = (uint32_t)((int32_t)rd32(ent + 6) + (int32_t)tex_scroll);
+                int16_t fromtile_word = (int16_t)(packed >> 16);
+                *out_fromtile = (int16_t)((int32_t)fromtile_word * 16);
+                *out_totalyoff = (int16_t)(packed & 0xFFFFu);
+                return 1;
+            }
         }
     }
     return 0;
@@ -14042,47 +14043,9 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     }
                 }
 
-                /* Level 4 (1-indexed) doorway: fix panel vertical scale (not y-offset).
-                 * Apply only on the known adjacent-door wall signatures. */
-                if (state->current_level == 3 &&
-                    renderer_level4_adjacent_door_wall_match(p1, p2, tex_id)) {
-                    wall_height_for_tex = (int16_t)(wall_height_for_tex - 16);
-                    if (wall_height_for_tex < 1) wall_height_for_tex = 1;
-                }
-
-                /* Level 6 (1-indexed), door zones 120/123:
-                 * apply the same scale-only correction, keyed by door wall-list membership
-                 * so adjacent-zone faces are included automatically. */
-                if (state->current_level == 5) {
-                    int l6_zone120 = renderer_wall_gfx_off_matches_door_zone(level, wall_gfx_off, 120);
-                    int l6_zone123 = renderer_wall_gfx_off_matches_door_zone(level, wall_gfx_off, 123);
-                    if (l6_zone120 || l6_zone123) {
-                    wall_height_for_tex = (int16_t)(wall_height_for_tex - 16);
-                    if (wall_height_for_tex < 1) wall_height_for_tex = 1;
-                    if (l6_zone120 && !g_renderfix_l6_zone120_seen) {
-                        g_renderfix_l6_zone120_seen = 1;
-                        printf("[RENDERFIX] level 6 door zone 120 scale fix active (first hit: zone=%d p1=%d p2=%d tex=%d gfx_off=%u)\n",
-                               (int)zone_id, (int)p1, (int)p2, (int)tex_id, (unsigned)wall_gfx_off);
-                    }
-                    if (l6_zone123 && !g_renderfix_l6_zone123_seen) {
-                        g_renderfix_l6_zone123_seen = 1;
-                        printf("[RENDERFIX] level 6 door zone 123 scale fix active (first hit: zone=%d p1=%d p2=%d tex=%d gfx_off=%u)\n",
-                               (int)zone_id, (int)p1, (int)p2, (int)tex_id, (unsigned)wall_gfx_off);
-                    }
-                    }
-                }
-
-                /* Level 12 (1-indexed, level_l), door zone 72:
-                 * apply the same scale-only correction to all wall-list-linked door faces. */
-                if (state->current_level == 11 &&
-                    renderer_wall_gfx_off_matches_door_zone(level, wall_gfx_off, 72)) {
-                    wall_height_for_tex = (int16_t)(wall_height_for_tex - 32);
-                    if (wall_height_for_tex < 1) wall_height_for_tex = 1;
-                    if (!g_renderfix_l12_zone72_seen) {
-                        g_renderfix_l12_zone72_seen = 1;
-                        printf("[RENDERFIX] level 12 door zone 72 scale fix active (first hit: zone=%d p1=%d p2=%d tex=%d gfx_off=%u)\n",
-                               (int)zone_id, (int)p1, (int)p2, (int)tex_id, (unsigned)wall_gfx_off);
-                    }
+                if (has_door_wall_list && tex_id != SWITCHES_WALL_TEX_ID) {
+                    if (renderer_door_wall_matches_gfx_off(level, wall_gfx_off))
+                        wall_height_for_tex = renderer_wall_texture_period_height(use_valshift);
                 }
 
                 /* Switch walls (tex_id 11): same texture has on/off states.
@@ -14091,6 +14054,17 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                  * Use V offset 0 for switches so full texture maps consistently. */
                 int16_t eff_totalyoff = (tex_id == SWITCHES_WALL_TEX_ID) ? 0 : (int16_t)(totalyoff + door_yoff_add);
                 int16_t eff_fromtile   = fromtile;
+                if (has_lift_wall_list && tex_id != SWITCHES_WALL_TEX_ID) {
+                    int16_t lift_totalyoff = 0;
+                    int16_t lift_fromtile = 0;
+                    if (renderer_lift_wall_texture_info_for_gfx_off(level, wall_gfx_off,
+                                                                     &lift_totalyoff,
+                                                                     &lift_fromtile)) {
+                        eff_totalyoff = lift_totalyoff;
+                        eff_fromtile = lift_fromtile;
+                        wall_height_for_tex = renderer_wall_texture_period_height(use_valshift);
+                    }
+                }
 
                 if (tex_id >= 0 && tex_id < MAX_WALL_TILES)
                     ctx->cur_wall_pal = r->wall_palettes[tex_id];
