@@ -34,7 +34,12 @@
 #define HEIGHT_STEP         1024
 #define BOBBLE_MASK         ANGLE_MASK
 #define CLUMP_MASK          4095
-#define CLUMP_THRESHOLD     (-4096)  /* and.w #-4096,d1 checks bit 12+ */
+#define CLUMP_HIGH_MASK     ((uint16_t)~(uint16_t)CLUMP_MASK)  /* and.w #-4096,d1 checks bit 12+ */
+#define FOOTSTEP_SAMPLE_OFFSET 23
+#define FOOTSTEP_WATER_SAMPLE 6
+#define FOOTSTEP_WATER_SELECTOR (FOOTSTEP_WATER_SAMPLE - FOOTSTEP_SAMPLE_OFFSET)
+#define FOOTSTEP_NOISEVOL 80
+#define FOOTSTEP_SFX_COUNT 28
 /* Amiga step-up: same scale as zone floor heights. game_data uses 40*256 for marines;
  * movement.c default is 40*256. Step-UP blocked when ledge is higher than this.
  * Step-DOWN always passable (unlimited). */
@@ -61,6 +66,29 @@ static bool player_should_run(const GameState *state, const uint8_t *key_map,
     if (state && state->cfg_run_default)
         return !modifier_down;
     return modifier_down;
+}
+
+static int16_t player_read_i16_be(const uint8_t *p)
+{
+    return (int16_t)((p[0] << 8) | p[1]);
+}
+
+static int32_t player_read_i32_be(const uint8_t *p)
+{
+    return (int32_t)(((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+                     ((uint32_t)p[2] << 8) | (uint32_t)p[3]);
+}
+
+static int16_t player_word_asl(int16_t value, unsigned shift)
+{
+    return (int16_t)((uint16_t)value << shift);
+}
+
+static int player_amiga_noisevol_to_pc(int noisevol)
+{
+    if (noisevol < 1) noisevol = 1;
+    int v = (noisevol * 255 + 400) / 800;
+    return (v > 255) ? 255 : v;
 }
 
 static int16_t player_room_zone_word(const uint8_t *room)
@@ -174,6 +202,47 @@ static uint8_t *resolve_player_room_ptr(GameState *state, const PlayerState *plr
         if (zi >= 0) return level_get_zone_data_ptr(&state->level, (int16_t)zi);
     }
     return NULL;
+}
+
+static int16_t *player_clumptime_ptr(GameState *state, const PlayerState *plr)
+{
+    if (!state || !plr) return NULL;
+    return (plr == &state->plr2) ? &state->plr2_clumptime : &state->plr1_clumptime;
+}
+
+static void player_play_footstep(PlayerState *plr, GameState *state)
+{
+    uint8_t *room = resolve_player_room_ptr(state, plr);
+    if (!room || !plr) return;
+
+    int16_t noise_selector = player_read_i16_be(room + ZONE_OFF_FLOOR_NOISE);
+    int32_t water_y = player_read_i32_be(room + ZONE_OFF_WATER);
+    int32_t floor_y = player_read_i32_be(room + ZONE_OFF_FLOOR);
+
+    /* Plr*Control.s PLR*clump: water selects sample 6 before the upper-floor
+     * noise override, then the floor-noise selector is biased by +23. */
+    if (water_y < floor_y && water_y >= plr->yoff) {
+        noise_selector = (int16_t)FOOTSTEP_WATER_SELECTOR;
+    }
+    if (plr->stood_in_top) {
+        noise_selector = player_read_i16_be(room + ZONE_OFF_UPPER_FLOOR_NOISE);
+    }
+
+    int sample_id = (int)noise_selector + FOOTSTEP_SAMPLE_OFFSET;
+    if (sample_id < 0 || sample_id >= FOOTSTEP_SFX_COUNT) return;
+    audio_play_sample(sample_id, player_amiga_noisevol_to_pc(FOOTSTEP_NOISEVOL));
+}
+
+static void player_advance_clumptime(PlayerState *plr, GameState *state, int16_t delta)
+{
+    int16_t *clumptime = player_clumptime_ptr(state, plr);
+    if (!clumptime || delta == 0) return;
+
+    uint16_t sum = (uint16_t)((uint16_t)*clumptime + (uint16_t)delta);
+    *clumptime = (int16_t)(sum & (uint16_t)CLUMP_MASK);
+    if ((sum & CLUMP_HIGH_MASK) != 0) {
+        player_play_footstep(plr, state);
+    }
 }
 
 static int16_t zone_from_room_or_fallback(LevelState *level, const uint8_t *room, int16_t fallback)
@@ -653,7 +722,7 @@ static void player_always_keys(PlayerState *plr, uint8_t *key_map,
  * Translated from Plr1Control.s PLR1_keyboard_control (~line 337-547)
  * ----------------------------------------------------------------------- */
 static void player_keyboard_control(PlayerState *plr, const uint8_t *key_map,
-                                     const KeyBindings *keys, const GameState *state,
+                                     const KeyBindings *keys, GameState *state,
                                      int16_t temp_frames)
 {
     int16_t max_turn = MAX_TURN_WALK;
@@ -738,12 +807,11 @@ static void player_keyboard_control(PlayerState *plr, const uint8_t *key_map,
     }
 
     /* ---- Bobble ---- */
-    int16_t bob_delta = fwd << 6;  /* asl.w #6,d2 */
+    int16_t bob_delta = player_word_asl(fwd, 6);  /* asl.w #6,d2 */
     plr->bobble = (plr->bobble + bob_delta) & BOBBLE_MASK;
 
     /* ---- Clump (footstep sound trigger) ---- */
-    /* clumptime accumulates movement; when bit 12+ overflows, trigger sound */
-    /* TODO: actual clump timing once audio works */
+    player_advance_clumptime(plr, state, bob_delta);
 
     /* ---- Calculate movement vector ---- */
     /* Forward: x -= sin*fwd, z -= cos*fwd */
@@ -786,7 +854,8 @@ static void player_keyboard_control(PlayerState *plr, const uint8_t *key_map,
  * Translated from Plr1Control.s PLR1_mouse_control (~line 13-138)
  * ----------------------------------------------------------------------- */
 static void player_mouse_control(PlayerState *plr, const uint8_t *key_map,
-                                  const KeyBindings *keys, int16_t temp_frames)
+                                  const KeyBindings *keys, GameState *state,
+                                  int16_t temp_frames)
 {
     MouseState mouse;
     input_read_mouse(&mouse);
@@ -807,7 +876,7 @@ static void player_mouse_control(PlayerState *plr, const uint8_t *key_map,
         fwd_delta >>= 1;
     }
 
-    int16_t move_mag = fwd_delta << 4;
+    int16_t move_mag = player_word_asl(fwd_delta, 4);
 
     /* Angle and sin/cos */
     angpos &= ANGLE_MASK;
@@ -847,6 +916,7 @@ static void player_mouse_control(PlayerState *plr, const uint8_t *key_map,
 
     /* Bobble */
     plr->bobble = (plr->bobble + move_mag) & BOBBLE_MASK;
+    player_advance_clumptime(plr, state, move_mag);
 
     /* Fire from mouse button */
     if (plr->fire) {
@@ -1179,8 +1249,9 @@ static void player_mouse_kbd_control(PlayerState *plr, const uint8_t *key_map,
     }
 
     /* ---- Bobble ---- */
-    int16_t bob_delta = fwd << 6;
+    int16_t bob_delta = player_word_asl(fwd, 6);
     plr->bobble = (plr->bobble + bob_delta) & BOBBLE_MASK;
+    player_advance_clumptime(plr, state, bob_delta);
 
     /* ---- Movement vector ---- */
     int32_t sin_val = plr->s_sinval;
@@ -1239,7 +1310,7 @@ static void player_sim_control(PlayerState *plr, const ControlMode *ctrl,
         player_mouse_kbd_control(plr, key_map, keys, state, temp_frames);
     } else if (ctrl->mouse) {
         player_reset_mouse_look_aim(plr, state);
-        player_mouse_control(plr, key_map, keys, temp_frames);
+        player_mouse_control(plr, key_map, keys, state, temp_frames);
     } else if (ctrl->keys) {
         player_reset_mouse_look_aim(plr, state);
         player_keyboard_control(plr, key_map, keys, state, temp_frames);

@@ -373,6 +373,9 @@ typedef struct {
     uint8_t         cfg_crosshair_colour; /* TKG Draw_Crosshair colour slot: 0=off, 1..7 */
     bool            cfg_run_default;      /* 1 = run by default; held run key walks */
 
+    int16_t         plr1_clumptime;       /* PLR1_clumptime footstep accumulator */
+    int16_t         plr2_clumptime;       /* PLR2_clumptime footstep accumulator */
+
 } GameState;
 
 /* -----------------------------------------------------------------------

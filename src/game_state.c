@@ -86,6 +86,8 @@ void game_state_init(GameState *state)
     state->cfg_weapon_post_gl = false;
     state->cfg_crosshair_colour = 0;
     state->cfg_run_default = true;
+    state->plr1_clumptime = 0;
+    state->plr2_clumptime = 0;
 }
 
 /*
@@ -98,6 +100,8 @@ void game_state_setup_default(GameState *state)
     game_state_init_player(&state->plr2);
     game_state_init_single_player_loadout(&state->plr1);
     game_state_init_single_player_loadout(&state->plr2);
+    state->plr1_clumptime = 0;
+    state->plr2_clumptime = 0;
     state->nasty = true;
 }
 
@@ -109,5 +113,7 @@ void game_state_setup_two_player(GameState *state)
 {
     game_state_init_player(&state->plr1);
     game_state_init_player(&state->plr2);
+    state->plr1_clumptime = 0;
+    state->plr2_clumptime = 0;
     state->nasty = false;  /* no enemies in versus mode */
 }
