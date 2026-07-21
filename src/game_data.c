@@ -859,8 +859,8 @@ const EnemyParams enemy_params[] = {
         .death_frames   = {16,16,16,16,16,16,16,16,16,16, 17,17,17,17,17,17,17,17,17,17,
                            18,18,18,18,18,18, -1},
     },
-    /* [6] Mutant Marine (MutantMarine.s) - fires gun (Amiga: hitscan via ShootPlayer1,
-     * approximated here with a fast plasma projectile for visible gameplay).
+    /* [6] Mutant Marine (MutantMarine.s) - fires gun (Amiga: hitscan via ShootPlayer1;
+     * marine_hitscan_projectiles can replace this with a fast plasma projectile).
      * Same scream #0 / splat #14 death pattern as other marines. */
     {
         .thing_height   = 128 * 128,

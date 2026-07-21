@@ -89,6 +89,7 @@ void game_state_init(GameState *state)
     state->plr1_clumptime = 0;
     state->plr2_clumptime = 0;
     state->cfg_footsteps_water_only = false;
+    state->cfg_marine_hitscan_projectiles = true;
 }
 
 /*

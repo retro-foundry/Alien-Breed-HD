@@ -20,6 +20,11 @@ all_weapons=0
 # 1 = treat every key in the level as collected (door/lift condition bits only; switches unchanged).
 all_keys=0
 
+# 1 = mutant marine instant-hit attacks become orange projectiles (same shot colour as eyeballs).
+# 0 = original-style instant-hit marine attacks.
+# Alias: marine_projectiles.
+marine_hitscan_projectiles=1
+
 # 1 = mouse Y shifts the 3D view center in modern mouse+keyboard mode.
 # 0 = original fixed vertical view.
 mouse_look=1

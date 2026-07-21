@@ -2951,7 +2951,15 @@ void object_handle_marine(GameObject *obj, GameState *state)
             if (type == OBJ_NBR_MARINE) {
                 OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, 50 + (int16_t)(rand() & 0xFF));
                 if (params->attack_sound >= 0) audio_play_sample(params->attack_sound, 100);
-                marine_hitscan_burst(obj, state, target_player, 1, 4);
+                if (state->cfg_marine_hitscan_projectiles) {
+                    /* Optional non-parity path: use SHOTTYPE 0, the orange plasma
+                     * projectile fired by EyeBall.s / FlyingScalyBall.s. */
+                    enemy_fire_at_player(obj, state, target_player,
+                                         params->shot_type, params->shot_power,
+                                         params->shot_speed, params->shot_shift);
+                } else {
+                    marine_hitscan_burst(obj, state, target_player, 1, 4);
+                }
             } else if (type == OBJ_NBR_TOUGH_MARINE) {
                 OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, 50 + (int16_t)(rand() & 0x1F));
                 if (params->attack_sound >= 0) audio_play_sample(params->attack_sound, 100);
