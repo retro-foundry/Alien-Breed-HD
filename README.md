@@ -167,6 +167,16 @@ build/Release/ab3d1.exe
 
 ---
 
+## Voxel world objects
+
+Choose **Options > Objects > Voxels**, or set `voxel_objects=1` in `ab3d.ini`.
+All world billboards, including enemies, pickups, projectiles, explosions and
+gibs, are converted from the original art during asset loading. The software
+renderer uses compressed voxel columns and the existing painter ordering,
+without a depth buffer. Voxels are enabled by default, and the option is saved
+with the other menu preferences.
+See [voxel conversion and renderer notes](docs/voxels.md) for details and tests.
+
 ## Weapon redraw workflow (PNG round-trip)
 
 Use `tools/gun_frames_png.py` to export every in-hand weapon animation frame to PNG,

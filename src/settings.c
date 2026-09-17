@@ -31,6 +31,7 @@ static void log_effective_settings(const GameState *state,
 #define SETTINGS_WEB_VOLUME_KEY              "ab3d1.settings.volume"
 #define SETTINGS_WEB_CROSSHAIR_KEY           "ab3d1.settings.crosshair"
 #define SETTINGS_WEB_GAMEPAD_LOOK_SPEED_KEY  "ab3d1.settings.gamepad_look_speed"
+#define SETTINGS_WEB_VOXEL_OBJECTS_KEY        "ab3d1.settings.voxel_objects"
 #define SETTINGS_WEB_RUN_DEFAULT_KEY         "ab3d1.settings.run_default"
 
 EM_JS(int, settings_web_local_storage_get_int,
@@ -186,7 +187,8 @@ static int settings_write_menu_options_line(FILE *out,
                                             int *saw_volume,
                                             int *saw_crosshair,
                                             int *saw_gamepad_look_speed,
-                                            int *saw_run_default)
+                                            int *saw_run_default,
+                                            int *saw_voxel_objects)
 {
     char key[64];
 
@@ -225,6 +227,10 @@ static int settings_write_menu_options_line(FILE *out,
         return fprintf(out, "%s=%d\n", key,
                        (int)state->cfg_gamepad_look_speed) >= 0;
     }
+    if (strcmp(key, "voxel_objects") == 0) {
+        *saw_voxel_objects = 1;
+        return fprintf(out, "voxel_objects=%d\n", state->cfg_voxel_objects ? 1 : 0) >= 0;
+    }
     if (strcmp(key, "run_default") == 0 ||
         strcmp(key, "always_run") == 0) {
         *saw_run_default = 1;
@@ -242,10 +248,11 @@ static int settings_append_missing_menu_options(FILE *out,
                                                 int saw_volume,
                                                 int saw_crosshair,
                                                 int saw_gamepad_look_speed,
-                                                int saw_run_default)
+                                                int saw_run_default,
+                                                int saw_voxel_objects)
 {
     if (saw_mouse_look && saw_show_fps && saw_volume &&
-        saw_crosshair && saw_gamepad_look_speed && saw_run_default) {
+        saw_crosshair && saw_gamepad_look_speed && saw_run_default && saw_voxel_objects) {
         return 1;
     }
     if (fprintf(out, "\n# Runtime menu options\n") < 0) return 0;
@@ -271,6 +278,8 @@ static int settings_append_missing_menu_options(FILE *out,
                 (int)state->cfg_gamepad_look_speed) < 0) {
         return 0;
     }
+    if (!saw_voxel_objects &&
+        fprintf(out, "voxel_objects=%d\n", state->cfg_voxel_objects ? 1 : 0) < 0) return 0;
     if (!saw_run_default &&
         fprintf(out, "run_default=%d\n",
                 state->cfg_run_default ? 1 : 0) < 0) {
@@ -293,6 +302,7 @@ static void settings_save_menu_options_to_ini(const GameState *state)
     int saw_crosshair = 0;
     int saw_gamepad_look_speed = 0;
     int saw_run_default = 0;
+    int saw_voxel_objects = 0;
     int ok = 1;
 
     if (!state) return;
@@ -341,7 +351,8 @@ static void settings_save_menu_options_to_ini(const GameState *state)
                                                   &saw_volume,
                                                   &saw_crosshair,
                                                   &saw_gamepad_look_speed,
-                                                  &saw_run_default)) {
+                                                  &saw_run_default,
+                                                  &saw_voxel_objects)) {
                 ok = 0;
                 break;
             }
@@ -357,7 +368,8 @@ static void settings_save_menu_options_to_ini(const GameState *state)
                                                   saw_volume,
                                                   saw_crosshair,
                                                   saw_gamepad_look_speed,
-                                                  saw_run_default);
+                                                  saw_run_default,
+                                                  saw_voxel_objects);
     }
     if (fclose(out) != 0) ok = 0;
 
@@ -416,6 +428,8 @@ static void settings_apply_persistent_menu_options(GameState *state)
             state->cfg_gamepad_look_speed = (int16_t)speed;
         }
     }
+    state->cfg_voxel_objects = settings_web_local_storage_get_int(
+        SETTINGS_WEB_VOXEL_OBJECTS_KEY, state->cfg_voxel_objects ? 1 : 0) != 0;
     state->cfg_run_default =
         settings_web_local_storage_get_int(
             SETTINGS_WEB_RUN_DEFAULT_KEY,
@@ -430,6 +444,7 @@ static void settings_finalize_load(GameState *state, const char *source_label)
     apply_runtime_constraints(state);
     settings_apply_persistent_menu_options(state);
     log_effective_settings(state, source_label);
+    printf("[SETTINGS] Objects: %s\n", state->cfg_voxel_objects ? "voxels" : "billboards");
 }
 
 static int parse_display_mode_value(const char *v, int8_t *out_mode)
@@ -578,6 +593,8 @@ static void apply_line(GameState *state, char *line)
         } else {
             printf("[SETTINGS] supersampling ignored (use 1..4): %s\n", val);
         }
+    } else if (strcmp(key, "voxel_objects") == 0) {
+        state->cfg_voxel_objects = parse_bool(val) ? true : false;
     } else if (strcmp(key, "render_threads") == 0) {
         state->cfg_render_threads = parse_bool(val) ? true : false;
     } else if (strcmp(key, "render_threads_max") == 0) {
@@ -795,7 +812,9 @@ void settings_save_menu_options(const GameState *state)
 {
     if (!state) return;
 #if defined(__EMSCRIPTEN__)
-    if (!settings_web_local_storage_set_int(
+    if (!settings_web_local_storage_set_int(SETTINGS_WEB_VOXEL_OBJECTS_KEY,
+            state->cfg_voxel_objects ? 1 : 0) ||
+        !settings_web_local_storage_set_int(
             SETTINGS_WEB_MOUSE_LOOK_KEY,
             state->cfg_mouse_look ? 1 : 0) ||
         !settings_web_local_storage_set_int(

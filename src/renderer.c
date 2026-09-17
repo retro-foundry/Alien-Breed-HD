@@ -29,6 +29,7 @@
  */
 
 #include "renderer.h"
+#include "voxel_assets.h"
 #include "renderer_alloc.h"
 #include "renderer_3dobj.h"
 #include "level.h"
@@ -9989,165 +9990,7 @@ int renderer_decode_gun_frame_rgba(int frame_slot, uint32_t *out_rgba)
     return 1;
 }
 
-/* -----------------------------------------------------------------------
- * Sprite FRAMES tables (from ObjDraw3.ChipRam.s).
- *
- * Each frame entry is {ptr_offset, down_strip}:
- *   ptr_offset = byte offset into .ptr table for the starting column
- *   down_strip = vertical row offset within each column's data
- *
- * The Amiga stores these as dc.w pairs; ptr_offset values are in bytes
- * (column_index * 4 since each PTR entry is 4 bytes).
- * ----------------------------------------------------------------------- */
-typedef struct { uint16_t ptr_off; uint16_t down_strip; } SpriteFrame;
-
-/* Type 0 - ALIEN2: 64 cols/frame, walking 0-15, exploding 16-31, dying 32-33 */
-static const SpriteFrame frames_alien[] = {
-    {0,0},{64*4,0},{64*4*2,0},{64*4*3,0},{64*4*4,0},{64*4*5,0},{64*4*6,0},{64*4*7,0},
-    {64*4*8,0},{64*4*9,0},{64*4*10,0},{64*4*11,0},{64*4*12,0},{64*4*13,0},{64*4*14,0},{64*4*15,0},
-    /* frames 16-19: gib set 1 (Explode1Anim: vect=0 frames 16-19) */
-    {4*(64*16),0},{4*(64*16+16),0},{4*(64*16+32),0},{4*(64*16+48),0},
-    /* frames 20-23: gib set 2 (Explode2Anim: vect=0 frames 20-23) */
-    {4*(64*16),16},{4*(64*16+16),16},{4*(64*16+32),16},{4*(64*16+48),16},
-    /* frames 24-27: gib set 3 (Explode3Anim: vect=0 frames 24-27) */
-    {4*(64*16),32},{4*(64*16+16),32},{4*(64*16+32),32},{4*(64*16+48),32},
-    /* frames 28-31: gib set 4 (Explode4Anim: vect=0 frames 28-31) */
-    {4*(64*16),48},{4*(64*16+16),48},{4*(64*16+32),48},{4*(64*16+48),48},
-    /* frames 32-33: death animation (alien body lying on floor) */
-    {64*4*17,0},{64*4*18,0}
-};
-
-/* Type 1 - PICKUPS: variable layout */
-static const SpriteFrame frames_pickups[] = {
-    {0,0},                /* 0: medikit */
-    {0,32},               /* 1: big gun */
-    {64*4,32},            /* 2: bullet */
-    {32*4,0},             /* 3: ammo */
-    {64*4,0},             /* 4: battery */
-    {192*4,0},            /* 5: rockets */
-    {128*4,0},{(128+16)*4,0},{(128+32)*4,0},{(128+48)*4,0},   /* 6-9: gunpop */
-    {128*4,16},{(128+16)*4,16},{(128+32)*4,16},{(128+48)*4,16}, /* 10-13 */
-    {128*4,32},{(128+16)*4,32},{(128+32)*4,32},{(64+16)*4,32}, /* 14-17 */
-    {64*4,48},{(64+16)*4,48},                                   /* 18-19 */
-    {(64+32)*4,0},        /* 20: rocket launcher */
-    {64*4,32},{(64+16)*4,32},{(64+16)*4,48},{64*4,48},          /* 21-24: grenade */
-    {128*4,32},           /* 25: shotgun */
-    {256*4,0},            /* 26: grenade launcher */
-    {64*3*4,32},          /* 27: shotgun shells*4 */
-    {(64*3+32)*4,0},      /* 28: shotgun shells*20 */
-    {(64*3+32)*4,32}      /* 29: grenade clip */
-};
-
-/* Type 2 - BIGBULLET */
-static const SpriteFrame frames_bigbullet[] = {
-    {0,0},{0,32},{32*4,0},{32*4,32},{64*4,0},{64*4,32},{96*4,0},{96*4,32},
-    {128*4,0},{128*4,32},{32*5*4,0},{32*5*4,32},{32*6*4,0},{32*6*4,32},
-    {32*7*4,0},{32*7*4,32},{32*8*4,0},{32*8*4,32},{32*9*4,0},{32*9*4,32}
-};
-
-/* Type 4 - FLYINGMONSTER: 64 cols/frame, 21 frames */
-static const SpriteFrame frames_flying[] = {
-    {0,0},{64*4,0},{64*4*2,0},{64*4*3,0},{64*4*4,0},{64*4*5,0},{64*4*6,0},{64*4*7,0},
-    {64*4*8,0},{64*4*9,0},{64*4*10,0},{64*4*11,0},{64*4*12,0},{64*4*13,0},{64*4*14,0},{64*4*15,0},
-    {64*4*16,0},{64*4*17,0},{64*4*18,0},{64*4*19,0},{64*4*20,0}
-};
-
-/* Type 5 - KEYS: 4 frames */
-static const SpriteFrame frames_keys[] = {
-    {0,0},{0,32},{32*4,0},{32*4,32}
-};
-
-/* Type 6 - ROCKETS: 12 frames */
-static const SpriteFrame frames_rockets[] = {
-    {0,0},{32*4,0},{0,32},{32*4,32},
-    {64*4,0},{(64+32)*4,0},{64*4,32},{(64+32)*4,32},
-    {128*4,0},{(128+32)*4,0},{128*4,32},{(128+32)*4,32}
-};
-
-/* Type 7 - BARREL: 1 frame */
-static const SpriteFrame frames_barrel[] = { {0,0} };
-
-/* Type 8 - EXPLOSION: 9 frames (uses explosion.wad/ptr, not bigbullet) */
-static const SpriteFrame frames_explosion[] = {
-    {0,0},{64*4,0},{64*4*2,0},{64*4*3,0},{64*4*4,0},{64*4*5,0},{64*4*6,0},{64*4*7,0},{64*4*8,0}
-};
-
-/* Type 9 - GUNS (in-hand): handled by gun renderer, but provide frames */
-static const SpriteFrame frames_guns[] = {
-    {96*4*20,0},{96*4*21,0},{96*4*22,0},{96*4*23,0},
-    {96*4*4,0},{96*4*5,0},{96*4*6,0},{96*4*7,0},
-    {96*4*16,0},{96*4*17,0},{96*4*18,0},{96*4*19,0},
-    {96*4*12,0},{96*4*13,0},{96*4*14,0},{96*4*15,0},
-    {96*4*24,0},{96*4*25,0},{96*4*26,0},{96*4*27,0},
-    {0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},
-    {96*4*0,0},{96*4*1,0},{96*4*2,0},{96*4*3,0}
-};
-
-/* Type 10 - MARINE: 19 frames, 64 cols each */
-static const SpriteFrame frames_marine[] = {
-    {0,0},{64*4,0},{(64*2)*4,0},{(64*3)*4,0},{(64*4)*4,0},{(64*5)*4,0},
-    {(64*6)*4,0},{(64*7)*4,0},{(64*8)*4,0},{(64*9)*4,0},{(64*10)*4,0},
-    {(64*11)*4,0},{(64*12)*4,0},{(64*13)*4,0},{(64*14)*4,0},{(64*15)*4,0},
-    {(64*16)*4,0},{(64*17)*4,0},{(64*18)*4,0}
-};
-
-/* Type 11 - BIGALIEN: 4 frames, 128 cols each */
-static const SpriteFrame frames_bigalien[] = {
-    {0,0},{128*4,0},{128*4*2,0},{128*4*3,0}
-};
-
-/* Type 12 - LAMPS: 1 frame */
-static const SpriteFrame frames_lamps[] = { {0,0} };
-
-/* Type 13 - WORM: 21 frames, 90 cols each */
-static const SpriteFrame frames_worm[] = {
-    {0,0},{90*4,0},{90*4*2,0},{90*4*3,0},{90*4*4,0},{90*4*5,0},{90*4*6,0},{90*4*7,0},
-    {90*4*8,0},{90*4*9,0},{90*4*10,0},{90*4*11,0},{90*4*12,0},{90*4*13,0},{90*4*14,0},{90*4*15,0},
-    {90*4*16,0},{90*4*17,0},{90*4*18,0},{90*4*19,0},{90*4*20,0}
-};
-
-/* Type 14 - BIGCLAWS: 18 frames, 128 cols each */
-static const SpriteFrame frames_bigclaws[] = {
-    {0,0},{128*4,0},{128*4*2,0},{128*4*3,0},{128*4*4,0},{128*4*5,0},{128*4*6,0},{128*4*7,0},
-    {128*4*8,0},{128*4*9,0},{128*4*10,0},{128*4*11,0},{128*4*12,0},{128*4*13,0},{128*4*14,0},{128*4*15,0},
-    {128*4*16,0},{128*4*17,0}
-};
-
-/* Type 15 - TREE: 22 frames, 64 cols each (with repeats) */
-static const SpriteFrame frames_tree[] = {
-    {0,0},{64*4,0},{64*2*4,0},{64*3*4,0},
-    {0,0},{64*4,0},{64*2*4,0},{64*3*4,0},
-    {0,0},{64*4,0},{64*2*4,0},{64*3*4,0},
-    {0,0},{64*4,0},{64*2*4,0},{64*3*4,0},
-    {0,0},{0,0},
-    {32*8*4,0},{32*9*4,0},{32*10*4,0},{32*11*4,0}
-};
-
-/* Master lookup: frames table + count per sprite type */
-static const struct {
-    const SpriteFrame *frames;
-    int count;
-} sprite_frames_table[MAX_SPRITE_TYPES] = {
-    { frames_alien,     sizeof(frames_alien)/sizeof(SpriteFrame) },       /* 0 */
-    { frames_pickups,   sizeof(frames_pickups)/sizeof(SpriteFrame) },     /* 1 */
-    { frames_bigbullet, sizeof(frames_bigbullet)/sizeof(SpriteFrame) },   /* 2 */
-    { NULL, 0 },                                                          /* 3 ugly monster */
-    { frames_flying,    sizeof(frames_flying)/sizeof(SpriteFrame) },      /* 4 */
-    { frames_keys,      sizeof(frames_keys)/sizeof(SpriteFrame) },        /* 5 */
-    { frames_rockets,   sizeof(frames_rockets)/sizeof(SpriteFrame) },     /* 6 */
-    { frames_barrel,    sizeof(frames_barrel)/sizeof(SpriteFrame) },      /* 7 */
-    { frames_explosion, sizeof(frames_explosion)/sizeof(SpriteFrame) },   /* 8 */
-    { frames_guns,      sizeof(frames_guns)/sizeof(SpriteFrame) },        /* 9 */
-    { frames_marine,    sizeof(frames_marine)/sizeof(SpriteFrame) },      /* 10 */
-    { frames_bigalien,  sizeof(frames_bigalien)/sizeof(SpriteFrame) },    /* 11 */
-    { frames_lamps,     sizeof(frames_lamps)/sizeof(SpriteFrame) },       /* 12 */
-    { frames_worm,      sizeof(frames_worm)/sizeof(SpriteFrame) },        /* 13 */
-    { frames_bigclaws,  sizeof(frames_bigclaws)/sizeof(SpriteFrame) },    /* 14 */
-    { frames_tree,      sizeof(frames_tree)/sizeof(SpriteFrame) },        /* 15 */
-    { frames_marine,    sizeof(frames_marine)/sizeof(SpriteFrame) },      /* 16 tough (same as 10) */
-    { frames_marine,    sizeof(frames_marine)/sizeof(SpriteFrame) },      /* 17 flame (same as 10) */
-    { NULL, 0 }, { NULL, 0 }
-};
+#include "sprite_frames.h"
 
 /* Map ObjNumber -> enemy_params index (shared with objects.c death handling). */
 static int renderer_obj_type_to_enemy_index(int8_t obj_type)
@@ -12144,6 +11987,132 @@ static void renderer_project_zone_world_clip_y(const RendererState *r,
  * sorts by depth, and draws them back-to-front.
  * ----------------------------------------------------------------------- */
 /* level_filter: -1 = draw all (single-level zone), 0 = lower floor only, 1 = upper floor only (multi-floor). */
+static AB3D_THREAD_LOCAL uint8_t voxel_column_indices[RENDER_INTERNAL_MAX_DIM];
+typedef struct {
+    RenderSliceContext *ctx;
+    uint16_t *cw, *pick_zone;
+    uint32_t *rgb;
+    uint8_t *pick_player;
+    uint16_t palette[32];
+    uint32_t rgb_palette[32];
+    int column, is_spill;
+    float screen_y, plane_top, plane_bottom;
+    uint64_t writes, tested, occluded;
+} VoxelRasterColumn;
+
+static void renderer_emit_voxel_pixel(void *context, int row, uint8_t index, float distance)
+{
+    VoxelRasterColumn *out = context;
+    RendererState *r = &g_renderer;
+    ++out->tested;
+    float plane_y = (row + 0.5f - out->screen_y) * distance;
+    if (plane_y < out->plane_top || plane_y > out->plane_bottom) return;
+    int col = out->column;
+    if (out->is_spill) {
+        const ColumnClip *cc = &r->clip;
+        if ((cc->z[col] > 0 && cc->z[col] < distance && row >= cc->top[col] && row <= cc->bot[col]) ||
+            (cc->z2[col] > 0 && cc->z2[col] < distance && row >= cc->top2[col] && row <= cc->bot2[col])) {
+            ++out->occluded; return;
+        }
+    }
+    size_t pixel = (size_t)row * r->width + col;
+    uint16_t color = out->is_spill && g_debug_spill_visualize ? 0x0f0f : out->palette[index];
+    renderer_cw_store_xy(out->cw, col, row, r->width, r->height, color);
+    if (g_renderer_rgb_raster_expand)
+        out->rgb[pixel] = out->is_spill && g_debug_spill_visualize ? amiga12_to_argb(color) : out->rgb_palette[index];
+    if (out->pick_player && out->ctx->pick_player_id) out->pick_player[pixel] = out->ctx->pick_player_id;
+    if (out->pick_zone && g_debug_spill_visualize) out->pick_zone[pixel] = RENDERER_PICK_ZONE_NONE;
+    ++out->writes;
+}
+
+static void renderer_draw_voxel_ctx(RenderSliceContext *ctx, const GameState *state,
+                                   const VoxelModel *model, int slot, int facing,
+                                   const ObjRotatedPoint *orp, int world_w, int world_h,
+                                   int screen_y, int bright, int clip_left, int clip_right,
+                                   int32_t clip_top_y, int32_t clip_bot_y, int is_spill,
+                                   int zone, int world_x, int world_z)
+{
+    RendererState *r = &g_renderer;
+    uint16_t *cw = renderer_active_cw();
+    uint32_t *rgb = renderer_active_rgb();
+    if (!cw || !rgb) return;
+    uint64_t started = ctx->profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
+    /* RotateObjectPts has x_fine=world_x*64 and z=world_z. BitMapObj's
+     * size uses *128, hence its visible width is twice the object size byte. */
+    float focal = (float)((double)renderer_sprite_scale_x_fp16_for_state(r, state) / 131072.0);
+    int angle = (facing - r->view_angpos) & ANGLE_MASK;
+    VoxelView v;
+    v.focal = focal;
+    v.screen_x = (float)r->view_center_x;
+    v.screen_y = (float)renderer_view_center_y();
+    v.center_z = (float)orp->z / ROT_Z_ONE;
+    /* Preserve BitMapObj's projection and bottom-edge anchor. */
+    v.center_x = (float)orp->x_fine * renderer_proj_x_scale_px() / focal;
+    v.center_y = (screen_y - v.screen_y) * v.center_z / focal;
+    v.width = (float)world_w * 2.0f;
+    v.height = (float)world_h * 2.0f;
+    v.cosine = (float)cos_lookup((int16_t)angle) / 16384.0f;
+    v.sine = (float)sin_lookup((int16_t)angle) / 16384.0f;
+    v.near_z = 1.0f;
+    int bounds[4];
+    if (!voxel_screen_bounds(model, &v, r->width, r->height, bounds)) return;
+    int left = bounds[0], right = bounds[2], top = bounds[1], bottom = bounds[3];
+    if (left < ctx->left_clip) left = ctx->left_clip;
+    if (right > ctx->right_clip) right = ctx->right_clip;
+    if (left < clip_left) left = clip_left;
+    if (right > clip_right) right = clip_right;
+    if (left >= right || top >= bottom) return;
+
+    int starts[RENDERER_GEOM_CLIP_MAX_SPANS], ends[RENDERER_GEOM_CLIP_MAX_SPANS];
+    int ranges = 1;
+    starts[0] = 0; ends[0] = bounds[2] - bounds[0];
+    if (is_spill) {
+        /* Match the existing portal ownership mask, using the volume's full
+         * projected envelope instead of the original flat card's width. */
+        int radius = world_w;
+        int ox = (int)((int64_t)r->cosval * radius / 16384);
+        int oz = (int)(-(int64_t)r->sinval * radius / 16384);
+        ranges = renderer_zone_clip_segment_to_dx_ranges(&state->level, (int16_t)zone,
+            world_x - ox, world_z - oz, world_x + ox, world_z + oz,
+            bounds[2] - bounds[0], 0, bounds[2] - bounds[0],
+            starts, ends, NULL, NULL, RENDERER_GEOM_CLIP_MAX_SPANS);
+    }
+    VoxelRasterColumn out = {0};
+    out.ctx = ctx; out.cw = cw; out.rgb = rgb;
+    out.is_spill = is_spill;
+    out.screen_y = v.screen_y;
+    out.plane_top = ((float)clip_top_y - v.screen_y) * v.center_z;
+    out.plane_bottom = ((float)clip_bot_y - v.screen_y) * v.center_z;
+    if (bright < 0) bright = 0;
+    if (bright > 61) bright = 61;
+    size_t offset = r->sprite_pal_size[slot] >= 960 ? obj_scale_cols[bright] : 0;
+    const uint8_t *pal = r->sprite_pal_data[slot] + offset;
+    for (int i = 1; i < 32; ++i) {
+        out.palette[i] = (uint16_t)((pal[i * 2] << 8) | pal[i * 2 + 1]);
+        out.rgb_palette[i] = amiga12_to_argb(out.palette[i]);
+    }
+    out.pick_zone = renderer_active_pick_zone();
+    out.pick_player = renderer_active_pick_player();
+    for (int col = left; col < right; ++col) {
+        int accepted = 0;
+        for (int i = 0; i < ranges; ++i)
+            if (col - bounds[0] >= starts[i] && col - bounds[0] < ends[i]) { accepted = 1; break; }
+        if (!accepted) continue;
+        out.column = col;
+        voxel_trace_column(model, &v, col, top, bottom, voxel_column_indices,
+                           renderer_emit_voxel_pixel, &out);
+    }
+    if (ctx->profile_collect_stats) {
+        ctx->workload_stats.sprite_calls++;
+        ctx->workload_stats.sprite_columns += (uint64_t)(right - left);
+        ctx->workload_stats.sprite_pixels_visible += out.tested;
+        ctx->workload_stats.sprite_pixels_tested += out.tested;
+        ctx->workload_stats.sprite_pixels_drawn += out.writes;
+        ctx->workload_stats.sprite_pixels_wall_occluded += out.occluded;
+        ctx->workload_stats.ticks_sprite += SDL_GetPerformanceCounter() - started;
+    }
+}
+
 static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int16_t zone_id,
                                   int32_t top_of_room, int32_t bot_of_room,
                                   int level_filter,
@@ -12283,7 +12252,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
 
         /* BitMapObj cull: skip early when a billboard cannot affect this
          * column strip. PolygonObj clips its projected polygons directly. */
-        if (!is_poly_object) {
+        if (!is_poly_object && !state->cfg_voxel_objects) {
             int world_w = spill_world_w;
             int z_for_size = ROT_Z_INT(orp->z);
             if (z_for_size < 1) z_for_size = 1;
@@ -12366,7 +12335,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
             if (orp->z <= ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z)) continue;
 
-            {
+            if (!state->cfg_voxel_objects) {
                 int world_w = spill_world_w;
                 int z_for_size = ROT_Z_INT(orp->z);
                 if (z_for_size < 1) z_for_size = 1;
@@ -12451,7 +12420,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             int32_t orp_z = vz >> (16 - ROT_Z_FRAC_BITS);
             if (orp_z <= ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z)) continue;
 
-            {
+            if (!state->cfg_voxel_objects) {
                 int z_for_size = ROT_Z_INT(orp_z);
                 if (z_for_size < 1) z_for_size = 1;
                 int expl_w_est = 100;
@@ -12584,6 +12553,24 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             scr_y = renderer_sprite_param_i16(scr_y);
             sprite_w = renderer_sprite_param_i16(sprite_w);
             sprite_h = renderer_sprite_param_i16(sprite_h);
+            if (state->cfg_voxel_objects) {
+                const VoxelModel *model = voxel_assets_model(expl_vect, frame_num, 0);
+                if (!model) {
+                    fprintf(stderr, "[VOXEL] Missing explosion model for frame %d\n", frame_num);
+                    abort();
+                }
+                {
+                    ObjRotatedPoint position = {0};
+                    position.x_fine = vx_fine; position.z = orp_z;
+                    ctx->pick_player_id = 0;
+                    renderer_draw_voxel_ctx(ctx, state, model, expl_vect, 0,
+                        &position, expl_world_w, expl_h * EXPLOSION_SIZE_CORRECTION,
+                        scr_y, bright, draw_clip_left, draw_clip_right,
+                        clip_top_y, clip_bot_y, entry_is_spill, zone_id,
+                        state->explosions[ei].x, state->explosions[ei].z);
+                    continue;
+                }
+            }
             if (entry_is_spill) {
                 if (!renderer_spill_draw_still_valid(state,
                                                      entry->source_zone,
@@ -12847,6 +12834,27 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 const uint8_t *pt_ptr = level->object_points + (size_t)(uint16_t)pt_num * 8u;
                 billboard_world_x = (int32_t)rd16(pt_ptr + 0);
                 billboard_world_z = (int32_t)rd16(pt_ptr + 4);
+            }
+
+            if (state->cfg_voxel_objects) {
+                const VoxelModel *model = voxel_assets_model(vect_num, frame_num, drawing_dead);
+                if (!model) {
+                    /* io.c allows absent original slots 3/11. A loaded sprite
+                     * must always have its voxel model; never switch it to a card. */
+                    if (!r->sprite_wad[vect_num] || !r->sprite_ptr[vect_num]) continue;
+                    fprintf(stderr, "[VOXEL] Missing model for slot %d frame %d\n", vect_num, frame_num);
+                    abort();
+                }
+                {
+                    int facing = entry_src == DRAW_SRC_OBJECT && renderer_obj_type_to_enemy_index(obj_number) >= 0 ? rd16(obj + 30) : 0;
+                    if (obj_number == OBJ_NBR_PLR1) facing = state->plr1.angpos;
+                    if (obj_number == OBJ_NBR_PLR2) facing = state->plr2.angpos;
+                    renderer_draw_voxel_ctx(ctx, state, model, vect_num, facing,
+                        orp, world_w, world_h, scr_y, bright, draw_clip_left, draw_clip_right,
+                        clip_top_y, clip_bot_y, entry_is_spill, zone_id,
+                        billboard_world_x, billboard_world_z);
+                    continue;
+                }
             }
 
             if (entry_is_spill) {

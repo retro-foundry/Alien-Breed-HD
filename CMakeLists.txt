@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(ab3d1 VERSION 1.0.0 LANGUAGES C)
+include(CTest)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 set(CMAKE_C_STANDARD 11)
@@ -12,6 +13,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
 else()
   set(_AB3D_NO_THREADS_DEFAULT OFF)
 endif()
+
 option(AB3D_NO_THREADS "Build without renderer threading support (render_threads is ignored at runtime)" ${_AB3D_NO_THREADS_DEFAULT})
 unset(_AB3D_NO_THREADS_DEFAULT)
 option(AB3D_ENABLE_FLOOR_COL_FAST "Enable column-major floor fast path" ON)
@@ -78,6 +80,9 @@ set(SOURCES
     src/player.c
     src/renderer.c
     src/renderer_3dobj.c
+    src/voxel.c
+    src/voxel_build.c
+    src/voxel_assets.c
     src/display.c
     src/input.c
     src/audio.c
@@ -141,6 +146,44 @@ if(NOT EMSCRIPTEN)
   target_link_libraries(ab3d1 PRIVATE SDL2-static)
 endif()
 target_include_directories(ab3d1 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
+
+if(BUILD_TESTING AND NOT EMSCRIPTEN)
+  add_executable(voxel_test tests/voxel_test.c src/voxel.c src/voxel_build.c)
+  target_include_directories(voxel_test PRIVATE src)
+  if(UNIX)
+    target_link_libraries(voxel_test PRIVATE m)
+  endif()
+  add_test(NAME voxel_ray_oracle COMMAND voxel_test)
+  add_executable(voxel_assets_test tests/voxel_assets_test.c tests/voxel_reconstruction.c src/voxel.c src/voxel_build.c
+                 src/voxel_assets.c src/sprite_palettes.c src/sb_decompress.c)
+  target_include_directories(voxel_assets_test PRIVATE src)
+  target_compile_definitions(voxel_assets_test PRIVATE AB3D_STANDALONE_TOOL _CRT_SECURE_NO_WARNINGS)
+  if(UNIX)
+    target_link_libraries(voxel_assets_test PRIVATE m)
+  endif()
+  add_test(NAME voxel_original_assets COMMAND voxel_assets_test "${CMAKE_CURRENT_SOURCE_DIR}/amiga/data")
+endif()
+
+option(AB3D_BUILD_RENDER_TESTS "Build headless full-renderer voxel integration checks" OFF)
+if(BUILD_TESTING AND AB3D_BUILD_RENDER_TESTS AND NOT EMSCRIPTEN)
+  set(VOXEL_SCENE_SOURCES ${SOURCES})
+  list(REMOVE_ITEM VOXEL_SCENE_SOURCES src/main.c)
+  add_executable(voxel_scene_test tests/voxel_scene_test.c ${VOXEL_SCENE_SOURCES})
+  target_include_directories(voxel_scene_test PRIVATE src third_party)
+  target_link_libraries(voxel_scene_test PRIVATE SDL2-static)
+  target_compile_definitions(voxel_scene_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+  if(AB3D_NO_THREADS)
+    target_compile_definitions(voxel_scene_test PRIVATE AB3D_NO_THREADS)
+  endif()
+  if(AB3D_ENABLE_FLOOR_COL_FAST)
+    target_compile_definitions(voxel_scene_test PRIVATE AB3D_ENABLE_FLOOR_COL_FAST=1)
+  endif()
+  if(UNIX)
+    target_link_libraries(voxel_scene_test PRIVATE m)
+  endif()
+  add_dependencies(voxel_scene_test ab3d1)
+  add_test(NAME voxel_level_rendering COMMAND voxel_scene_test)
+endif()
 
 # Incremental build: copy ab3d.ini.template (repo root) -> ab3d.ini beside the exe only if ab3d.ini is missing
 # (so local edits next to the exe are kept). Full Clean/Rebuild: ab3d.ini is listed in ADDITIONAL_CLEAN_FILES,

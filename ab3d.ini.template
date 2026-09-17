@@ -94,6 +94,11 @@ y_proj_scale=100
 # 0 = legacy spill behavior.
 billboard_sprite_rendering_enhancement=1
 
+# Options menu: Objects. 0 = original billboards, 1 = volumetric voxels.
+# Enemy/prop models are converted from the original art once at asset load.
+# Includes shots, explosions and gibs. Uses painter ordering, no depth buffer.
+voxel_objects=1
+
 # 1 = show rounded FPS (same digit font as ammo) at top-left of the letterboxed game area; updates every second.
 # (Alias: fps_counter=0 — same as show_fps=0.)
 show_fps=0

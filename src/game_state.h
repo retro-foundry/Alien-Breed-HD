@@ -390,6 +390,10 @@ typedef struct {
     int16_t         enemy_burn_damage_accum[MAX_OBJECTS];
     int16_t         enemy_burn_particle_timer[MAX_OBJECTS];
 
+    /* Append settings: full saves contain raw GameState bytes, so existing
+     * field offsets must not move. Restored from current options on load. */
+    bool            cfg_voxel_objects;
+
 } GameState;
 
 /* -----------------------------------------------------------------------

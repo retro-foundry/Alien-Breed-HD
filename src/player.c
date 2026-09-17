@@ -2741,6 +2741,7 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     int16_t ini_cfg_audio_buffer_samples = state->cfg_audio_buffer_samples;
     int16_t ini_cfg_y_proj_scale = state->cfg_y_proj_scale;
     bool    ini_cfg_billboard_sprite_rendering_enhancement = state->cfg_billboard_sprite_rendering_enhancement;
+    bool    ini_cfg_voxel_objects = state->cfg_voxel_objects;
     bool    ini_cfg_weapon_draw = state->cfg_weapon_draw;
     bool    ini_cfg_post_tint = state->cfg_post_tint;
     bool    ini_cfg_weapon_post_gl = state->cfg_weapon_post_gl;
@@ -2773,6 +2774,7 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     state->cfg_audio_buffer_samples = ini_cfg_audio_buffer_samples;
     state->cfg_y_proj_scale = ini_cfg_y_proj_scale;
     state->cfg_billboard_sprite_rendering_enhancement = ini_cfg_billboard_sprite_rendering_enhancement;
+    state->cfg_voxel_objects = ini_cfg_voxel_objects;
     state->cfg_weapon_draw = ini_cfg_weapon_draw;
     state->cfg_post_tint = ini_cfg_post_tint;
     state->cfg_weapon_post_gl = ini_cfg_weapon_post_gl;

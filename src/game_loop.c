@@ -69,8 +69,9 @@
 #define INGAME_OPTIONS_MENU_RUN_DEFAULT  3
 #define INGAME_OPTIONS_MENU_FPS_COUNTER  4
 #define INGAME_OPTIONS_MENU_VOLUME       5
-#define INGAME_OPTIONS_MENU_BACK         6
-#define INGAME_OPTIONS_MENU_COUNT        7
+#define INGAME_OPTIONS_MENU_VOXELS       6
+#define INGAME_OPTIONS_MENU_BACK         7
+#define INGAME_OPTIONS_MENU_COUNT        8
 
 #define INGAME_MENU_CONFIRM_YES   0
 #define INGAME_MENU_CONFIRM_NO    1
@@ -543,7 +544,8 @@ static int game_loop_options_menu_item_at_line(int line)
     if (line == 5) return INGAME_OPTIONS_MENU_RUN_DEFAULT;
     if (line == 6) return INGAME_OPTIONS_MENU_FPS_COUNTER;
     if (line == 7) return INGAME_OPTIONS_MENU_VOLUME;
-    if (line == 8) return INGAME_OPTIONS_MENU_BACK;
+    if (line == 8) return INGAME_OPTIONS_MENU_VOXELS;
+    if (line == 9) return INGAME_OPTIONS_MENU_BACK;
     return -1;
 }
 
@@ -855,9 +857,14 @@ static void game_loop_draw_ingame_menu(GameState *state, const GameLoopCtx *ctx)
                  state ? (int)state->cfg_volume : 100);
         display_draw_line_of_text(line, 7);
 
+        snprintf(line, sizeof(line), "%c OBJECTS      : %s",
+                 ctx->ingame_menu_selected == INGAME_OPTIONS_MENU_VOXELS ? '>' : ' ',
+                 state && state->cfg_voxel_objects ? "VOXELS" : "SPRITES");
+        display_draw_line_of_text(line, 8);
+
         display_draw_line_of_text(
             (ctx->ingame_menu_selected == INGAME_OPTIONS_MENU_BACK) ?
-            "> BACK" : "  BACK", 8);
+            "> BACK" : "  BACK", 9);
         game_loop_present_menu(state, ctx);
         return;
     }
@@ -1076,6 +1083,11 @@ static void game_loop_select_options_menu_item(GameState *state, GameLoopCtx *ct
             state->cfg_volume = (int16_t)((volume > 100) ? 0 : volume);
         }
         game_loop_apply_volume(state);
+        break;
+
+    case INGAME_OPTIONS_MENU_VOXELS:
+        state->cfg_voxel_objects = !state->cfg_voxel_objects;
+        settings_save_menu_options(state);
         break;
 
     case INGAME_OPTIONS_MENU_BACK:

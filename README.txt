@@ -47,6 +47,7 @@ GAME / UI
 - Page Up / Page Down: Automap zoom in/out
 - Esc: Open the in-game menu; also releases mouse capture when captured
 - Autosaves: Load from the Autosaves menu
+- Options > Objects: Switch all world billboards between sprites and voxels (saved preference).
 - F5/F9: Quick save/load only when quicksave_load=1 is enabled in ab3d.ini
 - F6: Toggle Gouraud visualize mode
 

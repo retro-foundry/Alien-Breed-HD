@@ -11,6 +11,7 @@
 #include "renderer_3dobj.h"
 #include "game_types.h"
 #include "sprite_palettes.h"
+#include "voxel_assets.h"
 #include <SDL.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -657,6 +658,7 @@ void io_init(void)
 
 void io_shutdown(void)
 {
+    voxel_assets_free();
     /* Free wall texture data */
     for (int i = 0; i < MAX_WALL_TILES; i++) {
         free(g_wall_data[i]);
@@ -1965,6 +1967,9 @@ void io_load_objects(void)
             }
         }
     }
+    if (!voxel_assets_build()) exit(1);
+    printf("[VOXEL] Converted %d models, %.2f MiB of shared column data\n",
+           voxel_assets_count(), (double)voxel_assets_bytes() / (1024.0 * 1024.0));
 }
 
 static int load_first_existing_file(const char *const *candidates,
