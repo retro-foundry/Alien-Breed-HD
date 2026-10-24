@@ -191,6 +191,11 @@ build/Release/ab3d1.exe
 
 ## Weapon redraw workflow (PNG round-trip)
 
+The generatively redrawn 4x weapon artwork is in
+[`assets/weapons/redrawn-4x`](assets/weapons/redrawn-4x/README.txt), with 24
+transparent frames, full-resolution masters, and a preview. These PNGs are
+artwork assets; the legacy runtime/importer described below still uses 96x58.
+
 Use `tools/gun_frames_png.py` to export every in-hand weapon animation frame to PNG,
 edit them, then build a replacement set the game can load without replacing original data files.
 
