@@ -30,6 +30,9 @@
 #include "renderer.h"
 #include "input.h"
 #include "audio.h"
+#ifdef AB3D_DOS
+#include "platform_dos.h"
+#endif
 #include "io.h"
 #include "settings.h"
 #include <stdio.h>
@@ -323,13 +326,21 @@ int play_the_game_poll_level_text_input(GameState *state)
             return -1;
 
         case SDL_KEYDOWN:
-            if (!ev.key.repeat) return 1;
+            if (!ev.key.repeat) {
+#ifdef AB3D_DOS
+                if(display_text_next_page())return 0;
+#endif
+                return 1;
+            }
             break;
 
         case SDL_MOUSEBUTTONDOWN:
         case SDL_CONTROLLERBUTTONDOWN:
         case SDL_JOYBUTTONDOWN:
         case SDL_FINGERDOWN:
+#ifdef AB3D_DOS
+            if(display_text_next_page())return 0;
+#endif
             return 1;
 
         case SDL_WINDOWEVENT:
@@ -391,6 +402,9 @@ int play_the_game_drain_level_text_input(GameState *state)
 
 void play_the_game_clear_level_text(GameState *state)
 {
+#ifdef AB3D_DOS
+    display_text_reset_pages();
+#endif
     if (state) input_clear_keyboard(state->key_map);
     display_clear_text_screen();
 }
@@ -398,6 +412,9 @@ void play_the_game_clear_level_text(GameState *state)
 #if !defined(__EMSCRIPTEN__)
 static void control_level_text_fade_in(GameState *state)
 {
+#ifdef AB3D_DOS
+    display_text_reset_pages();
+#endif
     int steps = play_the_game_level_text_fade_steps();
     for (int step = 0; step < steps; step++) {
         play_the_game_present_level_text(state,
@@ -493,6 +510,10 @@ void play_the_game_prepare_level(GameState *state, bool *copper_screen_ready)
     }
 
     /* ---- Load level data ---- */
+#ifdef AB3D_DOS
+    /* Reload the front-end picture on demand; it is not resident in a level. */
+    display_release_title_memory();
+#endif
     io_load_level_data(&state->level, state->current_level);
     io_load_level_graphics(&state->level, state->current_level);
     io_load_level_clips(&state->level, state->current_level);
@@ -830,11 +851,20 @@ void play_game_load_shared_assets(GameState *state)
 
     /* ---- Load shared assets ---- */
     io_load_walls();
+#ifdef AB3D_DOS
+    dos_memory_report("walls");
+#endif
     io_load_floor();
+#ifdef AB3D_DOS
+    dos_memory_report("floor");
+#endif
     io_load_sky();
     io_load_gun_graphics();
     display_upload_gun_gl_textures();
     io_load_objects();
+#ifdef AB3D_DOS
+    dos_memory_report("sprites");
+#endif
     io_load_vec_objects();
     io_load_sfx();
 

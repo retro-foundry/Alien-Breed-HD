@@ -16,6 +16,7 @@
 #endif
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -52,6 +53,33 @@ static inline void *ab3d_aligned_calloc(size_t align, size_t nmemb, size_t size)
 static inline void ab3d_aligned_free(void *p)
 {
     _aligned_free(p);
+}
+
+#elif defined(AB3D_DOS)
+
+/* The bundled DJGPP memalign rejects ordinary unaligned malloc results.
+ * Own the padding/header so every render allocation has the required alignment. */
+static inline void *ab3d_aligned_alloc(size_t align, size_t size)
+{
+    if (align < sizeof(void *)) align = sizeof(void *);
+    if ((align & (align - 1)) != 0 || size > SIZE_MAX - align - sizeof(void *)) return NULL;
+    void *base = malloc(size + align - 1 + sizeof(void *));
+    if (!base) return NULL;
+    uintptr_t ptr = ((uintptr_t)base + sizeof(void *) + align - 1) & ~(uintptr_t)(align - 1);
+    ((void **)ptr)[-1] = base;
+    return (void *)ptr;
+}
+static inline void *ab3d_aligned_calloc(size_t align, size_t count, size_t size)
+{
+    if (count && size > SIZE_MAX / count) return NULL;
+    size_t total = count * size;
+    void *ptr = ab3d_aligned_alloc(align, total);
+    if (ptr) memset(ptr, 0, total);
+    return ptr;
+}
+static inline void ab3d_aligned_free(void *ptr)
+{
+    if (ptr) free(((void **)ptr)[-1]);
 }
 
 #else /* C11 + POSIX aligned_alloc */

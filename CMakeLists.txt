@@ -5,6 +5,11 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "DOS")
+  include(cmake/dos.cmake)
+  return()
+endif()
+
 # Emscripten: default single-threaded wasm (plain `emcmake cmake ..` + `cmake --build .`). Native: default threaded renderer.
 # Use CMAKE_SYSTEM_NAME (not EMSCRIPTEN): reliable as soon as the Emscripten toolchain has run.
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
@@ -62,31 +67,7 @@ if(NOT EMSCRIPTEN)
   FetchContent_MakeAvailable(SDL2)
 endif()
 
-# All source files
-set(SOURCES
-    src/main.c
-    src/game_state.c
-    src/game_data.c
-    src/math_tables.c
-    src/ai.c
-    src/movement.c
-    src/level.c
-    src/objects.c
-    src/visibility.c
-    src/control_loop.c
-    src/game_loop.c
-    src/player.c
-    src/renderer.c
-    src/renderer_3dobj.c
-    src/display.c
-    src/input.c
-    src/audio.c
-    src/io.c
-    src/settings.c
-    src/logging.c
-    src/sb_decompress.c
-    src/sprite_palettes.c
-)
+include(cmake/game_sources.cmake)
 
 file(GLOB_RECURSE PROJECT_HEADERS
      CONFIGURE_DEPENDS

@@ -29,7 +29,9 @@
 #define printf ab3d_log_printf
 
 /* Define SDL_MAIN_HANDLED before including SDL.h so SDL doesn't hijack main(). */
+#ifndef SDL_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
+#endif
 #include <SDL.h>
 #include "game_types.h"
 #include "game_state.h"
@@ -41,6 +43,11 @@
 #include "io.h"
 #include "renderer_3dobj.h"
 #include "settings.h"
+#ifdef AB3D_DOS
+#include "platform_dos.h"
+#include "game_loop.h"
+#include "renderer.h"
+#endif
 
 #if defined(__EMSCRIPTEN__)
 #include "emscripten_loop.h"
@@ -126,6 +133,9 @@ void tear_down_game(GameState *state)
  */
 int main(int argc, char *argv[])
 {
+#ifdef AB3D_DOS
+    dos_platform_bootstrap(argv[0]);
+#endif
     int log_init_ok;
     int enable_3dobj_anim = 1;
 
@@ -138,6 +148,9 @@ int main(int argc, char *argv[])
         fprintf(stderr, "[LOG] Failed to open log file (expected: %s)\n", ab3d_log_path());
     }
 
+#ifdef AB3D_DOS
+    dos_platform_init(argc, argv);
+#endif
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--3dobj-anim") == 0) {
             enable_3dobj_anim = 1;
@@ -158,6 +171,41 @@ int main(int argc, char *argv[])
     /* Game runs in emscripten_set_main_loop; tear_down + log shutdown happen when the loop ends. */
     return 0;
 #else
+#ifdef AB3D_DOS
+    if(dos_benchmark_frames>0) {
+        dos_memory_report("subsystems ready");
+        play_game_load_shared_assets(&g_state);
+        dos_memory_report("shared assets loaded");
+        if(dos_check_enabled || dos_frontend_check_enabled)dos_check_frontend(&g_state);
+        play_game_apply_front_menu_result(&g_state,GAME_LOOP_FRONT_MENU_NEW_GAME);
+        bool ready=false;
+        play_the_game_prepare_level(&g_state,&ready);
+        dos_check_zone_index(&g_state.level);
+        if(dos_check_enabled)dos_check_saves(&g_state);
+        GameLoopCtx ctx;
+        game_loop_ctx_init(&ctx,&g_state);
+        srand(1);
+        dos_memory_report("level loaded");
+        audio_dos_reset_stats();
+        dos_profile_reset();
+        for(int i=0;i<dos_benchmark_frames && g_state.running;i++) {
+            dos_profile_begin(DOS_UPDATE);
+            if(dos_check_enabled) {
+                if(i%4==0)audio_play_sample((i&4)?21:22,255);
+                audio_set_underwater(i>=dos_benchmark_frames/2);
+            }
+            game_loop_tick(&g_state,&ctx);
+            dos_profile_end();dos_profile_frame();
+        }
+        printf("[DOSBENCH] draws=%d menu=%d buffers=%p %p\n",ctx.frame_count,ctx.ingame_menu_open,
+            (void *)g_renderer.buffer,(void *)g_renderer.cw_buffer);
+        audio_dos_report_stats();
+        dos_benchmark_frames=0;
+        dos_capture_next_frame=1;
+        display_draw_display(&g_state);
+        if(dos_check_enabled)dos_check_ui_screens(&g_state);
+    } else
+#endif
     play_game(&g_state);
     tear_down_game(&g_state);
 

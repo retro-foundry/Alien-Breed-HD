@@ -62,6 +62,13 @@ void display_clear_screen_tint(void);
 void display_draw_line_of_text(const char *text, int line);
 void display_draw_line_of_text_alpha(const char *text, int line, int alpha);
 void display_clear_text_screen(void);
+#ifdef AB3D_DOS
+void display_text_reset_pages(void);
+int display_text_next_page(void);
+void display_dos_check_text_layouts(void);
+void display_dos_check_text_screen(const char *label, int allow_pages);
+void display_dos_check_hud_bounds(GameState *state);
+#endif
 int display_text_line_at_point(int window_x, int window_y, int title_screen,
                                int *out_line);
 

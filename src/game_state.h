@@ -213,6 +213,7 @@ typedef struct {
     int32_t  num_floor_lines;    /* Number of floor/wall line segments (for brute-force collision) */
 
     /* O(1) byte offset into level->data -> zone_adds slot index (LOS / visibility). Built in level_parse. */
+    /* DOS: sorted [offset lo, offset hi, slot] triples, with entry count below. */
     int16_t *zone_index_by_data_offset;
     size_t   zone_index_by_data_offset_len;
 

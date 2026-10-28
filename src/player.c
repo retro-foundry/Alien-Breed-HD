@@ -2102,6 +2102,9 @@ typedef struct {
     bool     valid;
     FullSaveHeader header;
     GameState game_state;
+#ifdef AB3D_DOS
+    FILE *source; /* Validated save payload, read directly into the reloaded level. */
+#endif
     uint8_t *level_data;
     uint8_t *level_graphics;
     uint8_t *level_clips;
@@ -2583,6 +2586,9 @@ static size_t player_save_lift_wall_offsets_size(const LevelState *level)
 
 static void player_save_clear_pending_full_save(void)
 {
+#ifdef AB3D_DOS
+    if(g_full_save_pending.source)fclose(g_full_save_pending.source);
+#endif
     free(g_full_save_pending.level_data);
     free(g_full_save_pending.level_graphics);
     free(g_full_save_pending.level_clips);
@@ -2623,7 +2629,12 @@ static bool player_save_apply_chunk(const char *label, void *dst, size_t dst_siz
                                      const uint8_t *src, uint32_t src_size)
 {
     if (src_size == 0) return true;
+#ifdef AB3D_DOS
+    (void)src;
+    if (!g_full_save_pending.source || !dst) {
+#else
     if (!src || !dst) {
+#endif
         printf("[PLAYER] load: missing destination for %s (%u bytes)\n",
                label ? label : "chunk", (unsigned)src_size);
         return false;
@@ -2633,7 +2644,13 @@ static bool player_save_apply_chunk(const char *label, void *dst, size_t dst_siz
                label ? label : "chunk", dst_size, (unsigned)src_size);
         return false;
     }
+#ifdef AB3D_DOS
+    if(!player_save_read_exact(g_full_save_pending.source,dst,src_size)) {
+        printf("[PLAYER] load: cannot read streamed %s\n",label);return false;
+    }
+#else
     memcpy(dst, src, (size_t)src_size);
+#endif
     return true;
 }
 
@@ -2661,6 +2678,29 @@ static bool player_save_read_full_save(FILE *f, GameState *state, const char *pa
     memset(&g_full_save_pending.game_state, 0, sizeof(g_full_save_pending.game_state));
     if (!player_save_read_exact(f, &g_full_save_pending.game_state, hdr.game_state_size))
         goto fail;
+#ifdef AB3D_DOS
+    /* Validate every byte before accepting the save, then retain its open file.
+     * Staging a second complete level in RAM exceeds a 4 MB DOS PC's budget. */
+    long payload=ftell(f);
+    const uint32_t lengths[]={hdr.level_data_bytes,hdr.level_graphics_bytes,
+        hdr.level_clips_bytes,hdr.player_shot_bytes,hdr.nasty_shot_bytes,
+        hdr.object_points_bytes,hdr.door_data_bytes,hdr.switch_data_bytes,
+        hdr.lift_data_bytes,hdr.zone_adds_bytes,hdr.door_wall_list_bytes,
+        hdr.door_wall_offsets_bytes,hdr.lift_wall_list_bytes,hdr.lift_wall_offsets_bytes,
+        hdr.workspace_bytes,hdr.version>=3u?hdr.automap_seen_bytes:0};
+    unsigned char block[4096];
+    if(payload<0)goto fail;
+    for(unsigned i=0;i<sizeof(lengths)/sizeof(lengths[0]);i++) {
+        uint32_t left=lengths[i];if(left>SAVE_MAX_CHUNK_BYTES)goto fail;
+        while(left) {
+            unsigned n=left>sizeof(block)?sizeof(block):(unsigned)left;
+            if(!player_save_read_exact(f,block,n))goto fail;
+            left-=n;
+        }
+    }
+    if(fseek(f,payload,SEEK_SET))goto fail;
+    g_full_save_pending.source=f;
+#else
     if (!player_save_alloc_read_chunk(f, hdr.level_data_bytes, &g_full_save_pending.level_data))
         goto fail;
     if (!player_save_alloc_read_chunk(f, hdr.level_graphics_bytes, &g_full_save_pending.level_graphics))
@@ -2696,6 +2736,7 @@ static bool player_save_read_full_save(FILE *f, GameState *state, const char *pa
             goto fail;
     }
 
+#endif
     g_full_save_pending.valid = true;
     state->current_level = hdr.current_level;
     printf("[PLAYER] load: full save read (level %d), reloading level to restore state\n",
@@ -2896,14 +2937,24 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
             }
             state->level.automap_seen_cap = count;
 
+#ifndef AB3D_DOS
             const SaveAutomapSeenWallDisk *disk = (const SaveAutomapSeenWallDisk *)g_full_save_pending.automap_seen;
+#endif
             for (uint32_t i = 0; i < count; i++) {
+#ifdef AB3D_DOS
+                SaveAutomapSeenWallDisk record;
+                if(!player_save_read_exact(g_full_save_pending.source,&record,sizeof(record))) {
+                    renderer_automap_unlock();goto fail;
+                }
+#else
+                SaveAutomapSeenWallDisk record=disk[i];
+#endif
                 AutomapSeenWall *w = &state->level.automap_seen_walls[i];
-                w->gfx_off = disk[i].gfx_off;
-                w->x1 = disk[i].x1; w->z1 = disk[i].z1;
-                w->x2 = disk[i].x2; w->z2 = disk[i].z2;
-                w->is_door = (uint8_t)((disk[i].flags & 0x0001u) ? 1u : 0u);
-                w->door_key_id = (uint8_t)((disk[i].flags >> 8) & 0x00FFu);
+                w->gfx_off = record.gfx_off;
+                w->x1 = record.x1; w->z1 = record.z1;
+                w->x2 = record.x2; w->z2 = record.z2;
+                w->is_door = (uint8_t)((record.flags & 0x0001u) ? 1u : 0u);
+                w->door_key_id = (uint8_t)((record.flags >> 8) & 0x00FFu);
                 w->reserved = 0;
             }
             state->level.automap_seen_count = count;
@@ -3351,7 +3402,9 @@ static PlayerSaveLoadResult player_load_from_file(GameState *state,
             fclose(f);
             return PLAYER_SAVE_LOAD_FAILED;
         }
+#ifndef AB3D_DOS
         fclose(f);
+#endif
         return PLAYER_SAVE_LOAD_NEED_LEVEL_RELOAD;
     }
 

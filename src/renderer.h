@@ -16,6 +16,7 @@
 #include "game_state.h"
 #include <stdint.h>
 #include <stddef.h>
+#include "renderer_pixel.h"
 
 /* -----------------------------------------------------------------------
  * Framebuffer dimensions (from AB3DI.s)
@@ -31,7 +32,11 @@
 #define RENDER_DEFAULT_WIDTH  RENDER_WIDTH          /* Default/resize reference width  */
 #define RENDER_DEFAULT_HEIGHT RENDER_HEIGHT         /* Default/resize reference height */
 /* Maximum internal framebuffer width/height (base size × supersampling). */
+#ifdef AB3D_DOS
+#define RENDER_INTERNAL_MAX_DIM 640
+#else
 #define RENDER_INTERNAL_MAX_DIM 8192
+#endif
 /* Sky filtering for HD output.
  * 1 = bilinear sample (smoother in high resolutions), 0 = nearest (Amiga-style blocky). */
 #ifndef SKY_BILINEAR_FILTER
@@ -295,6 +300,7 @@ typedef struct {
     const uint8_t *gun_ptr;   /* 96 columns × 4 bytes (mode + 24-bit offset per column) per frame */
     const uint8_t *gun_pal;   /* 32 × 16-bit 12-bit Amiga color (64 bytes) */
     size_t         gun_wad_size;
+    size_t         gun_ptr_size;
 
     /* Palette (legacy, used as fallback) */
     uint32_t palette[256];
@@ -313,7 +319,7 @@ extern RendererState g_renderer;
  * ----------------------------------------------------------------------- */
 
 /* Initialize renderer (allocate buffers) */
-void renderer_init(void);
+void renderer_init(int width, int height);
 
 /* Shutdown renderer (free buffers) */
 void renderer_shutdown(void);
@@ -330,7 +336,7 @@ void renderer_clear_frame_history(void);
  * Standard backfile: 32832 bytes = 432 x 38 x 2 (big-endian 12-bit words), interpreted in
  * strict Amiga column-major parity mode. Optional rgb_palette_768 is only for non-standard
  * 8-bit indexed sky assets (tex_w*tex_h == data_bytes). */
-void renderer_set_sky_assets(const uint8_t *chunky_pixels, int tex_w, int tex_h, size_t data_bytes,
+void renderer_set_sky_assets(uint8_t *chunky_pixels, int tex_w, int tex_h, size_t data_bytes,
                              const uint8_t *rgb_palette_768);
 
 /* Swap front/back buffers */
@@ -384,7 +390,7 @@ void renderer_automap_preallocate_for_level(LevelState *level);
 #define RENDERER_AUTOMAP_SEGFLAG_PLAYER   0x4000u
 int renderer_automap_collect_line_segments(GameState *state,
                                            int *x0, int *y0, int *x1, int *y1,
-                                           uint16_t *c12, int max_lines);
+                                           uint16_t *c12, int max_lines, int width, int height);
 /* HUD: Amiga12 tint for key condition bit 0..3 (same palette as automap key sprites). */
 uint16_t renderer_key_condition_bit_color_c12(const GameState *state, int bit_index);
 /* HUD: key sprite frame index 0..3 for condition bit (from level key objects / fallback). */
@@ -423,6 +429,9 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                           int16_t brightness, int sprite_type,
                           int32_t clip_top_sy, int32_t clip_bot_sy);
 void renderer_draw_gun(GameState *state);
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+void renderer_dos_check_gun_frames(GameState *state);
+#endif
 
 /* GL weapon/tint post-pass support.
  * When weapon_post_gl is active, renderer_draw_display skips the CPU gun draw;

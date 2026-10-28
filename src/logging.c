@@ -10,6 +10,9 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef AB3D_DOS
+#include <unistd.h>
+#endif
 
 #include <SDL.h>
 
@@ -76,10 +79,14 @@ int ab3d_log_init_file(void)
         return 0;
     }
 
+#ifdef AB3D_DOS
+    /* Share the DOS handle's offset so stderr cannot be overwritten by stdout. */
+    if (dup2(fileno(stdout), fileno(stderr)) < 0) return 0;
+    g_log_stderr = stderr;
+#else
     g_log_stderr = freopen(g_log_path, "a", stderr);
-    if (!g_log_stderr) {
-        return 0;
-    }
+    if (!g_log_stderr) return 0;
+#endif
 
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);

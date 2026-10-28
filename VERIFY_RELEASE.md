@@ -1,6 +1,6 @@
 # Verifying Release Downloads
 
-The Windows and Linux archives attached to a GitHub Release are built by GitHub Actions from the tagged source revision. Stable tags such as `v1.0.0` are published as releases; tags with a prerelease suffix such as `v1.0.0-beta.1` or `v1.0.0-rc.1` are marked as prereleases. Older releases may only include a Windows archive.
+The Windows, Linux and DOS archives attached to a GitHub Release are built by GitHub Actions from the tagged source revision. The DOS package is named `ABHD-DOS.zip`; its build and hardware requirements are described in [the DOS build notes](https://github.com/retro-foundry/Alien-Breed-HD/blob/main/docs/dos-build.md). Stable tags such as `v1.0.0` are published as releases; tags with a prerelease suffix such as `v1.0.0-beta.1` or `v1.0.0-rc.1` are marked as prereleases. Older releases may have fewer platform packages.
 
 ## Verify Checksums
 
@@ -28,6 +28,8 @@ GitHub artifact attestations are created for each packaged archive and the check
 ```bash
 gh attestation verify alien-breed-3d-i-v1.0.0-windows-x64.zip --repo retro-foundry/Alien-Breed-HD
 gh attestation verify alien-breed-3d-i-v1.0.0-linux-x64.tar.gz --repo retro-foundry/Alien-Breed-HD
+
+gh attestation verify ABHD-DOS.zip --repo retro-foundry/Alien-Breed-HD
 gh attestation verify SHA256SUMS.txt --repo retro-foundry/Alien-Breed-HD
 ```
 

@@ -15,6 +15,54 @@ permissions:
   contents: read
 
 jobs:
+  build-dos:
+    name: Build DOS / 486 package
+    if: github.repository == 'retro-foundry/Alien-Breed-HD'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: choco install ffmpeg ninja -y --no-progress
+
+      - name: Set up DOS toolchain and SDL3
+        shell: pwsh
+        run: ./tools/setup_dos.ps1
+
+      - name: Build DOS package
+        shell: pwsh
+        run: ./tools/build_dos.ps1
+
+      - name: Validate DOS archive
+        run: python -m zipfile -t build/dos/ABHD-DOS.zip
+
+      - name: Attest DOS package provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "build/dos/ABHD-DOS.zip"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dos
+          path: build/dos/ABHD-DOS.zip
+          if-no-files-found: error
+
   build-windows:
     name: Build Windows package
     if: github.repository == 'retro-foundry/Alien-Breed-HD'
@@ -163,7 +211,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, build-dos]
     if: github.repository == 'retro-foundry/Alien-Breed-HD'
     runs-on: ubuntu-latest
     permissions:

@@ -21,7 +21,10 @@
 #define AB3D_ATTR_UNUSED
 #endif
 
-#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+#if defined(AB3D_DOS)
+/* One DOS render/game thread: no TLS templates or emulated TLS heap blocks. */
+#define AB3D_THREAD_LOCAL
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
 #define AB3D_THREAD_LOCAL _Thread_local
 #elif defined(_MSC_VER)
 #define AB3D_THREAD_LOCAL __declspec(thread)
@@ -1080,6 +1083,18 @@ int level_connect_to_zone_index(const LevelState *level, int16_t connect)
     return result;
 }
 
+#ifdef AB3D_DOS
+/* Sorted triples [offset low word, offset high word, zone slot]. The dense
+ * desktop index wastes two bytes for every byte of level data, although only
+ * a few hundred zone offsets exist. Preserve the first slot for duplicate offsets. */
+static uint32_t level_dos_zone_offset(const int16_t *entry)
+{ return (uint16_t)entry[0]|((uint32_t)(uint16_t)entry[1]<<16); }
+static int level_dos_zone_offset_compare(const void *left,const void *right)
+{
+    const int16_t *a=left,*b=right;uint32_t x=level_dos_zone_offset(a),y=level_dos_zone_offset(b);
+    return x<y?-1:x>y?1:(a[2]>b[2])-(a[2]<b[2]);
+}
+#endif
 /* Dense map: byte offset into level->data -> first matching zone_adds slot (int16_t -1 = unused). */
 static void level_build_zone_index_by_data_offset(LevelState *level)
 {
@@ -1099,6 +1114,21 @@ static void level_build_zone_index_by_data_offset(LevelState *level)
     if (zone_slots <= 0)
         return;
 
+#ifdef AB3D_DOS
+    int16_t *map=malloc((size_t)zone_slots*3u*sizeof(int16_t));
+    if(!map)return;
+    size_t count=0;
+    for(int z=0;z<zone_slots;z++) {
+        int32_t offset=read_long(level->zone_adds+(size_t)z*4u);
+        if(offset<0 || (size_t)offset>=len)continue;
+        map[count*3]=(int16_t)(offset&65535);
+        map[count*3+1]=(int16_t)((uint32_t)offset>>16);
+        map[count*3+2]=(int16_t)z;count++;
+    }
+    qsort(map,count,3u*sizeof(int16_t),level_dos_zone_offset_compare);
+    level->zone_index_by_data_offset=map;
+    level->zone_index_by_data_offset_len=count;
+#else
     int16_t *map = (int16_t *)malloc(len * sizeof(int16_t));
     if (!map)
         return;
@@ -1115,6 +1145,7 @@ static void level_build_zone_index_by_data_offset(LevelState *level)
 
     level->zone_index_by_data_offset = map;
     level->zone_index_by_data_offset_len = len;
+#endif
 }
 
 int level_zone_index_from_room_offset(const LevelState *level, int32_t room_offset)
@@ -1122,6 +1153,18 @@ int level_zone_index_from_room_offset(const LevelState *level, int32_t room_offs
     if (!level || !level->zone_adds || room_offset < 0)
         return -1;
 
+#ifdef AB3D_DOS
+    if(level->zone_index_by_data_offset && (size_t)room_offset<level->data_byte_count) {
+        size_t low=0,high=level->zone_index_by_data_offset_len;
+        while(low<high) {
+            size_t mid=low+(high-low)/2;
+            uint32_t offset=level_dos_zone_offset(level->zone_index_by_data_offset+mid*3);
+            if(offset<(uint32_t)room_offset)low=mid+1;else high=mid;
+        }
+        const int16_t *entry=level->zone_index_by_data_offset+low*3;
+        return low<level->zone_index_by_data_offset_len && level_dos_zone_offset(entry)==(uint32_t)room_offset?entry[2]:-1;
+    }
+#else
     if (level->zone_index_by_data_offset &&
         (size_t)room_offset < level->zone_index_by_data_offset_len) {
         int16_t z = level->zone_index_by_data_offset[(size_t)room_offset];
@@ -1130,6 +1173,7 @@ int level_zone_index_from_room_offset(const LevelState *level, int32_t room_offs
         return -1;
     }
 
+#endif
     {
         int zone_slots = level_zone_slot_count(level);
         for (int z = 0; z < zone_slots; z++) {

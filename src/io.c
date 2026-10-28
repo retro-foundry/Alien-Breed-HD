@@ -6,6 +6,14 @@
  */
 
 #include "io.h"
+#ifdef AB3D_DOS
+#include "platform_dos.h"
+#define shared_texture_alloc dos_shared_asset_alloc
+#define shared_texture_free dos_shared_asset_free
+#else
+#define shared_texture_alloc malloc
+#define shared_texture_free free
+#endif
 #include "sb_decompress.h"
 #include "renderer.h"
 #include "renderer_3dobj.h"
@@ -72,16 +80,25 @@ static const char *data_base_path(void)
 
 static void make_data_path(char *buf, size_t bufsize, const char *subpath)
 {
+#ifdef AB3D_DOS
+    char logical[512];
+    snprintf(logical,sizeof(logical),"data/%s",subpath);
+    snprintf(buf,bufsize,"%s%s",exe_base_path(),dos_asset_alias(logical));
+#else
     snprintf(buf, bufsize, "%s%s", data_base_path(), subpath);
+#endif
 }
 
 void io_make_data_path(char *buf, size_t bufsize, const char *subpath)
 {
-    snprintf(buf, bufsize, "%s%s", data_base_path(), subpath);
+    make_data_path(buf,bufsize,subpath);
 }
 
 void io_make_exe_path(char *buf, size_t bufsize, const char *subpath)
 {
+#ifdef AB3D_DOS
+    subpath=dos_asset_alias(subpath);
+#endif
     snprintf(buf, bufsize, "%s%s", exe_base_path(), subpath);
 }
 
@@ -610,6 +627,24 @@ static void build_test_level_clips(LevelState *level)
 static uint8_t *g_wall_data[MAX_WALL_TILES];
 /* Storage for loaded .vec file data (forward declaration for io_shutdown) */
 static uint8_t *g_vec_data[POLY_OBJECTS_COUNT];
+static void io_release_gun_graphics(void);
+enum {SCENE_SKY,SCENE_GUN_WAD,SCENE_GUN_PTR,SCENE_GUN_PAL};
+static void *io_scene_alloc(unsigned slot,size_t size)
+{
+#ifdef AB3D_DOS
+    return dos_scene_asset_alloc(slot,size);
+#else
+    (void)slot;return malloc(size);
+#endif
+}
+static void io_scene_free(void *ptr)
+{
+#ifdef AB3D_DOS
+    dos_scene_asset_free(ptr);
+#else
+    free(ptr);
+#endif
+}
 /* Storage for 3D polygon texture assets (TextureMaps / OldTexturePalScaled). */
 static uint8_t *g_poly_tex_maps_data;
 static size_t   g_poly_tex_maps_size;
@@ -674,25 +709,25 @@ void io_shutdown(void)
     free(g_poly_tex_pal_data);
     g_poly_tex_pal_data = NULL;
     g_poly_tex_pal_size = 0;
-    free(g_water_file_data);
+    shared_texture_free(g_water_file_data);
     g_water_file_data = NULL;
     g_water_file_size = 0;
     free(g_water_brighten_data);
     g_water_brighten_data = NULL;
     g_water_brighten_size = 0;
-    free(g_floor_tile_data);
+    shared_texture_free(g_floor_tile_data);
     g_floor_tile_data = NULL;
     free(g_floor_pal_data);
     g_floor_pal_data = NULL;
-    free(g_bump_tile_data);
+    shared_texture_free(g_bump_tile_data);
     g_bump_tile_data = NULL;
-    free(g_smooth_bump_tile_data);
+    shared_texture_free(g_smooth_bump_tile_data);
     g_smooth_bump_tile_data = NULL;
     free(g_bump_pal_data);
     g_bump_pal_data = NULL;
     free(g_smooth_bump_pal_data);
     g_smooth_bump_pal_data = NULL;
-    free(g_sky_file_data);
+    io_scene_free(g_sky_file_data);
     g_sky_file_data = NULL;
     renderer_set_sky_assets(NULL, 0, 0, 0, NULL);
     g_renderer.floor_tile = NULL;
@@ -702,6 +737,7 @@ void io_shutdown(void)
     g_renderer.bump_pal = NULL;
     g_renderer.smooth_bump_pal = NULL;
     renderer_set_water_assets(NULL, 0, NULL, 0);
+    io_release_gun_graphics();
     poly_obj_set_texture_assets(NULL, 0, NULL, 0);
     printf("[IO] shutdown\n");
 }
@@ -763,6 +799,13 @@ int io_load_level_clips(LevelState *level, int level_num)
     io_fatal_missing("level clips", path);
 }
 
+static int io_pointer_in_level_data(const LevelState *level,const void *pointer)
+{
+    /* Real files and generated levels have an exact byte count. Preserve the
+     * existing unknown-size convention only for older caller-supplied data. */
+    size_t extent=level->data_byte_count?level->data_byte_count:1024u*1024u;
+    return level->data && (uintptr_t)pointer-(uintptr_t)level->data<extent;
+}
 void io_release_level_memory(LevelState *level)
 {
     renderer_reset_level_sky_cache();
@@ -785,30 +828,15 @@ void io_release_level_memory(LevelState *level)
     /* player_shot_data and nasty_shot_data point into the data buffer
      * when loaded from real files (level_parse resolves them as offsets
      * into level->data). Only free them if they DON'T point into data. */
-    if (level->player_shot_data && level->data) {
-        uint8_t *d = level->data;
-        if (level->player_shot_data < d || level->player_shot_data > d + 1024*1024) {
-            free(level->player_shot_data);
-        }
-    }
-    level->player_shot_data = NULL;
-
-    if (level->nasty_shot_data && level->data) {
-        uint8_t *d = level->data;
-        if (level->nasty_shot_data < d || level->nasty_shot_data > d + 1024*1024) {
-            free(level->nasty_shot_data);
-        }
-    }
-    level->nasty_shot_data = NULL;
-    level->other_nasty_data = NULL;
-
-    if (level->object_points && level->data) {
-        uint8_t *d = level->data;
-        if (level->object_points < d || level->object_points > d + 1024*1024) {
-            free(level->object_points);
-        }
-    }
-    level->object_points = NULL;
+    if(level->player_shot_data && !io_pointer_in_level_data(level,level->player_shot_data))
+        free(level->player_shot_data);
+    level->player_shot_data=NULL;
+    if(level->nasty_shot_data && !io_pointer_in_level_data(level,level->nasty_shot_data))
+        free(level->nasty_shot_data);
+    level->nasty_shot_data=NULL;level->other_nasty_data=NULL;
+    if(level->object_points && !io_pointer_in_level_data(level,level->object_points))
+        free(level->object_points);
+    level->object_points=NULL;
 
     /* prev_object_points is always a separately-allocated snapshot buffer */
     free(level->prev_object_points);
@@ -972,10 +1000,10 @@ void io_load_floor(void)
     FILE *f = NULL;
 
     /* Reload-safe: free prior allocations and clear renderer pointers. */
-    free(g_floor_tile_data);       g_floor_tile_data = NULL;
+    shared_texture_free(g_floor_tile_data);       g_floor_tile_data = NULL;
     free(g_floor_pal_data);        g_floor_pal_data = NULL;
-    free(g_bump_tile_data);        g_bump_tile_data = NULL;
-    free(g_smooth_bump_tile_data); g_smooth_bump_tile_data = NULL;
+    shared_texture_free(g_bump_tile_data);        g_bump_tile_data = NULL;
+    shared_texture_free(g_smooth_bump_tile_data); g_smooth_bump_tile_data = NULL;
     free(g_bump_pal_data);         g_bump_pal_data = NULL;
     free(g_smooth_bump_pal_data);  g_smooth_bump_pal_data = NULL;
 
@@ -995,7 +1023,7 @@ void io_load_floor(void)
         long len = ftell(f);
         fseek(f, 0, SEEK_SET);
 
-        g_floor_tile_data = (uint8_t *)malloc((size_t)len);
+        g_floor_tile_data = (uint8_t *)shared_texture_alloc((size_t)len);
         if (g_floor_tile_data) {
             fread(g_floor_tile_data, 1, (size_t)len, f);
             printf("[IO] Floor tile: %ld bytes from %s\n", len, path);
@@ -1073,12 +1101,12 @@ void io_load_floor(void)
             long len = ftell(f);
             fseek(f, 0, SEEK_SET);
             if (len > 0) {
-                g_bump_tile_data = (uint8_t *)malloc((size_t)len);
+                g_bump_tile_data = (uint8_t *)shared_texture_alloc((size_t)len);
                 if (g_bump_tile_data && fread(g_bump_tile_data, 1, (size_t)len, f) == (size_t)len) {
                     g_renderer.bump_tile = g_bump_tile_data;
                     printf("[IO] BumpTile: %ld bytes from %s\n", len, path);
                 } else {
-                    free(g_bump_tile_data);
+                    shared_texture_free(g_bump_tile_data);
                     g_bump_tile_data = NULL;
                 }
             }
@@ -1097,13 +1125,13 @@ void io_load_floor(void)
             long len = ftell(f);
             fseek(f, 0, SEEK_SET);
             if (len > 0) {
-                g_smooth_bump_tile_data = (uint8_t *)malloc((size_t)len);
+                g_smooth_bump_tile_data = (uint8_t *)shared_texture_alloc((size_t)len);
                 if (g_smooth_bump_tile_data &&
                     fread(g_smooth_bump_tile_data, 1, (size_t)len, f) == (size_t)len) {
                     g_renderer.smooth_bump_tile = g_smooth_bump_tile_data;
                     printf("[IO] SmoothBumpTile: %ld bytes from %s\n", len, path);
                 } else {
-                    free(g_smooth_bump_tile_data);
+                    shared_texture_free(g_smooth_bump_tile_data);
                     g_smooth_bump_tile_data = NULL;
                 }
             }
@@ -1163,7 +1191,7 @@ void io_load_floor(void)
     }
 
     /* Optional Amiga water assets (used for textured water + underwater tint parity). */
-    free(g_water_file_data);
+    shared_texture_free(g_water_file_data);
     g_water_file_data = NULL;
     g_water_file_size = 0;
     free(g_water_brighten_data);
@@ -1182,12 +1210,12 @@ void io_load_floor(void)
             long len = ftell(f);
             fseek(f, 0, SEEK_SET);
             if (len > 0) {
-                g_water_file_data = (uint8_t *)malloc((size_t)len);
+                g_water_file_data = (uint8_t *)shared_texture_alloc((size_t)len);
                 if (g_water_file_data && fread(g_water_file_data, 1, (size_t)len, f) == (size_t)len) {
                     g_water_file_size = (size_t)len;
                     printf("[IO] WaterFile: %ld bytes from %s\n", len, path);
                 } else {
-                    free(g_water_file_data);
+                    shared_texture_free(g_water_file_data);
                     g_water_file_data = NULL;
                     g_water_file_size = 0;
                 }
@@ -1255,7 +1283,7 @@ static void io_path_filename_to_lower(char *path)
 void io_load_sky(void)
 {
     printf("[IO] Loading sky backdrop...\n");
-    free(g_sky_file_data);
+    io_scene_free(g_sky_file_data);
     g_sky_file_data = NULL;
 
     char path[512];
@@ -1323,9 +1351,9 @@ void io_load_sky(void)
         io_fatal_missing("sky backfile (invalid length)", path);
     }
 
-    g_sky_file_data = (uint8_t *)malloc((size_t)len);
+    g_sky_file_data = (uint8_t *)io_scene_alloc(SCENE_SKY,(size_t)len);
     if (!g_sky_file_data || fread(g_sky_file_data, 1, (size_t)len, f) != (size_t)len) {
-        free(g_sky_file_data);
+        io_scene_free(g_sky_file_data);
         g_sky_file_data = NULL;
         fclose(f);
         io_fatal_missing("sky backfile (read failed)", path);
@@ -1413,10 +1441,18 @@ static FILE *open_gun_file(const char *subpath, const char *filename, char *path
 #define GUN_PTR_FRAME_SIZE (96 * 4)
 #define GUN_PTR_MIN_SIZE   (GUN_PTR_FRAME_SIZE * 28)
 
+static void io_release_gun_graphics(void)
+{
+    io_scene_free((void *)g_renderer.gun_wad);io_scene_free((void *)g_renderer.gun_ptr);io_scene_free((void *)g_renderer.gun_pal);
+    g_renderer.gun_wad=g_renderer.gun_ptr=g_renderer.gun_pal=NULL;
+    g_renderer.gun_wad_size=g_renderer.gun_ptr_size=0;
+}
+
 void io_load_gun_graphics(void)
 {
     printf("[IO] Loading gun graphics...\n");
     extern RendererState g_renderer;
+    io_release_gun_graphics();
 
     g_renderer.gun_wad = NULL;
     g_renderer.gun_ptr = NULL;
@@ -1431,14 +1467,14 @@ void io_load_gun_graphics(void)
         fseek(f, 0, SEEK_END);
         long len = ftell(f);
         fseek(f, 0, SEEK_SET);
-        uint8_t *data = (uint8_t *)malloc((size_t)len);
+        uint8_t *data = (uint8_t *)io_scene_alloc(SCENE_GUN_WAD,(size_t)len);
         if (data) {
             if (fread(data, 1, (size_t)len, f) == (size_t)len) {
                 g_renderer.gun_wad = data;
                 g_renderer.gun_wad_size = (size_t)len;
                 printf("[IO] Gun WAD: %ld bytes from %s\n", len, path);
             } else {
-                free(data);
+                io_scene_free(data);
             }
         }
         fclose(f);
@@ -1452,12 +1488,13 @@ void io_load_gun_graphics(void)
         long len = ftell(f);
         fseek(f, 0, SEEK_SET);
         if (len >= (long)GUN_PTR_MIN_SIZE) {
-            uint8_t *data = (uint8_t *)malloc((size_t)len);
+            uint8_t *data = (uint8_t *)io_scene_alloc(SCENE_GUN_PTR,(size_t)len);
             if (data && fread(data, 1, (size_t)len, f) == (size_t)len) {
                 g_renderer.gun_ptr = data;
+                g_renderer.gun_ptr_size = (size_t)len;
                 printf("[IO] Gun PTR: %ld bytes from %s\n", len, path);
             } else if (data) {
-                free(data);
+                io_scene_free(data);
             }
         } else {
             io_fatal_missing("gun PTR (too small)", path);
@@ -1472,12 +1509,12 @@ void io_load_gun_graphics(void)
         f = open_gun_file("includes/newgunsinhand.pal", "newgunsinhand.pal", path, sizeof(path));
     }
     if (f) {
-        uint8_t *data = (uint8_t *)malloc(64);
+        uint8_t *data = (uint8_t *)io_scene_alloc(SCENE_GUN_PAL,64);
         if (data && fread(data, 1, 64, f) == 64) {
             g_renderer.gun_pal = data;
             printf("[IO] Gun PAL: 64 bytes from %s\n", path);
         } else if (data) {
-            free(data);
+            io_scene_free(data);
         }
         fclose(f);
     } else {
@@ -1915,7 +1952,30 @@ void io_load_objects(void)
 
     for (int i = 0; i < MAX_SPRITE_TYPES; i++) {
         /* Load .wad (packed pixel data) */
-        if (sprite_wad_names[i]) {
+#ifdef AB3D_DOS
+        /* ObjDraw3.ChipRam.s Objects shares the marine graphics across its
+         * three palettes. Sprite slot 9 also uses the in-hand gun's same files.
+         * Only g_sprite_data/ptr_data own allocations; renderer aliases do not. */
+        if(i==9) {
+            g_renderer.sprite_wad[i]=g_renderer.gun_wad;
+            g_renderer.sprite_wad_size[i]=g_renderer.gun_wad_size;
+            g_renderer.sprite_ptr[i]=g_renderer.gun_ptr;
+            g_renderer.sprite_ptr_size[i]=g_renderer.gun_ptr_size;
+        }
+        for(int j=0;j<i;j++) {
+            if(sprite_wad_names[i] && sprite_wad_names[j] &&
+               !strcmp(sprite_wad_names[i],sprite_wad_names[j])) {
+                g_renderer.sprite_wad[i]=g_renderer.sprite_wad[j];
+                g_renderer.sprite_wad_size[i]=g_renderer.sprite_wad_size[j];
+            }
+            if(sprite_ptr_names[i] && sprite_ptr_names[j] &&
+               !strcmp(sprite_ptr_names[i],sprite_ptr_names[j])) {
+                g_renderer.sprite_ptr[i]=g_renderer.sprite_ptr[j];
+                g_renderer.sprite_ptr_size[i]=g_renderer.sprite_ptr_size[j];
+            }
+        }
+#endif
+        if (sprite_wad_names[i] && !g_renderer.sprite_wad[i]) {
             uint8_t *data = NULL; size_t sz = 0;
             if (load_sprite_file(sprite_wad_names[i], NULL, &data, &sz)) {
                 g_sprite_data[i] = data;
@@ -1932,7 +1992,7 @@ void io_load_objects(void)
         }
 
         /* Load .ptr (column pointer table) */
-        if (sprite_ptr_names[i]) {
+        if (sprite_ptr_names[i] && !g_renderer.sprite_ptr[i]) {
             uint8_t *data = NULL; size_t sz = 0;
             if (load_sprite_file(sprite_ptr_names[i], NULL, &data, &sz)) {
                 g_sprite_ptr_data[i] = data;

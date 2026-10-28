@@ -30,6 +30,9 @@
 #include "input.h"
 #include "audio.h"
 #include "settings.h"
+#ifdef AB3D_DOS
+#include "platform_dos.h"
+#endif
 #include <SDL.h>
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
@@ -1525,6 +1528,9 @@ void game_loop_tick(GameState *state, GameLoopCtx *ctx)
          * ================================================================ */
         {
             Uint32 now = SDL_GetTicks();
+#ifdef AB3D_DOS
+            if(dos_fixed_test_ticks)now=ctx->last_ticks+20;
+#endif
             state->current_ticks_ms = (uint32_t)now;
             Uint32 elapsed = now - ctx->last_ticks;
             ctx->last_ticks = now;

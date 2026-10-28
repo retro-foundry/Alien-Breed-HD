@@ -24,7 +24,7 @@ def main():
     if not cache.exists() or "AB3D_NO_THREADS:BOOL=ON" not in cache.read_text():
         parser.error("Build the single-threaded Emscripten target first")
     sources = re.search(r"set\(SOURCES\s+(.*?)\n\)",
-                        (root / "CMakeLists.txt").read_text(), re.S).group(1).split()
+                        (root / "cmake/game_sources.cmake").read_text(), re.S).group(1).split()
     objects = [build / "CMakeFiles/ab3d1.dir" / (source + ".o")
                for source in sources if source not in ("src/main.c", "src/control_loop.c")]
     for obj in objects:

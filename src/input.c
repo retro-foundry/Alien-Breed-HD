@@ -7,6 +7,9 @@
  */
 
 #include "input.h"
+#ifdef AB3D_DOS
+#include "platform_dos.h"
+#endif
 #include "display.h"
 #include "game_state.h"
 #include <SDL.h>
@@ -555,6 +558,10 @@ void input_set_menu_mouse_active(bool active, uint8_t *key_map)
         g_menu_mouse_active = false;
         g_gamepad_menu_axis_x = 0;
         g_gamepad_menu_axis_y = 0;
+#ifdef AB3D_DOS
+        if(SDL_GetHintBoolean("SDL_DOS_SKIP_MOUSE_PUMP",true)==false)
+            input_apply_relative_mouse(SDL_TRUE,key_map);
+#endif
     }
 }
 
@@ -580,6 +587,7 @@ void input_init(void)
     g_quit_requested = false;
     g_f7_spill_visualize_requested = false;
     g_f2_pick_log_requested = false;
+#ifndef AB3D_DOS
     if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) == 0) {
         g_gamecontroller_subsystem_inited = true;
         SDL_GameControllerEventState(SDL_ENABLE);
@@ -587,6 +595,7 @@ void input_init(void)
     } else {
         printf("[INPUT] SDL_InitSubSystem GAMECONTROLLER failed: %s\n", SDL_GetError());
     }
+#endif
     /* Pointer visible until user clicks in the window to capture (fullscreen or windowed). */
     input_apply_relative_mouse(SDL_FALSE, NULL);
     input_emscripten_install_pointer_lock_listener();
@@ -606,7 +615,7 @@ void input_shutdown(void)
 /* -----------------------------------------------------------------------
  * Per-frame polling
  * ----------------------------------------------------------------------- */
-void input_update(uint8_t *key_map, uint8_t *last_pressed)
+static void input_update_impl(uint8_t *key_map, uint8_t *last_pressed)
 {
 #if defined(__EMSCRIPTEN__)
     /* Pointer lock often ends here before SDL gets KEYDOWN(Escape). */
@@ -655,16 +664,18 @@ void input_update(uint8_t *key_map, uint8_t *last_pressed)
                 }
                 break;
             }
-            if (ev.key.keysym.scancode == SDL_SCANCODE_F2) {
-                g_f2_pick_log_requested = true;
-            } else if (ev.key.keysym.scancode == SDL_SCANCODE_F5) {
+            if (ev.key.keysym.scancode == SDL_SCANCODE_F5) {
                 g_f5_save_requested = true;
             } else if (ev.key.keysym.scancode == SDL_SCANCODE_F9) {
                 g_f9_load_requested = true;
+#ifndef AB3D_DOS
+            } else if (ev.key.keysym.scancode == SDL_SCANCODE_F2) {
+                g_f2_pick_log_requested = true;
             } else if (ev.key.keysym.scancode == SDL_SCANCODE_F6) {
                 g_f6_gouraud_visualize_requested = true;
             } else if (ev.key.keysym.scancode == SDL_SCANCODE_F7) {
                 g_f7_spill_visualize_requested = true;
+#endif
 #if !defined(__EMSCRIPTEN__)
             } else if (ev.key.keysym.scancode == SDL_SCANCODE_F11 ||
                        ev.key.keysym.scancode == SDL_SCANCODE_F12) {
@@ -979,4 +990,15 @@ bool input_fullscreen_toggle_requested(void)
     if (!g_fullscreen_toggle_requested) return false;
     g_fullscreen_toggle_requested = false;
     return true;
+}
+
+void input_update(uint8_t *key_map, uint8_t *last_pressed) {
+#ifdef AB3D_DOS
+    dos_profile_begin(DOS_INPUT);
+    audio_dos_pump();
+#endif
+    input_update_impl(key_map,last_pressed);
+#ifdef AB3D_DOS
+    dos_profile_end();
+#endif
 }

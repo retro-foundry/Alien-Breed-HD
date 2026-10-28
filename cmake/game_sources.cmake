@@ -1,0 +1,25 @@
+set(SOURCES
+    src/main.c
+    src/game_state.c
+    src/game_data.c
+    src/math_tables.c
+    src/ai.c
+    src/movement.c
+    src/level.c
+    src/objects.c
+    src/visibility.c
+    src/control_loop.c
+    src/game_loop.c
+    src/player.c
+    src/renderer.c
+    src/renderer_3dobj.c
+    src/display.c
+    src/input.c
+    src/audio.c
+    src/audio_spatial.c
+    src/io.c
+    src/settings.c
+    src/logging.c
+    src/sb_decompress.c
+    src/sprite_palettes.c
+)

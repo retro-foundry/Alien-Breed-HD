@@ -39,6 +39,9 @@ static const uint8_t *g_poly_tex_maps = NULL;
 static size_t         g_poly_tex_maps_size = 0;
 static const uint8_t *g_poly_tex_pal = NULL;
 static size_t         g_poly_tex_pal_size = 0;
+#ifdef AB3D_NATIVE_RGB565
+static uint16_t *g_poly_native_palette;
+#endif
 /* Default in PC port: animated object frame enabled (can be forced static via CLI). */
 static int            g_poly_use_object_frame = 1;
 
@@ -49,6 +52,15 @@ void poly_obj_set_texture_assets(const uint8_t *texture_maps, size_t texture_map
     g_poly_tex_maps_size = texture_maps_size;
     g_poly_tex_pal = texture_pal;
     g_poly_tex_pal_size = texture_pal_size;
+#ifdef AB3D_NATIVE_RGB565
+    free(g_poly_native_palette);g_poly_native_palette=NULL;
+    if(texture_pal && texture_pal_size) {
+        g_poly_native_palette=malloc(texture_pal_size);
+        if(!g_poly_native_palette){fprintf(stderr,"DOS polygon palette allocation failed\n");exit(1);}
+        for(size_t i=0;i+1<texture_pal_size;i+=2)
+            g_poly_native_palette[i/2]=renderer_pixel_from_be(texture_pal+i);
+    }
+#endif
 }
 
 void poly_obj_set_use_object_frame(int enabled)
@@ -349,7 +361,7 @@ static void draw_filled_polygon(const int *sx, const int *sy, int n,
 {
     uint32_t *rgb = renderer_get_active_rgb_target();
     uint16_t *cw = renderer_get_active_cw_target();
-    if (n < 3 || !rgb || !cw) return;
+    if (n < 3 || !cw || (renderer_get_rgb_raster_expand() && !rgb)) return;
 
     int min_y = sy[0], max_y = sy[0];
     for (int i = 1; i < n; i++) {
@@ -384,7 +396,7 @@ static void draw_filled_polygon(const int *sx, const int *sy, int n,
         if (x0 < clip_left)  x0 = clip_left;
         if (x1 > clip_right) x1 = clip_right;
         if (x0 > x1) continue;
-        uint32_t *row = rgb + (size_t)y * W;
+        uint32_t *row = rgb ? rgb + (size_t)y * W : NULL;
         for (int x = x0; x <= x1; x++) {
             if (renderer_get_rgb_raster_expand())
                 row[x] = color;
@@ -718,6 +730,7 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
 
 static inline uint32_t amiga12_to_argb_local(uint16_t w)
 {
+    w=renderer_pixel_to_c12(w);
     uint32_t r4 = (uint32_t)((w >> 8) & 0xF);
     uint32_t g4 = (uint32_t)((w >> 4) & 0xF);
     uint32_t b4 = (uint32_t)(w & 0xF);
@@ -753,6 +766,9 @@ static uint16_t sample_poly_palette_cw(uint8_t pal_idx, int shade_level)
 
     size_t pal_off = (size_t)shade_level * 512u + (size_t)pal_idx * 2u;
     if (pal_off + 1u >= g_poly_tex_pal_size) return 0;
+#ifdef AB3D_NATIVE_RGB565
+    return g_poly_native_palette[pal_off/2];
+#endif
     return (uint16_t)(((uint16_t)g_poly_tex_pal[pal_off] << 8) |
                        (uint16_t)g_poly_tex_pal[pal_off + 1u]);
 }
@@ -776,7 +792,7 @@ static void draw_textured_triangle(const int *sx, const int *sy,
 {
     uint32_t *rgb = renderer_get_active_rgb_target();
     uint16_t *cw = renderer_get_active_cw_target();
-    if (!rgb || !cw) return;
+    if (!cw || (renderer_get_rgb_raster_expand() && !rgb)) return;
 
     int min_x = sx[0], max_x = sx[0];
     int min_y = sy[0], max_y = sy[0];
@@ -803,7 +819,7 @@ static void draw_textured_triangle(const int *sx, const int *sy,
     int H = g_renderer.height;
 
     for (int y = min_y; y <= max_y; y++) {
-        uint32_t *row = rgb + (size_t)y * W;
+        uint32_t *row = rgb ? rgb + (size_t)y * W : NULL;
         double py = (double)y + 0.5;
         for (int x = min_x; x <= max_x; x++) {
             double px = (double)x + 0.5;

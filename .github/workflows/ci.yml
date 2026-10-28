@@ -14,6 +14,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dos:
+    name: DOS / 486 build
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: choco install ffmpeg ninja -y --no-progress
+
+      - name: Set up DOS toolchain and SDL3
+        shell: pwsh
+        run: ./tools/setup_dos.ps1
+
+      - name: Build DOS package
+        shell: pwsh
+        run: ./tools/build_dos.ps1
+
+      - name: Validate DOS archive
+        run: python -m zipfile -t build/dos/ABHD-DOS.zip
+
+      - name: Upload DOS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: dos-486
+          path: build/dos/ABHD-DOS.zip
+          if-no-files-found: error
+
   linux:
     name: Linux x64 build
     runs-on: ubuntu-22.04

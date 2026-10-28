@@ -29,6 +29,9 @@
  */
 
 #include "renderer.h"
+#ifdef AB3D_DOS
+#include "platform_dos.h"
+#endif
 #include "renderer_alloc.h"
 #include "renderer_3dobj.h"
 #include "level.h"
@@ -162,7 +165,10 @@ static inline void renderer_cw_store_xy(uint16_t *cw, int x, int y, int width, i
 #define AB3D_CACHELINE_ALIGN
 #endif
 
-#if defined(_MSC_VER)
+#if defined(AB3D_DOS)
+/* One DOS render/game thread: no TLS templates or emulated TLS heap blocks. */
+#define AB3D_THREAD_LOCAL
+#elif defined(_MSC_VER)
 #define AB3D_THREAD_LOCAL __declspec(thread)
 #elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
 #define AB3D_THREAD_LOCAL _Thread_local
@@ -204,9 +210,38 @@ static AB3D_THREAD_LOCAL uint8_t g_sprite_col_texel_lut[256];
  * ----------------------------------------------------------------------- */
 RendererState g_renderer;
 /* When zero (default), raster skips redundant ARGB writes; display unpacks from cw_buffer. */
+#ifdef AB3D_DOS
+static const int g_renderer_rgb_raster_expand = 0;
+#else
 static int g_renderer_rgb_raster_expand = 0;
+#endif
 /* Set by display.c when the GL weapon/tint post-pass will handle gun+tint this frame. */
 static int s_weapon_post_gl_active = 0;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+static SDL_Surface *g_dos_gun_frames[32],*g_dos_gun_targets[2];
+static SDL_Rect g_dos_gun_crops[32];
+static unsigned char g_dos_gun_empty[32];
+typedef struct { uint16_t x,y,count; } DOSGunRun;
+static DOSGunRun *g_dos_gun_runs[32];
+static int g_dos_gun_run_counts[32];
+static uint16_t *g_dos_gun_target_pixels[2];
+static int g_dos_gun_width,g_dos_gun_height,g_dos_gun_next_target,g_dos_gun_cached_weapon=-1;
+static void renderer_dos_release_gun_frames(void)
+{
+    for(int i=0;i<32;i++) {
+        if(g_dos_gun_frames[i])SDL_DestroySurface(g_dos_gun_frames[i]);
+        g_dos_gun_frames[i]=NULL;
+        g_dos_gun_empty[i]=0;g_dos_gun_crops[i]=(SDL_Rect){0};
+        free(g_dos_gun_runs[i]);g_dos_gun_runs[i]=NULL;g_dos_gun_run_counts[i]=0;
+    }
+    for(int i=0;i<2;i++) {
+        if(g_dos_gun_targets[i])SDL_DestroySurface(g_dos_gun_targets[i]);
+        g_dos_gun_targets[i]=NULL;g_dos_gun_target_pixels[i]=NULL;
+    }
+    g_dos_gun_width=g_dos_gun_height=g_dos_gun_next_target=0;
+    g_dos_gun_cached_weapon=-1;
+}
+#endif
 static int s_gl_water_tint_post_active = 0;
 /* Offscreen picking buffers (front/back swap with render buffers each frame). */
 #define RENDERER_PICK_ZONE_NONE 0xFFFFu
@@ -231,7 +266,7 @@ typedef struct {
 } RendererDebugSpillSpriteRect;
 
 #define RENDERER_DEBUG_SPILL_SPRITE_RECTS_MAX 8192
-static RendererDebugSpillSpriteRect g_debug_spill_sprite_rects[RENDERER_DEBUG_SPILL_SPRITE_RECTS_MAX];
+static RendererDebugSpillSpriteRect *g_debug_spill_sprite_rects;
 static int g_debug_spill_sprite_rect_count = 0;
 static uint64_t g_debug_spill_zone_log_sig = 0;
 static int g_debug_spill_zone_log_valid = 0;
@@ -241,10 +276,10 @@ void renderer_set_gl_water_tint_post_active(int active) { s_gl_water_tint_post_a
 int8_t renderer_get_last_fill_screen_water(void) { return g_renderer.last_fill_screen_water; }
 
 #define RASTER_PUT_PP(pp, val) do { \
-    if (g_renderer_rgb_raster_expand) \
-        *(*(pp))++ = (val); \
-    else \
+    if (*(pp)) { \
+        if (g_renderer_rgb_raster_expand) *(*(pp)) = (val); \
         (*(pp))++; \
+    } \
 } while (0)
 
 /* Horizontal projection reference width (effective logical width used for X projection). */
@@ -434,7 +469,7 @@ typedef struct {
     RendererWorkloadStats workload;
 } RendererF2PickSnapshot;
 
-static RendererF2PickSnapshot g_renderer_f2_pick_snapshot;
+static RendererF2PickSnapshot *g_renderer_f2_pick_snapshot;
 
 typedef struct {
     int active;
@@ -837,7 +872,11 @@ static int automap_stage_ensure_slot_capacity(int stage_slot, uint32_t need_coun
     if (need_count == 0u) return 1;
     if (g_automap_stage_walls[stage_slot] && g_automap_stage_caps[stage_slot] >= need_count) return 1;
 
+    #ifdef AB3D_DOS
+    cap = g_automap_stage_caps[stage_slot]?g_automap_stage_caps[stage_slot]:64u;
+#else
     cap = (g_automap_stage_caps[stage_slot] > 0u) ? g_automap_stage_caps[stage_slot] : 1024u;
+#endif
     while (cap < need_count) {
         if (cap > UINT32_MAX / 2u) {
             cap = need_count;
@@ -958,7 +997,11 @@ static int automap_door_lookup_rebuild_locked(const LevelState *level)
         return 1;
     }
 
+#ifdef AB3D_DOS
+    cap = 8u;
+#else
     cap = 1024u;
+#endif
     while (cap < total_entries || ((uint64_t)cap * 6u) < ((uint64_t)total_entries * 10u)) {
         if (cap > UINT32_MAX / 2u) {
             cap = 1u << 31;
@@ -966,7 +1009,11 @@ static int automap_door_lookup_rebuild_locked(const LevelState *level)
         }
         cap <<= 1u;
     }
+#ifdef AB3D_DOS
+    cap_gfx = 8u;
+#else
     cap_gfx = 1024u;
+#endif
     while (cap_gfx < total_entries || ((uint64_t)cap_gfx * 6u) < ((uint64_t)total_entries * 10u)) {
         if (cap_gfx > UINT32_MAX / 2u) {
             cap_gfx = 1u << 31;
@@ -1819,10 +1866,16 @@ void renderer_automap_unlock(void)
 
 static uint32_t automap_prealloc_estimate_walls(const LevelState *level)
 {
+#ifdef AB3D_DOS
+    /* Reserve from the map size on memory-limited PCs. The existing growth
+     * path still retains every discovered segment if clipping adds more. */
+    return level && level->num_floor_lines > 0 ? (uint32_t)level->num_floor_lines : 256u;
+#else
     (void)level;
     /* Deliberately over-allocate to keep automap inserts allocation-free during
      * gameplay. 262,144 walls ~= 4 MiB for wall entries (+ hash table). */
     return 262144u;
+#endif
 }
 
 void renderer_automap_preallocate_for_level(LevelState *level)
@@ -1860,7 +1913,7 @@ void renderer_automap_preallocate_for_level(LevelState *level)
 
 int renderer_automap_collect_line_segments(GameState *state,
                                            int *x0, int *y0, int *x1, int *y1,
-                                           uint16_t *c12, int max_lines)
+                                           uint16_t *c12, int max_lines, int w, int h)
 {
     if (!state || max_lines < 1 || !x0 || !y0 || !x1 || !y1 || !c12) return 0;
     LevelState *level = &state->level;
@@ -1869,8 +1922,6 @@ int renderer_automap_collect_line_segments(GameState *state,
     int16_t px = (int16_t)(plr->xoff >> 16);
     int16_t pz = (int16_t)(plr->zoff >> 16);
 
-    int w = g_renderer.width;
-    int h = g_renderer.height;
     int cx = w / 2;
     int cy = h / 2;
     const int mx = w - 1; /* horizontal flip: x' = mx - x */
@@ -2042,7 +2093,11 @@ typedef AB3D_CACHELINE_ALIGN struct {
     const uint16_t *floor_pal_cw_levels[FLOOR_PAL_LEVEL_COUNT];
     const uint32_t *floor_pal_rgb_levels[FLOOR_PAL_LEVEL_COUNT];
     uint16_t floor_span_cw_cache[FLOOR_PAL_LEVEL_COUNT][256];
+#ifdef AB3D_DOS
+    uint32_t (*floor_span_rgb_cache)[256]; /* No ARGB raster channel on DOS. */
+#else
     uint32_t floor_span_rgb_cache[FLOOR_PAL_LEVEL_COUNT][256];
+#endif
 } RenderSliceContext;
 #if defined(_MSC_VER)
 #pragma warning(pop)
@@ -2217,7 +2272,11 @@ uint16_t *renderer_get_active_cw_target(void)
 
 void renderer_set_rgb_raster_expand(int enabled)
 {
+#ifdef AB3D_DOS
+    if(enabled){fprintf(stderr,"DOS uses native RGB565 output only\n");exit(1);}
+#else
     g_renderer_rgb_raster_expand = enabled ? 1 : 0;
+#endif
 }
 
 int renderer_get_rgb_raster_expand(void)
@@ -2661,6 +2720,10 @@ static void renderer_debug_spill_note_sprite_rect(int left,
     if (left > right || top > bot) return;
 
     {
+        if(!g_debug_spill_sprite_rects) {
+            g_debug_spill_sprite_rects=malloc(sizeof(*g_debug_spill_sprite_rects)*RENDERER_DEBUG_SPILL_SPRITE_RECTS_MAX);
+            if(!g_debug_spill_sprite_rects){fprintf(stderr,"Cannot allocate spill diagnostic rectangles\n");exit(1);}
+        }
         RendererDebugSpillSpriteRect *r =
             &g_debug_spill_sprite_rects[g_debug_spill_sprite_rect_count++];
         r->left = (int16_t)left;
@@ -2692,16 +2755,16 @@ static void renderer_debug_draw_rect_outline(uint16_t *cw,
     if (left > right || top > bot) return;
 
     for (int x = left; x <= right; x++) {
-        renderer_cw_store_xy(cw, x, top, w, h, c12);
-        renderer_cw_store_xy(cw, x, bot, w, h, c12);
+        renderer_cw_store_xy(cw, x, top, w, h, renderer_pixel_from_c12(c12));
+        renderer_cw_store_xy(cw, x, bot, w, h, renderer_pixel_from_c12(c12));
         if (g_renderer_rgb_raster_expand && rgb) {
             rgb[(size_t)top * (size_t)w + (size_t)x] = c32;
             rgb[(size_t)bot * (size_t)w + (size_t)x] = c32;
         }
     }
     for (int y = top; y <= bot; y++) {
-        renderer_cw_store_xy(cw, left, y, w, h, c12);
-        renderer_cw_store_xy(cw, right, y, w, h, c12);
+        renderer_cw_store_xy(cw, left, y, w, h, renderer_pixel_from_c12(c12));
+        renderer_cw_store_xy(cw, right, y, w, h, renderer_pixel_from_c12(c12));
         if (g_renderer_rgb_raster_expand && rgb) {
             rgb[(size_t)y * (size_t)w + (size_t)left] = c32;
             rgb[(size_t)y * (size_t)w + (size_t)right] = c32;
@@ -2771,9 +2834,9 @@ static void renderer_apply_spill_visualize_debug_overlay(const RendererWorldZone
             if (zone == RENDERER_PICK_ZONE_NONE) continue;
             uint16_t c12 = renderer_debug_zone_color_cw((int16_t)zone);
 #if AB3D_CW_COL_MAJOR
-            renderer_cw_store_xy(cw, x, y, w, h, c12);
+            renderer_cw_store_xy(cw, x, y, w, h, renderer_pixel_from_c12(c12));
 #else
-            cw[idx] = c12;
+            cw[idx] = renderer_pixel_from_c12(c12);
 #endif
             if (g_renderer_rgb_raster_expand && rgb) {
                 rgb[idx] = amiga12_to_argb(c12);
@@ -2805,7 +2868,7 @@ static void renderer_apply_spill_visualize_debug_overlay(const RendererWorldZone
                 if (cx < (int)r->left) cx = (int)r->left;
                 if (cx > (int)r->right) cx = (int)r->right;
                 for (int y = top; y <= bot; y++) {
-                    renderer_cw_store_xy(cw, cx, y, w, h, center_c12);
+                    renderer_cw_store_xy(cw, cx, y, w, h, renderer_pixel_from_c12(center_c12));
                     if (g_renderer_rgb_raster_expand && rgb) {
                         rgb[(size_t)y * (size_t)w + (size_t)cx] = center_c32;
                     }
@@ -2847,7 +2910,7 @@ static void renderer_build_water_brighten_cw_lut(const uint8_t *water_brighten, 
         const uint8_t *src = water_brighten + row * WATER_BRIGHTEN_ROW_BYTES;
         for (int sample = 0; sample < 256; sample++) {
             size_t idx = (size_t)sample * 2u;
-            g_water_brighten_cw_lut[row][sample] = (uint16_t)((src[idx] << 8) | src[idx + 1u]);
+            g_water_brighten_cw_lut[row][sample] = renderer_pixel_from_be(src+idx);
         }
     }
 
@@ -2943,18 +3006,49 @@ void renderer_automap_adjust_scale(int delta_steps)
  * Only 4096 distinct input values exist, so we pre-build a lookup table
  * in renderer_init() and reduce every call site to a single array read.
  * ----------------------------------------------------------------------- */
+#ifndef AB3D_DOS
 static uint32_t amiga12_lut[4096];
+#endif
 /* Rounded 8-bit channel -> 4-bit nibble: exactly matches (v+8)/17 clamp. */
 static uint8_t byte_to_nibble_lut[256];
 /* Exact 4-bit channel blend for alpha 0..255 and packed (bg<<4)|fg nibble pairs. */
+#ifndef AB3D_DOS
 static uint8_t amiga12_blend_nibble_lut[256][256];
+#endif
 static int amiga12_blend_nibble_lut_ready = 0;
 /* Full RGB24 -> Amiga12 lookup table (16,777,216 entries, ~32 MiB). */
 static uint16_t *argb24_to_amiga12_lut = NULL;
 static int argb24_to_amiga12_lut_ready = 0;
 /* Exact floor(x/255) for x in [0, 130050] used by blend_argb. */
 #define DIV255_LUT_MAX 130050u
+#ifndef AB3D_DOS
 static uint16_t div255_lut[DIV255_LUT_MAX + 1u];
+#endif
+static inline unsigned renderer_div255(unsigned value)
+{
+#ifdef AB3D_DOS
+    return value/255u;
+#else
+    return div255_lut[value];
+#endif
+}
+static const uint8_t *renderer_blend_lut(unsigned alpha)
+{
+#ifdef AB3D_DOS
+    static uint8_t cache[4][256],index[256];
+    static int values[4]={-1,-1,-1,-1};
+    static unsigned next;
+    unsigned slot=index[alpha];
+    if(values[slot]!=(int)alpha) {
+        slot=next;next=(next+1)&3;values[slot]=alpha;index[alpha]=slot;
+        for(unsigned bg=0;bg<16;bg++)for(unsigned fg=0;fg<16;fg++)
+            cache[slot][(bg<<4)|fg]=byte_to_nibble_lut[renderer_div255(bg*17u*(255u-alpha)+fg*17u*alpha)];
+    }
+    return cache[slot];
+#else
+    return amiga12_blend_nibble_lut[alpha];
+#endif
+}
 static uint32_t g_render_frame_counter = 0;
 static int g_renderer_zone_trace_active = 0;
 static uint32_t g_renderer_zone_trace_frame_idx = 0;
@@ -4159,21 +4253,26 @@ static void build_argb24_to_amiga12_lut(void)
 
 static void build_amiga12_lut(void)
 {
+#ifndef AB3D_DOS
     for (int i = 0; i < 4096; i++) {
         uint32_t r4 = ((unsigned)i >> 8) & 0xFu;
         uint32_t g4 = ((unsigned)i >> 4) & 0xFu;
         uint32_t b4 =  (unsigned)i       & 0xFu;
         amiga12_lut[i] = RENDER_RGB_RASTER_PIXEL((r4 * 0x11u << 16) | (g4 * 0x11u << 8) | (b4 * 0x11u));
     }
+#endif
     for (int i = 0; i < 256; i++) {
         unsigned n = (unsigned)(i + 8) / 17u;
         if (n > 15u) n = 15u;
         byte_to_nibble_lut[i] = (uint8_t)n;
     }
+#ifndef AB3D_DOS
     for (unsigned i = 0; i <= DIV255_LUT_MAX; i++) {
         div255_lut[i] = (uint16_t)(i / 255u);
     }
+#endif
     amiga12_blend_nibble_lut_ready = 0;
+#ifndef AB3D_DOS
     for (unsigned alpha = 0; alpha < 256u; alpha++) {
         unsigned inv = 255u - alpha;
         uint8_t *alpha_lut = amiga12_blend_nibble_lut[alpha];
@@ -4182,33 +4281,45 @@ static void build_amiga12_lut(void)
             for (unsigned fg4 = 0; fg4 < 16u; fg4++) {
                 unsigned fg8 = fg4 * 0x11u;
                 unsigned pair = (bg4 << 4) | fg4;
-                alpha_lut[pair] = byte_to_nibble_lut[div255_lut[bg8 * inv + fg8 * alpha]];
+                alpha_lut[pair] = byte_to_nibble_lut[renderer_div255(bg8 * inv + fg8 * alpha)];
             }
         }
     }
     amiga12_blend_nibble_lut_ready = 1;
     build_argb24_to_amiga12_lut();
+#else
+    amiga12_blend_nibble_lut_ready = 1;
+#endif
 }
 
 static inline uint32_t amiga12_to_argb(uint16_t w)
 {
+#ifdef AB3D_DOS
+    return RENDER_RGB_RASTER_PIXEL((((w>>8)&15)*17u<<16)|(((w>>4)&15)*17u<<8)|((w&15)*17u));
+#else
     return amiga12_lut[w & 0xFFFu];
+#endif
 }
 
 static inline uint16_t argb_to_amiga12(uint32_t c)
 {
     if (argb24_to_amiga12_lut_ready) {
-        return argb24_to_amiga12_lut[c & 0x00FFFFFFu];
+        return renderer_pixel_from_c12(argb24_to_amiga12_lut[c & 0x00FFFFFFu]);
     }
     uint32_t r4 = (uint32_t)byte_to_nibble_lut[(c >> 16) & 0xFFu];
     uint32_t g4 = (uint32_t)byte_to_nibble_lut[(c >> 8) & 0xFFu];
     uint32_t b4 = (uint32_t)byte_to_nibble_lut[c & 0xFFu];
-    return (uint16_t)((r4 << 8) | (g4 << 4) | b4);
+    return renderer_pixel_from_c12((uint16_t)((r4 << 8) | (g4 << 4) | b4));
 }
 
 uint16_t renderer_argb_to_amiga12(uint32_t argb)
 {
     return argb_to_amiga12(argb);
+}
+
+static inline uint32_t renderer_pixel_to_argb(uint16_t pixel)
+{
+    return amiga12_to_argb(renderer_pixel_to_c12(pixel));
 }
 
 static inline uint32_t blend_argb(uint32_t bg, uint32_t fg, uint32_t alpha_fg)
@@ -4222,22 +4333,27 @@ static inline uint32_t blend_argb(uint32_t bg, uint32_t fg, uint32_t alpha_fg)
     uint32_t fr = (fg >> 16) & 0xFFu;
     uint32_t fg_g = (fg >> 8) & 0xFFu;
     uint32_t fb = fg & 0xFFu;
-    uint32_t r = (uint32_t)div255_lut[br * inv + fr * alpha_fg];
-    uint32_t g = (uint32_t)div255_lut[bg_g * inv + fg_g * alpha_fg];
-    uint32_t b = (uint32_t)div255_lut[bb * inv + fb * alpha_fg];
+    uint32_t r = renderer_div255(br * inv + fr * alpha_fg);
+    uint32_t g = renderer_div255(bg_g * inv + fg_g * alpha_fg);
+    uint32_t b = renderer_div255(bb * inv + fb * alpha_fg);
     return RENDER_RGB_RASTER_PIXEL((r << 16) | (g << 8) | b);
 }
 
 static inline uint16_t blend_amiga12(uint16_t bg, uint16_t fg, uint32_t alpha_fg)
 {
+#ifdef AB3D_NATIVE_RGB565
+    if(alpha_fg>=255u)return fg;
+    if(!alpha_fg)return bg;
+    bg=renderer_pixel_to_c12(bg);fg=renderer_pixel_to_c12(fg);
+#endif
     if (alpha_fg >= 255u) return (uint16_t)(fg & 0x0FFFu);
     if (alpha_fg == 0u) return (uint16_t)(bg & 0x0FFFu);
     if (amiga12_blend_nibble_lut_ready) {
-        const uint8_t *blend_lut = amiga12_blend_nibble_lut[alpha_fg & 0xFFu];
+        const uint8_t *blend_lut = renderer_blend_lut(alpha_fg & 0xFFu);
         uint16_t r4 = blend_lut[((((uint32_t)bg >> 8) & 0xFu) << 4) | (((uint32_t)fg >> 8) & 0xFu)];
         uint16_t g4 = blend_lut[((((uint32_t)bg >> 4) & 0xFu) << 4) | (((uint32_t)fg >> 4) & 0xFu)];
         uint16_t b4 = blend_lut[(((uint32_t)bg & 0xFu) << 4) | ((uint32_t)fg & 0xFu)];
-        return (uint16_t)((r4 << 8) | (g4 << 4) | b4);
+        return renderer_pixel_from_c12((uint16_t)((r4 << 8) | (g4 << 4) | b4));
     }
     uint32_t inv = 255u - alpha_fg;
 
@@ -4249,14 +4365,14 @@ static inline uint16_t blend_amiga12(uint16_t bg, uint16_t fg, uint32_t alpha_fg
     uint32_t fg_g = (((uint32_t)fg >> 4) & 0xFu) * 0x11u;
     uint32_t fb = ((uint32_t)fg & 0xFu) * 0x11u;
 
-    uint32_t r = (uint32_t)div255_lut[br * inv + fr * alpha_fg];
-    uint32_t g = (uint32_t)div255_lut[bg_g * inv + fg_g * alpha_fg];
-    uint32_t b = (uint32_t)div255_lut[bb * inv + fb * alpha_fg];
+    uint32_t r = renderer_div255(br * inv + fr * alpha_fg);
+    uint32_t g = renderer_div255(bg_g * inv + fg_g * alpha_fg);
+    uint32_t b = renderer_div255(bb * inv + fb * alpha_fg);
 
     uint16_t r4 = (uint16_t)byte_to_nibble_lut[r];
     uint16_t g4 = (uint16_t)byte_to_nibble_lut[g];
     uint16_t b4 = (uint16_t)byte_to_nibble_lut[b];
-    return (uint16_t)((r4 << 8) | (g4 << 4) | b4);
+    return renderer_pixel_from_c12((uint16_t)((r4 << 8) | (g4 << 4) | b4));
 }
 
 static void floor_span_prepare_pal_cache(RenderSliceContext *ctx,
@@ -4280,12 +4396,12 @@ static void floor_span_prepare_pal_cache(RenderSliceContext *ctx,
         const uint8_t *lut = pal_lut_src + level * 512;
         for (int ti = 0; ti < 256; ti++) {
             uint16_t cw = (uint16_t)((lut[ti * 2] << 8) | lut[ti * 2 + 1]);
-            ctx->floor_span_cw_cache[level][ti] = cw;
-            ctx->floor_span_rgb_cache[level][ti] = amiga12_to_argb(cw);
+            ctx->floor_span_cw_cache[level][ti] = renderer_pixel_from_c12(cw);
+            if(g_renderer_rgb_raster_expand)ctx->floor_span_rgb_cache[level][ti] = amiga12_to_argb(cw);
         }
         ctx->floor_pal_cache_valid[level] = 1;
         ctx->floor_pal_cw_levels[level] = ctx->floor_span_cw_cache[level];
-        ctx->floor_pal_rgb_levels[level] = ctx->floor_span_rgb_cache[level];
+        ctx->floor_pal_rgb_levels[level] = g_renderer_rgb_raster_expand?ctx->floor_span_rgb_cache[level]:NULL;
     }
 
     *cw_out = ctx->floor_span_cw_cache[level];
@@ -4432,20 +4548,24 @@ static void allocate_buffers(int w, int h)
     g_renderer.buffer = (uint8_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, buf_size, 1);
     g_renderer.back_buffer = (uint8_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, buf_size, 1);
 
+#ifndef AB3D_DOS
     size_t rgb_size = buf_size * sizeof(uint32_t);
     g_renderer.rgb_buffer = (uint32_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, rgb_size);
     g_renderer.rgb_back_buffer = (uint32_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, rgb_size);
+#endif
 
     size_t cw_size = buf_size * sizeof(uint16_t);
     g_renderer.cw_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
     g_renderer.cw_back_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
 
+#ifndef AB3D_DOS
     g_pick_zone_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
     g_pick_zone_back_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
     g_pick_player_buffer = (uint8_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, buf_size);
     g_pick_player_back_buffer = (uint8_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, buf_size);
     if (g_pick_zone_buffer) memset(g_pick_zone_buffer, 0xFF, cw_size);
     if (g_pick_zone_back_buffer) memset(g_pick_zone_back_buffer, 0xFF, cw_size);
+#endif
 
     size_t clip_size = (size_t)w * sizeof(int16_t);
     g_renderer.clip.top = (int16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, clip_size);
@@ -4454,6 +4574,18 @@ static void allocate_buffers(int w, int h)
     g_renderer.clip.top2 = (int16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, clip_size);
     g_renderer.clip.bot2 = (int16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, clip_size);
     g_renderer.clip.z2 = (int32_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, (size_t)w, sizeof(int32_t));
+    if (!g_renderer.buffer || !g_renderer.back_buffer ||
+        !g_renderer.cw_buffer || !g_renderer.cw_back_buffer ||
+#ifndef AB3D_DOS
+        !g_renderer.rgb_buffer || !g_renderer.rgb_back_buffer ||
+        !g_pick_zone_buffer || !g_pick_zone_back_buffer || !g_pick_player_buffer ||
+        !g_pick_player_back_buffer ||
+#endif
+        !g_renderer.clip.top || !g_renderer.clip.bot ||
+        !g_renderer.clip.z || !g_renderer.clip.top2 || !g_renderer.clip.bot2 || !g_renderer.clip.z2) {
+        fprintf(stderr,"[RENDERER] Cannot allocate %dx%d framebuffers and clip tables\n",w,h);
+        exit(1);
+    }
 
     g_renderer.top_clip = 0;
     g_renderer.bot_clip = (int16_t)(h - 1);
@@ -4476,14 +4608,14 @@ static void allocate_buffers(int w, int h)
     (void)renderer_floor_fast_ensure_cols_capacity(w);
 }
 
-void renderer_init(void)
+void renderer_init(int width, int height)
 {
     build_amiga12_lut();
     memset(&g_renderer, 0, sizeof(g_renderer));
     automap_stage_release();
     automap_door_lookup_release();
     automap_key_mask_cache_reset();
-    allocate_buffers(RENDER_WIDTH, RENDER_HEIGHT);
+    allocate_buffers(width, height);
     g_proj_base_width = renderer_proj_effective_base_width_from_dims(g_renderer.width, g_renderer.height);
     g_renderer.view_center_x = (g_renderer.width * 47) / 96;
     g_automap_mutex = SDL_CreateMutex();
@@ -4496,6 +4628,7 @@ void renderer_init(void)
 
 void renderer_resize(int w, int h)
 {
+    if (w == g_renderer.width && h == g_renderer.height && g_renderer.buffer) return;
     if (w < 96) w = 96;
     if (h < 80) h = 80;
     if (w > RENDER_INTERNAL_MAX_DIM) w = RENDER_INTERNAL_MAX_DIM;
@@ -4508,6 +4641,11 @@ void renderer_resize(int w, int h)
 
 void renderer_shutdown(void)
 {
+    free(g_renderer_f2_pick_snapshot);g_renderer_f2_pick_snapshot=NULL;
+    free(g_debug_spill_sprite_rects);g_debug_spill_sprite_rects=NULL;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    renderer_dos_release_gun_frames();
+#endif
     renderer_threads_shutdown();
     renderer_reset_level_sky_cache_internal();
     renderer_floor_fast_release_scratch();
@@ -4539,7 +4677,7 @@ static AB3D_ATTR_UNUSED void init_clear_rows(void)
     if (s_clear_rows_inited) return;
     for (int i = 0; i < CLEAR_ROW_MAX; i++) {
         s_clear_sky_row[i] = RENDER_RGB_CLEAR_SKY_PIXEL;
-        s_clear_sky_cw_row[i] = 0x0EEEu;
+        s_clear_sky_cw_row[i] = renderer_pixel_from_c12(0x0EEEu);
     }
     s_clear_rows_inited = 1;
 }
@@ -4571,7 +4709,7 @@ static void renderer_clear_cw_history_buffer(uint16_t *p, int w, int h)
     } else {
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++)
-                p[(size_t)y * (size_t)w + (size_t)x] = 0x0EEEu;
+                p[(size_t)y * (size_t)w + (size_t)x] = renderer_pixel_from_c12(0x0EEEu);
         }
     }
 }
@@ -4603,7 +4741,7 @@ void renderer_clear_frame_history(void)
     g_pick_capture_armed = 0;
     g_pick_capture_active = 0;
     g_pick_last_frame_valid = 0;
-    renderer_f2_pick_snapshot_clear(&g_renderer_f2_pick_snapshot);
+    renderer_f2_pick_snapshot_clear(g_renderer_f2_pick_snapshot);
 }
 
 void renderer_clear(uint8_t color)
@@ -4657,11 +4795,13 @@ static void renderer_prefill_current_color_from_previous_frame(void)
                g_renderer.cw_back_buffer,
                pixel_count * sizeof(uint16_t));
     }
+#ifndef AB3D_DOS
     if (g_renderer.rgb_buffer && g_renderer.rgb_back_buffer) {
         memcpy(g_renderer.rgb_buffer,
                g_renderer.rgb_back_buffer,
                pixel_count * sizeof(uint32_t));
     }
+#endif
 #endif
 }
 
@@ -4723,7 +4863,7 @@ static inline uint16_t sky_fetch_cw_mode0(int tx, int ty)
     } else {
         off = (size_t)tx * (size_t)s_sky_bytes_per_col + (size_t)ty * 2u;
     }
-    if (off + 1u >= s_sky_data_bytes) return 0x0FFFu;
+    if (off + 1u >= s_sky_data_bytes) return renderer_pixel_from_c12(0x0FFFu);
     return (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1u]);
 }
 
@@ -4741,7 +4881,7 @@ static inline uint16_t sky_fetch_cw_mode0_uc(int tx, int ty)
 
 static AB3D_ATTR_UNUSED inline uint32_t sky_fetch_argb_mode0(int tx, int ty)
 {
-    return amiga12_to_argb(sky_fetch_cw_mode0(tx, ty));
+    return renderer_pixel_to_argb(sky_fetch_cw_mode0(tx, ty));
 }
 
 static inline uint32_t sky_fetch_argb_mode1(int tx, int ty)
@@ -4782,9 +4922,19 @@ static inline uint32_t sky_bilinear_argb(uint32_t c00, uint32_t c10, uint32_t c0
     return RENDER_RGB_RASTER_PIXEL((r << 16) | (g << 8) | b);
 }
 
-void renderer_set_sky_assets(const uint8_t *chunky_pixels, int tex_w, int tex_h, size_t data_bytes,
+void renderer_set_sky_assets(uint8_t *chunky_pixels, int tex_w, int tex_h, size_t data_bytes,
                               const uint8_t *rgb_palette_768)
 {
+#ifdef AB3D_NATIVE_RGB565
+    if(chunky_pixels && tex_w==432 && data_bytes%432u==0 &&
+       (data_bytes/432u)%2u==0 && !(data_bytes==32832u && tex_h==76)) {
+        /* IO owns this mutable asset for the session. Convert in place once. */
+        for(size_t i=0;i+1<data_bytes;i+=2) {
+            uint16_t color=renderer_pixel_from_be(chunky_pixels+i);
+            chunky_pixels[i]=(uint8_t)(color>>8);chunky_pixels[i+1]=(uint8_t)color;
+        }
+    }
+#endif
     s_sky_pixels = chunky_pixels;
     s_sky_tex_w = tex_w > 0 ? tex_w : 1;
     s_sky_tex_h = tex_h > 0 ? tex_h : 1;
@@ -4853,7 +5003,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
     uint16_t *cw = renderer_active_cw();
-    if (!buf || !rgb || !cw) return;
+    if (!buf || !cw || (g_renderer_rgb_raster_expand && !rgb)) return;
     int w = g_renderer.width;
     int h = g_renderer.height;
     if (w < 1 || h < 1) return;
@@ -4885,7 +5035,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
             }
         } else {
             const uint32_t below_px = RENDER_RGB_CLEAR_SKY_PIXEL;
-            const uint16_t below_cw = 0x0EEEu;
+            const uint16_t below_cw = renderer_pixel_from_c12(0x0EEEu);
             for (int y = y0; y < y1; y++) {
                 size_t row = (size_t)y * (size_t)w;
                 for (int x = x0; x < x1; x++) {
@@ -4956,10 +5106,10 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     uint32_t fx = (uint32_t)(tx_fp & 0xFFFF);
                     int tx1 = tx0 + 1;
                     if (tx1 >= tw) tx1 = 0;
-                    uint32_t c00 = amiga12_to_argb(sky_fetch_cw_mode0_uc(tx0, v0));
-                    uint32_t c10 = amiga12_to_argb(sky_fetch_cw_mode0_uc(tx1, v0));
-                    uint32_t c01 = amiga12_to_argb(sky_fetch_cw_mode0_uc(tx0, v1));
-                    uint32_t c11 = amiga12_to_argb(sky_fetch_cw_mode0_uc(tx1, v1));
+                    uint32_t c00 = renderer_pixel_to_argb(sky_fetch_cw_mode0_uc(tx0, v0));
+                    uint32_t c10 = renderer_pixel_to_argb(sky_fetch_cw_mode0_uc(tx1, v0));
+                    uint32_t c01 = renderer_pixel_to_argb(sky_fetch_cw_mode0_uc(tx0, v1));
+                    uint32_t c11 = renderer_pixel_to_argb(sky_fetch_cw_mode0_uc(tx1, v1));
                     uint32_t px = sky_bilinear_argb(c00, c10, c01, c11, fx, fy);
                     size_t p = row + (size_t)x;
                     buf[p] = 0;
@@ -4997,7 +5147,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     size_t p = row + (size_t)x;
                     buf[p] = 0;
                     if (g_renderer_rgb_raster_expand)
-                        rgb[p] = amiga12_to_argb(cw12);
+                        rgb[p] = renderer_pixel_to_argb(cw12);
                     renderer_cw_store_xy(cw, x, y, w, h, cw12);
                     sx_fp += sx_step_fp;
                 }
@@ -5103,7 +5253,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
     {
         init_clear_rows();
         const uint32_t below_px = RENDER_RGB_CLEAR_SKY_PIXEL;
-        const uint16_t below_cw = 0x0EEEu;
+        const uint16_t below_cw = renderer_pixel_from_c12(0x0EEEu);
         size_t row_bytes_rgb = (size_t)(x1 - x0) * sizeof(uint32_t);
         size_t row_bytes_cw = (size_t)(x1 - x0) * sizeof(uint16_t);
         if (w <= CLEAR_ROW_MAX) {
@@ -5247,7 +5397,8 @@ void renderer_log_f2_pick_debug(const GameState *state,
                                 int16_t standing_zone,
                                 int16_t looking_zone)
 {
-    const RendererF2PickSnapshot *snap = &g_renderer_f2_pick_snapshot;
+    const RendererF2PickSnapshot *snap = g_renderer_f2_pick_snapshot;
+    if(!snap){printf("[DEBUG][F2] renderer snapshot unavailable\n");return;}
     const PlayerState *view_plr = (state && state->mode == MODE_SLAVE) ? &state->plr2 : (state ? &state->plr1 : NULL);
     int level_1_indexed = state ? ((state->current_level >= 0) ? ((int)state->current_level + 1) : -1) : -1;
     int player_x = view_plr ? (int)(view_plr->xoff >> 16) : 0;
@@ -5280,7 +5431,7 @@ void renderer_log_f2_pick_debug(const GameState *state,
            fps_frame,
            frame_ms);
 
-    if (!snap->valid) {
+    if (!snap || !snap->valid) {
         printf("[DEBUG][F2] renderer snapshot unavailable\n");
         fflush(stdout);
         return;
@@ -6090,7 +6241,7 @@ static void draw_wall_rasterize_segment(
     uint32_t * AB3D_RESTRICT rgb = renderer_active_rgb();
     uint16_t * AB3D_RESTRICT cw = renderer_active_cw();
     if (!ctx) return;
-    if (!buf || !rgb || !cw) return;
+    if (!buf || !cw || (g_renderer_rgb_raster_expand && !rgb)) return;
 
     const int expand = g_renderer_rgb_raster_expand;
     const int width = g_renderer.width;
@@ -6213,7 +6364,7 @@ static void draw_wall_rasterize_segment(
                 for (int ti = 0; ti < 32; ti++) {
                     int lut_off = lut_block_off + ti * 2;
                     uint16_t c12 = ((uint16_t)pal[lut_off] << 8) | pal[lut_off + 1];
-                    ctx->wall_cache_cw[ti] = c12;
+                    ctx->wall_cache_cw[ti] = renderer_pixel_from_c12(c12);
                     ctx->wall_cache_rgb[ti] = amiga12_to_argb(c12);
                 }
                 ctx->wall_cache_pal = pal;
@@ -6360,7 +6511,7 @@ static void draw_wall_rasterize_segment(
 #define WALL_TEX_E(EL, ER) \
     do { for (int y_ = ct; y_ <= cb; y_++) { \
         AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]); \
-        AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]); \
+        if(rgb)AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]); \
         int ra_ = ((int)(tex_y >> 16) & valand) << 1; \
         uint16_t w_ = ((uint16_t)tex_strip[ra_] << 8) | tex_strip[ra_ + 1]; \
         uint8_t t_ = (uint8_t)((w_ >> pack_shift) & 31u); \
@@ -6400,7 +6551,7 @@ static void draw_wall_rasterize_segment(
             if (expand) {
                 for (int y = ct; y <= cb; y++) {
                     AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
-                    AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]);
+                    if(rgb)AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]);
                     buf[pix] = 2; AB3D_NT_STORE_U16(&cw[pix_cw], cw0); rgb[pix] = rgb0;
                     if (do_ext_l) { buf[pix - 1] = 2; cw[pix_cw - cw_step_x] = cw0; rgb[pix - 1] = rgb0; }
                     if (do_ext_r) { buf[pix + 1] = 2; cw[pix_cw + cw_step_x] = cw0; rgb[pix + 1] = rgb0; }
@@ -6421,7 +6572,7 @@ static void draw_wall_rasterize_segment(
             if (expand) {
                 for (int y = ct; y <= cb; y++) {
                     AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
-                    AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]);
+                    if(rgb)AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]);
                     buf[pix] = 2; rgb[pix] = fallback_rgb; AB3D_NT_STORE_U16(&cw[pix_cw], fallback_cw);
                     if (do_ext_l) { buf[pix - 1] = 2; rgb[pix - 1] = fallback_rgb; cw[pix_cw - cw_step_x] = fallback_cw; }
                     if (do_ext_r) { buf[pix + 1] = 2; rgb[pix + 1] = fallback_rgb; cw[pix_cw + cw_step_x] = fallback_cw; }
@@ -6650,7 +6801,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
     uint16_t *cwbuf = renderer_active_cw();
     uint16_t *pick_zone = renderer_active_pick_zone();
     uint8_t *pick_player = renderer_active_pick_player();
-    if (!buf || !rgb || !cwbuf) return;
+    if (!buf || !cwbuf || (g_renderer_rgb_raster_expand && !rgb)) return;
     if (y < 0 || y >= rs->height) return;
     if (y < (int)ctx->top_clip || y > (int)ctx->bot_clip) return;
 
@@ -6661,7 +6812,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
 #if !RENDER_SKY
     {
         const uint32_t sky_px = RENDER_RGB_CLEAR_SKY_PIXEL;
-        const uint16_t sky_cw = 0x0EEEu;
+        const uint16_t sky_cw = renderer_pixel_from_c12(0x0EEEu);
         int w = rs->width;
         size_t row = (size_t)y * (size_t)w;
         for (int x = xl; x <= xr; x++) {
@@ -6739,7 +6890,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                     if (pick_player) pick_player[p] = 0;
                     buf[p] = 0;
                     if (g_renderer_rgb_raster_expand)
-                        rgb[p] = amiga12_to_argb(cw12);
+                        rgb[p] = renderer_pixel_to_argb(cw12);
                     renderer_cw_store_xy(cwbuf, x, y, w, h, cw12);
                     sx_fp += sx_step_fp;
                 }
@@ -6758,7 +6909,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                     if (pick_player) pick_player[p] = 0;
                     buf[p] = 0;
                     if (g_renderer_rgb_raster_expand)
-                        rgb[p] = amiga12_to_argb(cw12);
+                        rgb[p] = renderer_pixel_to_argb(cw12);
                     renderer_cw_store_xy(cwbuf, x, y, w, h, cw12);
                     sx_fp += sx_step_fp;
                 }
@@ -6856,7 +7007,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
     uint16_t *cwbuf = renderer_active_cw();
-    if (!buf || !rgb || !cwbuf) return;
+    if (!buf || !cwbuf || (g_renderer_rgb_raster_expand && !rgb)) return;
     if (y < 0 || y >= rs->height) return;
     /* Clip to active slice vertical band (full height for column-threaded workers). */
     if (y < (int)ctx->top_clip || y > (int)ctx->bot_clip) return;
@@ -6997,7 +7148,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         }
     }
     uint8_t *row8 = buf + (size_t)y * w + (size_t)xl;
-    uint32_t *row32 = rgb + (size_t)y * w + (size_t)xl;
+    uint32_t *row32 = rgb ? rgb + (size_t)y * w + (size_t)xl : NULL;
     uint16_t *row16 = cwbuf + (size_t)y * w + (size_t)xl;
     const int cw_col_major = AB3D_CW_COL_MAJOR;
     const int floor_cw_nt = (cw_col_major && !is_water);
@@ -7054,7 +7205,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             uint32_t *p32 = row32;
             uint16_t *p16 = row16;
             size_t p16_idx = row16_idx;
-            const uint32_t *span_rgb = ctx->floor_span_rgb_cache[floor_pal_level];
+            const uint32_t *span_rgb = g_renderer_rgb_raster_expand?ctx->floor_span_rgb_cache[floor_pal_level]:NULL;
             uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
             uint32_t v_pf = v_fp + (uint32_t)v_step * 8u;
             int i = 0;
@@ -7092,7 +7243,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 _mm_storel_epi64((__m128i *)(void *)p16, qcw);
                 *(uint32_t *)(void *)p8 = 0x01010101u;
                 p8 += 4;
-                p32 += 4;
+                if(p32)p32 += 4;
                 p16 += 4;
             }
 #endif
@@ -7122,7 +7273,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     p32[1] = span_rgb[t1];
                     p32[2] = span_rgb[t2];
                     p32[3] = span_rgb[t3];
-                    p32 += 4;
+                    if(p32)p32 += 4;
 
                     AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t0]); p16_idx += cw_step_x;
                     AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t1]); p16_idx += cw_step_x;
@@ -7251,7 +7402,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             ? g_water_level_phase_lut[g_water_src_phase & 7u]
             : NULL;
         const uint8_t *water_blend_nibble_lut = amiga12_blend_nibble_lut_ready
-            ? amiga12_blend_nibble_lut[water_refr_frac & 0xFFu]
+            ? renderer_blend_lut(water_refr_frac & 0xFFu)
             : NULL;
         uint32_t dist_off = (((uint32_t)dist) & 0xFF00u) << 1;
         if (dist_off > (uint32_t)(12 * 512)) dist_off = (uint32_t)(12 * 512);
@@ -7287,10 +7438,10 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 water_d5 &= 0x3F3Fu;
                                 uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
                                 uint8_t water_level = water_phase_lut[water_idx];
-                                uint16_t out_cw = g_water_brighten_cw_lut[water_brighten_row_base + water_level][cwbuf[bg_cw_i0] & 0xFFu];
+                                uint16_t out_cw = g_water_brighten_cw_lut[water_brighten_row_base + water_level][renderer_pixel_gb_index(cwbuf[bg_cw_i0])];
 
                                 *p8++ = 4;
-                                p32++;
+                                if(p32)p32++;
                                 FLOOR_CW_STORE_P16(out_cw);
                             }
                         } else {
@@ -7311,14 +7462,14 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 uint16_t bg_cw0 = cwbuf[bg_cw_i0];
                                 uint16_t out_cw;
                                 if (water_has_brighten_cw_lut) {
-                                    out_cw = g_water_brighten_cw_lut[water_brighten_row_base + water_level][bg_cw0 & 0xFFu];
+                                    out_cw = g_water_brighten_cw_lut[water_brighten_row_base + water_level][renderer_pixel_gb_index(bg_cw0)];
                                 } else {
-                                    size_t bi0 = ((size_t)water_level << 9) + (size_t)(bg_cw0 & 0xFFu) * 2u;
-                                    out_cw = (uint16_t)((water_brighten[bi0] << 8) | water_brighten[bi0 + 1u]);
+                                    size_t bi0 = ((size_t)water_level << 9) + (size_t)(renderer_pixel_gb_index(bg_cw0)) * 2u;
+                                    out_cw = renderer_pixel_from_be(water_brighten+bi0);
                                 }
 
                                 *p8++ = 4;
-                                p32++;
+                                if(p32)p32++;
                                 FLOOR_CW_STORE_P16(out_cw);
                             }
                         }
@@ -7343,14 +7494,14 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
 
                             uint16_t out_cw;
                             if (water_has_brighten_cw_lut) {
-                                out_cw = g_water_brighten_cw_lut[water_brighten_row_base + water_level][bg_cw0 & 0xFFu];
+                                out_cw = g_water_brighten_cw_lut[water_brighten_row_base + water_level][renderer_pixel_gb_index(bg_cw0)];
                             } else {
-                                size_t bi0 = ((size_t)water_level << 9) + (size_t)(bg_cw0 & 0xFFu) * 2u;
-                                out_cw = (uint16_t)((water_brighten[bi0] << 8) | water_brighten[bi0 + 1u]);
+                                size_t bi0 = ((size_t)water_level << 9) + (size_t)(renderer_pixel_gb_index(bg_cw0)) * 2u;
+                                out_cw = renderer_pixel_from_be(water_brighten+bi0);
                             }
 
                             *p8++ = 4;
-                            p32++;
+                            if(p32)p32++;
                             FLOOR_CW_STORE_P16(out_cw);
                         }
                     }
@@ -7369,15 +7520,15 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
                                 uint8_t water_level = water_phase_lut[water_idx];
                                 const uint16_t *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
-                                uint16_t out_cw0 = brighten_row[cwbuf[bg_cw_i0] & 0xFFu];
-                                uint16_t out_cw1 = brighten_row[cwbuf[bg_cw_i1] & 0xFFu];
-                                uint16_t r4 = water_blend_nibble_lut[((((uint32_t)out_cw0 >> 8) & 0xFu) << 4) | (((uint32_t)out_cw1 >> 8) & 0xFu)];
-                                uint16_t g4 = water_blend_nibble_lut[((((uint32_t)out_cw0 >> 4) & 0xFu) << 4) | (((uint32_t)out_cw1 >> 4) & 0xFu)];
-                                uint16_t b4 = water_blend_nibble_lut[(((uint32_t)out_cw0 & 0xFu) << 4) | ((uint32_t)out_cw1 & 0xFu)];
+                                uint16_t out_cw0 = brighten_row[renderer_pixel_gb_index(cwbuf[bg_cw_i0])];
+                                uint16_t out_cw1 = brighten_row[renderer_pixel_gb_index(cwbuf[bg_cw_i1])];
+                                uint16_t r4 = water_blend_nibble_lut[((((uint32_t)renderer_pixel_to_c12(out_cw0) >> 8) & 0xFu) << 4) | (((uint32_t)renderer_pixel_to_c12(out_cw1) >> 8) & 0xFu)];
+                                uint16_t g4 = water_blend_nibble_lut[((((uint32_t)renderer_pixel_to_c12(out_cw0) >> 4) & 0xFu) << 4) | (((uint32_t)renderer_pixel_to_c12(out_cw1) >> 4) & 0xFu)];
+                                uint16_t b4 = water_blend_nibble_lut[(((uint32_t)renderer_pixel_to_c12(out_cw0) & 0xFu) << 4) | ((uint32_t)renderer_pixel_to_c12(out_cw1) & 0xFu)];
 
                                 *p8++ = 4;
-                                p32++;
-                                FLOOR_CW_STORE_P16((uint16_t)((r4 << 8) | (g4 << 4) | b4));
+                                if(p32)p32++;
+                                FLOOR_CW_STORE_P16(renderer_pixel_from_c12((uint16_t)((r4 << 8) | (g4 << 4) | b4)));
                             }
                         } else {
                             for (int i = 0; i < span_len; i++, bg_i0++, bg_i1++, bg_cw_i0 += cw_step_x, bg_cw_i1 += cw_step_x) {
@@ -7400,22 +7551,22 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 uint16_t out_cw1;
                                 if (water_has_brighten_cw_lut) {
                                     const uint16_t *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
-                                    out_cw0 = brighten_row[bg_cw0 & 0xFFu];
-                                    out_cw1 = brighten_row[bg_cw1 & 0xFFu];
+                                    out_cw0 = brighten_row[renderer_pixel_gb_index(bg_cw0)];
+                                    out_cw1 = brighten_row[renderer_pixel_gb_index(bg_cw1)];
                                 } else {
-                                    size_t bi0 = ((size_t)water_level << 9) + (size_t)(bg_cw0 & 0xFFu) * 2u;
-                                    size_t bi1 = ((size_t)water_level << 9) + (size_t)(bg_cw1 & 0xFFu) * 2u;
-                                    out_cw0 = (uint16_t)((water_brighten[bi0] << 8) | water_brighten[bi0 + 1u]);
-                                    out_cw1 = (uint16_t)((water_brighten[bi1] << 8) | water_brighten[bi1 + 1u]);
+                                    size_t bi0 = ((size_t)water_level << 9) + (size_t)(renderer_pixel_gb_index(bg_cw0)) * 2u;
+                                    size_t bi1 = ((size_t)water_level << 9) + (size_t)(renderer_pixel_gb_index(bg_cw1)) * 2u;
+                                    out_cw0 = renderer_pixel_from_be(water_brighten+bi0);
+                                    out_cw1 = renderer_pixel_from_be(water_brighten+bi1);
                                 }
 
                                 *p8++ = 4;
-                                p32++;
+                                if(p32)p32++;
                                 if (water_blend_nibble_lut) {
-                                    uint16_t r4 = water_blend_nibble_lut[((((uint32_t)out_cw0 >> 8) & 0xFu) << 4) | (((uint32_t)out_cw1 >> 8) & 0xFu)];
-                                    uint16_t g4 = water_blend_nibble_lut[((((uint32_t)out_cw0 >> 4) & 0xFu) << 4) | (((uint32_t)out_cw1 >> 4) & 0xFu)];
-                                    uint16_t b4 = water_blend_nibble_lut[(((uint32_t)out_cw0 & 0xFu) << 4) | ((uint32_t)out_cw1 & 0xFu)];
-                                    FLOOR_CW_STORE_P16((uint16_t)((r4 << 8) | (g4 << 4) | b4));
+                                    uint16_t r4 = water_blend_nibble_lut[((((uint32_t)renderer_pixel_to_c12(out_cw0) >> 8) & 0xFu) << 4) | (((uint32_t)renderer_pixel_to_c12(out_cw1) >> 8) & 0xFu)];
+                                    uint16_t g4 = water_blend_nibble_lut[((((uint32_t)renderer_pixel_to_c12(out_cw0) >> 4) & 0xFu) << 4) | (((uint32_t)renderer_pixel_to_c12(out_cw1) >> 4) & 0xFu)];
+                                    uint16_t b4 = water_blend_nibble_lut[(((uint32_t)renderer_pixel_to_c12(out_cw0) & 0xFu) << 4) | ((uint32_t)renderer_pixel_to_c12(out_cw1) & 0xFu)];
+                                    FLOOR_CW_STORE_P16(renderer_pixel_from_c12((uint16_t)((r4 << 8) | (g4 << 4) | b4)));
                                 } else {
                                     FLOOR_CW_STORE_P16(blend_amiga12(out_cw0, out_cw1, (uint32_t)water_refr_frac));
                                 }
@@ -7447,22 +7598,22 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                             uint16_t out_cw1;
                             if (water_has_brighten_cw_lut) {
                                 const uint16_t *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
-                                out_cw0 = brighten_row[bg_cw0 & 0xFFu];
-                                out_cw1 = brighten_row[bg_cw1 & 0xFFu];
+                                out_cw0 = brighten_row[renderer_pixel_gb_index(bg_cw0)];
+                                out_cw1 = brighten_row[renderer_pixel_gb_index(bg_cw1)];
                             } else {
-                                size_t bi0 = ((size_t)water_level << 9) + (size_t)(bg_cw0 & 0xFFu) * 2u;
-                                size_t bi1 = ((size_t)water_level << 9) + (size_t)(bg_cw1 & 0xFFu) * 2u;
-                                out_cw0 = (uint16_t)((water_brighten[bi0] << 8) | water_brighten[bi0 + 1u]);
-                                out_cw1 = (uint16_t)((water_brighten[bi1] << 8) | water_brighten[bi1 + 1u]);
+                                size_t bi0 = ((size_t)water_level << 9) + (size_t)(renderer_pixel_gb_index(bg_cw0)) * 2u;
+                                size_t bi1 = ((size_t)water_level << 9) + (size_t)(renderer_pixel_gb_index(bg_cw1)) * 2u;
+                                out_cw0 = renderer_pixel_from_be(water_brighten+bi0);
+                                out_cw1 = renderer_pixel_from_be(water_brighten+bi1);
                             }
 
                             *p8++ = 4;
-                            p32++;
+                            if(p32)p32++;
                             if (water_blend_nibble_lut) {
-                                uint16_t r4 = water_blend_nibble_lut[((((uint32_t)out_cw0 >> 8) & 0xFu) << 4) | (((uint32_t)out_cw1 >> 8) & 0xFu)];
-                                uint16_t g4 = water_blend_nibble_lut[((((uint32_t)out_cw0 >> 4) & 0xFu) << 4) | (((uint32_t)out_cw1 >> 4) & 0xFu)];
-                                uint16_t b4 = water_blend_nibble_lut[(((uint32_t)out_cw0 & 0xFu) << 4) | ((uint32_t)out_cw1 & 0xFu)];
-                                FLOOR_CW_STORE_P16((uint16_t)((r4 << 8) | (g4 << 4) | b4));
+                                uint16_t r4 = water_blend_nibble_lut[((((uint32_t)renderer_pixel_to_c12(out_cw0) >> 8) & 0xFu) << 4) | (((uint32_t)renderer_pixel_to_c12(out_cw1) >> 8) & 0xFu)];
+                                uint16_t g4 = water_blend_nibble_lut[((((uint32_t)renderer_pixel_to_c12(out_cw0) >> 4) & 0xFu) << 4) | (((uint32_t)renderer_pixel_to_c12(out_cw1) >> 4) & 0xFu)];
+                                uint16_t b4 = water_blend_nibble_lut[(((uint32_t)renderer_pixel_to_c12(out_cw0) & 0xFu) << 4) | ((uint32_t)renderer_pixel_to_c12(out_cw1) & 0xFu)];
+                                FLOOR_CW_STORE_P16(renderer_pixel_from_c12((uint16_t)((r4 << 8) | (g4 << 4) | b4)));
                             } else {
                                 FLOOR_CW_STORE_P16(blend_amiga12(out_cw0, out_cw1, (uint32_t)water_refr_frac));
                             }
@@ -7509,7 +7660,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             uint32_t bg0 = 0;
             if (expand)
                 bg0 = rgb[bg_i0];
-            uint8_t bg_sample0 = (uint8_t)(bg_cw0 & 0xFFu);
+            uint8_t bg_sample0 = (uint8_t)(renderer_pixel_gb_index(bg_cw0));
 
             uint32_t bg1 = bg0;
             uint16_t bg_cw1 = bg_cw0;
@@ -7518,7 +7669,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 bg_cw1 = cwbuf[bg_cw_i1];
                 if (expand)
                     bg1 = rgb[bg_i1];
-                bg_sample1 = (uint8_t)(bg_cw1 & 0xFFu);
+                bg_sample1 = (uint8_t)(renderer_pixel_gb_index(bg_cw1));
             }
 
             uint32_t out = 0;
@@ -7531,9 +7682,9 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 uint32_t out0 = 0;
                 uint16_t out_cw0;
                 if (bi0 + 1u < g_water_brighten_size) {
-                    out_cw0 = (uint16_t)((g_water_brighten[bi0] << 8) | g_water_brighten[bi0 + 1u]);
+                    out_cw0 = renderer_pixel_from_be(g_water_brighten+bi0);
                     if (expand)
-                        out0 = amiga12_to_argb(out_cw0);
+                        out0 = renderer_pixel_to_argb(out_cw0);
                 } else {
                     out_cw0 = bg_cw0;
                     if (expand)
@@ -7545,9 +7696,9 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     uint32_t out1 = 0;
                     uint16_t out_cw1;
                     if (bi1 + 1u < g_water_brighten_size) {
-                        out_cw1 = (uint16_t)((g_water_brighten[bi1] << 8) | g_water_brighten[bi1 + 1u]);
+                        out_cw1 = renderer_pixel_from_be(g_water_brighten+bi1);
                         if (expand)
-                            out1 = amiga12_to_argb(out_cw1);
+                            out1 = renderer_pixel_to_argb(out_cw1);
                     } else {
                         out_cw1 = bg_cw1;
                         if (expand)
@@ -7585,9 +7736,10 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     uint16_t bg_cw = water_has_next_refr
                         ? blend_amiga12(bg_cw0, bg_cw1, (uint32_t)water_refr_frac)
                         : bg_cw0;
-                    uint32_t br = (((uint32_t)bg_cw >> 8) & 0xFu) * 0x11u;
-                    uint32_t bg_g = (((uint32_t)bg_cw >> 4) & 0xFu) * 0x11u;
-                    uint32_t bb = ((uint32_t)bg_cw & 0xFu) * 0x11u;
+                    uint16_t bg_c12=renderer_pixel_to_c12(bg_cw);
+                    uint32_t br = (((uint32_t)bg_c12 >> 8) & 0xFu) * 0x11u;
+                    uint32_t bg_g = (((uint32_t)bg_c12 >> 4) & 0xFu) * 0x11u;
+                    uint32_t bb = ((uint32_t)bg_c12 & 0xFu) * 0x11u;
                     uint32_t shade = 160u + ((uint32_t)water_level * 6u);
                     uint32_t r = (br * ((shade > 96u) ? (shade - 96u) : 0u)) >> 8;
                     uint32_t g = (bg_g * shade) >> 8;
@@ -7600,7 +7752,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                         uint16_t tint_cw = (uint16_t)(((uint16_t)byte_to_nibble_lut[r] << 8)
                                                     | ((uint16_t)byte_to_nibble_lut[g] << 4)
                                                     |  (uint16_t)byte_to_nibble_lut[b]);
-                        out_cw = blend_amiga12(bg_cw, tint_cw, 120u);
+                        out_cw = blend_amiga12(bg_cw, renderer_pixel_from_c12(tint_cw), 120u);
                     }
                 }
             }
@@ -7609,7 +7761,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             if (expand)
                 *p32++ = out;
             else
-                p32++;
+                if(p32)p32++;
             FLOOR_CW_STORE_P16(out_cw);
         }
         return;
@@ -7896,10 +8048,10 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     v_fp += (uint32_t)v_step;
                     u_pf += (uint32_t)u_step;
                     v_pf += (uint32_t)v_step;
-                    uint16_t out_cw = (uint16_t)((lut[texel * 2] << 8) | lut[texel * 2 + 1]);
+                    uint16_t out_cw = renderer_pixel_from_be(lut+texel*2);
 
                     *p8++ = 1;
-                    *p32++ = amiga12_to_argb(out_cw);
+                    *p32++ = renderer_pixel_to_argb(out_cw);
                     FLOOR_CW_STORE_P16(out_cw);
                 }
             } else {
@@ -7914,7 +8066,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     v_fp += (uint32_t)v_step;
                     u_pf += (uint32_t)u_step;
                     v_pf += (uint32_t)v_step;
-                    uint16_t out_cw = (uint16_t)((lut[texel * 2] << 8) | lut[texel * 2 + 1]);
+                    uint16_t out_cw = renderer_pixel_from_be(lut+texel*2);
 
                     *p8++ = 1;
                     FLOOR_CW_STORE_P16(out_cw);
@@ -8327,7 +8479,7 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
 
                         if (y + floor_pf_dist <= bot) {
                             AB3D_PREFETCH_WRITE(&buf[pix + floor_pf_stride]);
-                            AB3D_PREFETCH_WRITE(&rgb[pix + floor_pf_stride]);
+                            if(rgb)AB3D_PREFETCH_WRITE(&rgb[pix + floor_pf_stride]);
                         }
 
                         if (draw_here) {
@@ -8445,7 +8597,7 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                                 const uint16_t *cw_level = gour_cw_levels[level];
                                 const uint32_t *rgb_level = gour_rgb_levels[level];
                                 out_cw = cw_level ? cw_level[texel] : row->span_cw ? row->span_cw[texel] : 0;
-                                out_rgb = rgb_level ? rgb_level[texel] : row->span_rgb ? row->span_rgb[texel] : amiga12_to_argb(out_cw);
+                                out_rgb = rgb_level ? rgb_level[texel] : row->span_rgb ? row->span_rgb[texel] : renderer_pixel_to_argb(out_cw);
                             }
 
                             buf[pix] = 1;
@@ -8467,7 +8619,7 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
 
                         if (y + floor_pf_dist <= bot) {
                             AB3D_PREFETCH_WRITE(&buf[pix + floor_pf_stride]);
-                            AB3D_PREFETCH_WRITE(&rgb[pix + floor_pf_stride]);
+                            if(rgb)AB3D_PREFETCH_WRITE(&rgb[pix + floor_pf_stride]);
                         }
 
                         if (draw_here) {
@@ -8490,7 +8642,7 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                                 const uint16_t *cw_level = gour_cw_levels[level];
                                 const uint32_t *rgb_level = gour_rgb_levels[level];
                                 out_cw = cw_level ? cw_level[texel] : row->span_cw ? row->span_cw[texel] : 0;
-                                out_rgb = rgb_level ? rgb_level[texel] : row->span_rgb ? row->span_rgb[texel] : amiga12_to_argb(out_cw);
+                                out_rgb = rgb_level ? rgb_level[texel] : row->span_rgb ? row->span_rgb[texel] : renderer_pixel_to_argb(out_cw);
                             }
 
                             if (run_start == -1) run_start = y;
@@ -8636,7 +8788,7 @@ static int renderer_draw_floor_columns_ctx_fast(RenderSliceContext *ctx,
     uint32_t *rgb = renderer_active_rgb();
     uint16_t *cwbuf = renderer_active_cw();
     if (!ctx || !left_edge || !right_edge_tab || !texture || !floor_pal) return 0;
-    if (!buf || !rgb || !cwbuf) return 0;
+    if (!buf || !cwbuf || (g_renderer_rgb_raster_expand && !rgb)) return 0;
 
     const int w = rs->width;
     const int h = rs->height;
@@ -9023,7 +9175,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     uint32_t *rgb = renderer_active_rgb();
     uint16_t *cw = renderer_active_cw();
     if (!ctx) return;
-    if (!rgb || !cw) return;
+    if (!cw || (g_renderer_rgb_raster_expand && !rgb)) return;
     if (z <= SPRITE_NEAR_CLIP_Z) return;
     if (!wad || !ptr_data) return;
     const int rw = g_renderer.width, rh = g_renderer.height;
@@ -9113,7 +9265,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
             uint32_t ci = level_off + (uint32_t)ti * 2;
             if (ci + 1 < pal_size) {
                 uint16_t c12 = (uint16_t)((pal[ci] << 8) | pal[ci + 1]);
-                spr_cw[ti] = c12;
+                spr_cw[ti] = renderer_pixel_from_c12(c12);
                 spr_rgb[ti] = amiga12_to_argb(c12);
             } else {
                 spr_cw[ti] = 0;
@@ -9140,8 +9292,8 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
      * clip_top_sy/clip_bot_sy were projected (renderer_project_zone_world_clip_y). */
     const int view_center_y_px = renderer_view_center_y();
     const int spill_visualize = (is_spill && g_debug_spill_visualize) ? 1 : 0;
-    const uint16_t spill_vis_cw = 0x0F0Fu;
-    const uint32_t spill_vis_rgb = amiga12_to_argb(spill_vis_cw);
+    const uint16_t spill_vis_cw = renderer_pixel_from_c12(0x0F0Fu);
+    const uint32_t spill_vis_rgb = renderer_pixel_to_argb(spill_vis_cw);
     uint16_t *pick_zone = renderer_active_pick_zone();
     uint8_t *pick_player = renderer_active_pick_player();
     const uint8_t pick_player_id = ctx->pick_player_id;
@@ -9748,7 +9900,7 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
     uint16_t *cw = renderer_active_cw();
-    if (!buf || !rgb || !cw) return;
+    if (!buf || !cw || (g_renderer_rgb_raster_expand && !rgb)) return;
     if (!state) return;
 
     int rw = g_renderer.width, rh = g_renderer.height;
@@ -9819,6 +9971,14 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
     size_t gun_wad_size = g_renderer.gun_wad_size;
 
     if (gun_wad && gun_ptr && gun_pal && gun_wad_size > 0) {
+#ifdef AB3D_NATIVE_RGB565
+        static uint16_t native_gun_palette[32];
+        static const uint8_t *native_gun_palette_source;
+        if(native_gun_palette_source!=gun_pal) {
+            for(int i=0;i<32;i++)native_gun_palette[i]=renderer_pixel_from_be(gun_pal+i*2);
+            native_gun_palette_source=gun_pal;
+        }
+#endif
         const GunAnim *anim = &gun_anims[gun_type];
         int anim_frame = plr->gun_frame;
         if (anim_frame > anim->num_frames) anim_frame = 0;
@@ -9834,13 +9994,24 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
             int draw_sy1 = gy + gun_h_draw;
             if (draw_sy0 < 0) draw_sy0 = 0;
             if (draw_sy1 > rh) draw_sy1 = rh;
+#ifdef AB3D_DOS
+            /* The source column depends only on x. Avoid a software 64-bit
+             * division for every weapon pixel on a 486; values fit in 32 bits. */
+            static int dos_gun_columns[RENDER_INTERNAL_MAX_DIM];
+            for(int sx=draw_x0;sx<draw_x1;sx++)
+                dos_gun_columns[sx]=(sx-gx)*gun_w_src/gun_w_draw;
+#endif
             for (int sy = draw_sy0; sy < draw_sy1; sy++) {
                 if (sy < 0) continue;
                 int src_row = (int)((int64_t)(sy - gy) * (int64_t)gun_h_src / gun_h_draw);
                 if (src_row >= gun_h_src) continue;
                 for (int sx = draw_x0; sx < draw_x1 && sx < rw; sx++) {
                     if (sx < 0) continue;
+#ifdef AB3D_DOS
+                    int src_col=dos_gun_columns[sx];
+#else
                     int src_col = (int)((int64_t)(sx - gx) * (int64_t)gun_w_src / gun_w_draw);
+#endif
                     if (src_col >= gun_w_src) continue;
 
                     const uint8_t *col_ptr = gun_ptr + ptr_off + (uint32_t)src_col * 4;
@@ -9868,7 +10039,11 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
                     buf[sy * rw + sx] = 15;
                     if (g_renderer_rgb_raster_expand)
                         rgb[sy * rw + sx] = amiga12_to_argb(c12);
+#ifdef AB3D_NATIVE_RGB565
+                    renderer_cw_store_xy(cw,sx,sy,rw,rh,native_gun_palette[idx]);
+#else
                     renderer_cw_store_xy(cw, sx, sy, rw, rh, c12);
+#endif
                 }
             }
             return;
@@ -9878,10 +10053,150 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
     /* Do not draw placeholder gun when real gun data is missing or slot unused */
 }
 
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+/* Cache the exact source nearest-neighbor weapon sampling once per animation
+ * frame/size. Native RGB565 + a reserved color key lets SDL RLE skip transparent
+ * runs, instead of resampling tens of thousands of empty pixels every frame. */
+/* Original PTR column packing and palette, sampled without a temporary RGBA image. */
+static unsigned renderer_dos_gun_source(int slot,int x,int y)
+{
+    const uint8_t *ptr=g_renderer.gun_ptr+gun_ptr_frame_offsets[slot]+x*4;
+    unsigned mode=ptr[0],offset=((unsigned)ptr[1]<<16)|((unsigned)ptr[2]<<8)|ptr[3];
+    if((!mode && !offset) || offset+(size_t)GUN_LINES*2>g_renderer.gun_wad_size)return 0;
+    const uint8_t *p=g_renderer.gun_wad+offset+y*2;
+    unsigned word=((unsigned)p[0]<<8)|p[1];
+    unsigned index=(word>>(mode==0?0:mode==1?5:10))&31;
+    if(!index)return 0;
+    p=g_renderer.gun_pal+index*2;
+    return 0x1000u|((unsigned)p[0]<<8)|p[1];
+}
+static void renderer_dos_draw_gun_cached(GameState *state)
+{
+    if(!state || !state->cfg_weapon_draw)return;
+    int slot,x,y,w,h;
+    if(!renderer_get_gun_draw_info(state,&slot,&x,&y,&w,&h))return;
+    if(w!=g_dos_gun_width || h!=g_dos_gun_height || slot/4!=g_dos_gun_cached_weapon) {
+        renderer_dos_release_gun_frames();g_dos_gun_width=w;g_dos_gun_height=h;
+        g_dos_gun_cached_weapon=slot/4;
+    }
+    SDL_Surface *gun=g_dos_gun_frames[slot];
+    if(g_dos_gun_empty[slot])return;
+    if(!gun) {
+        const int sw=GUN_COLS,sh=GUN_LINES;
+        if(!g_renderer.gun_ptr || !g_renderer.gun_pal || !g_renderer.gun_wad) {
+            fprintf(stderr,"DOS weapon frame %d allocation/decode failed\n",slot);exit(1);
+        }
+        int edge_x[GUN_COLS+1],edge_y[GUN_LINES+1];
+        for(int i=0;i<=sw;i++)edge_x[i]=(i*w+sw-1)/sw;
+        for(int i=0;i<=sh;i++)edge_y[i]=(i*h+sh-1)/sh;
+        int left=w,top=h,right=0,bottom=0;
+        for(int sy=0;sy<sh;sy++)for(int sx=0;sx<sw;sx++)
+            if(renderer_dos_gun_source(slot,sx,sy) && edge_x[sx+1]>edge_x[sx] && edge_y[sy+1]>edge_y[sy]) {
+                if(edge_x[sx]<left)left=edge_x[sx];if(edge_y[sy]<top)top=edge_y[sy];
+                if(edge_x[sx+1]>right)right=edge_x[sx+1];if(edge_y[sy+1]>bottom)bottom=edge_y[sy+1];
+            }
+        if(right<=left || bottom<=top){g_dos_gun_empty[slot]=1;return;}
+        SDL_Rect crop={left,top,right-left,bottom-top};g_dos_gun_crops[slot]=crop;
+        gun=SDL_CreateSurface(crop.w,crop.h,SDL_PIXELFORMAT_RGB565);
+        if(!gun){fprintf(stderr,"DOS cropped weapon surface allocation failed\n");exit(1);}
+        /* Retain every opaque sampled pixel, without storing empty margins. */
+        SDL_FillSurfaceRect(gun,NULL,1);
+        for(int sy=0;sy<sh;sy++)for(int sx=0;sx<sw;sx++) {
+            unsigned color=renderer_dos_gun_source(slot,sx,sy);
+            if(!color || edge_x[sx+1]<=edge_x[sx] || edge_y[sy+1]<=edge_y[sy])continue;
+            uint16_t c12=(uint16_t)(color&0xfff);
+            uint16_t pixel=renderer_pixel_from_c12(c12);
+            for(int dy=edge_y[sy];dy<edge_y[sy+1];dy++) {
+                uint16_t *out=(uint16_t *)((uint8_t *)gun->pixels+(dy-crop.y)*gun->pitch);
+                for(int dx=edge_x[sx];dx<edge_x[sx+1];dx++)out[dx-crop.x]=pixel;
+            }
+        }
+        int run_count=0;
+        for(int pass=0;pass<2;pass++) {
+            int at=0;
+            for(int dy=0;dy<crop.h;dy++) {
+                const uint16_t *row=(const uint16_t *)((uint8_t *)gun->pixels+dy*gun->pitch);
+                for(int dx=0;dx<crop.w;) {
+                    if(row[dx]==1){dx++;continue;}
+                    int start=dx;while(dx<crop.w && row[dx]!=1)dx++;
+                    if(pass)g_dos_gun_runs[slot][at]=(DOSGunRun){(uint16_t)(start+crop.x),(uint16_t)(dy+crop.y),(uint16_t)(dx-start)};
+                    at++;
+                }
+            }
+            if(!pass) {
+                run_count=at;g_dos_gun_runs[slot]=malloc((size_t)(at?at:1)*sizeof(DOSGunRun));
+                if(!g_dos_gun_runs[slot]){fprintf(stderr,"DOS weapon mask allocation failed\n");exit(1);}
+            }
+        }
+        g_dos_gun_run_counts[slot]=run_count;
+        if(!SDL_SetSurfaceColorKey(gun,true,1) || !SDL_SetSurfaceBlendMode(gun,SDL_BLENDMODE_NONE) ||
+           !SDL_SetSurfaceRLE(gun,true)) { fprintf(stderr,"DOS weapon RLE setup failed: %s\n",SDL_GetError());exit(1); }
+        g_dos_gun_frames[slot]=gun;
+    }
+    uint16_t *pixels=renderer_active_cw();int target_slot;
+    if(g_dos_gun_target_pixels[0]==pixels)target_slot=0;
+    else if(g_dos_gun_target_pixels[1]==pixels)target_slot=1;
+    else {target_slot=g_dos_gun_next_target;g_dos_gun_next_target^=1;}
+    SDL_Surface *target=g_dos_gun_targets[target_slot];
+    if(!target || g_dos_gun_target_pixels[target_slot]!=pixels ||
+       target->w!=g_renderer.width || target->h!=g_renderer.height) {
+        if(target)SDL_DestroySurface(target);
+        target=SDL_CreateSurfaceFrom(g_renderer.width,g_renderer.height,SDL_PIXELFORMAT_RGB565,pixels,g_renderer.width*2);
+        if(!target){fprintf(stderr,"DOS weapon target failed: %s\n",SDL_GetError());exit(1);}
+        g_dos_gun_targets[target_slot]=target;g_dos_gun_target_pixels[target_slot]=pixels;
+    }
+    SDL_Rect crop=g_dos_gun_crops[slot];
+    SDL_Rect dst={x+crop.x,y+crop.y,crop.w,crop.h};
+    if(!SDL_BlitSurface(gun,NULL,target,&dst)) { fprintf(stderr,"DOS weapon blit failed: %s\n",SDL_GetError());exit(1); }
+    /* Preserve the source tag buffer for wall/water history and diagnostics. */
+    uint8_t *tags=renderer_active_buf();
+    for(int i=0;i<g_dos_gun_run_counts[slot];i++) {
+        DOSGunRun run=g_dos_gun_runs[slot][i];
+        memset(tags+(size_t)(y+run.y)*g_renderer.width+x+run.x,15,run.count);
+    }
+}
+#endif
+
 void renderer_draw_gun(GameState *state)
 {
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    if(!g_renderer_rgb_raster_expand) { renderer_dos_draw_gun_cached(state);return; }
+#endif
     renderer_draw_gun_columns(state, 0, g_renderer.width);
 }
+
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+void renderer_dos_check_gun_frames(GameState *state)
+{
+    size_t count=(size_t)g_renderer.width*g_renderer.height;
+    /* This end-of-run diagnostic may overwrite both history buffers. Reuse
+     * the inactive pair instead of allocating another 384 KiB on a 4 MB PC. */
+    uint16_t *cw=renderer_active_cw();
+    uint16_t *expected=cw==g_renderer.cw_buffer?g_renderer.cw_back_buffer:g_renderer.cw_buffer;
+    uint8_t *tags=renderer_active_buf();
+    uint8_t *expected_tags=tags==g_renderer.buffer?g_renderer.back_buffer:g_renderer.buffer;
+    GameMode mode=state->mode;state->mode=MODE_SINGLE;
+    int gun=state->plr1.gun_selected,frame=state->plr1.gun_frame,checked=0;
+    unsigned char seen[32]={0};
+    for(int g=0;g<8;g++)for(int f=0;f<=gun_anims[g].num_frames;f++) {
+        int slot,x,y,w,h;
+        state->plr1.gun_selected=g;state->plr1.gun_frame=f;
+        if(!renderer_get_gun_draw_info(state,&slot,&x,&y,&w,&h) || seen[slot])continue;
+        seen[slot]=1;
+        for(size_t i=0;i<count;i++){cw[i]=renderer_pixel_from_c12((uint16_t)((i*37)&4095));tags[i]=7;}
+        renderer_draw_gun_columns(state,0,g_renderer.width);
+        memcpy(expected,cw,count*2);memcpy(expected_tags,tags,count);
+        for(size_t i=0;i<count;i++){cw[i]=renderer_pixel_from_c12((uint16_t)((i*37)&4095));tags[i]=7;}
+        renderer_dos_draw_gun_cached(state);
+        if(memcmp(expected,cw,count*2) || memcmp(expected_tags,tags,count)) {
+            fprintf(stderr,"DOS cached weapon pixels/tags differ: gun=%d animation=%d slot=%d\n",g,f,slot);exit(1);
+        }
+        checked++;
+    }
+    state->mode=mode;state->plr1.gun_selected=gun;state->plr1.gun_frame=frame;
+    printf("[DOSCHECK] %d scaled weapon frames: SDL pixels and water-history tags match original draws\n",checked);
+}
+#endif
 
 int renderer_get_gun_draw_info(const GameState *state, int *out_frame_slot,
                                int *out_ix, int *out_iy, int *out_iw, int *out_ih)
@@ -11956,7 +12271,8 @@ static RendererF2SpriteSpillEntry *renderer_f2_pick_find_or_add_sprite_entry(con
                                                                               int source_slot,
                                                                               int16_t source_zone)
 {
-    RendererF2PickSnapshot *snap = &g_renderer_f2_pick_snapshot;
+    RendererF2PickSnapshot *snap = g_renderer_f2_pick_snapshot;
+    if(!snap)return NULL;
     int16_t source_slot16;
 
     if (source_slot < -32768) source_slot = -32768;
@@ -13162,6 +13478,9 @@ static void renderer_reset_level_sky_cache_internal(void)
 
 void renderer_reset_level_sky_cache(void)
 {
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    renderer_dos_release_gun_frames();
+#endif
     renderer_reset_level_sky_cache_internal();
 }
 
@@ -13169,7 +13488,11 @@ static int renderer_level_sky_cache_ensure_poly_cap(uint32_t want)
 {
     if (want <= g_level_sky_cache_poly_cap) return 1;
 
+    #ifdef AB3D_DOS
+    uint32_t new_cap = g_level_sky_cache_poly_cap?g_level_sky_cache_poly_cap:16u;
+#else
     uint32_t new_cap = (g_level_sky_cache_poly_cap > 0) ? g_level_sky_cache_poly_cap : 256u;
+#endif
     while (new_cap < want) {
         if (new_cap > UINT32_MAX / 2u) {
             new_cap = want;
@@ -15533,6 +15856,9 @@ static void renderer_draw_world_slice(GameState *state,
                 }
             }
         }
+#ifdef AB3D_DOS
+        audio_dos_pump();
+#endif
         if (!zone_drew_lower && !zone_drew_upper) {
             continue;
         }
@@ -15559,7 +15885,7 @@ static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
                                                   uint32_t *dst_rgb, uint16_t *dst_cw)
 {
     if (fill_screen_water == 0) return;
-    if (!src_rgb || !src_cw || !dst_rgb || !dst_cw) return;
+    if (!src_cw || !dst_cw || (g_renderer_rgb_raster_expand && (!src_rgb || !dst_rgb))) return;
 
     const int w = g_renderer.width;
     const int h = g_renderer.height;
@@ -15588,17 +15914,17 @@ static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
         size_t row = (size_t)y * (size_t)w;
         for (int x = x0; x < x1; x++) {
             size_t i = row + (size_t)x;
-            uint16_t c12 = (uint16_t)(renderer_cw_load_xy(src_cw, x, y, w, h) & 0x00FFu);
+            uint16_t c12 = renderer_pixel_without_red(renderer_cw_load_xy(src_cw, x, y, w, h));
             renderer_cw_store_xy(dst_cw, x, y, w, h, c12);
             if (g_renderer_rgb_raster_expand)
-                dst_rgb[i] = amiga12_to_argb(c12);
+                dst_rgb[i] = renderer_pixel_to_argb(c12);
         }
     }
 }
 
 static void renderer_apply_underwater_tint(int8_t fill_screen_water)
 {
-    if (!g_renderer.rgb_buffer || !g_renderer.cw_buffer) return;
+    if (!g_renderer.cw_buffer || (g_renderer_rgb_raster_expand && !g_renderer.rgb_buffer)) return;
     renderer_apply_underwater_tint_slice(fill_screen_water,
                                          0, (int16_t)g_renderer.height,
                                          0, (int16_t)g_renderer.width,
@@ -15613,7 +15939,7 @@ static void renderer_apply_underwater_tint(int8_t fill_screen_water)
  *
  * This is called once per frame to render the entire 3D scene.
  * ----------------------------------------------------------------------- */
-void renderer_draw_display(GameState *state)
+static void renderer_draw_display_impl(GameState *state)
 {
     RendererState *r = &g_renderer;
     int pick_this_frame = (g_pick_capture_armed || g_debug_spill_visualize) ? 1 : 0;
@@ -15622,7 +15948,11 @@ void renderer_draw_display(GameState *state)
     g_pick_capture_armed = 0;
     g_pick_capture_active = pick_this_frame;
     if (pick_this_frame) {
-        renderer_f2_pick_snapshot_clear(&g_renderer_f2_pick_snapshot);
+        if(!g_renderer_f2_pick_snapshot) {
+            g_renderer_f2_pick_snapshot=malloc(sizeof(*g_renderer_f2_pick_snapshot));
+            if(!g_renderer_f2_pick_snapshot){fprintf(stderr,"Cannot allocate picking diagnostic snapshot\n");exit(1);}
+        }
+        renderer_f2_pick_snapshot_clear(g_renderer_f2_pick_snapshot);
     }
     if (!r->buffer) {
         g_renderer_zone_trace_active = 0;
@@ -15927,23 +16257,23 @@ void renderer_draw_display(GameState *state)
     }
 
     if (pick_this_frame) {
-        g_renderer_f2_pick_snapshot.valid = 1;
-        g_renderer_f2_pick_snapshot.frame_idx = frame_idx;
-        g_renderer_f2_pick_snapshot.width = w;
-        g_renderer_f2_pick_snapshot.height = h;
-        g_renderer_f2_pick_snapshot.frame_ms = frame_ms;
-        g_renderer_f2_pick_snapshot.prepass_total_zones = prepass_total_zones;
-        g_renderer_f2_pick_snapshot.prepass_valid_zones = prepass_valid_zones;
-        g_renderer_f2_pick_snapshot.zones_drawn = prepass_draw_zones;
-        g_renderer_f2_pick_snapshot.zones_drawn_lower = prepass_draw_lower;
-        g_renderer_f2_pick_snapshot.zones_drawn_upper = prepass_draw_upper;
-        g_renderer_f2_pick_snapshot.zone_draw_order_count = prepass_draw_order_count;
+        g_renderer_f2_pick_snapshot->valid = 1;
+        g_renderer_f2_pick_snapshot->frame_idx = frame_idx;
+        g_renderer_f2_pick_snapshot->width = w;
+        g_renderer_f2_pick_snapshot->height = h;
+        g_renderer_f2_pick_snapshot->frame_ms = frame_ms;
+        g_renderer_f2_pick_snapshot->prepass_total_zones = prepass_total_zones;
+        g_renderer_f2_pick_snapshot->prepass_valid_zones = prepass_valid_zones;
+        g_renderer_f2_pick_snapshot->zones_drawn = prepass_draw_zones;
+        g_renderer_f2_pick_snapshot->zones_drawn_lower = prepass_draw_lower;
+        g_renderer_f2_pick_snapshot->zones_drawn_upper = prepass_draw_upper;
+        g_renderer_f2_pick_snapshot->zone_draw_order_count = prepass_draw_order_count;
         if (prepass_draw_order_count > 0) {
-            memcpy(g_renderer_f2_pick_snapshot.zone_draw_order,
+            memcpy(g_renderer_f2_pick_snapshot->zone_draw_order,
                    prepass_draw_order,
                    (size_t)prepass_draw_order_count * sizeof(int16_t));
         }
-        g_renderer_f2_pick_snapshot.workload = world_workload_stats;
+        g_renderer_f2_pick_snapshot->workload = world_workload_stats;
     }
 
     /* Automap is drawn via SDL in display.c after the frame is composited. */
@@ -16002,4 +16332,14 @@ void renderer_draw_display(GameState *state)
     }
     g_renderer_profile_collect_stats = 0;
     g_renderer_zone_trace_active = 0;
+}
+
+void renderer_draw_display(GameState *state) {
+#ifdef AB3D_DOS
+    dos_profile_begin(DOS_RENDER);
+#endif
+    renderer_draw_display_impl(state);
+#ifdef AB3D_DOS
+    dos_profile_end();
+#endif
 }

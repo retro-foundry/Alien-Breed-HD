@@ -1,6 +1,6 @@
 # Alien Breed 3D I (PC Port)
 
-A C port of Alien Breed 3D I (Amiga), translating the original 68000 assembly into C and rendering with SDL2 on Windows, Linux, and macOS.
+A C port of Alien Breed 3D I (Amiga), translating the original 68000 assembly into C and rendering with SDL2 on Windows, Linux, and macOS. A 486 DOS build uses SDL3's DOS backend.
 
 The project keeps Amiga data formats and game behavior where possible, while running natively on modern platforms.
 
@@ -87,6 +87,21 @@ Typical outputs:
 - Linux/macOS: `build/ab3d1`
 
 Floor column-fast rendering is enabled by default.
+
+### DOS / 486
+
+The DOS build targets a 486 DX2/DX4, 4 MB RAM, VESA RGB565 video and
+Sound Blaster audio. It renders at 320x200 and presents pixels 1:1 through SDL.
+From PowerShell, with CMake, Ninja, Git, Python 3 and ffmpeg installed:
+
+```powershell
+./tools/setup_dos.ps1
+./tools/build_dos.ps1
+```
+
+The playable package is `build/dos/ABHD-DOS.zip`; extract it and run `ABHD.BAT`.
+See [DOS build and profiling notes](docs/dos-build.md) for reusing GloomAmiga's
+toolchain, hardware requirements, measured emulator results and validation.
 
 ### Releases
 

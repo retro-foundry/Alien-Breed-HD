@@ -16,6 +16,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef AB3D_DOS
+#include "platform_dos.h"
+#endif
 #ifndef AB3D_STANDALONE_TOOL
 #include "logging.h"
 #define printf ab3d_log_printf
@@ -470,6 +473,10 @@ int sb_load_file(const char *path, uint8_t **out_data, size_t *out_size)
 
     uint8_t *file_buf = (uint8_t *)malloc((size_t)file_len);
     if (!file_buf) {
+#ifdef AB3D_DOS
+        fprintf(stderr,"[SB] Out of memory loading %s (%ld bytes)\n",path,file_len);
+        dos_memory_report("asset allocation failed");
+#endif
         fclose(f);
         return -1;
     }

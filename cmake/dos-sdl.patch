@@ -1,0 +1,240 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e591a01..29c3358 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -3380,9 +3380,11 @@ elseif(DOS)
+   sdl_glob_sources("${SDL3_SOURCE_DIR}/src/timer/dos/*.c")
+   set(HAVE_SDL_TIMERS TRUE)
+ 
+-  set(SDL_JOYSTICK_DOS 1)
+-  sdl_glob_sources("${SDL3_SOURCE_DIR}/src/joystick/dos/*.c")
+-  set(HAVE_SDL_JOYSTICK TRUE)
++  if(SDL_JOYSTICK)
++    set(SDL_JOYSTICK_DOS 1)
++    sdl_glob_sources("${SDL3_SOURCE_DIR}/src/joystick/dos/*.c")
++    set(HAVE_SDL_JOYSTICK TRUE)
++  endif()
+ 
+   set(SDL_THREAD_DOS 1)
+   sdl_glob_sources(
+@@ -4441,3 +4443,10 @@ string(APPEND CMAKE_OBJC_FLAGS " ${CMAKE_C_FLAGS}")
+ 
+ SDL_PrintSummary()
+ debug_show_sdl_deps()
++
++if(DOS AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
++  # IRQ locking uses adjacent function/end markers. Keep those translation
++  # units out of LTO and preserve their source order.
++  set_property(SOURCE src/audio/dos/SDL_dosaudio_sb.c src/video/dos/SDL_dosevents.c
++    APPEND PROPERTY COMPILE_OPTIONS -fno-lto -fno-toplevel-reorder -fno-reorder-functions)
++endif()
+diff --git a/src/audio/dos/SDL_dosaudio_sb.c b/src/audio/dos/SDL_dosaudio_sb.c
+index 881750d..009eb48 100644
+--- a/src/audio/dos/SDL_dosaudio_sb.c
++++ b/src/audio/dos/SDL_dosaudio_sb.c
+@@ -38,6 +38,7 @@ static int soundblaster_version = -1;
+ static int soundblaster_version_minor = -1;
+ static bool soundblaster_is_sb16 = false; // false when FORCE_SB_8BIT or DSP < 4
+ static Uint8 soundblaster_silence_value = 0;
++static SDL_AudioDevice *manual_soundblaster_device = NULL;
+ 
+ static void ResetSoundBlasterDSP(void)
+ {
+@@ -78,8 +79,8 @@ static Uint8 ReadSoundBlasterDSP(void)
+ // the ISR just does a memcpy (no SDL calls, no DPMI, no allocator).
+ 
+ // Number of DMA half-buffers that fit in the ring. Must be a power of two.
+-// 4 chunks is ~45 ms at 44100 Hz, enough headroom for 22 fps frame times.
+-#define RING_BUFFER_CHUNKS 4
++// Eight 512-frame chunks provide room for the application's bounded manual queue.
++#define RING_BUFFER_CHUNKS 8
+ 
+ // All of the following statics are memory-locked, making them safe to access
+ // from the ISR without risking a page fault or DPMI re-entrance.
+@@ -90,6 +91,7 @@ static volatile int isr_irq_ack_port = 0;
+ // ISR-visible ring buffer state (all memory-locked).
+ static volatile int isr_ring_read = 0;
+ static volatile int isr_ring_write = 0;
++static volatile unsigned isr_underruns = 0;
+ static int isr_ring_size = 0;         // ring_size (power-of-2 bytes)
+ static int isr_ring_mask = 0;         // ring_size - 1
+ static int isr_chunk_size = 0;        // one DMA half-buffer, in bytes
+@@ -156,6 +158,7 @@ static void SoundBlasterIRQHandler(void)
+         isr_ring_read += isr_chunk_size;
+     } else {
+         // Ring underrun: fill with silence so we don't replay stale audio.
++        isr_underruns++;
+         SDL_memset(dma_dst, isr_silence_value, isr_chunk_size);
+     }
+ }
+@@ -201,6 +204,15 @@ static bool DOSSOUNDBLASTER_OpenDevice(SDL_AudioDevice *device)
+         device->spec.channels = 1;
+     }
+ 
++    if (SDL_GetHintBoolean("SDL_DOS_MANUAL_AUDIO_PUMP", false)) {
++        const char *freq_hint = SDL_GetHint("SDL_DOS_MANUAL_AUDIO_FREQ");
++        const int freq = freq_hint ? SDL_atoi(freq_hint) : 22050;
++        if (freq >= 5000 && freq <= 44100) {
++            device->spec.freq = freq;
++        }
++    }
++
++
+     // Accept whatever frequency SDL3's audio layer passes in. For SB16 (DSP >= 4)
+     // the hardware supports 5000–44100 Hz via DSP command 0x41. For pre-SB16,
+     // clamp to hardware limits:
+@@ -339,6 +351,7 @@ static bool DOSSOUNDBLASTER_OpenDevice(SDL_AudioDevice *device)
+     DOS_LockData(*hidden->ring_buffer, hidden->ring_size);
+     DOS_LockVariable(isr_ring_read);
+     DOS_LockVariable(isr_ring_write);
++    DOS_LockVariable(isr_underruns);
+     DOS_LockVariable(isr_ring_size);
+     DOS_LockVariable(isr_ring_mask);
+     DOS_LockVariable(isr_chunk_size);
+@@ -413,6 +426,8 @@ static bool DOSSOUNDBLASTER_OpenDevice(SDL_AudioDevice *device)
+     }
+ 
+     SDL_Log("SoundBlaster opened!");
++
++    manual_soundblaster_device = device;
+     return true;
+ }
+ 
+@@ -450,9 +465,82 @@ static bool DOSSOUNDBLASTER_PlayDevice(SDL_AudioDevice *device, const Uint8 *buf
+     return true;
+ }
+ 
++
++unsigned SDL_DOSSoundBlasterGetUnderruns(SDL_AudioDeviceID devid)
++{
++    (void)devid;
++    return isr_underruns;
++}
++
++int SDL_DOSSoundBlasterGetQueuedAudioSize(SDL_AudioDeviceID devid)
++{
++    SDL_AudioDevice *device = manual_soundblaster_device;
++    struct SDL_PrivateAudioData *hidden = device ? device->hidden : NULL;
++
++    (void)devid;
++    if (!hidden) {
++        return -1;
++    }
++    return hidden->ring_write - isr_ring_read;
++}
++
++int SDL_DOSSoundBlasterGetAudioBufferSize(SDL_AudioDeviceID devid)
++{
++    SDL_AudioDevice *device = manual_soundblaster_device;
++    struct SDL_PrivateAudioData *hidden = device ? device->hidden : NULL;
++
++    (void)devid;
++    return hidden ? hidden->ring_size : 0;
++}
++
++int SDL_DOSSoundBlasterGetAudioChunkSize(SDL_AudioDeviceID devid)
++{
++    SDL_AudioDevice *device = manual_soundblaster_device;
++    struct SDL_PrivateAudioData *hidden = device ? device->hidden : NULL;
++
++    (void)devid;
++    return hidden ? hidden->chunk_size : 0;
++}
++
++bool SDL_DOSSoundBlasterQueueAudio(SDL_AudioDeviceID devid, const void *buffer, int len)
++{
++    SDL_AudioDevice *device = manual_soundblaster_device;
++    struct SDL_PrivateAudioData *hidden = device ? device->hidden : NULL;
++    int used = 0;
++
++    (void)devid;
++    if (!hidden || !buffer || len <= 0) {
++        return false;
++    }
++    used = hidden->ring_write - isr_ring_read;
++    if (len > hidden->ring_size - used) {
++        return false;
++    }
++    return DOSSOUNDBLASTER_PlayDevice(device, (const Uint8 *)buffer, len);
++}
++
++void SDL_DOSSoundBlasterClearQueuedAudio(SDL_AudioDeviceID devid)
++{
++    SDL_AudioDevice *device = manual_soundblaster_device;
++    struct SDL_PrivateAudioData *hidden = device ? device->hidden : NULL;
++
++    (void)devid;
++    if (!hidden) {
++        return;
++    }
++    DOS_DisableInterrupts();
++    SDL_memset(hidden->ring_buffer, soundblaster_silence_value, hidden->ring_size);
++    hidden->ring_write = isr_ring_read;
++    isr_ring_write = hidden->ring_write;
++    DOS_EnableInterrupts();
++}
+ static void DOSSOUNDBLASTER_CloseDevice(SDL_AudioDevice *device)
+ {
+     struct SDL_PrivateAudioData *hidden = device->hidden;
++
++    if (manual_soundblaster_device == device) {
++        manual_soundblaster_device = NULL;
++    }
+     if (hidden) {
+         // Disable PCM.
+         if (hidden->is_16bit) {
+@@ -619,6 +707,9 @@ static bool DOSSOUNDBLASTER_Init(SDL_AudioDriverImpl *impl)
+     impl->PlayDevice = DOSSOUNDBLASTER_PlayDevice;
+     impl->CloseDevice = DOSSOUNDBLASTER_CloseDevice;
+ 
++    impl->ProvidesOwnCallbackThread = SDL_GetHintBoolean("SDL_DOS_MANUAL_AUDIO_PUMP", false);
++
++
+     impl->OnlyHasDefaultPlaybackDevice = true;
+ 
+     return true;
+diff --git a/src/cpuinfo/SDL_cpuinfo.c b/src/cpuinfo/SDL_cpuinfo.c
+index 966a5ae..163817a 100644
+--- a/src/cpuinfo/SDL_cpuinfo.c
++++ b/src/cpuinfo/SDL_cpuinfo.c
+@@ -134,7 +134,9 @@ static int CPU_haveCPUID(void)
+     int has_CPUID = 0;
+ 
+ /* *INDENT-OFF* */ // clang-format off
+-#ifndef SDL_PLATFORM_EMSCRIPTEN
++/* This DOS build targets a 486. DPMI can make the EFLAGS.ID probe unreliable;
++ * never execute CPUID or select SIMD paths on the DOS target. */
++#if !defined(SDL_PLATFORM_EMSCRIPTEN) && !defined(SDL_PLATFORM_DOS)
+ #if (defined(__GNUC__) || defined(__llvm__)) && defined(__i386__)
+     __asm__ (
+ "        pushfl                      # Get original EFLAGS             \n"
+diff --git a/src/video/dos/SDL_dosevents.c b/src/video/dos/SDL_dosevents.c
+index 78a50b6..f6ba1ee 100644
+--- a/src/video/dos/SDL_dosevents.c
++++ b/src/video/dos/SDL_dosevents.c
+@@ -254,11 +254,11 @@ static int keyevents_tail = 0;
+ 
+ void DOSVESA_PumpEvents(SDL_VideoDevice *device)
+ {
+-    /* Give cooperative threads a chance to run.  Audio mixing now runs
+-       in its own cooperative thread (via SDL's normal audio thread),
+-       so it will execute during this yield along with loading threads
+-       and anything else that is runnable. */
+-    DOS_Yield();
++    /* Gloom DOS pumps events once per rendered frame; yielding here turns
++       input polling into a visible frame-time spike on 386-class profiles. */
++    if (!SDL_GetHintBoolean("SDL_DOS_SKIP_EVENT_YIELD", false)) {
++        DOS_Yield();
++    }
+ 
+     static bool is_extended = false;
+     static int pause_sequence_remaining = 0;
+@@ -323,7 +323,7 @@ void DOSVESA_PumpEvents(SDL_VideoDevice *device)
+     }
+ 
+     SDL_Mouse *mouse = SDL_GetMouse();
+-    if (mouse->internal) { // if non-NULL, there's a mouse detected on the system.
++    if (mouse->internal && !SDL_GetHintBoolean("SDL_DOS_SKIP_MOUSE_PUMP", false)) { // if non-NULL, there's a mouse detected on the system.
+         __dpmi_regs regs;
+ 
+         regs.x.ax = 0x3; // read mouse buttons and position.

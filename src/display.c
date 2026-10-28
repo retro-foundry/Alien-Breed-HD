@@ -16,6 +16,9 @@
  */
 
 #include "display.h"
+#ifdef AB3D_DOS
+#include "platform_dos.h"
+#endif
 #include "renderer.h"
 #include "game_data.h"
 #include "io.h"
@@ -136,8 +139,10 @@ static void display_emscripten_apply_screen_aspect_resolution(int *out_w,
 }
 #endif
 
+#ifndef AB3D_DOS
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+#endif
 
 /* OpenGL 3.0+ integer texture (not always in SDL's bundled gl.h) */
 #ifndef GL_R16UI
@@ -189,6 +194,42 @@ static SDL_Renderer *g_sdl_ren  = NULL;
 static SDL_Texture  *g_texture  = NULL;
 /* True when g_texture accepts native packed 0x0RGB words directly (XRGB4444/ARGB4444). */
 static int g_texture_is_4444_direct = 0;
+#ifdef AB3D_DOS
+static SDL_Surface *g_dos_frame_surfaces[2];
+static const uint16_t *g_dos_frame_pixels[2];
+static int g_dos_frame_next;
+static unsigned char *g_dos_map_scratch;
+static int g_dos_map_capacity;
+
+/* Renderer output already matches SDL and VESA: native RGB565, row-major.
+ * Surface descriptors borrow the two engine buffers. No conversion or scaling. */
+static void display_dos_copy_cw(const uint16_t *src,int w,int h,const SDL_Rect *rect)
+{
+    SDL_Surface *surface=SDL_GetWindowSurface(g_window);
+    if(!surface || surface->format!=SDL_PIXELFORMAT_RGB565) {
+        fprintf(stderr,"DOS RGB565 framebuffer unavailable: %s\n",SDL_GetError());exit(1);
+    }
+    if(rect->w!=w || rect->h!=h || w>surface->w || h>surface->h) {
+        fprintf(stderr,"DOS requires a 1:1 framebuffer fitting the VESA mode\n");exit(1);
+    }
+    int slot;
+    if(g_dos_frame_pixels[0]==src)slot=0;
+    else if(g_dos_frame_pixels[1]==src)slot=1;
+    else {slot=g_dos_frame_next;g_dos_frame_next^=1;}
+    SDL_Surface *frame=g_dos_frame_surfaces[slot];
+    if(g_dos_frame_pixels[slot]!=src || !frame || frame->w!=w || frame->h!=h) {
+        if(frame)SDL_DestroySurface(frame);
+        frame=SDL_CreateSurfaceFrom(w,h,SDL_PIXELFORMAT_RGB565,(void *)src,w*2);
+        if(!frame){fprintf(stderr,"DOS native surface failed: %s\n",SDL_GetError());exit(1);}
+        SDL_SetSurfaceBlendMode(frame,SDL_BLENDMODE_NONE);
+        g_dos_frame_surfaces[slot]=frame;g_dos_frame_pixels[slot]=src;
+    }
+    SDL_Rect dst=*rect;
+    if(!SDL_BlitSurface(frame,NULL,surface,&dst)) {
+        fprintf(stderr,"DOS native framebuffer blit failed: %s\n",SDL_GetError());exit(1);
+    }
+}
+#endif
 /* Key HUD: one SDL texture per key sprite frame 0..3 (invalidated when level/assets change). */
 static SDL_Texture *g_key_hud_tex[4];
 static uintptr_t    g_key_hud_tex_tag;
@@ -224,10 +265,18 @@ static int          hud_digit_tex_scale_k(int tex_w, int tex_h);
 #define DISPLAY_ASCII_LAST            126
 #define DISPLAY_ASCII_COUNT           (DISPLAY_ASCII_LAST - DISPLAY_ASCII_FIRST + 1)
 #define DISPLAY_ASCII_COLS            16
+#ifdef AB3D_DOS
+/* DOS packaging removes cell padding that the glyph blitter never samples. */
+#define DISPLAY_ASCII_CELL_W          8
+#define DISPLAY_ASCII_CELL_H          13
+#define DISPLAY_ASCII_DRAW_X          0
+#define DISPLAY_ASCII_DRAW_Y          0
+#else
 #define DISPLAY_ASCII_CELL_W          12
 #define DISPLAY_ASCII_CELL_H          17
 #define DISPLAY_ASCII_DRAW_X          2
 #define DISPLAY_ASCII_DRAW_Y          2
+#endif
 #define DISPLAY_ASCII_DRAW_W          8
 #define DISPLAY_ASCII_DRAW_H          13
 #define DISPLAY_ASCII_XADVANCE        8
@@ -235,7 +284,17 @@ static int          hud_digit_tex_scale_k(int tex_w, int tex_h);
 #define DISPLAY_ASCII_SCALE_ONE       256
 #define DISPLAY_TEXT_MAX_LINES        32
 #define DISPLAY_TEXT_MAX_CHARS        128
+#ifdef AB3D_DOS
+#define DISPLAY_TEXT_LAYOUT_MAX_RUNS 128
+static int g_dos_text_page,g_dos_text_pages=1,g_dos_text_page_rows;
+void display_text_reset_pages(void) { g_dos_text_page=0;g_dos_text_pages=1; }
+int display_text_next_page(void) {
+    if(g_dos_text_page+1>=g_dos_text_pages)return 0;
+    g_dos_text_page++;return 1;
+}
+#else
 #define DISPLAY_TEXT_LAYOUT_MAX_RUNS  DISPLAY_TEXT_MAX_LINES
+#endif
 static SDL_Texture *g_ascii_font_tex;
 static int          g_ascii_font_tex_w;
 static int          g_ascii_font_tex_h;
@@ -270,7 +329,11 @@ static GLuint       g_title_screen_gl_tex;
 static int          g_title_screen_load_attempted;
 static void         display_title_screen_free(void);
 
+#ifdef AB3D_DOS
+static const int g_gl_unpack_ok=0;
+#else
 static int g_gl_unpack_ok; /* OpenGL R16UI + shader path active */
+#endif
 static int g_present_width = 0;
 static int g_present_height = 0;
 static SDL_Rect g_present_dst_rect;
@@ -1554,24 +1617,57 @@ static void display_gl_solid_triangles_xy(const float *xy, int nverts, Uint8 r, 
 static void display_overlay_copy(SDL_Texture *tex, const SDL_Rect *src_opt, const SDL_Rect *dst)
 {
     if (!g_sdl_ren || !tex || !dst) return;
+#ifdef AB3D_DOS
+    if(dos_check_enabled && !dos_benchmark_frames) {
+        int w,h;
+        if(src_opt){w=src_opt->w;h=src_opt->h;}
+        else if(SDL_QueryTexture(tex,NULL,NULL,&w,&h)<0) {
+            fprintf(stderr,"DOS UI texture query failed: %s\n",SDL_GetError());exit(1);
+        }
+        if(w!=dst->w || h!=dst->h) {
+            fprintf(stderr,"DOS UI attempted scaling %dx%d to %dx%d\n",w,h,dst->w,dst->h);exit(1);
+        }
+        /* Native title artwork is deliberately cropped; controls must fit. */
+        if(tex!=g_title_screen_tex && (dst->x<0 || dst->y<0 ||
+           dst->x+dst->w>g_present_width || dst->y+dst->h>g_present_height)) {
+            fprintf(stderr,"DOS UI blit outside %dx%d: %d,%d %dx%d\n",
+                g_present_width,g_present_height,dst->x,dst->y,dst->w,dst->h);exit(1);
+        }
+    }
+#endif
     if (g_gl_unpack_ok && g_gl_hud_ok)
         display_gl_texture_blit(tex, src_opt, dst);
     else
         SDL_RenderCopy(g_sdl_ren, tex, src_opt, dst);
 }
 
+
 static void display_overlay_fill_rect_abs(const SDL_Rect *rect, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
     if (!g_sdl_ren || !rect) return;
+#ifdef AB3D_DOS
+    if (!a) return;
+    if(dos_check_enabled && !dos_benchmark_frames && (rect->x<0 || rect->y<0 ||
+       rect->x+rect->w>g_present_width || rect->y+rect->h>g_present_height)) {
+        fprintf(stderr,"DOS UI fill outside %dx%d: %d,%d %dx%d\n",
+            g_present_width,g_present_height,rect->x,rect->y,rect->w,rect->h);exit(1);
+    }
+    a = 255;
+#endif
     if (g_gl_unpack_ok && g_gl_hud_ok)
         display_gl_solid_rect_fill(rect, r, g, b, a);
     else {
+#ifdef AB3D_DOS
+        SDL_SetRenderDrawBlendMode(g_sdl_ren, SDL_BLENDMODE_NONE);
+#else
         SDL_SetRenderDrawBlendMode(g_sdl_ren, SDL_BLENDMODE_BLEND);
+#endif
         SDL_SetRenderDrawColor(g_sdl_ren, r, g, b, a);
         SDL_RenderFillRect(g_sdl_ren, rect);
     }
 }
 
+#ifndef AB3D_DOS
 static unsigned char *display_load_png_rgba_asset(const char *rel_path,
                                                   int *out_w, int *out_h,
                                                   const char *label)
@@ -1583,6 +1679,9 @@ static unsigned char *display_load_png_rgba_asset(const char *rel_path,
 
     if (!rel_path || !*rel_path) return NULL;
 
+#ifdef AB3D_DOS
+    rel_path = dos_asset_alias(rel_path);
+#endif
     base = SDL_GetBasePath();
     if (base) {
         int plen = snprintf(path, sizeof(path), "%s%s", base, rel_path);
@@ -1612,9 +1711,32 @@ static unsigned char *display_load_png_rgba_asset(const char *rel_path,
     return rgba;
 }
 
-static SDL_Texture *display_load_png_texture_argb(const char *rel_path, int *out_w, int *out_h,
+#endif
+
+static FILE *display_open_asset_file(const char *rel_path,char *path,size_t path_size,const char *label);
+static SDL_Texture *display_load_ui_image_asset(const char *rel_path, int *out_w, int *out_h,
                                                   const char *label)
 {
+#ifdef AB3D_DOS
+    char path[1024];unsigned char header[12];
+    FILE *file=display_open_asset_file(rel_path,path,sizeof(path),label);
+    if(!file || fread(header,1,12,file)!=12 || memcmp(header,"ABUI",4)) {
+        fprintf(stderr,"Invalid/missing native DOS UI image: %s\n",rel_path);exit(1);
+    }
+    unsigned w=header[4]|(header[5]<<8),h=header[6]|(header[7]<<8);
+    unsigned flags=header[8]|(header[9]<<8),key=header[10]|(header[11]<<8);
+    if(!w || !h || flags>1){fprintf(stderr,"Invalid DOS UI dimensions/flags: %s\n",rel_path);exit(1);}
+    DosUiImage *image=dos_ui_create_image(w,h,SDL_TEXTUREACCESS_STATIC);
+    if(!image){fprintf(stderr,"Cannot allocate DOS UI image: %s (%s)\n",rel_path,SDL_GetError());exit(1);}
+    for(unsigned y=0;y<h;y++)if(fread((uint8_t *)image->normal->pixels+y*image->normal->pitch,2,w,file)!=w) {
+        fprintf(stderr,"Truncated DOS UI image: %s\n",rel_path);exit(1);
+    }
+    if(fgetc(file)!=EOF || ferror(file) || !SDL_SetSurfaceColorKey(image->normal,flags!=0,key) ||
+       !SDL_SetSurfaceBlendMode(image->normal,SDL_BLENDMODE_NONE) || !SDL_SetSurfaceRLE(image->normal,true)) {
+        fprintf(stderr,"DOS UI image format/setup failed: %s\n",rel_path);exit(1);
+    }
+    fclose(file);if(out_w)*out_w=w;if(out_h)*out_h=h;return image;
+#else
     int w = 0, h = 0;
     unsigned char *rgba = NULL;
 
@@ -1656,6 +1778,7 @@ static SDL_Texture *display_load_png_texture_argb(const char *rel_path, int *out
     if (out_w) *out_w = w;
     if (out_h) *out_h = h;
     return t;
+#endif
 }
 
 static FILE *display_open_asset_file(const char *rel_path, char *path,
@@ -1667,6 +1790,9 @@ static FILE *display_open_asset_file(const char *rel_path, char *path,
     if (!rel_path || !*rel_path || !path || path_size < 1) return NULL;
     path[0] = '\0';
 
+#ifdef AB3D_DOS
+    rel_path = dos_asset_alias(rel_path);
+#endif
     base = SDL_GetBasePath();
     if (base) {
         int plen = snprintf(path, path_size, "%s%s", base, rel_path);
@@ -1735,6 +1861,11 @@ static uint8_t *display_load_asset_exact(const char *rel_path,
 static SDL_Rect display_fit_rect(int win_w, int win_h, int src_w, int src_h)
 {
     SDL_Rect dst;
+#ifdef AB3D_DOS
+    dst.w=src_w;dst.h=src_h;
+    dst.x=(win_w-src_w)/2;dst.y=(win_h-src_h)/2;
+    return dst;
+#endif
     double sx;
     double sy;
     double sc;
@@ -1758,6 +1889,20 @@ static SDL_Rect display_fit_rect(int win_w, int win_h, int src_w, int src_h)
     dst.y = (win_h - dst.h) / 2;
     return dst;
 }
+
+#ifdef AB3D_DOS
+/* Artwork can be taller than the VESA mode. Text uses only its visible area. */
+static SDL_Rect display_dos_visible_text_rect(SDL_Rect r)
+{
+    int right=r.x+r.w,bottom=r.y+r.h;
+    if(r.x<0)r.x=0;
+    if(r.y<0)r.y=0;
+    if(right>g_present_width)right=g_present_width;
+    if(bottom>g_present_height)bottom=g_present_height;
+    r.w=right-r.x;r.h=bottom-r.y;
+    return r;
+}
+#endif
 
 static void display_title_screen_free(void)
 {
@@ -1841,6 +1986,45 @@ static void display_title_screen_upload_gl_texture(const uint32_t *argb)
     free(rgba);
 }
 
+#ifdef AB3D_DOS
+static void display_title_screen_ensure_loaded(void)
+{
+    if(g_title_screen_load_attempted || !g_sdl_ren)return;
+    g_title_screen_load_attempted=1;
+    char path[1024];
+    FILE *file=display_open_asset_file(DISPLAY_TITLE_RAW_PATH,path,sizeof(path),"title raw");
+    uint8_t *pal=display_load_asset_exact(DISPLAY_TITLE_PAL_PATH,DISPLAY_TITLE_PAL_BYTES,"title palette");
+    uint8_t *plane=malloc(DISPLAY_TITLE_PLANE_BYTES);
+    DosUiImage *title=dos_ui_create_striped_image(DISPLAY_TITLE_W,DISPLAY_TITLE_H);
+    if(!file || !pal || !plane || !title){fprintf(stderr,"Cannot load native DOS title assets\n");exit(1);}
+    uint16_t colors[1<<DISPLAY_TITLE_PLANES];
+    for(unsigned index=0;index<(1u<<DISPLAY_TITLE_PLANES);index++) {
+        size_t off=index*DISPLAY_TITLE_PAL_ENTRY_BYTES;
+        unsigned r=display_title_palette_component_to_rgb((pal[off]<<8)|pal[off+1]);
+        unsigned g=display_title_palette_component_to_rgb(pal[off+2]);
+        unsigned b=display_title_palette_component_to_rgb(pal[off+3]);
+        colors[index]=(uint16_t)(((r>>3)<<11)|((g>>2)<<5)|(b>>3));
+    }
+    /* ControlLoop.s's original planar data: read one plane at a time into
+     * the final surface, then resolve its indices through the same palette. */
+    for(int bit=0;bit<DISPLAY_TITLE_PLANES;bit++) {
+        if(fread(plane,1,DISPLAY_TITLE_PLANE_BYTES,file)!=DISPLAY_TITLE_PLANE_BYTES) {
+            fprintf(stderr,"Truncated DOS title plane %d\n",bit);exit(1);
+        }
+        for(int y=0;y<DISPLAY_TITLE_H;y++) {
+            uint16_t *row=(uint16_t *)((uint8_t *)title->strips[y/16]->pixels+(y%16)*title->strips[y/16]->pitch);
+            for(int x=0;x<DISPLAY_TITLE_W;x++)
+                row[x]|=((plane[y*DISPLAY_TITLE_ROW_BYTES+(x>>3)]>>(7-(x&7)))&1u)<<bit;
+        }
+    }
+    for(int y=0;y<DISPLAY_TITLE_H;y++) {
+        uint16_t *row=(uint16_t *)((uint8_t *)title->strips[y/16]->pixels+(y%16)*title->strips[y/16]->pitch);
+        for(int x=0;x<DISPLAY_TITLE_W;x++)row[x]=colors[row[x]];
+    }
+    if(fgetc(file)!=EOF || ferror(file)){fprintf(stderr,"DOS title raw size/read mismatch\n");exit(1);}
+    fclose(file);free(plane);free(pal);g_title_screen_tex=title;
+}
+#else
 static void display_title_screen_ensure_loaded(void)
 {
     uint8_t *raw;
@@ -1921,6 +2105,7 @@ static void display_title_screen_ensure_loaded(void)
     free(raw);
     free(pal);
 }
+#endif
 
 static void display_ascii_font_free(void)
 {
@@ -1942,7 +2127,7 @@ static void display_ascii_font_free(void)
 
 static void display_ascii_font_upload_array_texture(void)
 {
-#if SDL_VERSION_ATLEAST(2, 0, 12)
+#if !defined(AB3D_DOS) && SDL_VERSION_ATLEAST(2, 0, 12)
     int atlas_w = 0, atlas_h = 0;
     unsigned char *atlas = NULL;
     unsigned char *layers = NULL;
@@ -2069,7 +2254,7 @@ static void display_ascii_font_ensure_loaded(void)
     if (g_ascii_font_load_attempted || !g_sdl_ren) return;
     g_ascii_font_load_attempted = 1;
 
-    g_ascii_font_tex = display_load_png_texture_argb(DISPLAY_ASCII_FONT_PATH,
+    g_ascii_font_tex = display_load_ui_image_asset(DISPLAY_ASCII_FONT_PATH,
                                                      &g_ascii_font_tex_w,
                                                      &g_ascii_font_tex_h,
                                                      "ASCII font");
@@ -2212,7 +2397,7 @@ static int display_text_append_run(DisplayTextRun *runs, int max_runs,
 }
 
 static int display_text_build_line_layout(DisplayTextRun *runs, int max_runs,
-                                          int *out_longest_chars)
+                                          int *out_longest_chars, int wrap_cols)
 {
     int first_line = -1;
     int last_line = -1;
@@ -2233,6 +2418,15 @@ static int display_text_build_line_layout(DisplayTextRun *runs, int max_runs,
         if (!g_text_line_used[i] || display_ascii_text_is_blank(g_text_lines[i])) {
             start = 0;
             len = 0;
+        }
+        while(wrap_cols>0 && len>wrap_cols) {
+            int take=wrap_cols;
+            while(take>0 && g_text_lines[i][start+take]!=' ')take--;
+            if(!take)take=wrap_cols;
+            if(!display_text_append_run(runs,max_runs,&count,g_text_lines[i],start,take,i,g_text_line_alpha[i]))return 0;
+            if(take>longest)longest=take;
+            start+=take;len-=take;
+            while(len && g_text_lines[i][start]==' '){start++;len--;}
         }
         if (!display_text_append_run(runs, max_runs, &count, g_text_lines[i],
                                      start, len, i, g_text_line_alpha[i])) {
@@ -2274,10 +2468,18 @@ static int display_text_layout_in_rect(SDL_Rect r, DisplayTextRun *runs,
     }
 
     int longest_chars = 1;
+    int wrap_cols=0;
+#ifdef AB3D_DOS
+    wrap_cols=avail_w/DISPLAY_ASCII_XADVANCE;
+#endif
     int run_count = display_text_build_line_layout(runs, max_runs,
-                                                   &longest_chars);
+                                                   &longest_chars,wrap_cols);
     if (run_count < 1) return 0;
 
+#ifdef AB3D_DOS
+    /* Native bitmap pixels on DOS, including menus, level text and dialogs. */
+    int scale_q=DISPLAY_ASCII_SCALE_ONE;
+#else
     int scale_q = DISPLAY_ASCII_SCALE_ONE * 4;
     if (longest_chars > 0) {
         int64_t natural_w = (int64_t)longest_chars *
@@ -2308,10 +2510,21 @@ static int display_text_layout_in_rect(SDL_Rect r, DisplayTextRun *runs,
     }
 
     scale_q = display_text_crisp_scale_q(scale_q);
+#endif
 
     int line_h = display_text_scaled_px(DISPLAY_ASCII_LINE_ADVANCE, scale_q);
     int draw_h = display_text_scaled_px(DISPLAY_ASCII_DRAW_H, scale_q);
     int total_h = run_count * line_h;
+#ifdef AB3D_DOS
+    g_dos_text_page_rows=avail_h/line_h;
+    if(g_dos_text_page_rows<1)g_dos_text_page_rows=1;
+    if(run_count>g_dos_text_page_rows && g_dos_text_page_rows>1)g_dos_text_page_rows--;
+    g_dos_text_pages=(run_count+g_dos_text_page_rows-1)/g_dos_text_page_rows;
+    if(g_dos_text_page>=g_dos_text_pages)g_dos_text_page=g_dos_text_pages-1;
+    int remaining=run_count-g_dos_text_page*g_dos_text_page_rows;
+    total_h=(remaining<g_dos_text_page_rows?remaining:g_dos_text_page_rows)*line_h;
+    if(g_dos_text_pages>1)total_h+=line_h;
+#endif
     int top = r.y + (r.h - total_h) / 2;
     if (top < r.y + margin_y) top = r.y + margin_y;
 
@@ -2328,6 +2541,10 @@ static int display_text_layout_in_rect(SDL_Rect r, DisplayTextRun *runs,
 static void display_text_screen_draw_in_rect(Uint8 alpha, SDL_Rect r)
 {
     if (!display_text_has_lines()) return;
+#ifdef AB3D_DOS
+    r=display_dos_visible_text_rect(r);
+    if(r.w<1 || r.h<1)return;
+#endif
     display_ascii_font_ensure_loaded();
     if (!g_ascii_font_tex) return;
 
@@ -2346,23 +2563,44 @@ static void display_text_screen_draw_in_rect(Uint8 alpha, SDL_Rect r)
         return;
     }
 
-    for (int i = 0; i < run_count; i++) {
+    int first_run=0,end_run=run_count;
+#ifdef AB3D_DOS
+    first_run=g_dos_text_page*g_dos_text_page_rows;
+    if(end_run>first_run+g_dos_text_page_rows)end_run=first_run+g_dos_text_page_rows;
+#endif
+    for (int i = first_run; i < end_run; i++) {
         if (runs[i].len < 1) continue;
 
         int text_w = display_text_span_width_px_q(runs[i].len, scale_q);
         int x = r.x + (r.w - text_w) / 2;
         if (x < r.x + margin_x) x = r.x + margin_x;
-        int y = top + i * line_h;
+        int y = top + (i-first_run) * line_h;
         if (y > r.y + r.h - margin_y - draw_h) continue;
         Uint8 run_alpha = (Uint8)(((int)alpha * (int)runs[i].alpha + 127) / 255);
+#ifdef AB3D_DOS
+        /* Screen transitions step on/off; only disabled labels use grey. */
+        run_alpha = alpha ? (runs[i].alpha < 255 ? 128 : 255) : 0;
+#endif
         display_bitmap_text_span_abs(runs[i].text, runs[i].start, runs[i].len,
                                      x, y, scale_q, run_alpha);
     }
+#ifdef AB3D_DOS
+    if(g_dos_text_pages>1) {
+        const char *prompt=g_dos_text_page+1<g_dos_text_pages?"MORE - PRESS A KEY":"PRESS A KEY";
+        int len=(int)strlen(prompt);
+        display_bitmap_text_span_abs(prompt,0,len,r.x+(r.w-len*DISPLAY_ASCII_XADVANCE)/2,
+            r.y+r.h-margin_y-DISPLAY_ASCII_DRAW_H,DISPLAY_ASCII_SCALE_ONE,alpha);
+    }
+#endif
 }
 
 static void display_text_screen_draw(Uint8 alpha)
 {
+#ifdef AB3D_DOS
+    display_text_screen_draw_in_rect(alpha,(SDL_Rect){0,0,g_present_width,g_present_height});
+#else
     display_text_screen_draw_in_rect(alpha, g_present_dst_rect);
+#endif
 }
 
 static void display_automap_line_stroked_gl(int ax0, int ay0, int ax1, int ay1,
@@ -2411,11 +2649,16 @@ static void display_gl_shutdown_unpack(void)
     g_gl_vbo = 0;
     g_gl_prog = 0;
     g_gl_tex_cw = 0;
+#ifndef AB3D_DOS
     g_gl_unpack_ok = 0;
+#endif
 }
 
 static int display_gl_try_init_unpack(void)
 {
+#ifdef AB3D_DOS
+    return 0;
+#else
     if (!g_sdl_ren || !g_window) return 0;
     SDL_RenderClear(g_sdl_ren);
 #if SDL_VERSION_ATLEAST(2, 0, 14)
@@ -2488,6 +2731,7 @@ static int display_gl_try_init_unpack(void)
     }
     printf("[DISPLAY] 12-bit unpack: GPU (GL_R16UI + shader)\n");
     return 1;
+#endif
 }
 
 /* GL client-unpack state (pixel store + PBO) is global; SDL's renderer may leave
@@ -2642,6 +2886,10 @@ static void display_update_letterbox(int win_w, int win_h)
     if (rw < 1) rw = 1;
     if (rh < 1) rh = 1;
 
+#ifdef AB3D_DOS
+    int dw=rw,dh=rh;
+    printf("[DOS VIDEO] render %dx%d; native RGB565 SDL surface; 1:1 viewport\n",rw,rh);
+#else
     double sx = (double)win_w / (double)rw;
     double sy = (double)win_h / (double)rh;
     double sc = (sx < sy) ? sx : sy;
@@ -2651,6 +2899,7 @@ static void display_update_letterbox(int win_w, int win_h)
     if (dh < 1) dh = 1;
     if (dw > win_w) dw = win_w;
     if (dh > win_h) dh = win_h;
+#endif
 
     g_present_dst_rect.x = (win_w - dw) / 2;
     g_present_dst_rect.y = (win_h - dh) / 2;
@@ -2769,6 +3018,10 @@ int display_text_line_at_point(int window_x, int window_y, int title_screen,
         r = g_present_dst_rect;
     }
 
+#ifdef AB3D_DOS
+    r=display_dos_visible_text_rect(r);
+    if(r.w<1 || r.h<1)return 0;
+#endif
     if (!display_text_layout_in_rect(r, runs, DISPLAY_TEXT_LAYOUT_MAX_RUNS,
                                      &run_count, &scale_q, &line_h, &draw_h,
                                      &top, &margin_x, NULL)) {
@@ -2811,6 +3064,9 @@ static void display_set_renderer_target_size(int w, int h)
     if (g_gl_unpack_ok) {
         display_gl_resize_cw_texture(w, h);
     } else {
+#ifdef AB3D_DOS
+        /* The DOS renderer owns native RGB565 framebuffers; no SDL texture. */
+#else
 #if defined(__amigaos4__) || defined(__BIG_ENDIAN__)
         g_texture = NULL; /* Force ARGB8888 on big-endian */
 #else
@@ -2841,6 +3097,7 @@ static void display_set_renderer_target_size(int w, int h)
             /* Opaque blit: cw uses XRGB4444 (high nibble unused). */
             SDL_SetTextureBlendMode(g_texture, SDL_BLENDMODE_NONE);
         }
+#endif
     }
 }
 
@@ -2854,18 +3111,18 @@ static void display_log_display_mode_snapshot(const char *tag)
     if (cur_ok && desk_ok) {
         printf("[DISPLAY] %s: current=%dx%d@%d desktop=%dx%d@%d\n",
                tag,
-               cur.w, cur.h, cur.refresh_rate,
-               desk.w, desk.h, desk.refresh_rate);
+               cur.w, cur.h, (int)cur.refresh_rate,
+               desk.w, desk.h, (int)desk.refresh_rate);
         return;
     }
     if (cur_ok) {
         printf("[DISPLAY] %s: current=%dx%d@%d desktop=unavailable\n",
-               tag, cur.w, cur.h, cur.refresh_rate);
+               tag, cur.w, cur.h, (int)cur.refresh_rate);
         return;
     }
     if (desk_ok) {
         printf("[DISPLAY] %s: current=unavailable desktop=%dx%d@%d\n",
-               tag, desk.w, desk.h, desk.refresh_rate);
+               tag, desk.w, desk.h, (int)desk.refresh_rate);
         return;
     }
     printf("[DISPLAY] %s: display mode query unavailable (%s)\n", tag, SDL_GetError());
@@ -2942,9 +3199,15 @@ void display_init(GameState *state)
         }
     }
     fullscreen_desktop = display_use_fullscreen_desktop(state);
+#ifdef AB3D_DOS
+    fullscreen_desktop = 0;
+#endif
     if (base_rw < 96) base_rw = 96;
     if (base_rh < 80) base_rh = 80;
     if (supersampling < 1) supersampling = 1;
+#ifdef AB3D_DOS
+    if(supersampling!=1){fprintf(stderr,"DOS 1:1 rendering requires supersampling=1\n");exit(1);}
+#endif
     if (supersampling > 4) supersampling = 4;
 
     {
@@ -3023,7 +3286,7 @@ void display_init(GameState *state)
 #endif
     }
 
-    renderer_init();
+    renderer_init(rw, rh);
 
     const char *driver_override = SDL_getenv("AB3D_RENDER_DRIVER");
     /* Set AB3D_DISABLE_GL_UNPACK=1 to force D3D + SDL texture (CPU blit path). Otherwise prefer GL_R16UI. */
@@ -3045,6 +3308,9 @@ void display_init(GameState *state)
                                      framebuffer_mipmap[0] == 'Y')) ? 1 : 0;
     int window_w = base_rw;
     int window_h = base_rh;
+#ifdef AB3D_DOS
+    window_w=base_rw<320?320:base_rw;window_h=base_rh<200?200:base_rh;
+#endif
     Uint32 window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
     int window_x = SDL_WINDOWPOS_CENTERED;
     int window_y = SDL_WINDOWPOS_CENTERED;
@@ -3095,6 +3361,9 @@ void display_init(GameState *state)
     );
     if (!g_window) {
         printf("[DISPLAY] SDL_CreateWindow failed: %s\n", SDL_GetError());
+#ifdef AB3D_DOS
+        exit(1);
+#endif
         return;
     }
     SDL_GetWindowSize(g_window, &window_w, &window_h);
@@ -3140,6 +3409,9 @@ void display_init(GameState *state)
     }
     if (!g_sdl_ren) {
         printf("[DISPLAY] SDL_CreateRenderer failed: %s\n", SDL_GetError());
+#ifdef AB3D_DOS
+        exit(1);
+#endif
         return;
     }
     {
@@ -3197,7 +3469,12 @@ void display_init(GameState *state)
            g_present_dst_rect.w, g_present_dst_rect.h,
            g_present_dst_rect.x, g_present_dst_rect.y);
     display_log_display_mode_snapshot("startup-after-window");
+#ifdef AB3D_DOS
+    /* Keep the small, always-needed HUD atlases ahead of level heap growth. */
+    display_hud_digits_ensure_loaded();
+#else
     (void)display_gl_lines_ensure_scratch(DISPLAY_AUTOMAP_MAX_SEGS * 14);
+#endif
 #if defined(__EMSCRIPTEN__)
     /* Canvas backing store may settle after layout; refresh letterbox once. */
     SDL_PumpEvents();
@@ -3338,6 +3615,13 @@ void display_toggle_fullscreen(void)
 
 void display_shutdown(void)
 {
+#ifdef AB3D_DOS
+    free(g_dos_map_scratch);g_dos_map_scratch=NULL;g_dos_map_capacity=0;
+    for(int i=0;i<2;i++) {
+        if(g_dos_frame_surfaces[i])SDL_DestroySurface(g_dos_frame_surfaces[i]);
+        g_dos_frame_surfaces[i]=NULL;g_dos_frame_pixels[i]=NULL;
+    }
+#endif
     display_hud_digits_free();
     display_key_hud_free_textures();
     for (int i = 0; i < 2; i++) {
@@ -3400,6 +3684,12 @@ static void display_automap_line_stroked_sdl(SDL_Renderer *ren,
                                              Uint8 fr, Uint8 fg, Uint8 fb, Uint8 alpha,
                                              int black_k_max, int fg_k_max)
 {
+#ifdef AB3D_DOS
+    SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(ren,fr*alpha/255,fg*alpha/255,fb*alpha/255,255);
+    SDL_RenderDrawLine(ren,ax0,ay0,ax1,ay1);
+    return;
+#endif
     int dx = ax1 - ax0;
     int dy = ay1 - ay0;
     double len = hypot((double)dx, (double)dy);
@@ -3476,6 +3766,18 @@ static void display_automap_draw_line_outlined(SDL_Renderer *ren,
 static void display_automap_player_arrow_fill(int axb, int ayb, int axl, int ayl, int axt, int ayt,
                                               int axr, int ayr)
 {
+#ifdef AB3D_DOS
+    SDL_Vertex verts[4]={0};
+    int dos_xy[4][2]={{axb,ayb},{axl,ayl},{axt,ayt},{axr,ayr}};
+    const int indices[6]={0,1,2,0,2,3};
+    for(int i=0;i<4;i++) {
+        verts[i].position=(SDL_FPoint){(float)dos_xy[i][0],(float)dos_xy[i][1]};
+        verts[i].color=(SDL_FColor){18/255.0f,60/255.0f,82/255.0f,1.0f};
+    }
+    SDL_SetRenderDrawBlendMode(g_sdl_ren,SDL_BLENDMODE_NONE);
+    SDL_RenderGeometry(g_sdl_ren,NULL,verts,4,indices,6);
+    return;
+#endif
     float xy[12] = {
         (float)axb, (float)ayb, (float)axl, (float)ayl, (float)axt, (float)ayt,
         (float)axb, (float)ayb, (float)axt, (float)ayt, (float)axr, (float)ayr,
@@ -3600,7 +3902,7 @@ static void display_hud_digits_free(void)
 
 static void display_hud_digit_upload_array_texture(int kind)
 {
-#if SDL_VERSION_ATLEAST(2, 0, 12)
+#if !defined(AB3D_DOS) && SDL_VERSION_ATLEAST(2, 0, 12)
     if (kind < 0 || kind >= DISPLAY_HUD_DIGIT_KIND_COUNT)
         return;
 
@@ -3718,48 +4020,10 @@ static void display_hud_digits_ensure_loaded(void)
     g_hud_digits_load_attempted = 1;
 
     for (int i = 0; i < DISPLAY_HUD_DIGIT_KIND_COUNT; i++) {
-        int w = 0, h = 0;
-        unsigned char *rgba = NULL;
-
-        rgba = display_load_png_rgba_asset(g_hud_digit_paths[i], &w, &h,
-                                           "HUD digits");
-        if (!rgba) {
-            continue;
-        }
-
-        size_t npix = (size_t)w * (size_t)h;
-        uint32_t *argb = (uint32_t *)malloc(npix * sizeof(uint32_t));
-        if (!argb) {
-            stbi_image_free(rgba);
-            continue;
-        }
-        for (size_t p = 0; p < npix; p++) {
-            unsigned char r = rgba[p * 4 + 0];
-            unsigned char g = rgba[p * 4 + 1];
-            unsigned char b = rgba[p * 4 + 2];
-            unsigned char a = rgba[p * 4 + 3];
-            argb[p] = ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
-        }
-        stbi_image_free(rgba);
-
-        SDL_Texture *t = SDL_CreateTexture(g_sdl_ren, SDL_PIXELFORMAT_ARGB8888,
-                                           SDL_TEXTUREACCESS_STATIC, w, h);
-        if (!t || SDL_UpdateTexture(t, NULL, argb, (int)(w * (int)sizeof(uint32_t))) != 0) {
-            if (t) SDL_DestroyTexture(t);
-            free(argb);
-            printf("[DISPLAY] HUD digits: SDL texture failed for %s\n",
-                   g_hud_digit_paths[i]);
-            continue;
-        }
-        free(argb);
-        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
-#if SDL_VERSION_ATLEAST(2, 0, 12)
-        /* Nearest: linear upscale bleeds between adjacent digits in the strip atlas. */
-        SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
-#endif
-        g_hud_digit_tex[i] = t;
-        g_hud_digit_tex_w[i] = w;
-        g_hud_digit_tex_h[i] = h;
+        int w=0,h=0;
+        SDL_Texture *t=display_load_ui_image_asset(g_hud_digit_paths[i],&w,&h,"HUD digits");
+        if(!t)continue;
+        g_hud_digit_tex[i]=t;g_hud_digit_tex_w[i]=w;g_hud_digit_tex_h[i]=h;
         display_hud_digit_upload_array_texture(i);
     }
 }
@@ -3768,6 +4032,12 @@ static void display_hud_digits_ensure_loaded(void)
  * Bottom HUD: compact cluster bottom-right. Letterbox pixels (g_present_dst_rect);
  * scale ~1/32 of height so size tracks resolution without dominating the screen.
  */
+static int hud_key_mark_height(int key_height)
+{
+    int height=key_height/10;
+    return height<2?2:height;
+}
+
 static void hud_key_row_layout(int lay_w, int lay_h, int *margin, int *kh, int *gap, int *group_w,
                                int *ix_key0, int *iy)
 {
@@ -3782,10 +4052,16 @@ static void hud_key_row_layout(int lay_w, int lay_h, int *margin, int *kh, int *
     }
     int g = k / 12;
     if (g < 2) g = 2;
+#ifdef AB3D_DOS
+    m=2;k=32;g=2;
+#endif
     int gw = 4 * k + 3 * g;
     int ix = lay_w - m - gw;
     if (ix < 0) ix = 0;
     int y = lay_h - m - k;
+#ifdef AB3D_DOS
+    y-=hud_key_mark_height(k)+1;
+#endif
     *margin = m;
     *kh = k;
     *gap = g;
@@ -3845,6 +4121,9 @@ static void hud_digit_src_rect(int tex_w, int tex_h, int digit, SDL_Rect *src)
 /* Widest scaled glyph — fixed column width so 0..9 align in three slots. */
 static int hud_digit_crisp_height(int tex_h, int digit_h)
 {
+#ifdef AB3D_DOS
+    return tex_h;
+#endif
     if (tex_h < 1 || digit_h < 1)
         return digit_h;
     if (digit_h <= tex_h)
@@ -4073,6 +4352,9 @@ static void display_crosshair_sdl_overlay(const GameState *state)
 
     int margin = 5;
     int unit = display_round_div_i64((int64_t)ph, RENDER_DEFAULT_HEIGHT);
+#ifdef AB3D_DOS
+    unit=1;
+#endif
     if (unit < 1) unit = 1;
     if (unit > 4) unit = 4;
     int dot = unit;
@@ -4147,6 +4429,7 @@ static void display_hud_numbers_sdl_overlay(const GameState *state)
     if (g_hud_digit_tex[1])
         ammo_w = hud_three_slot_width(g_hud_digit_tex_w[1], g_hud_digit_tex_h[1], digit_h, d_gap);
 
+#ifndef AB3D_DOS
     /* Shrink digits if stats would extend left of the margin (health | ammo | gap | keys). */
     for (int attempt = 0; attempt < 10; attempt++) {
         int inner = (health_w > 0 && ammo_w > 0) ? gap_stat : 0;
@@ -4158,6 +4441,9 @@ static void display_hud_numbers_sdl_overlay(const GameState *state)
         health_w = g_hud_digit_tex[0] ? hud_three_slot_width(g_hud_digit_tex_w[0], g_hud_digit_tex_h[0], digit_h, d_gap) : 0;
         ammo_w = g_hud_digit_tex[1] ? hud_three_slot_width(g_hud_digit_tex_w[1], g_hud_digit_tex_h[1], digit_h, d_gap) : 0;
     }
+#else
+    iy+=kh-digit_h;
+#endif
 
     /* Right edge of stat block sits just left of the key row (same baseline iy). */
     int right = ix_key0 - gap_stat;
@@ -4268,7 +4554,17 @@ static void display_hud_stats_sdl_overlay(const GameState *state)
     if (bw < 4) bw = 4;
     int margin = ph * 8 / 256;
     int full_h = ph * 128 / 256;
+#ifdef AB3D_DOS
+    bw=8;margin=8;full_h=128;
+#endif
     int top = (ph - full_h) / 2;
+#ifdef AB3D_DOS
+    int key_margin,key_h,key_gap,key_w,key_x,key_y;
+    hud_key_row_layout(pw,ph,&key_margin,&key_h,&key_gap,&key_w,&key_x,&key_y);
+    /* A 200-line mode needs room above the native key row as well. */
+    int max_top=key_y-2-full_h-1;
+    if(top>max_top)top=max_top;
+#endif
     for (int kind = 0; kind < 2; kind++) {
         int maximum = kind ? 63 : PLAYER_MAX_ENERGY;
         int value = values[kind];
@@ -4284,6 +4580,9 @@ static void display_hud_stats_sdl_overlay(const GameState *state)
         SDL_Rect track = { g_present_dst_rect.x + x, g_present_dst_rect.y + top,
                            bw, full_h };
         SDL_Rect dst = display_hud_bar_fill_rect(track, value, maximum);
+#ifdef AB3D_DOS
+        dst.y=track.y+track.h-rows;dst.h=rows;
+#endif
         display_overlay_copy(display_bar_hud_texture(kind), &src, &dst);
     }
 }
@@ -4294,9 +4593,18 @@ static void display_hit_flash_overlay(const GameState *state)
     int hit = state->mode == MODE_SLAVE ? state->hitcol2 : state->hitcol;
     if (hit <= 0) return;
     if (hit > 0xF00) hit = 0xF00;
+#ifdef AB3D_DOS
+    /* Keep damage feedback without blending every world pixel on a 486. */
+    SDL_Rect r = g_present_dst_rect;
+    int red = hit * 255 / 0xF00;
+    SDL_Rect edges[4] = {{r.x,r.y,r.w,2},{r.x,r.y+r.h-2,r.w,2},
+                         {r.x,r.y+2,2,r.h-4},{r.x+r.w-2,r.y+2,2,r.h-4}};
+    for (int i=0;i<4;i++) display_overlay_fill_rect_abs(&edges[i],red,0,0,255);
+#else
     /* Original hitcol red pulse, adapted to a borderless view. */
     display_overlay_fill_rect_abs(&g_present_dst_rect, 255, 0, 0,
                                    (Uint8)(hit * 88 / 0xF00));
+#endif
 }
 
 static void display_key_hud_sdl_overlay(const GameState *state)
@@ -4327,6 +4635,10 @@ static void display_key_hud_sdl_overlay(const GameState *state)
         uint8_t bit = (uint8_t)(1u << i);
         int collected = (((uint16_t)game_conditions & (uint16_t)bit) != 0);
         Uint8 alpha = collected ? (Uint8)255 : (Uint8)40;
+#ifdef AB3D_DOS
+        /* The DOS cache selects opaque grey for a disabled key. */
+        alpha = collected ? 255 : 128;
+#endif
 
         int frame = renderer_key_sprite_frame_for_condition_bit(state, i);
         if (frame < 0) frame = 0;
@@ -4336,8 +4648,7 @@ static void display_key_hud_sdl_overlay(const GameState *state)
 
         if (collected) {
             /* An underline identifies ownership even against bright scenery. */
-            int mark_h = kh / 10;
-            if (mark_h < 2) mark_h = 2;
+            int mark_h = hud_key_mark_height(kh);
             display_key_hud_fill_rect(g_sdl_ren, ix, iy + kh + 1, kh, mark_h,
                                       255, 245, 200, 255);
         }
@@ -4367,6 +4678,9 @@ static void display_key_hud_sdl_overlay(const GameState *state)
             g = fallback_rgb[i][1];
             b = fallback_rgb[i][2];
         }
+#ifdef AB3D_DOS
+        if (!collected) r = g = b = 112;
+#endif
         int bow_w = kw * 2 / 3;
         int bow_h = kh * 5 / 12;
         display_key_hud_fill_rect(g_sdl_ren, ix, iy, bow_w, bow_h, r, g, b, alpha);
@@ -4386,20 +4700,43 @@ static void display_key_hud_sdl_overlay(const GameState *state)
     }
 }
 
+#ifdef AB3D_DOS
+static void display_automap_sdl_overlay_impl(GameState *state)
+#else
 static void display_automap_sdl_overlay(GameState *state)
+#endif
 {
     if (!state || !state->automap_visible || !g_sdl_ren) return;
 
     /* ~264 KiB: must not live on the stack — Emscripten default stack is 64 KiB and overflow
      * here caused a solid tab freeze when opening the map on web. */
+#ifdef AB3D_DOS
+    unsigned seen=state->level.automap_seen_count;
+    int wanted=seen>DISPLAY_AUTOMAP_MAX_SEGS-3?DISPLAY_AUTOMAP_MAX_SEGS:(int)seen+3;
+    if(wanted>g_dos_map_capacity) {
+        unsigned char *scratch=realloc(g_dos_map_scratch,(size_t)wanted*(4*sizeof(int)+sizeof(uint16_t)));
+        if(!scratch){fprintf(stderr,"Cannot allocate DOS map segments\n");exit(1);}
+        g_dos_map_scratch=scratch;g_dos_map_capacity=wanted;
+    }
+    int *s_ix0=(int *)g_dos_map_scratch,*s_iy0=s_ix0+g_dos_map_capacity;
+    int *s_ix1=s_iy0+g_dos_map_capacity,*s_iy1=s_ix1+g_dos_map_capacity;
+    uint16_t *s_c12=(uint16_t *)(s_iy1+g_dos_map_capacity);
+    int segment_capacity=g_dos_map_capacity;
+#else
     static int s_ix0[DISPLAY_AUTOMAP_MAX_SEGS];
     static int s_iy0[DISPLAY_AUTOMAP_MAX_SEGS];
     static int s_ix1[DISPLAY_AUTOMAP_MAX_SEGS];
     static int s_iy1[DISPLAY_AUTOMAP_MAX_SEGS];
     static uint16_t s_c12[DISPLAY_AUTOMAP_MAX_SEGS];
+    int segment_capacity=DISPLAY_AUTOMAP_MAX_SEGS;
+#endif
 
+    int iw=renderer_get_width(),ih=renderer_get_height();
+#ifdef AB3D_DOS
+    iw=g_present_dst_rect.w;ih=g_present_dst_rect.h;
+#endif
     int n = renderer_automap_collect_line_segments(state, s_ix0, s_iy0, s_ix1, s_iy1, s_c12,
-                                                   DISPLAY_AUTOMAP_MAX_SEGS);
+                                                   segment_capacity,iw,ih);
     if (n <= 0) return;
 
 #if SDL_VERSION_ATLEAST(2, 0, 14)
@@ -4407,8 +4744,6 @@ static void display_automap_sdl_overlay(GameState *state)
         SDL_RenderFlush(g_sdl_ren);
 #endif
 
-    int iw = renderer_get_width();
-    int ih = renderer_get_height();
 
     int wall_end = n;
     if (n >= 3 && (s_c12[n - 3] & RENDERER_AUTOMAP_SEGFLAG_PLAYER))
@@ -4626,6 +4961,23 @@ static void display_automap_sdl_overlay(GameState *state)
 /* -----------------------------------------------------------------------
  * Main rendering
  * ----------------------------------------------------------------------- */
+#ifdef AB3D_DOS
+static void display_automap_sdl_overlay(GameState *state)
+{
+    if(!state || !state->automap_visible || !g_sdl_ren)return;
+    SDL_Rect previous;
+    bool clipped=SDL_RenderClipEnabled(g_sdl_ren);
+    if(!SDL_GetRenderClipRect(g_sdl_ren,&previous) ||
+       !SDL_SetRenderClipRect(g_sdl_ren,&g_present_dst_rect)) {
+        fprintf(stderr,"DOS map clip setup failed: %s\n",SDL_GetError());exit(1);
+    }
+    display_automap_sdl_overlay_impl(state);
+    if(!SDL_SetRenderClipRect(g_sdl_ren,clipped?&previous:NULL)) {
+        fprintf(stderr,"DOS map clip restore failed: %s\n",SDL_GetError());exit(1);
+    }
+}
+#endif
+
 static void display_present_cw_frame(GameState *state)
 {
     if (!g_sdl_ren) return;
@@ -4675,6 +5027,12 @@ static void display_present_cw_frame(GameState *state)
         } else
             display_sdl_resync_after_raw_gl();
     } else {
+#ifdef AB3D_DOS
+        SDL_SetRenderDrawColor(g_sdl_ren,0,0,0,255);
+        SDL_RenderClear(g_sdl_ren);
+        SDL_RenderFlush(g_sdl_ren);
+        display_dos_copy_cw(src,w,h,&g_present_dst_rect);
+#else
         if (!g_texture) return;
         display_cpu_unpack_cw_to_texture(src, w, h);
 #if SDL_VERSION_ATLEAST(2, 0, 12)
@@ -4683,8 +5041,13 @@ static void display_present_cw_frame(GameState *state)
         SDL_SetRenderDrawColor(g_sdl_ren, 0, 0, 0, 255);
         SDL_RenderClear(g_sdl_ren);
         SDL_RenderCopy(g_sdl_ren, g_texture, NULL, &g_present_dst_rect);
+#endif
     }
 
+#ifdef AB3D_DOS
+    SDL_Rect dos_world_rect=g_present_dst_rect;
+    g_present_dst_rect=(SDL_Rect){0,0,g_present_width,g_present_height};
+#endif
     if (state) {
         display_hit_flash_overlay(state);
         display_hud_stats_sdl_overlay(state);
@@ -4700,7 +5063,11 @@ static void display_present_cw_frame(GameState *state)
             display_gl_solid_rect_fill(&tr, g_screen_tint_r, g_screen_tint_g, g_screen_tint_b,
                                        g_screen_tint_a);
         } else {
+#ifdef AB3D_DOS
+            SDL_SetRenderDrawBlendMode(g_sdl_ren, SDL_BLENDMODE_NONE);
+#else
             SDL_SetRenderDrawBlendMode(g_sdl_ren, SDL_BLENDMODE_BLEND);
+#endif
             SDL_SetRenderDrawColor(g_sdl_ren,
                                    g_screen_tint_r,
                                    g_screen_tint_g,
@@ -4710,6 +5077,9 @@ static void display_present_cw_frame(GameState *state)
         }
     }
     display_text_screen_draw(255);
+#ifdef AB3D_DOS
+    g_present_dst_rect=dos_world_rect;
+#endif
 
     if (g_gl_unpack_ok && g_gl_hud_ok)
         display_gl_overlay_end();
@@ -4718,6 +5088,12 @@ static void display_present_cw_frame(GameState *state)
         g_suppress_next_present_count--;
         return;
     }
+#ifdef AB3D_DOS
+    if(dos_capture_next_frame) {
+        dos_capture_next_frame=0;
+        dos_capture_frame("FRAME.BMP");
+    }
+#endif
     SDL_RenderPresent(g_sdl_ren);
 
     /* Debug: show player position in window title (throttled) */
@@ -4734,7 +5110,7 @@ static void display_present_cw_frame(GameState *state)
     }
 }
 
-void display_draw_display(GameState *state)
+static void display_draw_display_impl(GameState *state)
 {
     /* Tell renderer to skip CPU work when the GL overlay path will handle it. */
     int use_gl_weapon = state && state->cfg_weapon_post_gl && g_gl_unpack_ok && g_gl_hud_ok;
@@ -4742,6 +5118,9 @@ void display_draw_display(GameState *state)
     renderer_set_weapon_post_gl_active(use_gl_weapon);
     renderer_set_gl_water_tint_post_active(use_gl_water_tint);
     renderer_draw_display(state);
+#ifdef AB3D_DOS
+    audio_dos_pump();
+#endif
     display_present_cw_frame(state);
 }
 
@@ -4806,6 +5185,9 @@ void display_present_title_screen_alpha(int text_alpha, int dim_alpha)
     if (text_alpha > 255) text_alpha = 255;
     if (dim_alpha < 0) dim_alpha = 0;
     if (dim_alpha > 255) dim_alpha = 255;
+#ifdef AB3D_DOS
+    dim_alpha = 0;
+#endif
 
     display_title_screen_ensure_loaded();
     if (!g_title_screen_tex && !g_title_screen_gl_tex) {
@@ -4873,6 +5255,9 @@ void display_set_screen_tint(int r, int g, int b, int alpha)
     if (g < 0) g = 0; else if (g > 255) g = 255;
     if (b < 0) b = 0; else if (b > 255) b = 255;
     if (alpha < 0) alpha = 0; else if (alpha > 255) alpha = 255;
+#ifdef AB3D_DOS
+    if (alpha) alpha = 255;
+#endif
 
     g_screen_tint_r = (Uint8)r;
     g_screen_tint_g = (Uint8)g;
@@ -4918,3 +5303,163 @@ void display_clear_text_screen(void)
     memset(g_text_line_used, 0, sizeof(g_text_line_used));
     memset(g_text_line_alpha, 255, sizeof(g_text_line_alpha));
 }
+
+#ifdef AB3D_DOS
+void display_dos_check_text_screen(const char *label, int allow_pages)
+{
+    if(!display_text_has_lines())return;
+    int saved_page=g_dos_text_page,saved_pages=g_dos_text_pages,saved_rows=g_dos_text_page_rows;
+    unsigned expected=0;
+    for(int row=0;row<DISPLAY_TEXT_MAX_LINES;row++)
+        for(const char *p=g_text_lines[row];*p;p++)if(*p!=' ' && *p!='\t')expected++;
+    for(int height=200;height<=240;height+=40) {
+        SDL_Rect r={0,0,320,height};
+        unsigned actual=0;
+        g_dos_text_page=0;
+        do {
+            DisplayTextRun runs[DISPLAY_TEXT_LAYOUT_MAX_RUNS];
+            int count,scale,line_h,draw_h,top,mx,my;
+            if(!display_text_layout_in_rect(r,runs,DISPLAY_TEXT_LAYOUT_MAX_RUNS,
+                    &count,&scale,&line_h,&draw_h,&top,&mx,&my) ||
+               scale!=DISPLAY_ASCII_SCALE_ONE || (!allow_pages && g_dos_text_pages!=1)) {
+                fprintf(stderr,"DOS %s does not fit native 320x%d\n",label,height);exit(1);
+            }
+            int first=g_dos_text_page*g_dos_text_page_rows;
+            int end=first+g_dos_text_page_rows;if(end>count)end=count;
+            int bottom=g_dos_text_pages>1?height-my-DISPLAY_ASCII_DRAW_H:height;
+            for(int i=first;i<end;i++) {
+                int w=runs[i].len*DISPLAY_ASCII_XADVANCE;
+                int y=top+(i-first)*line_h;
+                if(w>320-2*mx || y<0 || y+draw_h>bottom) {
+                    fprintf(stderr,"DOS %s row %d clipped/overlaps prompt at 320x%d\n",
+                        label,i,height);exit(1);
+                }
+                for(int j=0;j<runs[i].len;j++) {
+                    char c=runs[i].text[runs[i].start+j];if(c!=' ' && c!='\t')actual++;
+                }
+            }
+            g_dos_text_page++;
+        } while(g_dos_text_page<g_dos_text_pages);
+        if(actual!=expected) {
+            fprintf(stderr,"DOS %s lost glyphs at 320x%d\n",label,height);exit(1);
+        }
+    }
+    g_dos_text_page=saved_page;g_dos_text_pages=saved_pages;g_dos_text_page_rows=saved_rows;
+}
+
+void display_dos_check_hud_bounds(GameState *state)
+{
+    GameState *test=malloc(sizeof(*test));
+    if(!test){fprintf(stderr,"DOS HUD diagnostic allocation failed\n");exit(1);}
+    memcpy(test,state,sizeof(*test));
+    int saved_w=g_present_width,saved_h=g_present_height;
+    SDL_Rect saved_rect=g_present_dst_rect;
+    int16_t conditions=game_conditions;game_conditions|=15;
+    test->cfg_show_fps=1;test->fps_display=9999;test->cfg_crosshair_colour=7;
+    test->automap_visible=true;
+    test->infinite_ammo=false;test->infinite_health=false;
+    test->hitcol=test->hitcol2=0xF00;
+    for(int height=200;height<=240 && height<=saved_h;height+=40) {
+        g_present_width=320;g_present_height=height;
+        for(int bars=0;bars<2;bars++)for(int value=0;value<3;value++) {
+            test->cfg_hud_bars=bars;
+            test->energy=test->plr1.energy=test->plr2.energy=value==2?PLAYER_MAX_ENERGY:value;
+            test->ammo=value==2?MAX_AMMO_RAW:value;
+            SDL_SetRenderDrawColor(g_sdl_ren,0,0,0,255);SDL_RenderClear(g_sdl_ren);
+            SDL_RenderFlush(g_sdl_ren);
+            int w=renderer_get_width(),h=renderer_get_height();
+            g_present_dst_rect=(SDL_Rect){(320-w)/2,(height-h)/2,w,h};
+            if(w<=320 && h<=height)display_dos_copy_cw(renderer_get_cw_buffer(),w,h,&g_present_dst_rect);
+            g_present_dst_rect=(SDL_Rect){0,0,320,height};
+            display_hit_flash_overlay(test);
+            display_hud_stats_sdl_overlay(test);
+            display_key_hud_sdl_overlay(test);
+            display_crosshair_sdl_overlay(test);
+            display_fps_overlay(test);
+            display_automap_sdl_overlay(test);
+            SDL_RenderPresent(g_sdl_ren);
+            if(value==2) {
+                char filename[13];snprintf(filename,sizeof(filename),"%s%d.BMP",bars?"BAR":"HUD",height);
+                dos_capture_frame(filename);
+            }
+        }
+    }
+    game_conditions=conditions;
+    g_present_width=saved_w;g_present_height=saved_h;g_present_dst_rect=saved_rect;
+    free(test);
+    printf("[DOSCHECK] HUD bars/numbers, four keys/underlines, 9999 FPS, crosshair and map fit 320x200/240\n");
+}
+
+void display_dos_check_text_layouts(void)
+{
+    SDL_Rect r={0,0,g_present_width,g_present_height};
+    for(int lev=0;lev<MAX_LEVELS;lev++) {
+        display_clear_text_screen();display_text_reset_pages();
+        display_draw_line_of_text(level_text_heading[lev],0);
+        for(int row=0;row<LEVEL_TEXT_VISIBLE_ROWS;row++)
+            display_draw_line_of_text(level_text[lev][row],row+2);
+        display_dos_check_text_screen(level_text_heading[lev],1);
+        DisplayTextRun runs[DISPLAY_TEXT_LAYOUT_MAX_RUNS];
+        int count,scale,line_h,draw_h,top,mx,my;
+        if(!display_text_layout_in_rect(r,runs,DISPLAY_TEXT_LAYOUT_MAX_RUNS,
+                &count,&scale,&line_h,&draw_h,&top,&mx,&my) || scale!=DISPLAY_ASCII_SCALE_ONE) {
+            fprintf(stderr,"DOS level %d native font layout failed\n",lev+1);exit(1);
+        }
+        unsigned expected=0,actual=0;
+        for(int row=0;row<DISPLAY_TEXT_MAX_LINES;row++)
+            for(const char *p=g_text_lines[row];*p;p++)if(*p!=' ' && *p!='\t')expected++;
+        for(int i=0;i<count;i++) {
+            if(runs[i].len*DISPLAY_ASCII_XADVANCE>r.w-2*mx) {
+                fprintf(stderr,"DOS level %d text exceeds screen width\n",lev+1);exit(1);
+            }
+            for(int j=0;j<runs[i].len;j++) {
+                char c=runs[i].text[runs[i].start+j];if(c!=' ' && c!='\t')actual++;
+            }
+        }
+        if(actual!=expected){fprintf(stderr,"DOS level %d text lost glyphs\n",lev+1);exit(1);}
+        if(lev==0) {
+            display_present_text_screen_alpha(255);dos_capture_frame("INTRO1.BMP");
+            while(display_text_next_page())display_present_text_screen_alpha(255);
+            dos_capture_frame("INTRO2.BMP");
+        }
+    }
+    display_clear_text_screen();display_text_reset_pages();
+    printf("[DOSCHECK] all 16 level texts fit native font pages without lost glyphs\n");
+}
+#endif
+
+void display_draw_display(GameState *state) {
+#ifdef AB3D_DOS
+    dos_profile_begin(DOS_PRESENT);
+    audio_dos_pump();
+#endif
+    display_draw_display_impl(state);
+#ifdef AB3D_DOS
+    audio_dos_pump();
+    dos_profile_end();
+#endif
+}
+
+#ifdef AB3D_DOS
+void dos_capture_frame(const char *filename) {
+    /* DOS drawing is synchronous; stream the resident native surface directly. */
+    SDL_Surface *surface=g_sdl_ren?g_sdl_ren->surface:NULL;
+    if(!surface) { fprintf(stderr,"DOS frame readback failed: %s\n",SDL_GetError());exit(1); }
+    const SDL_PixelFormatDetails *fmt=SDL_GetPixelFormatDetails(surface->format);
+    unsigned stride=(surface->w*3+3)&~3u,size=54+stride*surface->h;
+    unsigned char header[54]={0};header[0]='B';header[1]='M';header[10]=54;header[14]=40;header[26]=1;header[28]=24;
+    for(int i=0;i<4;i++){header[2+i]=(unsigned char)(size>>(8*i));header[18+i]=(unsigned char)(surface->w>>(8*i));header[22+i]=(unsigned char)(surface->h>>(8*i));}
+    FILE *f=fopen(filename,"wb");unsigned char *row=calloc(1,stride);
+    if(!f || !row || fwrite(header,1,54,f)!=54){fprintf(stderr,"DOS frame file allocation/write failed\n");exit(1);}
+    for(int y=surface->h-1;y>=0;y--) {
+        for(int x=0;x<surface->w;x++) {
+            Uint32 pixel=0;Uint8 r,g,b,a;
+            memcpy(&pixel,(Uint8 *)surface->pixels+y*surface->pitch+x*fmt->bytes_per_pixel,fmt->bytes_per_pixel);
+            SDL_GetRGBA(pixel,fmt,SDL_GetSurfacePalette(surface),&r,&g,&b,&a);
+            row[x*3]=b;row[x*3+1]=g;row[x*3+2]=r;
+        }
+        if(fwrite(row,1,stride,f)!=stride){fprintf(stderr,"DOS frame write failed\n");exit(1);}
+    }
+    fclose(f);free(row);
+}
+#endif
