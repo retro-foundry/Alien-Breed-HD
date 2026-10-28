@@ -63,6 +63,7 @@ COMBAT / HUD
   numbers, using the original green/yellow/red palette.
   Ammo uses the original bar scale (full at 63 displayed rounds).
 - Water enables a software low-pass audio filter, including with post_tint=0.
+- Browser: finishing the final level returns to the title menu after the fade.
 - Run Speed: 100% is original Amiga speed; the default 130% retains the PC boost.
   Walking speed is unchanged.
 - Enemy attacks, cries and deaths, and wall fire-spouts fade with distance.

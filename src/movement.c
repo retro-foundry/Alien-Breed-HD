@@ -1681,6 +1681,8 @@ bool check_teleport(MoveContext* ctx, LevelState* level, int16_t zone_id)
             int32_t dest_floor = read_be32(dest_zone + ZONE_FLOOR_HEIGHT);
 
             int32_t floor_diff = dest_floor - src_floor;
+            int32_t walk_x = ctx->newx;
+            int32_t walk_z = ctx->newz;
 
             ctx->newx = tel_x;
             ctx->newz = tel_z;
@@ -1694,6 +1696,12 @@ bool check_teleport(MoveContext* ctx, LevelState* level, int16_t zone_id)
             }
 
             if (ctx->hitwall) {
+                /* AB3DI.s PLR1/2_Control restore the walking coordinates
+                 * when an exit is occupied. Leaving the destination here
+                 * makes the subsequent walking collision test hit it again,
+                 * preventing the player from stepping off the pad. */
+                ctx->newx = walk_x;
+                ctx->newz = walk_z;
                 ctx->newy -= floor_diff;
                 ctx->hitwall = 0;
                 return false;

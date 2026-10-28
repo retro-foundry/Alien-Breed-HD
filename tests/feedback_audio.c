@@ -17,18 +17,20 @@ static double tone(int rate, int hz, int submerged) {
 int main(void) {
     /* SoundPlayer.s MakeSomeNoise, Noisevol=200 (Anims.s ItsAGasPipe). */
     assert(audio_distance_volume(200,0,0)==255);
-    assert(audio_distance_volume(200,800,0)==251);
-    assert(audio_distance_volume(200,1600,0)==123);
-    assert(audio_distance_volume(200,3200,0)==59);
-    assert(audio_distance_volume(200,0,-3200)==59);
-    assert(audio_distance_volume(200,60000,0)==0);
+    assert(audio_distance_volume(200,800,0)==253);
+    assert(audio_distance_volume(200,1600,0)==127);
+    assert(audio_distance_volume(200,3200,0)==63);
+    assert(audio_distance_volume(200,0,-3200)==63);
+    assert(audio_distance_volume(200,1000000,0)==0);
     assert(audio_distance_volume(0,0,0)==0);
-    /* The original two-iteration sqrt has small quantization jumps at its
-     * seed boundaries; compare clearly separated listener distances. */
-    for(int distance=800;distance<16000;distance*=2) {
-        assert(audio_distance_volume(200,distance,0)>=
-               audio_distance_volume(200,distance*2,0));
+    int changes=0;
+    for(int distance=800;distance<16000;distance++) {
+        int a=audio_distance_volume(200,distance,0);
+        int b=audio_distance_volume(200,distance+1,0);
+        assert(a>=b && a-b<=1);
+        if(distance>=1600 && distance<3200 && a!=b) changes++;
     }
+    assert(changes>=60); /* Former Paula rounding supplied only 16 steps here. */
     static Uint8 sample[100];
     g_samples[22].data=sample; g_samples[22].length=sizeof(sample);
     for(int nearer_first=0;nearer_first<2;nearer_first++) {
@@ -43,14 +45,18 @@ int main(void) {
         audio_queue_sample(22,59);
         assert(g_channels[1].volume==59 && g_channels[1].position==0);
     }
-    puts("PASS: original fire-spout distance curve; simultaneous emitters keep loudest burst without restarting");
+    puts("PASS: smooth fire-spout distance curve; simultaneous emitters keep loudest burst without restarting");
     int rates[]={8007,48000};
     for(int r=0;r<2;r++) {
         int rate=rates[r];
         double low=tone(rate,300,1)/tone(rate,300,0);
         double high=tone(rate,rate==8007?3800:10000,1)/tone(rate,rate==8007?3800:10000,0);
+        double cutoff=tone(rate,2200,1)/tone(rate,2200,0);
+        double mid=tone(rate,2500,1)/tone(rate,2500,0);
         assert(low>0.98 && low<1.02);
         assert(high<0.15);
+        assert(cutoff>0.70 && cutoff<0.72);
+        assert(mid<0.65); /* More muffling within the original samples' band. */
         printf("PASS rate=%d: low gain %.3f high gain %.3f; dry bypass exact\n",rate,low,high);
         g_spec.freq=rate; audio_filter_init(); g_underwater=1;
         Sint16 samples[2048]={0};

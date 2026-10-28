@@ -98,7 +98,7 @@ int main(void)
         OBJ_NBR_EYEBALL,OBJ_NBR_TREE};
     for(int mode=0;mode<2;mode++) {
         state.mode=mode?MODE_SLAVE:MODE_SINGLE;
-        int expected=mode?255:123; /* Noisevol=200 at distance 0 / 1600. */
+        int expected=mode?255:127; /* Noisevol=200 at distance 0 / 1600. */
         for(unsigned t=0;t<sizeof(types)/sizeof(types[0]);t++) {
             obj->obj.number=types[t];
             const EnemyParams *params=&enemy_params[obj_type_to_enemy_index(types[t])];

@@ -1010,7 +1010,13 @@ int play_game_outer_emscripten_finish(GameState *state)
     case EM_OUTER_BR_ENDGAME:
         display_clear_screen_tint();
         printf("[MUSIC] outcome: end game\n");
-        return 0;
+        /* A browser cannot return to the desktop after the final fade.
+         * Reuse the title-menu path, keeping the animation loop alive. */
+        s_front_menu_requested = true;
+        s_show_transition_level_text = false;
+        s_autosave_next_level_start = false;
+        printf("[CONTROL] Returning to title menu after ending\n");
+        return 1;
     case EM_OUTER_BR_WELLDONE:
         display_clear_screen_tint();
         printf("[MUSIC] outcome: well done\n");

@@ -28,7 +28,7 @@ The six requested changes are implemented in the PC and web paths:
    or ammo remains visible, and full values fill the track at every size.
 5. `AB3DI.s` `oknothalf` / `nowaterfull` switch the CIA audio filter whenever
    `fillscrnwater` is nonzero. The port follows that same water state, independently
-   of `post_tint`, using a 3 kHz two-pole Butterworth filter on the mixed output.
+   of `post_tint`, using a 2.2 kHz two-pole Butterworth filter on the mixed output.
    A 20 ms wet/dry transition avoids abrupt switching. This is an audible
    software approximation, not an analog circuit simulation. Leaving gameplay
    clears the water target so menu/end music is not left muffled.
@@ -107,3 +107,50 @@ has not been performed. For an oracle check, capture `FlameMarineAttackPLR1`
 before/after firing at close range: `FourthTimer`, `ThirdTimer`, sample/volume,
 player `damagetaken`, and `NastyShotData`; expect sample 21, five hit rolls,
 at most ten queued damage, and no projectile allocation.
+
+The next player report led to three changes:
+
+- Distance fading retains `SoundPlayer.s` `MakeSomeNoise`'s inverse-distance
+  curve, source loudness and cap, with fractional distance/gain retained until
+  conversion to the mixer's 0..255 volume. This deliberately smooths the
+  original Paula rounding and approximate square root. At distances 1600..3200,
+  a Noisevol-200 source now has 64 volume changes instead of 16. Sample
+  coalescing and the loudest simultaneous emitter still work as before.
+- The underwater filter cutoff is reduced from 3 kHz to 2.2 kHz so muffling
+  affects more of the original samples' audible band. The 20 ms transition
+  and exact dry bypass remain. This is requested audio tuning, not a claim
+  of analog circuit equivalence.
+- The browser ending now returns to the title menu after the end music/fade.
+  `EM_OUTER_BR_ENDGAME` previously returned zero, making `em_frame` tear down
+  the game and cancel its callback. Keeping that callback alive allows another
+  New Game without refreshing the page. Desktop exit behavior is unchanged.
+
+The teleporter investigation also found a port bug. In `AB3DI.s`
+`PLR1_Control` / `PLR2_Control`, an occupied destination restores the attempted
+walking X/Z before ordinary collision runs. `check_teleport` left its attempted
+destination X/Z in the context on failure. A second collision test could then
+hit the remote blocker again and reject walking, trapping the player on the
+pad. Failed teleports now restore walking X/Z. Occupied exits still refuse
+teleportation; walking off and retrying after the blocker clears both work.
+This reproduces a plausible cause of the report, without claiming to recover
+the player's exact incident.
+
+`tests/feedback_teleport.c` loads the original level 15 data and checks all
+four authored teleporters (including the extra zone-table slot): 96 cases
+cover both players, standing/crouching, stationary/moving attempts, occupied
+destinations and retry. The blocked moving cases fail before the fix.
+`tests/feedback_ending.c` is a browser harness for the production ending and
+menu lifecycle, with only the music clock advanced for the check. Two repeated
+ending -> title -> New Game cycles pass on each of the GL and SDL display paths.
+Build that harness with `python tools/build_ending_check.py` after building
+the single-threaded web target (the same `--emcc` option is supported).
+Windows and single-threaded Emscripten Release builds and the complete
+`tools/check_feedback.py` suite also pass.
+
+Shotgun recovery remains `200+(rand&255)` VBlanks with the original windup;
+the slight aggression difference has not been demonstrated as a timer bug.
+Flamethrower damage/burning balance is unchanged. An original-game emulator
+capture of blocked teleport attempts remains an oracle follow-up: capture
+`PLR1_Control`'s teleport collision return, `newx/newz`, `hitwall`, player
+position and `PLR1_Roompt`, then compare a walking attempt with an occupied
+exit against the native fixture.

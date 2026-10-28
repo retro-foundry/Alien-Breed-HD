@@ -112,7 +112,8 @@ void head_towards_angle(MoveContext *ctx, int16_t *facing,
  * If the zone's ToTelZone field is >= 0, teleports the object to the
  * destination coordinates and adjusts Y for floor height difference.
  *
- * Returns: true if teleported, false otherwise.
+ * Returns: true if teleported, false otherwise. A blocked destination
+ * preserves the attempted walking coordinates so movement can continue.
  */
 bool check_teleport(MoveContext *ctx, LevelState *level, int16_t zone_id);
 

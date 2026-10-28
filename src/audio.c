@@ -119,7 +119,7 @@ static MusicTrack        g_music;
 static int               g_audio_ready = 0;
 static int               g_master_volume = 100; /* 0..100, scales music and SFX playback */
 /* Software replacement for AB3DI.s oknothalf/nowaterfull's CIA filter switch.
- * Two-pole Butterworth, 3 kHz: an audible Amiga-style low-pass, not a
+ * Two-pole Butterworth, 2.2 kHz: an audible Amiga-style low-pass, not a
  * cycle-exact model of the analog circuit. All state is audio-device locked. */
 static int g_underwater;
 static float g_filter_b0, g_filter_b1, g_filter_b2, g_filter_a1, g_filter_a2;
@@ -128,7 +128,7 @@ static float g_filter_z1, g_filter_z2, g_filter_wet;
 static void audio_filter_init(void)
 {
     /* The device is opened with no format changes: signed 16-bit mono. */
-    float k = tanf(3.14159265358979323846f * 3000.0f / (float)g_spec.freq);
+    float k = tanf(3.14159265358979323846f * 2200.0f / (float)g_spec.freq);
     float norm = 1.0f / (1.0f + 1.41421356237f * k + k * k);
     g_filter_b0 = k * k * norm;
     g_filter_b1 = 2.0f * g_filter_b0;
@@ -884,25 +884,17 @@ void audio_play_sfx(int sfx_id, int volume, int channel)
 
 int audio_distance_volume(int noise_volume, int dx, int dz)
 {
-    /* SoundPlayer.s MakeSomeNoise: highest-bit seed, two Newton corrections,
-     * then Noisevol*64 / (distance/4+1), limited to Paula's 0..64 range. */
+    /* SoundPlayer.s MakeSomeNoise's inverse-distance curve and loudness cap.
+     * Keep fractional distance/gain until the final 0..255 mixer conversion:
+     * rounding first to Paula's integer 0..64 caused audible volume steps. */
     int64_t squared = (int64_t)dx * dx + (int64_t)dz * dz;
-    int volume = 64;
     if (noise_volume <= 0) return 0;
-    if (squared > 0) {
-        int bit = 0;
-        for (int64_t n = squared; n >>= 1; ) bit++;
-        int64_t distance = (int64_t)1 << (bit / 2);
-        for (int i = 0; i < 2; i++) {
-            distance -= ((distance * distance - squared) >> 1) / distance;
-            if (distance < 1) distance = 1;
-        }
-        int64_t numerator = (int64_t)noise_volume * 64;
-        if (numerator > 32767) numerator = 32767;
-        volume = (int)(numerator / ((distance >> 2) + 1));
-        if (volume > 64) volume = 64;
-    }
-    return volume * 255 / 64;
+    if (squared == 0) return 255;
+    int64_t numerator = (int64_t)noise_volume * 64;
+    if (numerator > 32767) numerator = 32767;
+    double volume = (double)numerator / (sqrt((double)squared) / 4.0 + 1.0);
+    if (volume >= 64.0) return 255;
+    return (int)(volume * 255.0 / 64.0);
 }
 
 /* Called with the audio device locked. Coalesce simultaneous emitters using

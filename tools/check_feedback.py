@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run movement, settings, shooting, audio and HUD checks using Emscripten and Node."""
+"""Run movement, settings, shooting, teleport, audio and HUD checks using Emscripten and Node."""
 import argparse
 from pathlib import Path
 import shutil
@@ -30,6 +30,9 @@ def main():
         ("shooting", ["src/math_tables.c", "src/game_data.c", "src/objects.c",
                       "src/level.c", "src/movement.c", "src/visibility.c"],
          ["-sUSE_SDL=2"]),
+        ("teleport", ["src/math_tables.c", "src/game_data.c", "src/level.c",
+                      "src/movement.c", "src/visibility.c", "src/sb_decompress.c", "src/logging.c"],
+         ["-sUSE_SDL=2", "-sNODERAWFS=1"]),
     ):
         target = output / f"{name}.js"
         subprocess.run(compiler + [f"tests/feedback_{name}.c"] + sources +
