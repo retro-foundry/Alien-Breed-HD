@@ -33,6 +33,10 @@ void player_clear_mouse_look_aim_state(GameState *state);
 /* Apply ab3d.ini weapon availability toggles to player inventory. */
 void player_apply_weapon_config(GameState *state);
 
+/* Inventory ammo for a valid gun index. The starting rifle and PC
+ * flamethrower share the rifle's counter, in the original eight units/round. */
+int16_t *player_weapon_ammo_ptr(PlayerState *plr, int gun_idx);
+
 /* Shooting (from PlayerShoot.s) */
 void player1_shoot(GameState *state);
 void player2_shoot(GameState *state);

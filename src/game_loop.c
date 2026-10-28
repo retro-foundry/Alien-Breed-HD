@@ -1610,12 +1610,7 @@ void game_loop_tick(GameState *state, GameLoopCtx *ctx)
 
                 int gun_idx = gun_plr->gun_selected;
                 if (gun_idx >= 0 && gun_idx < MAX_GUNS) {
-                    if (state->cfg_flamethrower_weapon &&
-                        gun_idx == AB3D_GUN_FLAMETHROWER) {
-                        state->ammo = gun_plr->gun_data[gun_idx].ammo;
-                    } else {
-                        state->ammo = gun_plr->gun_data[gun_idx].ammo >> 3;
-                    }
+                    state->ammo = *player_weapon_ammo_ptr(gun_plr, gun_idx) >> 3;
                 }
             }
 

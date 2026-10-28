@@ -54,6 +54,10 @@ GAME / UI
 - F6: Toggle Gouraud visualize mode
 
 COMBAT / HUD
+- The starting pulse rifle (key 1) and flamethrower (key 6) share ammunition.
+  Both use one round per shot. After three seconds without firing either,
+  automatic refill restores up to 20 rounds at the existing rate.
+  Collected ammunition above 20 rounds is kept.
 - Normal mutant rifles use original instant-hit attacks by default. Set
   marine_hitscan_projectiles=1 in ab3d.ini to enable the optional orange shots.
 - Shotgun soldiers fire five instant-hit pellets with the shotgun sound.

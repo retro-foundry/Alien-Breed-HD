@@ -57,6 +57,7 @@
 #define PLAYER_CLOSE_RESCUE_EXTRA_DIST 24
 #define PLAYER_CLOSE_RESCUE_MAX_CROSS_MUL 2
 #define FLAMETHROWER_CHARGE_MAX 20
+#define FLAMETHROWER_CHARGE_AMMO 8 /* one charge in the rifle's ammo units */
 #define FLAMETHROWER_LOGIC_TICKS_PER_SECOND 50
 #define FLAMETHROWER_RECHARGE_DELAY_TICKS (3 * FLAMETHROWER_LOGIC_TICKS_PER_SECOND)
 #define FLAMETHROWER_RECHARGE_STEP_TICKS 5
@@ -192,6 +193,15 @@ static bool player_weapon_is_selectable(const PlayerState *plr, int gun_idx)
     return plr->gun_data[gun_idx].visible != 0;
 }
 
+int16_t *player_weapon_ammo_ptr(PlayerState *plr, int gun_idx)
+{
+    /* Requested PC behavior: gun 3 draws from the starting pulse rifle,
+     * named PISTOL in the original data. Keep one authoritative counter so
+     * pickups, passwords and full saves also carry the shared ammunition. */
+    int ammo_idx = gun_idx == AB3D_GUN_FLAMETHROWER ? AB3D_GUN_PISTOL : gun_idx;
+    return &plr->gun_data[ammo_idx].ammo;
+}
+
 static void player_ensure_valid_weapon_selection(PlayerState *plr)
 {
     if (!plr) return;
@@ -250,19 +260,6 @@ static void player_flamethrower_mark_used(GameState *state, int plr_num)
     if (accum) *accum = 0;
 }
 
-static void player_flamethrower_clamp_charge(PlayerState *plr)
-{
-    int16_t *charge;
-    if (!plr) return;
-
-    charge = &plr->gun_data[AB3D_GUN_FLAMETHROWER].ammo;
-    if (*charge < 0) {
-        *charge = 0;
-    } else if (*charge > FLAMETHROWER_CHARGE_MAX) {
-        *charge = FLAMETHROWER_CHARGE_MAX;
-    }
-}
-
 static void player_flamethrower_tick_recharge(GameState *state, PlayerState *plr,
                                               int plr_num, bool fire_held)
 {
@@ -270,14 +267,17 @@ static void player_flamethrower_tick_recharge(GameState *state, PlayerState *plr
     int16_t *accum;
     int16_t frames;
     int32_t acc;
+    const int max_ammo = FLAMETHROWER_CHARGE_MAX * FLAMETHROWER_CHARGE_AMMO;
 
     if (!state || !plr || !state->cfg_flamethrower_weapon)
         return;
     if (!player_weapon_is_selectable(plr, AB3D_GUN_FLAMETHROWER))
         return;
 
-    player_flamethrower_clamp_charge(plr);
-    if (plr->gun_data[AB3D_GUN_FLAMETHROWER].ammo >= FLAMETHROWER_CHARGE_MAX) {
+    int16_t *ammo = player_weapon_ammo_ptr(plr, AB3D_GUN_FLAMETHROWER);
+    if (*ammo < 0) *ammo = 0;
+    /* This is the automatic refill ceiling, not a cap on collected ammo. */
+    if (*ammo >= max_ammo) {
         player_flamethrower_reset_recharge(state, plr_num);
         return;
     }
@@ -305,13 +305,13 @@ static void player_flamethrower_tick_recharge(GameState *state, PlayerState *plr
 
     acc = (int32_t)*accum + (int32_t)frames;
     while (acc >= FLAMETHROWER_RECHARGE_STEP_TICKS &&
-           plr->gun_data[AB3D_GUN_FLAMETHROWER].ammo < FLAMETHROWER_CHARGE_MAX) {
-        plr->gun_data[AB3D_GUN_FLAMETHROWER].ammo++;
+           *ammo < max_ammo) {
+        *ammo += FLAMETHROWER_CHARGE_AMMO;
         acc -= FLAMETHROWER_RECHARGE_STEP_TICKS;
     }
 
-    if (plr->gun_data[AB3D_GUN_FLAMETHROWER].ammo >= FLAMETHROWER_CHARGE_MAX) {
-        plr->gun_data[AB3D_GUN_FLAMETHROWER].ammo = FLAMETHROWER_CHARGE_MAX;
+    if (*ammo >= max_ammo) {
+        *ammo = (int16_t)max_ammo;
         acc = 0;
     }
     *accum = (int16_t)acc;
@@ -327,10 +327,7 @@ static void player_enable_flamethrower(GameState *state, PlayerState *plr, int p
     plr->gun_data[AB3D_GUN_FLAMETHROWER].visible = -1;
 
     if (newly_visible) {
-        plr->gun_data[AB3D_GUN_FLAMETHROWER].ammo = FLAMETHROWER_CHARGE_MAX;
         player_flamethrower_reset_recharge(state, plr_num);
-    } else {
-        player_flamethrower_clamp_charge(plr);
     }
 }
 
@@ -3833,7 +3830,8 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
         player_weapon_is_selectable(plr, AB3D_GUN_FLAMETHROWER);
 
     player_flamethrower_tick_recharge(state, plr, plr_num,
-                                      selected_flamethrower && plr->p_fire != 0);
+                                      (selected_flamethrower || gun_idx == AB3D_GUN_PISTOL) &&
+                                      plr->p_fire != 0);
 
     if (gun_idx < 0 || gun_idx >= MAX_GUNS) return;
     if (!player_weapon_is_selectable(plr, gun_idx)) return;
@@ -3865,25 +3863,25 @@ static void player_shoot_internal(GameState *state, PlayerState *plr,
     if (!fire) return;
 
     /* 3. Check ammo */
-    int16_t ammo = plr->gun_data[gun_idx].ammo;
+    int16_t *ammo = player_weapon_ammo_ptr(plr, gun_idx);
     if (selected_flamethrower) {
-        if (ammo < 1) {
+        if (*ammo < FLAMETHROWER_CHARGE_AMMO) {
             /* Click sound (empty) */
             audio_play_sample(12, 300);
             plr->time_to_shoot = 10; /* prevent spam */
             player_flamethrower_mark_used(state, plr_num);
             return;
         }
-        plr->gun_data[gun_idx].ammo = (int16_t)(ammo - 1);
+        *ammo -= FLAMETHROWER_CHARGE_AMMO;
         player_flamethrower_mark_used(state, plr_num);
     } else if (!state->infinite_ammo) {
-        if (ammo < gun->ammo_per_shot) {
+        if (*ammo < gun->ammo_per_shot) {
             /* Click sound (empty) */
             audio_play_sample(12, 300);
             plr->time_to_shoot = 10; /* prevent spam */
             return;
         }
-        plr->gun_data[gun_idx].ammo -= gun->ammo_per_shot;
+        *ammo -= gun->ammo_per_shot;
     }
 
     /* Set fire rate delay */

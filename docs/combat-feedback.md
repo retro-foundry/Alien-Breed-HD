@@ -154,3 +154,28 @@ capture of blocked teleport attempts remains an oracle follow-up: capture
 `PLR1_Control`'s teleport collision return, `newx/newz`, `hitwall`, player
 position and `PLR1_Roompt`, then compare a walking attempt with an occupied
 exit against the native fixture.
+
+By request, the starting pulse rifle (gun 0, `PISTOL` in the original data)
+and the optional PC flamethrower (gun 3) now share gun 0's inventory counter.
+`player_weapon_ammo_ptr` owns the mapping for firing, recharge and the HUD.
+This is a deliberate change from the original separate gun slots, not an
+assembly-parity correction. Each shot consumes eight internal ammo units
+(one displayed round), preserving one flamethrower charge per shot.
+The existing three-second recharge delay, one charge per five VBlanks and
+20-charge refill ceiling remain. Firing either shared weapon holds off the
+refill; it also runs while another weapon is selected. The refill ceiling
+does not trim ammo gained from the original `Anims.s` `ItsAnAmmoClip` pickup.
+Flamethrower enable/disable and saved-game config application leave the
+shared stock intact. The existing gun 0 counter in passwords and full saves
+carries the pool without changing save layouts. Other weapons retain their
+own ammunition.
+
+`tests/feedback_shared_ammo.c` checks both players' shared consumption and
+empty clicks, actual rifle ammo pickups, unrelated plasma ammo, delayed and
+batched refill, stopping refill while firing, preserving stock above the
+refill ceiling, config toggles and existing infinite-ammo behavior.
+The browser runtime check passes on GL and SDL: both weapons consume the
+same displayed supply, refill resumes after emptying it, and an actual
+autosave/load restores 37 shared rounds without trimming them to 20.
+Windows and single-threaded Emscripten Release builds and the full feedback
+regression suite pass.
