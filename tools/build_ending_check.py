@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Build the browser ending harness using an existing single-threaded web build.
+"""Build the browser death/ending harness using a single-threaded web build.
 
 Serve the build directory and open ending-check.html. Browser automation can
 call Module._feedback_finish_game(), wait for _feedback_at_title(), choose
 New Game in the menu, and check _feedback_started_new_game().
+Use start_level=12 with Module._feedback_die() to check death and restart.
 """
 import argparse
 from pathlib import Path
@@ -17,6 +18,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--emcc", default="emcc", help="emcc executable or emcc.py path")
     parser.add_argument("--build-dir", default="build/emscripten-release")
+    parser.add_argument("--asan", action="store_true",
+                        help="Link against a web build compiled with -fsanitize=address")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     build = (root / args.build_dir).resolve()
@@ -33,7 +36,9 @@ def main():
     compiler = ([sys.executable, args.emcc] if args.emcc.endswith(".py")
                 else [shutil.which(args.emcc) or args.emcc])
     target = build / "ending-check.html"
-    subprocess.run(compiler + ["tests/feedback_ending.c"] + [str(obj) for obj in objects] + [
+    diagnostic_flags = (["-fsanitize=address", "-sASSERTIONS=2", "-sSTACK_OVERFLOW_CHECK=2"]
+                        if args.asan else [])
+    subprocess.run(compiler + diagnostic_flags + ["tests/feedback_ending.c"] + [str(obj) for obj in objects] + [
         "-Isrc", "-Ithird_party", "-O2", "-sUSE_SDL=2", "-sFULL_ES3=1",
         "-sMIN_WEBGL_VERSION=2", "-sMAX_WEBGL_VERSION=2", "-sALLOW_MEMORY_GROWTH=1",
         "-sINITIAL_MEMORY=134217728", "-sSHARED_MEMORY=0",

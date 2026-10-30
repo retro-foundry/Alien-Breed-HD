@@ -179,3 +179,44 @@ same displayed supply, refill resumes after emptying it, and an actual
 autosave/load restores 37 shared rounds without trimming them to 20.
 Windows and single-threaded Emscripten Release builds and the full feedback
 regression suite pass.
+
+## Windows crash after death on level 12
+
+Report received 2026-10-30: the downloaded Windows executable intermittently
+crashes after the player is killed on level 12, while returning to the main
+menu. The Windows platform was confirmed after an initial browser-build
+investigation. Game version, PC specifications, crash message and a save/replay
+were not supplied. Status: unresolved; native Windows reproduction is pending.
+
+The transition follows `amiga/AB3DI.s` `quitGame`, `playGameOver`,
+`weveLost` and `CleanupForMainMenu`. The shared implementation spans
+`game_loop_tick`, `play_the_game_after_game_loop`,
+`play_the_game_finalize_session` and `play_game_outer_should_continue`.
+The browser uses the separate `EM_OUTER_POST`/`EM_FRONT_MENU` phases in
+`src/emscripten_loop.c` for the outer transition.
+
+`tests/feedback_ending.c` now supports a configured starting level and exports
+`feedback_die`, `feedback_current_level` and `feedback_save_autosave`.
+With `start_level=12` in the preloaded INI, load `ending-check.html`, wait for
+`Module._feedback_started_new_game()` to return 1, and call
+`Module._feedback_save_autosave()` followed by `Module._feedback_die()`.
+Death runs through the regular browser callback, including the final game
+frame, level cleanup, full game-over music/red fade and title-menu setup.
+Wait for `Module._feedback_at_title()` to return 1, select New Game, dismiss
+the level text and verify that level 12 starts again. Repeat to exercise
+cleanup and autosave rotation.
+
+Build the harness with `python tools/build_ending_check.py`. Its `--asan`
+option supports a separate single-threaded web build compiled and linked
+with `-fsanitize=address`; use `--build-dir` to select that build. Assertions
+and stack-overflow checks are also enabled when linking that harness.
+
+All six full-fade death/restart cycles passed in local Chromium: three each
+through GL and SDL presentation, with autosaves created before death and
+AddressSanitizer/assertion/stack checks enabled. The existing final-ending
+regression also passed twice per presentation path. These are short
+stationary browser scenarios with controlled death; they do not reproduce
+or rule out the reported Windows crash. No production behavior was changed
+without a reproduced failure or a confirmed cause. The next native check
+needs the reported Windows version and its `ab3d.log`/crash details, or a
+save and combat sequence that reproduces the failure.

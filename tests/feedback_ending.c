@@ -1,4 +1,4 @@
-/* Browser harness for the real final-level fade and title-menu lifecycle.
+/* Browser harness for the real death/ending fades and title-menu lifecycle.
  * Link against the web game's objects except main/control_loop/emscripten_loop. */
 #include <emscripten.h>
 #define main ab3d_normal_main
@@ -22,6 +22,23 @@ EMSCRIPTEN_KEEPALIVE void feedback_finish_game(void)
         s_em_fade_t0 = SDL_GetTicks() - audio_music_duration_ms();
 }
 
+EMSCRIPTEN_KEEPALIVE void feedback_die(void)
+{
+    /* The browser callback must handle the last game frame, cleanup, the
+     * complete GameOver track/fade and the title menu without skipping phases. */
+    g_state.plr1.energy = 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void feedback_save_autosave(void)
+{
+    player_save_autosave(&g_state);
+}
+
+EMSCRIPTEN_KEEPALIVE int feedback_current_level(void)
+{
+    return g_state.current_level + 1;
+}
+
 EMSCRIPTEN_KEEPALIVE int feedback_at_title(void)
 {
     return g_em_phase == EM_FRONT_MENU && play_game_front_menu_requested();
@@ -29,7 +46,9 @@ EMSCRIPTEN_KEEPALIVE int feedback_at_title(void)
 
 EMSCRIPTEN_KEEPALIVE int feedback_started_new_game(void)
 {
-    return g_em_phase == EM_GAME && g_state.current_level == 0 &&
+    int start_level = (g_state.cfg_start_level >= 0 && g_state.cfg_start_level < MAX_LEVELS)
+                    ? g_state.cfg_start_level : 0;
+    return g_em_phase == EM_GAME && g_state.current_level == start_level &&
            !g_state.finished_level && !play_game_front_menu_requested();
 }
 
