@@ -5,9 +5,8 @@
  * Translated from: AB3DI.s DrawDisplay (lines 3395-3693),
  *                  WallRoutine3.ChipMem.s, ObjDraw3.ChipRam.s
  *
- * The renderer draws into a flat 8-bit indexed pixel buffer.
- * The buffer is RENDER_STRIDE bytes wide and RENDER_HEIGHT lines tall.
- * Each byte is a palette index (0-31 for game colors).
+ * The renderer draws color words (native RGB565 on DOS) and optional ARGB.
+ * Desktop builds also write byte-sized diagnostic tags; DOS omits those.
  *
  * The rendering pipeline:
  *   1. Clear framebuffer
@@ -29,6 +28,7 @@
  */
 
 #include "renderer.h"
+#include "renderer_fixed.h"
 #ifdef AB3D_DOS
 #include "platform_dos.h"
 #endif
@@ -73,9 +73,9 @@
  * GCC/MSVC: use plain assignment for 16-bit stores
  * (removing the cw prefetch hints still reduces fetch pressure). */
 #if defined(__clang__)
-#define AB3D_NT_STORE_U16(ptr, val) __builtin_nontemporal_store((uint16_t)(val), (uint16_t *)(ptr))
+#define AB3D_NT_STORE_PIXEL(ptr, val) __builtin_nontemporal_store((RendererPixel)(val), (RendererPixel *)(ptr))
 #else
-#define AB3D_NT_STORE_U16(ptr, val) (*(ptr) = (uint16_t)(val))
+#define AB3D_NT_STORE_PIXEL(ptr, val) (*(ptr) = (RendererPixel)(val))
 #endif
 
 #if AB3D_HAVE_SSE2
@@ -141,12 +141,12 @@ static inline size_t renderer_cw_step_x(int height)
 #endif
 }
 
-static inline uint16_t renderer_cw_load_xy(const uint16_t *cw, int x, int y, int width, int height)
+static inline uint16_t renderer_cw_load_xy(const RendererPixel *cw, int x, int y, int width, int height)
 {
     return cw[renderer_cw_index_xy(x, y, width, height)];
 }
 
-static inline void renderer_cw_store_xy(uint16_t *cw, int x, int y, int width, int height, uint16_t v)
+static inline void renderer_cw_store_xy(RendererPixel *cw, int x, int y, int width, int height, uint16_t v)
 {
     cw[renderer_cw_index_xy(x, y, width, height)] = v;
 }
@@ -176,6 +176,24 @@ static inline void renderer_cw_store_xy(uint16_t *cw, int x, int y, int width, i
 #define AB3D_THREAD_LOCAL __thread
 #else
 #define AB3D_THREAD_LOCAL
+#endif
+
+/* Only desktop tracing consumes pixel tags. DOS draws directly to RGB565;
+ * compile out tag stores and pointer arithmetic, including post-increments. */
+#ifdef AB3D_DOS
+#define RENDER_TAGS_ENABLED 0
+#define RENDER_TAG_STORE(dst, value) ((void)0)
+#define RENDER_TAG_FILL(dst, value, count) ((void)0)
+#define RENDER_TAG_OFFSET(base, offset) ((uint8_t *)NULL)
+#define RENDER_TAG_ADVANCE(ptr, count) ((void)0)
+#define RENDER_TAG_PREFETCH(ptr) ((void)0)
+#else
+#define RENDER_TAGS_ENABLED 1
+#define RENDER_TAG_STORE(dst, value) ((dst) = (value))
+#define RENDER_TAG_FILL(dst, value, count) memset((dst), (value), (count))
+#define RENDER_TAG_OFFSET(base, offset) ((base) + (offset))
+#define RENDER_TAG_ADVANCE(ptr, count) ((ptr) += (count))
+#define RENDER_TAG_PREFETCH(ptr) AB3D_PREFETCH_WRITE(ptr)
 #endif
 
 /* Sprite row caches for renderer_draw_sprite_ctx hot path (per-thread). */
@@ -217,14 +235,11 @@ static int g_renderer_rgb_raster_expand = 0;
 #endif
 /* Set by display.c when the GL weapon/tint post-pass will handle gun+tint this frame. */
 static int s_weapon_post_gl_active = 0;
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
 static SDL_Surface *g_dos_gun_frames[32],*g_dos_gun_targets[2];
 static SDL_Rect g_dos_gun_crops[32];
 static unsigned char g_dos_gun_empty[32];
-typedef struct { uint16_t x,y,count; } DOSGunRun;
-static DOSGunRun *g_dos_gun_runs[32];
-static int g_dos_gun_run_counts[32];
-static uint16_t *g_dos_gun_target_pixels[2];
+static RendererPixel *g_dos_gun_target_pixels[2];
 static int g_dos_gun_width,g_dos_gun_height,g_dos_gun_next_target,g_dos_gun_cached_weapon=-1;
 static void renderer_dos_release_gun_frames(void)
 {
@@ -232,7 +247,6 @@ static void renderer_dos_release_gun_frames(void)
         if(g_dos_gun_frames[i])SDL_DestroySurface(g_dos_gun_frames[i]);
         g_dos_gun_frames[i]=NULL;
         g_dos_gun_empty[i]=0;g_dos_gun_crops[i]=(SDL_Rect){0};
-        free(g_dos_gun_runs[i]);g_dos_gun_runs[i]=NULL;g_dos_gun_run_counts[i]=0;
     }
     for(int i=0;i<2;i++) {
         if(g_dos_gun_targets[i])SDL_DestroySurface(g_dos_gun_targets[i]);
@@ -494,20 +508,20 @@ typedef struct {
     uint64_t water_backbuf0_pixels;
     uint64_t water_backbuf1_pixels;
     uint8_t *before_tags;
-    uint16_t *before_cw;
+    RendererPixel *before_cw;
     size_t before_count;
     int before_ready;
 } RendererZoneTraceFloorStats;
 
 static AB3D_THREAD_LOCAL uint8_t *g_zone_trace_floor_before_tags_scratch = NULL;
-static AB3D_THREAD_LOCAL uint16_t *g_zone_trace_floor_before_cw_scratch = NULL;
+static AB3D_THREAD_LOCAL RendererPixel *g_zone_trace_floor_before_cw_scratch = NULL;
 static AB3D_THREAD_LOCAL size_t g_zone_trace_floor_before_scratch_cap = 0;
 
 static int renderer_zone_trace_floor_stats_ensure_scratch(size_t need_count)
 {
     size_t new_cap;
     uint8_t *new_tags;
-    uint16_t *new_cw;
+    RendererPixel *new_cw;
 
     if (need_count == 0) return 1;
     if (g_zone_trace_floor_before_tags_scratch &&
@@ -531,7 +545,7 @@ static int renderer_zone_trace_floor_stats_ensure_scratch(size_t need_count)
     if (!new_tags) return 0;
     g_zone_trace_floor_before_tags_scratch = new_tags;
 
-    new_cw = (uint16_t *)realloc(g_zone_trace_floor_before_cw_scratch,
+    new_cw = (RendererPixel *)realloc(g_zone_trace_floor_before_cw_scratch,
                                  new_cap * sizeof(*new_cw));
     if (!new_cw) return 0;
     g_zone_trace_floor_before_cw_scratch = new_cw;
@@ -577,8 +591,8 @@ static void renderer_build_lgr_first_entry_lookup(const GameState *state,
 static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
                                                   int16_t row_start, int16_t row_end,
                                                   int16_t col_start, int16_t col_end,
-                                                  const uint32_t *src_rgb, const uint16_t *src_cw,
-                                                  uint32_t *dst_rgb, uint16_t *dst_cw);
+                                                  const uint32_t *src_rgb, const RendererPixel *src_cw,
+                                                  uint32_t *dst_rgb, RendererPixel *dst_cw);
 static void renderer_build_world_zone_prepass(GameState *state, uint32_t frame_idx,
                                               int trace_clip, RendererWorldZonePrepass *out);
 
@@ -623,9 +637,9 @@ typedef struct {
     int trace_clip;
     int8_t tint_fill_screen_water;
     const uint32_t *post_src_rgb;
-    const uint16_t *post_src_cw;
+    const RendererPixel *post_src_cw;
     uint32_t *post_dst_rgb;
-    uint16_t *post_dst_cw;
+    RendererPixel *post_dst_cw;
     SDL_sem *done_sem;
     SDL_sem *worker_sems[RENDERER_MAX_THREADS];
     RendererThreadWorker workers[RENDERER_MAX_THREADS];
@@ -2054,7 +2068,7 @@ static const uint8_t floor_bright_level_table[29] = {
 #endif
 typedef AB3D_CACHELINE_ALIGN struct {
     /* ---- Hot: per-pixel wall shade LUT (inner loop reads) ---- */
-    uint16_t wall_cache_cw[32];          /* 64 B — cache line 0 */
+    RendererPixel wall_cache_cw[32];          /* 64 B — cache line 0 */
     uint32_t wall_cache_rgb[32];         /* 128 B — cache lines 1-2 */
 
     /* ---- Warm: per-column wall state ---- */
@@ -2090,9 +2104,9 @@ typedef AB3D_CACHELINE_ALIGN struct {
     const uint8_t *floor_pal_cache_src;
     uint8_t  floor_pal_cache_all_levels_ready;
     uint8_t  floor_pal_cache_valid[FLOOR_PAL_LEVEL_COUNT];
-    const uint16_t *floor_pal_cw_levels[FLOOR_PAL_LEVEL_COUNT];
+    const RendererPixel *floor_pal_cw_levels[FLOOR_PAL_LEVEL_COUNT];
     const uint32_t *floor_pal_rgb_levels[FLOOR_PAL_LEVEL_COUNT];
-    uint16_t floor_span_cw_cache[FLOOR_PAL_LEVEL_COUNT][256];
+    RendererPixel floor_span_cw_cache[FLOOR_PAL_LEVEL_COUNT][256];
 #ifdef AB3D_DOS
     uint32_t (*floor_span_rgb_cache)[256]; /* No ARGB raster channel on DOS. */
 #else
@@ -2154,7 +2168,11 @@ static void render_slice_context_init(RenderSliceContext *ctx,
 
 static inline uint8_t *renderer_active_buf(void)
 {
+#ifdef AB3D_DOS
+    return NULL;
+#else
     return g_renderer.buffer;
+#endif
 }
 
 static inline uint32_t *renderer_active_rgb(void)
@@ -2162,7 +2180,7 @@ static inline uint32_t *renderer_active_rgb(void)
     return g_renderer.rgb_buffer;
 }
 
-static inline uint16_t *renderer_active_cw(void)
+static inline RendererPixel *renderer_active_cw(void)
 {
     return g_renderer.cw_buffer;
 }
@@ -2265,7 +2283,7 @@ uint32_t *renderer_get_active_rgb_target(void)
     return renderer_active_rgb();
 }
 
-uint16_t *renderer_get_active_cw_target(void)
+RendererPixel *renderer_get_active_cw_target(void)
 {
     return renderer_active_cw();
 }
@@ -2335,9 +2353,9 @@ static int renderer_thread_worker_main(void *userdata)
         int trace_clip = pool->trace_clip;
         int8_t tint_fill_screen_water = pool->tint_fill_screen_water;
         const uint32_t *post_src_rgb = pool->post_src_rgb;
-        const uint16_t *post_src_cw = pool->post_src_cw;
+        const RendererPixel *post_src_cw = pool->post_src_cw;
         uint32_t *post_dst_rgb = pool->post_dst_rgb;
-        uint16_t *post_dst_cw = pool->post_dst_cw;
+        RendererPixel *post_dst_cw = pool->post_dst_cw;
 
         int8_t fill_screen_water = 0;
         RendererWorkloadStats world_stats;
@@ -2672,7 +2690,7 @@ static uint8_t g_water_level_phase_lut[8][64 * 64];
 static int g_water_level_phase_lut_ready = 0;
 static const uint8_t *g_water_brighten = NULL;
 static size_t g_water_brighten_size = 0;
-static uint16_t g_water_brighten_cw_lut[WATER_BRIGHTEN_ROW_COUNT][256];
+static RendererPixel g_water_brighten_cw_lut[WATER_BRIGHTEN_ROW_COUNT][256];
 static int g_water_brighten_cw_lut_ready = 0;
 static const uint16_t g_water_src_offsets[8] = { 0, 2, 256, 258, 512, 514, 768, 770 };
 /* Debug view: show floor/ceiling Gouraud term without distance attenuation. */
@@ -2735,7 +2753,7 @@ static void renderer_debug_spill_note_sprite_rect(int left,
     }
 }
 
-static void renderer_debug_draw_rect_outline(uint16_t *cw,
+static void renderer_debug_draw_rect_outline(RendererPixel *cw,
                                              uint32_t *rgb,
                                              int left,
                                              int top,
@@ -2818,7 +2836,7 @@ static void renderer_apply_spill_visualize_debug_overlay(const RendererWorldZone
     if (!g_debug_spill_visualize) return;
     if (!g_pick_capture_active || !g_pick_zone_buffer) return;
 
-    uint16_t *cw = renderer_active_cw();
+    RendererPixel *cw = renderer_active_cw();
     uint32_t *rgb = renderer_active_rgb();
     int w = g_renderer.width;
     int h = g_renderer.height;
@@ -4341,7 +4359,7 @@ static inline uint32_t blend_argb(uint32_t bg, uint32_t fg, uint32_t alpha_fg)
 
 static inline uint16_t blend_amiga12(uint16_t bg, uint16_t fg, uint32_t alpha_fg)
 {
-#ifdef AB3D_NATIVE_RGB565
+#if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
     if(alpha_fg>=255u)return fg;
     if(!alpha_fg)return bg;
     bg=renderer_pixel_to_c12(bg);fg=renderer_pixel_to_c12(fg);
@@ -4377,7 +4395,7 @@ static inline uint16_t blend_amiga12(uint16_t bg, uint16_t fg, uint32_t alpha_fg
 
 static void floor_span_prepare_pal_cache(RenderSliceContext *ctx,
                                          const uint8_t *pal_lut_src, int level,
-                                         const uint16_t **cw_out)
+                                         const RendererPixel **cw_out)
 {
     if (!pal_lut_src || level < 0 || level >= FLOOR_PAL_LEVEL_COUNT) {
         *cw_out = NULL;
@@ -4421,7 +4439,7 @@ static void floor_span_prepare_pal_cache_all_levels(RenderSliceContext *ctx,
     if (ctx->floor_pal_cache_all_levels_ready) return;
 
     for (int level = 0; level < FLOOR_PAL_LEVEL_COUNT; level++) {
-        const uint16_t *cw_level = NULL;
+        const RendererPixel *cw_level = NULL;
         floor_span_prepare_pal_cache(ctx, pal_lut_src, level, &cw_level);
     }
     ctx->floor_pal_cache_all_levels_ready = 1u;
@@ -4545,18 +4563,18 @@ static void allocate_buffers(int w, int h)
     g_renderer.present_height = h;
 
     size_t buf_size = (size_t)w * h;
+#ifndef AB3D_DOS
     g_renderer.buffer = (uint8_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, buf_size, 1);
     g_renderer.back_buffer = (uint8_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, buf_size, 1);
 
-#ifndef AB3D_DOS
     size_t rgb_size = buf_size * sizeof(uint32_t);
     g_renderer.rgb_buffer = (uint32_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, rgb_size);
     g_renderer.rgb_back_buffer = (uint32_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, rgb_size);
 #endif
 
-    size_t cw_size = buf_size * sizeof(uint16_t);
-    g_renderer.cw_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
-    g_renderer.cw_back_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
+    size_t cw_size = buf_size * sizeof(RendererPixel);
+    g_renderer.cw_buffer = (RendererPixel *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
+    g_renderer.cw_back_buffer = (RendererPixel *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
 
 #ifndef AB3D_DOS
     g_pick_zone_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
@@ -4574,9 +4592,9 @@ static void allocate_buffers(int w, int h)
     g_renderer.clip.top2 = (int16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, clip_size);
     g_renderer.clip.bot2 = (int16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, clip_size);
     g_renderer.clip.z2 = (int32_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, (size_t)w, sizeof(int32_t));
-    if (!g_renderer.buffer || !g_renderer.back_buffer ||
-        !g_renderer.cw_buffer || !g_renderer.cw_back_buffer ||
+    if (!g_renderer.cw_buffer || !g_renderer.cw_back_buffer ||
 #ifndef AB3D_DOS
+        !g_renderer.buffer || !g_renderer.back_buffer ||
         !g_renderer.rgb_buffer || !g_renderer.rgb_back_buffer ||
         !g_pick_zone_buffer || !g_pick_zone_back_buffer || !g_pick_player_buffer ||
         !g_pick_player_back_buffer ||
@@ -4628,7 +4646,7 @@ void renderer_init(int width, int height)
 
 void renderer_resize(int w, int h)
 {
-    if (w == g_renderer.width && h == g_renderer.height && g_renderer.buffer) return;
+    if (w == g_renderer.width && h == g_renderer.height && g_renderer.cw_buffer) return;
     if (w < 96) w = 96;
     if (h < 80) h = 80;
     if (w > RENDER_INTERNAL_MAX_DIM) w = RENDER_INTERNAL_MAX_DIM;
@@ -4643,7 +4661,7 @@ void renderer_shutdown(void)
 {
     free(g_renderer_f2_pick_snapshot);g_renderer_f2_pick_snapshot=NULL;
     free(g_debug_spill_sprite_rects);g_debug_spill_sprite_rects=NULL;
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
     renderer_dos_release_gun_frames();
 #endif
     renderer_threads_shutdown();
@@ -4667,7 +4685,7 @@ void renderer_shutdown(void)
 /* Row templates for fast RGB clear (avoid per-pixel loops). Max width from renderer_resize. */
 #define CLEAR_ROW_MAX RENDER_INTERNAL_MAX_DIM
 static uint32_t s_clear_sky_row[CLEAR_ROW_MAX];
-static uint16_t s_clear_sky_cw_row[CLEAR_ROW_MAX];
+static RendererPixel s_clear_sky_cw_row[CLEAR_ROW_MAX];
 static int s_clear_rows_inited = 0;
 
 static void renderer_f2_pick_snapshot_clear(RendererF2PickSnapshot *snap);
@@ -4698,12 +4716,12 @@ static void renderer_clear_rgb_history_buffer(uint32_t *p, int w, int h)
     }
 }
 
-static void renderer_clear_cw_history_buffer(uint16_t *p, int w, int h)
+static void renderer_clear_cw_history_buffer(RendererPixel *p, int w, int h)
 {
     if (!p || w <= 0 || h <= 0) return;
     init_clear_rows();
     if (w <= CLEAR_ROW_MAX) {
-        size_t row_bytes = (size_t)w * sizeof(uint16_t);
+        size_t row_bytes = (size_t)w * sizeof(RendererPixel);
         for (int y = 0; y < h; y++)
             memcpy(p + (size_t)y * (size_t)w, s_clear_sky_cw_row, row_bytes);
     } else {
@@ -4725,10 +4743,12 @@ void renderer_clear_frame_history(void)
     if (w <= 0 || h <= 0) return;
     pixel_count = (size_t)w * (size_t)h;
     buf_size = pixel_count;
-    cw_size = pixel_count * sizeof(uint16_t);
+    cw_size = pixel_count * sizeof(RendererPixel);
 
+#ifndef AB3D_DOS
     if (g_renderer.buffer) memset(g_renderer.buffer, 0, buf_size);
     if (g_renderer.back_buffer) memset(g_renderer.back_buffer, 0, buf_size);
+#endif
     renderer_clear_rgb_history_buffer(g_renderer.rgb_buffer, w, h);
     renderer_clear_rgb_history_buffer(g_renderer.rgb_back_buffer, w, h);
     renderer_clear_cw_history_buffer(g_renderer.cw_buffer, w, h);
@@ -4748,9 +4768,11 @@ void renderer_clear(uint8_t color)
 {
 #if RENDER_CLEAR
     int w = g_renderer.width, h = g_renderer.height;
+#ifndef AB3D_DOS
     if (g_renderer.buffer) {
         memset(g_renderer.buffer, color, (size_t)w * h);
     }
+#endif
     if (g_renderer.rgb_buffer) {
         init_clear_rows();
         uint32_t *p = g_renderer.rgb_buffer;
@@ -4766,8 +4788,8 @@ void renderer_clear(uint8_t color)
     }
     if (g_renderer.cw_buffer) {
         init_clear_rows();
-        uint16_t *p = g_renderer.cw_buffer;
-        size_t row_bytes = (size_t)w * sizeof(uint16_t);
+        RendererPixel *p = g_renderer.cw_buffer;
+        size_t row_bytes = (size_t)w * sizeof(RendererPixel);
         if (w <= CLEAR_ROW_MAX) {
             for (int y = 0; y < h; y++)
                 memcpy(p + (size_t)y * w, s_clear_sky_cw_row, row_bytes);
@@ -4793,7 +4815,7 @@ static void renderer_prefill_current_color_from_previous_frame(void)
     if (g_renderer.cw_buffer && g_renderer.cw_back_buffer) {
         memcpy(g_renderer.cw_buffer,
                g_renderer.cw_back_buffer,
-               pixel_count * sizeof(uint16_t));
+               pixel_count * sizeof(RendererPixel));
     }
 #ifndef AB3D_DOS
     if (g_renderer.rgb_buffer && g_renderer.rgb_back_buffer) {
@@ -4825,7 +4847,7 @@ static int s_cached_sky_view_cols_w = -1;
 static int s_cached_sky_view_cols_h = -1;
 static int s_cached_sky_view_cols_center_x = -1;
 static uint32_t s_sky_argb[256];
-static uint16_t s_sky_cw[256];
+static RendererPixel s_sky_cw[256];
 
 static void sky_build_lut_default(void)
 {
@@ -4864,7 +4886,11 @@ static inline uint16_t sky_fetch_cw_mode0(int tx, int ty)
         off = (size_t)tx * (size_t)s_sky_bytes_per_col + (size_t)ty * 2u;
     }
     if (off + 1u >= s_sky_data_bytes) return renderer_pixel_from_c12(0x0FFFu);
+    #ifdef AB3D_DOS_INDEXED
+    return renderer_pixel_from_be(s_sky_pixels+off);
+#else
     return (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1u]);
+#endif
 }
 
 /* Unchecked: tx, ty must be in [0,tw-1] x [0,th-1] and off in bounds (bilinear inner loop). */
@@ -4876,7 +4902,11 @@ static inline uint16_t sky_fetch_cw_mode0_uc(int tx, int ty)
     } else {
         off = (size_t)tx * (size_t)s_sky_bytes_per_col + (size_t)ty * 2u;
     }
+    #ifdef AB3D_DOS_INDEXED
+    return renderer_pixel_from_be(s_sky_pixels+off);
+#else
     return (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1u]);
+#endif
 }
 
 static AB3D_ATTR_UNUSED inline uint32_t sky_fetch_argb_mode0(int tx, int ty)
@@ -5002,8 +5032,8 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
 {
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
-    uint16_t *cw = renderer_active_cw();
-    if (!buf || !cw || (g_renderer_rgb_raster_expand && !rgb)) return;
+    RendererPixel *cw = renderer_active_cw();
+    if ((RENDER_TAGS_ENABLED && !buf) || !cw || (g_renderer_rgb_raster_expand && !rgb)) return;
     int w = g_renderer.width;
     int h = g_renderer.height;
     if (w < 1 || h < 1) return;
@@ -5024,11 +5054,11 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
     {
         init_clear_rows();
         size_t row_bytes_rgb = (size_t)(x1 - x0) * sizeof(uint32_t);
-        size_t row_bytes_cw = (size_t)(x1 - x0) * sizeof(uint16_t);
+        size_t row_bytes_cw = (size_t)(x1 - x0) * sizeof(RendererPixel);
         if (w <= CLEAR_ROW_MAX) {
             for (int y = y0; y < y1; y++) {
                 size_t row = (size_t)y * (size_t)w + (size_t)x0;
-                memset(buf + row, 0, (size_t)(x1 - x0));
+                RENDER_TAG_FILL(buf + row, 0, (size_t)(x1 - x0));
                 if (g_renderer_rgb_raster_expand)
                     memcpy(rgb + row, s_clear_sky_row + (size_t)x0, row_bytes_rgb);
                 memcpy(cw + row, s_clear_sky_cw_row + (size_t)x0, row_bytes_cw);
@@ -5040,7 +5070,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                 size_t row = (size_t)y * (size_t)w;
                 for (int x = x0; x < x1; x++) {
                     size_t p = row + (size_t)x;
-                    buf[p] = 0;
+                    RENDER_TAG_STORE(buf[p], 0);
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = below_px;
                     renderer_cw_store_xy(cw, x, y, w, h, below_cw);
@@ -5112,7 +5142,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     uint32_t c11 = renderer_pixel_to_argb(sky_fetch_cw_mode0_uc(tx1, v1));
                     uint32_t px = sky_bilinear_argb(c00, c10, c01, c11, fx, fy);
                     size_t p = row + (size_t)x;
-                    buf[p] = 0;
+                    RENDER_TAG_STORE(buf[p], 0);
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = px;
                     renderer_cw_store_xy(cw, x, y, w, h, argb_to_amiga12(px));
@@ -5143,9 +5173,12 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     if (s_sky_row_major) off = (size_t)rpix * row_stride + (size_t)c * 2u;
                     else                 off = (size_t)c * (size_t)bpc + (size_t)rpix * 2u;
                     if (off + 2u > s_sky_data_bytes) continue;
-                    uint16_t cw12 = (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1]);
+                    uint16_t cw12 = (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1u]);
+#ifdef AB3D_DOS_INDEXED
+                    cw12 = renderer_pixel_from_c12(cw12);
+#endif
                     size_t p = row + (size_t)x;
-                    buf[p] = 0;
+                    RENDER_TAG_STORE(buf[p], 0);
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = renderer_pixel_to_argb(cw12);
                     renderer_cw_store_xy(cw, x, y, w, h, cw12);
@@ -5183,7 +5216,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     uint32_t c11 = sky_fetch_argb_mode1(tx1, v1);
                     uint32_t px = sky_bilinear_argb(c00, c10, c01, c11, fx, fy);
                     size_t p = row + (size_t)x;
-                    buf[p] = 0;
+                    RENDER_TAG_STORE(buf[p], 0);
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = px;
                     renderer_cw_store_xy(cw, x, y, w, h, argb_to_amiga12(px));
@@ -5212,7 +5245,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     if (toff >= (size_t)tw * (size_t)th) continue;
                     uint8_t idx = s_sky_pixels[toff];
                     size_t p = row + (size_t)x;
-                    buf[p] = 0;
+                    RENDER_TAG_STORE(buf[p], 0);
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = s_sky_argb[idx];
                     renderer_cw_store_xy(cw, x, y, w, h, s_sky_cw[idx]);
@@ -5239,7 +5272,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                 int b = 30 + (shade * 200) / 255;
                 uint32_t px = RENDER_RGB_RASTER_PIXEL(((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b);
                 size_t p = row + (size_t)x;
-                buf[p] = 0;
+                RENDER_TAG_STORE(buf[p], 0);
                 if (g_renderer_rgb_raster_expand)
                     rgb[p] = px;
                 renderer_cw_store_xy(cw, x, y, w, h, argb_to_amiga12(px));
@@ -5255,11 +5288,11 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
         const uint32_t below_px = RENDER_RGB_CLEAR_SKY_PIXEL;
         const uint16_t below_cw = renderer_pixel_from_c12(0x0EEEu);
         size_t row_bytes_rgb = (size_t)(x1 - x0) * sizeof(uint32_t);
-        size_t row_bytes_cw = (size_t)(x1 - x0) * sizeof(uint16_t);
+        size_t row_bytes_cw = (size_t)(x1 - x0) * sizeof(RendererPixel);
         if (w <= CLEAR_ROW_MAX) {
             for (int y = sky_h; y < h; y++) {
                 size_t row = (size_t)y * (size_t)w + (size_t)x0;
-                memset(buf + row, 0, (size_t)(x1 - x0));
+                RENDER_TAG_FILL(buf + row, 0, (size_t)(x1 - x0));
                 if (g_renderer_rgb_raster_expand)
                     memcpy(rgb + row, s_clear_sky_row + (size_t)x0, row_bytes_rgb);
                 memcpy(cw + row, s_clear_sky_cw_row + (size_t)x0, row_bytes_cw);
@@ -5269,7 +5302,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                 size_t row = (size_t)y * (size_t)w;
                 for (int x = x0; x < x1; x++) {
                     size_t p = row + (size_t)x;
-                    buf[p] = 0;
+                    RENDER_TAG_STORE(buf[p], 0);
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = below_px;
                     cw[p] = below_cw;
@@ -5289,15 +5322,17 @@ void renderer_draw_sky_pass(int16_t angpos)
 
 void renderer_swap(void)
 {
+#ifndef AB3D_DOS
     uint8_t *tmp = g_renderer.buffer;
     g_renderer.buffer = g_renderer.back_buffer;
     g_renderer.back_buffer = tmp;
+#endif
 
     uint32_t *tmp2 = g_renderer.rgb_buffer;
     g_renderer.rgb_buffer = g_renderer.rgb_back_buffer;
     g_renderer.rgb_back_buffer = tmp2;
 
-    uint16_t *tmp3 = g_renderer.cw_buffer;
+    RendererPixel *tmp3 = g_renderer.cw_buffer;
     g_renderer.cw_buffer = g_renderer.cw_back_buffer;
     g_renderer.cw_back_buffer = tmp3;
 
@@ -5315,7 +5350,11 @@ void renderer_swap(void)
 
 const uint8_t *renderer_get_buffer(void)
 {
+#ifdef AB3D_DOS
+    return NULL; /* Diagnostic tags are not allocated on DOS. */
+#else
     return g_renderer.back_buffer; /* The just-drawn frame */
+#endif
 }
 
 const uint32_t *renderer_get_rgb_buffer(void)
@@ -5323,7 +5362,7 @@ const uint32_t *renderer_get_rgb_buffer(void)
     return g_renderer.rgb_back_buffer; /* The just-drawn RGB frame */
 }
 
-const uint16_t *renderer_get_cw_buffer(void)
+const RendererPixel *renderer_get_cw_buffer(void)
 {
     return g_renderer.cw_back_buffer; /* The just-drawn 12-bit color-word frame */
 }
@@ -5556,7 +5595,7 @@ static AB3D_ATTR_UNUSED inline void put_pixel(uint8_t *buf, int x, int y, uint8_
 {
     int w = g_renderer.width, h = g_renderer.height;
     if (x >= 0 && x < w && y >= 0 && y < h) {
-        buf[y * w + x] = color;
+        RENDER_TAG_STORE(buf[y * w + x], color);
     }
 }
 
@@ -5568,7 +5607,7 @@ static AB3D_ATTR_UNUSED inline void draw_vline(uint8_t *buf, int x, int y_top, i
     if (y_top < 0) y_top = 0;
     if (y_bot >= h) y_bot = h - 1;
     for (int y = y_top; y <= y_bot; y++) {
-        buf[y * w + x] = color;
+        RENDER_TAG_STORE(buf[y * w + x], color);
     }
 }
 
@@ -5910,6 +5949,12 @@ static void renderer_zone_trace_floor_stats_init(RendererZoneTraceFloorStats *st
                                                  int is_water)
 {
     if (!stats) return;
+#ifdef AB3D_DOS
+    if (active) {
+        fprintf(stderr, "Pixel tag floor tracing requires a desktop build; DOS omits tag buffers\n");
+        exit(1);
+    }
+#endif
     memset(stats, 0, sizeof(*stats));
     stats->active = active ? 1 : 0;
     stats->zone_id = zone_id;
@@ -5958,7 +6003,7 @@ static void renderer_zone_trace_floor_stats_accumulate_edges(RendererZoneTraceFl
                                                              int poly_bot)
 {
     uint8_t *buf = renderer_active_buf();
-    uint16_t *cw = renderer_active_cw();
+    RendererPixel *cw = renderer_active_cw();
     int w = g_renderer.width;
     int h = g_renderer.height;
 
@@ -6046,7 +6091,7 @@ static void renderer_zone_trace_floor_stats_finalize(RendererZoneTraceFloorStats
                                                      int poly_bot)
 {
     uint8_t *buf = renderer_active_buf();
-    uint16_t *cw = renderer_active_cw();
+    RendererPixel *cw = renderer_active_cw();
     int w = g_renderer.width;
     int h = g_renderer.height;
 
@@ -6239,9 +6284,9 @@ static void draw_wall_rasterize_segment(
 
     uint8_t * AB3D_RESTRICT buf = renderer_active_buf();
     uint32_t * AB3D_RESTRICT rgb = renderer_active_rgb();
-    uint16_t * AB3D_RESTRICT cw = renderer_active_cw();
+    RendererPixel * AB3D_RESTRICT cw = renderer_active_cw();
     if (!ctx) return;
-    if (!buf || !cw || (g_renderer_rgb_raster_expand && !rgb)) return;
+    if ((RENDER_TAGS_ENABLED && !buf) || !cw || (g_renderer_rgb_raster_expand && !rgb)) return;
 
     const int expand = g_renderer_rgb_raster_expand;
     const int width = g_renderer.width;
@@ -6330,8 +6375,8 @@ static void draw_wall_rasterize_segment(
         int y_bot_scr = (int)((bnum >= 0 ? (bnum + (INVZ_ONE / 2)) : (bnum - (INVZ_ONE / 2))) / INVZ_ONE) + center_y;
 
         /* Texture column via perspective divide */
-        int64_t tex_t_fp64 = ((tex_z_acc >> INTERP_SUB_BITS) * INVZ_ONE) / inv_z_fp;
-        int tex_col = ((int32_t)(tex_t_fp64 >> 24) & horand) + fromtile;
+        int tex_col = (renderer_wall_tex_column(tex_z_acc >> INTERP_SUB_BITS,
+                                                (int32_t)inv_z_fp) & horand) + fromtile;
 
         /* Step interpolators */
         inv_z_acc += inv_z_step_acc;
@@ -6365,7 +6410,8 @@ static void draw_wall_rasterize_segment(
                     int lut_off = lut_block_off + ti * 2;
                     uint16_t c12 = ((uint16_t)pal[lut_off] << 8) | pal[lut_off + 1];
                     ctx->wall_cache_cw[ti] = renderer_pixel_from_c12(c12);
-                    ctx->wall_cache_rgb[ti] = amiga12_to_argb(c12);
+                    if (g_renderer_rgb_raster_expand)
+                        ctx->wall_cache_rgb[ti] = amiga12_to_argb(c12);
                 }
                 ctx->wall_cache_pal = pal;
                 ctx->wall_cache_block_off = lut_block_off;
@@ -6418,7 +6464,7 @@ static void draw_wall_rasterize_segment(
 #define WALL_PF_DIST 8
         if (has_tex_pal && strip_offset >= 0) {
             const uint8_t *tex_strip = texture + strip_offset;
-            const uint16_t *cache_cw  = ctx->wall_cache_cw;
+            const RendererPixel *cache_cw  = ctx->wall_cache_cw;
             const uint32_t *cache_rgb = ctx->wall_cache_rgb;
 
             /* Dominant wall path: no RGB expand, no side extension. Keep loop body minimal. */
@@ -6435,8 +6481,8 @@ static void draw_wall_rasterize_segment(
         int ra_ = ((int)(tex_y_hot >> 16) & valand) << 1; \
         uint16_t w_ = ((uint16_t)tex_strip[ra_] << 8) | tex_strip[ra_ + 1]; \
         uint8_t t_ = (uint8_t)((w_ >> (SHIFT_)) & 31u); \
-        buf[pix_hot] = 2; \
-        AB3D_NT_STORE_U16(&cw[pix_hot_cw], cache_cw[t_]); \
+        RENDER_TAG_STORE(buf[pix_hot], 2); \
+        AB3D_NT_STORE_PIXEL(&cw[pix_hot_cw], cache_cw[t_]); \
         pix_hot += wstride; \
         pix_hot_cw += cw_step_y; \
         pf_hot += wstride; \
@@ -6448,7 +6494,7 @@ static void draw_wall_rasterize_segment(
                         if (do_pf_hot) {
                             int i = 0;
                             for (; i + 3 < hot_count; i += 4) {
-                                AB3D_PREFETCH_WRITE(&buf[pf_hot]);
+                                RENDER_TAG_PREFETCH(&buf[pf_hot]);
                                 WALL_TEX_HOT_ROW(0);
                                 WALL_TEX_HOT_ROW(0);
                                 WALL_TEX_HOT_ROW(0);
@@ -6467,7 +6513,7 @@ static void draw_wall_rasterize_segment(
                         if (do_pf_hot) {
                             int i = 0;
                             for (; i + 3 < hot_count; i += 4) {
-                                AB3D_PREFETCH_WRITE(&buf[pf_hot]);
+                                RENDER_TAG_PREFETCH(&buf[pf_hot]);
                                 WALL_TEX_HOT_ROW(5);
                                 WALL_TEX_HOT_ROW(5);
                                 WALL_TEX_HOT_ROW(5);
@@ -6486,7 +6532,7 @@ static void draw_wall_rasterize_segment(
                         if (do_pf_hot) {
                             int i = 0;
                             for (; i + 3 < hot_count; i += 4) {
-                                AB3D_PREFETCH_WRITE(&buf[pf_hot]);
+                                RENDER_TAG_PREFETCH(&buf[pf_hot]);
                                 WALL_TEX_HOT_ROW(10);
                                 WALL_TEX_HOT_ROW(10);
                                 WALL_TEX_HOT_ROW(10);
@@ -6510,15 +6556,15 @@ static void draw_wall_rasterize_segment(
             } else if (expand) {
 #define WALL_TEX_E(EL, ER) \
     do { for (int y_ = ct; y_ <= cb; y_++) { \
-        AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]); \
+        RENDER_TAG_PREFETCH(&buf[pix + (size_t)wstride * WALL_PF_DIST]); \
         if(rgb)AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]); \
         int ra_ = ((int)(tex_y >> 16) & valand) << 1; \
         uint16_t w_ = ((uint16_t)tex_strip[ra_] << 8) | tex_strip[ra_ + 1]; \
         uint8_t t_ = (uint8_t)((w_ >> pack_shift) & 31u); \
         uint16_t cv_ = cache_cw[t_]; uint32_t rv_ = cache_rgb[t_]; \
-        buf[pix] = 2; AB3D_NT_STORE_U16(&cw[pix_cw], cv_); rgb[pix] = rv_; \
-        if (EL) { buf[pix - 1] = 2; cw[pix_cw - cw_step_x] = cv_; rgb[pix - 1] = rv_; } \
-        if (ER) { buf[pix + 1] = 2; cw[pix_cw + cw_step_x] = cv_; rgb[pix + 1] = rv_; } \
+        RENDER_TAG_STORE(buf[pix], 2); AB3D_NT_STORE_PIXEL(&cw[pix_cw], cv_); rgb[pix] = rv_; \
+        if (EL) { RENDER_TAG_STORE(buf[pix - 1], 2); cw[pix_cw - cw_step_x] = cv_; rgb[pix - 1] = rv_; } \
+        if (ER) { RENDER_TAG_STORE(buf[pix + 1], 2); cw[pix_cw + cw_step_x] = cv_; rgb[pix + 1] = rv_; } \
         pix += wstride; pix_cw += cw_step_y; tex_y += tex_step; \
     } } while (0)
                 if      ( do_ext_l &&  do_ext_r) WALL_TEX_E(1, 1);
@@ -6529,14 +6575,14 @@ static void draw_wall_rasterize_segment(
             } else {
 #define WALL_TEX_C(EL, ER) \
     do { for (int y_ = ct; y_ <= cb; y_++) { \
-        AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]); \
+        RENDER_TAG_PREFETCH(&buf[pix + (size_t)wstride * WALL_PF_DIST]); \
         int ra_ = ((int)(tex_y >> 16) & valand) << 1; \
         uint16_t w_ = ((uint16_t)tex_strip[ra_] << 8) | tex_strip[ra_ + 1]; \
         uint8_t t_ = (uint8_t)((w_ >> pack_shift) & 31u); \
         uint16_t cv_ = cache_cw[t_]; \
-        buf[pix] = 2; AB3D_NT_STORE_U16(&cw[pix_cw], cv_); \
-        if (EL) { buf[pix - 1] = 2; cw[pix_cw - cw_step_x] = cv_; } \
-        if (ER) { buf[pix + 1] = 2; cw[pix_cw + cw_step_x] = cv_; } \
+        RENDER_TAG_STORE(buf[pix], 2); AB3D_NT_STORE_PIXEL(&cw[pix_cw], cv_); \
+        if (EL) { RENDER_TAG_STORE(buf[pix - 1], 2); cw[pix_cw - cw_step_x] = cv_; } \
+        if (ER) { RENDER_TAG_STORE(buf[pix + 1], 2); cw[pix_cw + cw_step_x] = cv_; } \
         pix += wstride; pix_cw += cw_step_y; tex_y += tex_step; \
     } } while (0)
                 if      ( do_ext_l &&  do_ext_r) WALL_TEX_C(1, 1);
@@ -6550,20 +6596,20 @@ static void draw_wall_rasterize_segment(
             uint32_t rgb0 = ctx->wall_cache_rgb[0];
             if (expand) {
                 for (int y = ct; y <= cb; y++) {
-                    AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
+                    RENDER_TAG_PREFETCH(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
                     if(rgb)AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]);
-                    buf[pix] = 2; AB3D_NT_STORE_U16(&cw[pix_cw], cw0); rgb[pix] = rgb0;
-                    if (do_ext_l) { buf[pix - 1] = 2; cw[pix_cw - cw_step_x] = cw0; rgb[pix - 1] = rgb0; }
-                    if (do_ext_r) { buf[pix + 1] = 2; cw[pix_cw + cw_step_x] = cw0; rgb[pix + 1] = rgb0; }
+                    RENDER_TAG_STORE(buf[pix], 2); AB3D_NT_STORE_PIXEL(&cw[pix_cw], cw0); rgb[pix] = rgb0;
+                    if (do_ext_l) { RENDER_TAG_STORE(buf[pix - 1], 2); cw[pix_cw - cw_step_x] = cw0; rgb[pix - 1] = rgb0; }
+                    if (do_ext_r) { RENDER_TAG_STORE(buf[pix + 1], 2); cw[pix_cw + cw_step_x] = cw0; rgb[pix + 1] = rgb0; }
                     pix += wstride;
                     pix_cw += cw_step_y;
                 }
             } else {
                 for (int y = ct; y <= cb; y++) {
-                    AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
-                    buf[pix] = 2; AB3D_NT_STORE_U16(&cw[pix_cw], cw0);
-                    if (do_ext_l) { buf[pix - 1] = 2; cw[pix_cw - cw_step_x] = cw0; }
-                    if (do_ext_r) { buf[pix + 1] = 2; cw[pix_cw + cw_step_x] = cw0; }
+                    RENDER_TAG_PREFETCH(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
+                    RENDER_TAG_STORE(buf[pix], 2); AB3D_NT_STORE_PIXEL(&cw[pix_cw], cw0);
+                    if (do_ext_l) { RENDER_TAG_STORE(buf[pix - 1], 2); cw[pix_cw - cw_step_x] = cw0; }
+                    if (do_ext_r) { RENDER_TAG_STORE(buf[pix + 1], 2); cw[pix_cw + cw_step_x] = cw0; }
                     pix += wstride;
                     pix_cw += cw_step_y;
                 }
@@ -6571,20 +6617,20 @@ static void draw_wall_rasterize_segment(
         } else {
             if (expand) {
                 for (int y = ct; y <= cb; y++) {
-                    AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
+                    RENDER_TAG_PREFETCH(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
                     if(rgb)AB3D_PREFETCH_WRITE(&rgb[pix + (size_t)wstride * WALL_PF_DIST]);
-                    buf[pix] = 2; rgb[pix] = fallback_rgb; AB3D_NT_STORE_U16(&cw[pix_cw], fallback_cw);
-                    if (do_ext_l) { buf[pix - 1] = 2; rgb[pix - 1] = fallback_rgb; cw[pix_cw - cw_step_x] = fallback_cw; }
-                    if (do_ext_r) { buf[pix + 1] = 2; rgb[pix + 1] = fallback_rgb; cw[pix_cw + cw_step_x] = fallback_cw; }
+                    RENDER_TAG_STORE(buf[pix], 2); rgb[pix] = fallback_rgb; AB3D_NT_STORE_PIXEL(&cw[pix_cw], fallback_cw);
+                    if (do_ext_l) { RENDER_TAG_STORE(buf[pix - 1], 2); rgb[pix - 1] = fallback_rgb; cw[pix_cw - cw_step_x] = fallback_cw; }
+                    if (do_ext_r) { RENDER_TAG_STORE(buf[pix + 1], 2); rgb[pix + 1] = fallback_rgb; cw[pix_cw + cw_step_x] = fallback_cw; }
                     pix += wstride;
                     pix_cw += cw_step_y;
                 }
             } else {
                 for (int y = ct; y <= cb; y++) {
-                    AB3D_PREFETCH_WRITE(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
-                    buf[pix] = 2; AB3D_NT_STORE_U16(&cw[pix_cw], fallback_cw);
-                    if (do_ext_l) { buf[pix - 1] = 2; cw[pix_cw - cw_step_x] = fallback_cw; }
-                    if (do_ext_r) { buf[pix + 1] = 2; cw[pix_cw + cw_step_x] = fallback_cw; }
+                    RENDER_TAG_PREFETCH(&buf[pix + (size_t)wstride * WALL_PF_DIST]);
+                    RENDER_TAG_STORE(buf[pix], 2); AB3D_NT_STORE_PIXEL(&cw[pix_cw], fallback_cw);
+                    if (do_ext_l) { RENDER_TAG_STORE(buf[pix - 1], 2); cw[pix_cw - cw_step_x] = fallback_cw; }
+                    if (do_ext_r) { RENDER_TAG_STORE(buf[pix + 1], 2); cw[pix_cw + cw_step_x] = fallback_cw; }
                     pix += wstride;
                     pix_cw += cw_step_y;
                 }
@@ -6600,13 +6646,13 @@ static void draw_wall_rasterize_segment(
             size_t last_pix_cw  = renderer_cw_index_xy(x, cb, width, height);
             if (ct > top_clip_val) {
                 size_t up = first_pix - wstride;
-                buf[up] = 2;
+                RENDER_TAG_STORE(buf[up], 2);
                 cw[first_pix_cw - cw_step_y] = cw[first_pix_cw];
                 if (expand) rgb[up] = rgb[first_pix];
             }
             if (!floor_occluded_bot && cb + 1 <= bot_clip_val) {
                 size_t dn = last_pix + wstride;
-                buf[dn] = 2;
+                RENDER_TAG_STORE(buf[dn], 2);
                 cw[last_pix_cw + cw_step_y] = cw[last_pix_cw];
                 if (expand) rgb[dn] = rgb[last_pix];
             }
@@ -6798,10 +6844,10 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
     RendererState *rs = &g_renderer;
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
-    uint16_t *cwbuf = renderer_active_cw();
+    RendererPixel *cwbuf = renderer_active_cw();
     uint16_t *pick_zone = renderer_active_pick_zone();
     uint8_t *pick_player = renderer_active_pick_player();
-    if (!buf || !cwbuf || (g_renderer_rgb_raster_expand && !rgb)) return;
+    if ((RENDER_TAGS_ENABLED && !buf) || !cwbuf || (g_renderer_rgb_raster_expand && !rgb)) return;
     if (y < 0 || y >= rs->height) return;
     if (y < (int)ctx->top_clip || y > (int)ctx->bot_clip) return;
 
@@ -6819,7 +6865,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
             size_t p = row + (size_t)x;
             if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
             if (pick_player) pick_player[p] = 0;
-            buf[p] = 0;
+            RENDER_TAG_STORE(buf[p], 0);
             if (g_renderer_rgb_raster_expand)
                 rgb[p] = sky_px;
             renderer_cw_store_xy(cwbuf, x, y, w, rs->height, sky_cw);
@@ -6885,10 +6931,13 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                     size_t off = rm_base + (size_t)c * 2u;
                     if (off + 2u > sky_lim) { sx_fp += sx_step_fp; continue; }
                     uint16_t cw12 = (uint16_t)((sky_px[off] << 8) | sky_px[off + 1u]);
+#ifdef AB3D_DOS_INDEXED
+                    cw12 = renderer_pixel_from_c12(cw12);
+#endif
                     size_t p = row + (size_t)x;
                     if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
                     if (pick_player) pick_player[p] = 0;
-                    buf[p] = 0;
+                    RENDER_TAG_STORE(buf[p], 0);
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = renderer_pixel_to_argb(cw12);
                     renderer_cw_store_xy(cwbuf, x, y, w, h, cw12);
@@ -6904,10 +6953,13 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                     size_t off = (size_t)c * (size_t)bpc + cm_base;
                     if (off + 2u > sky_lim) { sx_fp += sx_step_fp; continue; }
                     uint16_t cw12 = (uint16_t)((sky_px[off] << 8) | sky_px[off + 1u]);
+#ifdef AB3D_DOS_INDEXED
+                    cw12 = renderer_pixel_from_c12(cw12);
+#endif
                     size_t p = row + (size_t)x;
                     if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
                     if (pick_player) pick_player[p] = 0;
-                    buf[p] = 0;
+                    RENDER_TAG_STORE(buf[p], 0);
                     if (g_renderer_rgb_raster_expand)
                         rgb[p] = renderer_pixel_to_argb(cw12);
                     renderer_cw_store_xy(cwbuf, x, y, w, h, cw12);
@@ -6939,7 +6991,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                 size_t p = row + (size_t)x;
                 if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
                 if (pick_player) pick_player[p] = 0;
-                buf[p] = 0;
+                RENDER_TAG_STORE(buf[p], 0);
                 if (g_renderer_rgb_raster_expand)
                     rgb[p] = s_sky_argb[idx];
                 renderer_cw_store_xy(cwbuf, x, y, w, h, s_sky_cw[idx]);
@@ -6961,7 +7013,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                 size_t p = row + (size_t)x;
                 if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
                 if (pick_player) pick_player[p] = 0;
-                buf[p] = 0;
+                RENDER_TAG_STORE(buf[p], 0);
                 if (g_renderer_rgb_raster_expand)
                     rgb[p] = px;
                 renderer_cw_store_xy(cwbuf, x, y, w, h, argb_to_amiga12(px));
@@ -6982,10 +7034,10 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
 static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                          int16_t y, int16_t x_left, int16_t x_right,
                                          int16_t shade_x_left, int16_t shade_x_right,
-                                         int32_t floor_height, const uint8_t *texture, const uint8_t *floor_pal,
+                                         const FloorDrawCommon *floor_common, const uint8_t *texture, const uint8_t *floor_pal,
                                          int16_t brightness, int16_t left_brightness, int16_t right_brightness,
                                          int16_t use_gouraud,
-                                         int16_t scaleval, int is_water,
+                                         int is_water,
                                          int16_t water_rows_left)
 {
     (void)water_rows_left;
@@ -7002,12 +7054,11 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
      * Starting position involves centering with 3/4 factors plus camera pos.
      */
     RendererState *rs = &g_renderer;
-    FloorDrawCommon floor_common;
     FloorRowMath row_math;
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
-    uint16_t *cwbuf = renderer_active_cw();
-    if (!buf || !cwbuf || (g_renderer_rgb_raster_expand && !rgb)) return;
+    RendererPixel *cwbuf = renderer_active_cw();
+    if ((RENDER_TAGS_ENABLED && !buf) || !cwbuf || (g_renderer_rgb_raster_expand && !rgb)) return;
     if (y < 0 || y >= rs->height) return;
     /* Clip to active slice vertical band (full height for column-threaded workers). */
     if (y < (int)ctx->top_clip || y > (int)ctx->bot_clip) return;
@@ -7034,9 +7085,9 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 ctx->foreground_floor_occlude_top = NULL;
                 renderer_draw_floor_span_ctx(ctx, y, (int16_t)seg_start, (int16_t)(x - 1),
                                              shade_x_left, shade_x_right,
-                                             floor_height, texture, floor_pal,
+                                             floor_common, texture, floor_pal,
                                              brightness, left_brightness, right_brightness,
-                                             use_gouraud, scaleval, is_water, water_rows_left);
+                                             use_gouraud, is_water, water_rows_left);
                 ctx->foreground_floor_occlude_top = saved_occlude;
                 seg_start = -1;
             }
@@ -7048,20 +7099,19 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
 
     const int expand = g_renderer_rgb_raster_expand;
 
-    renderer_floor_prepare_common(&floor_common, rs, floor_height, scaleval);
-
     int center = renderer_view_center_y();  /* Match wall/floor projection center */
     int row_dist = renderer_floor_row_dist_from_screen_y(y, center);
     const int use_gour = (use_gouraud != 0 && !is_water);
     /* Amiga floor distance attenuation uses 80-line screen-space row offsets (d0 around center=40). */
-    int row80 = (int)(((int64_t)y * 80) / ((rs->height > 0) ? rs->height : 1));
+    int row80 = (int)((y * 80) / ((rs->height > 0) ? rs->height : 1));
     int row_dist80 = row80 - 40;
     if (row_dist80 == 0) row_dist80 = (y < center) ? -1 : 1;
 
     /* Fallback grayscale only (when no floor palette is loaded). */
     int zone_d6 = brightness * 2;
 
-    int32_t dist = renderer_floor_compute_dist(rs, &floor_common, row_dist);
+    renderer_floor_prepare_row_math(&row_math, rs, floor_common, row_dist);
+    int32_t dist = row_math.dist;
 
     /* Amiga formula: d6 = (dist >> 7) + zone_bright. Higher d6 = darker. */
     int amiga_d6 = (dist >> 7) + zone_d6;
@@ -7069,12 +7119,10 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     if (amiga_d6 > 64) amiga_d6 = 64;
     int gray = (64 - amiga_d6) * 255 / 64;
 
-    renderer_floor_prepare_row_math(&row_math, rs, &floor_common, row_dist);
-
     /* Step per pixel:
      * - At base render width, keep the original mapping.
      * - When supersampling increases internal width, scale step down so output FOV stays unchanged. */
-    int w = floor_common.width;
+    int w = floor_common->width;
     int32_t u_step = row_math.u_step;
     int32_t v_step = row_math.v_step;
 
@@ -7087,7 +7135,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         floor_pal_level = floor_bright_level_table[bright_idx];
     }
 
-    const uint16_t *span_cw = NULL;
+    const RendererPixel *span_cw = NULL;
     const int use_span_lut = (texture != NULL && pal_lut_src != NULL && !is_water && !use_gour);
     if (use_span_lut) {
         floor_span_prepare_pal_cache(ctx, pal_lut_src, floor_pal_level, &span_cw);
@@ -7123,7 +7171,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         /* AB3DI disttobot clamp is in 80-line view space:
          *   if (d0 >= disttobot) d0 = disttobot-1 */
         {
-            int amiga_y = (int)(((int64_t)y * 80) / ((rs->height > 0) ? rs->height : 1));
+            int amiga_y = (int)((y * 80) / ((rs->height > 0) ? rs->height : 1));
             int disttobot = 79 - amiga_y;
             if (disttobot < 1) disttobot = 1;
             if (refr_y_off_fp >= (disttobot << 8))
@@ -7147,9 +7195,9 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             ctx->workload_stats.water_pixels += (uint64_t)span_len;
         }
     }
-    uint8_t *row8 = buf + (size_t)y * w + (size_t)xl;
+    uint8_t *row8 = RENDER_TAG_OFFSET(buf, (size_t)y * w + (size_t)xl);
     uint32_t *row32 = rgb ? rgb + (size_t)y * w + (size_t)xl : NULL;
-    uint16_t *row16 = cwbuf + (size_t)y * w + (size_t)xl;
+    RendererPixel *row16 = cwbuf + (size_t)y * w + (size_t)xl;
     const int cw_col_major = AB3D_CW_COL_MAJOR;
     const int floor_cw_nt = (cw_col_major && !is_water);
     const size_t cw_step_x = renderer_cw_step_x(rs->height);
@@ -7159,7 +7207,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         if (!cw_col_major) { \
             *row16++ = (V_); \
         } else { \
-            if (floor_cw_nt) AB3D_NT_STORE_U16(&cwbuf[row16_idx], (V_)); \
+            if (floor_cw_nt) AB3D_NT_STORE_PIXEL(&cwbuf[row16_idx], (V_)); \
             else cwbuf[row16_idx] = (V_); \
             row16_idx += cw_step_x; \
             row16++; \
@@ -7170,7 +7218,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         if (!cw_col_major) { \
             *p16++ = (V_); \
         } else { \
-            if (floor_cw_nt) AB3D_NT_STORE_U16(&cwbuf[p16_idx], (V_)); \
+            if (floor_cw_nt) AB3D_NT_STORE_PIXEL(&cwbuf[p16_idx], (V_)); \
             else cwbuf[p16_idx] = (V_); \
             p16_idx += cw_step_x; \
             p16++; \
@@ -7203,7 +7251,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         if (expand) {
             uint8_t *p8 = row8;
             uint32_t *p32 = row32;
-            uint16_t *p16 = row16;
+            RendererPixel *p16 = row16;
             size_t p16_idx = row16_idx;
             const uint32_t *span_rgb = g_renderer_rgb_raster_expand?ctx->floor_span_rgb_cache[floor_pal_level]:NULL;
             uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
@@ -7241,8 +7289,8 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 __m128i qcw = _mm_set_epi16(0, 0, 0, 0,
                     (int16_t)c3, (int16_t)c2, (int16_t)c1, (int16_t)c0);
                 _mm_storel_epi64((__m128i *)(void *)p16, qcw);
-                *(uint32_t *)(void *)p8 = 0x01010101u;
-                p8 += 4;
+                RENDER_TAG_STORE(*(uint32_t *)(void *)p8, 0x01010101u);
+                RENDER_TAG_ADVANCE(p8, 4);
                 if(p32)p32 += 4;
                 p16 += 4;
             }
@@ -7267,18 +7315,18 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     u_pf += (uint32_t)u_step * 4u;
                     v_pf += (uint32_t)v_step * 4u;
 
-                    *(uint32_t *)(void *)p8 = 0x01010101u;
-                    p8 += 4;
+                    RENDER_TAG_STORE(*(uint32_t *)(void *)p8, 0x01010101u);
+                    RENDER_TAG_ADVANCE(p8, 4);
                     p32[0] = span_rgb[t0];
                     p32[1] = span_rgb[t1];
                     p32[2] = span_rgb[t2];
                     p32[3] = span_rgb[t3];
                     if(p32)p32 += 4;
 
-                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t0]); p16_idx += cw_step_x;
-                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t1]); p16_idx += cw_step_x;
-                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t2]); p16_idx += cw_step_x;
-                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t3]); p16_idx += cw_step_x;
+                    AB3D_NT_STORE_PIXEL(&cwbuf[p16_idx], span_cw[t0]); p16_idx += cw_step_x;
+                    AB3D_NT_STORE_PIXEL(&cwbuf[p16_idx], span_cw[t1]); p16_idx += cw_step_x;
+                    AB3D_NT_STORE_PIXEL(&cwbuf[p16_idx], span_cw[t2]); p16_idx += cw_step_x;
+                    AB3D_NT_STORE_PIXEL(&cwbuf[p16_idx], span_cw[t3]); p16_idx += cw_step_x;
                     p16 += 4;
                 }
             }
@@ -7292,13 +7340,13 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 u_pf += (uint32_t)u_step;
                 v_pf += (uint32_t)v_step;
 
-                *p8++ = 1;
+                RENDER_TAG_STORE(*p8++, 1);
                 *p32++ = span_rgb[texel];
                 FLOOR_CW_STORE_P16(span_cw[texel]);
             }
         } else {
             uint8_t *p8 = row8;
-            uint16_t *p16 = row16;
+            RendererPixel *p16 = row16;
             size_t p16_idx = row16_idx;
             uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
             uint32_t v_pf = v_fp + (uint32_t)v_step * 8u;
@@ -7330,8 +7378,8 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 __m128i qcw = _mm_set_epi16(0, 0, 0, 0,
                     (int16_t)c3, (int16_t)c2, (int16_t)c1, (int16_t)c0);
                 _mm_storel_epi64((__m128i *)(void *)p16, qcw);
-                *(uint32_t *)(void *)p8 = 0x01010101u;
-                p8 += 4;
+                RENDER_TAG_STORE(*(uint32_t *)(void *)p8, 0x01010101u);
+                RENDER_TAG_ADVANCE(p8, 4);
                 p16 += 4;
             }
 #endif
@@ -7355,12 +7403,12 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     u_pf += (uint32_t)u_step * 4u;
                     v_pf += (uint32_t)v_step * 4u;
 
-                    *(uint32_t *)(void *)p8 = 0x01010101u;
-                    p8 += 4;
-                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t0]); p16_idx += cw_step_x;
-                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t1]); p16_idx += cw_step_x;
-                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t2]); p16_idx += cw_step_x;
-                    AB3D_NT_STORE_U16(&cwbuf[p16_idx], span_cw[t3]); p16_idx += cw_step_x;
+                    RENDER_TAG_STORE(*(uint32_t *)(void *)p8, 0x01010101u);
+                    RENDER_TAG_ADVANCE(p8, 4);
+                    AB3D_NT_STORE_PIXEL(&cwbuf[p16_idx], span_cw[t0]); p16_idx += cw_step_x;
+                    AB3D_NT_STORE_PIXEL(&cwbuf[p16_idx], span_cw[t1]); p16_idx += cw_step_x;
+                    AB3D_NT_STORE_PIXEL(&cwbuf[p16_idx], span_cw[t2]); p16_idx += cw_step_x;
+                    AB3D_NT_STORE_PIXEL(&cwbuf[p16_idx], span_cw[t3]); p16_idx += cw_step_x;
                     p16 += 4;
                 }
             }
@@ -7374,7 +7422,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 u_pf += (uint32_t)u_step;
                 v_pf += (uint32_t)v_step;
 
-                *p8++ = 1;
+                RENDER_TAG_STORE(*p8++, 1);
                 FLOOR_CW_STORE_P16(span_cw[texel]);
             }
         }
@@ -7389,7 +7437,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             : NULL;
         uint8_t *p8 = row8;
         uint32_t *p32 = row32;
-        uint16_t *p16 = row16;
+        RendererPixel *p16 = row16;
         size_t p16_idx = row16_idx;
         size_t bg_i0 = water_refr_base0 + (size_t)xl;
         size_t bg_i1 = water_refr_base1 + (size_t)xl;
@@ -7440,7 +7488,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 uint8_t water_level = water_phase_lut[water_idx];
                                 uint16_t out_cw = g_water_brighten_cw_lut[water_brighten_row_base + water_level][renderer_pixel_gb_index(cwbuf[bg_cw_i0])];
 
-                                *p8++ = 4;
+                                RENDER_TAG_STORE(*p8++, 4);
                                 if(p32)p32++;
                                 FLOOR_CW_STORE_P16(out_cw);
                             }
@@ -7468,7 +7516,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                     out_cw = renderer_pixel_from_be(water_brighten+bi0);
                                 }
 
-                                *p8++ = 4;
+                                RENDER_TAG_STORE(*p8++, 4);
                                 if(p32)p32++;
                                 FLOOR_CW_STORE_P16(out_cw);
                             }
@@ -7500,7 +7548,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 out_cw = renderer_pixel_from_be(water_brighten+bi0);
                             }
 
-                            *p8++ = 4;
+                            RENDER_TAG_STORE(*p8++, 4);
                             if(p32)p32++;
                             FLOOR_CW_STORE_P16(out_cw);
                         }
@@ -7519,14 +7567,14 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 water_d5 &= 0x3F3Fu;
                                 uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
                                 uint8_t water_level = water_phase_lut[water_idx];
-                                const uint16_t *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
+                                const RendererPixel *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
                                 uint16_t out_cw0 = brighten_row[renderer_pixel_gb_index(cwbuf[bg_cw_i0])];
                                 uint16_t out_cw1 = brighten_row[renderer_pixel_gb_index(cwbuf[bg_cw_i1])];
                                 uint16_t r4 = water_blend_nibble_lut[((((uint32_t)renderer_pixel_to_c12(out_cw0) >> 8) & 0xFu) << 4) | (((uint32_t)renderer_pixel_to_c12(out_cw1) >> 8) & 0xFu)];
                                 uint16_t g4 = water_blend_nibble_lut[((((uint32_t)renderer_pixel_to_c12(out_cw0) >> 4) & 0xFu) << 4) | (((uint32_t)renderer_pixel_to_c12(out_cw1) >> 4) & 0xFu)];
                                 uint16_t b4 = water_blend_nibble_lut[(((uint32_t)renderer_pixel_to_c12(out_cw0) & 0xFu) << 4) | ((uint32_t)renderer_pixel_to_c12(out_cw1) & 0xFu)];
 
-                                *p8++ = 4;
+                                RENDER_TAG_STORE(*p8++, 4);
                                 if(p32)p32++;
                                 FLOOR_CW_STORE_P16(renderer_pixel_from_c12((uint16_t)((r4 << 8) | (g4 << 4) | b4)));
                             }
@@ -7550,7 +7598,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 uint16_t out_cw0;
                                 uint16_t out_cw1;
                                 if (water_has_brighten_cw_lut) {
-                                    const uint16_t *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
+                                    const RendererPixel *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
                                     out_cw0 = brighten_row[renderer_pixel_gb_index(bg_cw0)];
                                     out_cw1 = brighten_row[renderer_pixel_gb_index(bg_cw1)];
                                 } else {
@@ -7560,7 +7608,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                     out_cw1 = renderer_pixel_from_be(water_brighten+bi1);
                                 }
 
-                                *p8++ = 4;
+                                RENDER_TAG_STORE(*p8++, 4);
                                 if(p32)p32++;
                                 if (water_blend_nibble_lut) {
                                     uint16_t r4 = water_blend_nibble_lut[((((uint32_t)renderer_pixel_to_c12(out_cw0) >> 8) & 0xFu) << 4) | (((uint32_t)renderer_pixel_to_c12(out_cw1) >> 8) & 0xFu)];
@@ -7597,7 +7645,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                             uint16_t out_cw0;
                             uint16_t out_cw1;
                             if (water_has_brighten_cw_lut) {
-                                const uint16_t *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
+                                const RendererPixel *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
                                 out_cw0 = brighten_row[renderer_pixel_gb_index(bg_cw0)];
                                 out_cw1 = brighten_row[renderer_pixel_gb_index(bg_cw1)];
                             } else {
@@ -7607,7 +7655,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 out_cw1 = renderer_pixel_from_be(water_brighten+bi1);
                             }
 
-                            *p8++ = 4;
+                            RENDER_TAG_STORE(*p8++, 4);
                             if(p32)p32++;
                             if (water_blend_nibble_lut) {
                                 uint16_t r4 = water_blend_nibble_lut[((((uint32_t)renderer_pixel_to_c12(out_cw0) >> 8) & 0xFu) << 4) | (((uint32_t)renderer_pixel_to_c12(out_cw1) >> 8) & 0xFu)];
@@ -7757,7 +7805,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 }
             }
 
-            *p8++ = 4; /* water tag: avoid wall-join fill smearing */
+            RENDER_TAG_STORE(*p8++, 4); /* Desktop water tracing tag. */
             if (expand)
                 *p32++ = out;
             else
@@ -7772,6 +7820,9 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     int32_t gour_level_step = 0;
     int32_t gour_bright_fp = 0;
     int32_t gour_bright_step = 0;
+#ifdef AB3D_DOS
+    int gour_level_min = 0, gour_level_max = 0;
+#endif
     const int dist_add = (dist >> 7);
     if (use_gour) {
         const int need_gour_bright = (g_debug_floor_gouraud_only || !(texture && pal_lut_src));
@@ -7788,6 +7839,12 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         right_level >>= 1;
         if (left_level > 14) left_level = 14;
         if (right_level > 14) right_level = 14;
+#ifdef AB3D_DOS
+        /* Clipping only shortens this gradient; every sampled level remains
+         * between its original clamped endpoints, including reversed ramps. */
+        gour_level_min = left_level < right_level ? left_level : right_level;
+        gour_level_max = left_level > right_level ? left_level : right_level;
+#endif
         gour_level_step  = (full_span_w > 0) ? (int32_t)(((int64_t)(right_level      - left_level)      << 16) / full_span_w) : 0;
         /* Advance from the polygon's left edge to the clipped draw start. */
         int clip_advance = xl - (int)shade_x_left;
@@ -7812,7 +7869,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 g = 96;
             }
             uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)g << 16) | ((uint32_t)g << 8) | (uint32_t)g);
-            *row8++ = 1;
+            RENDER_TAG_STORE(*row8++, 1);
             RASTER_PUT_PP(&row32, argb);
             FLOOR_CW_STORE_ROW(argb_to_amiga12(argb));
         }
@@ -7822,13 +7879,39 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     if (texture && pal_lut_src) {
         uint8_t *p8 = row8;
         uint32_t *p32 = row32;
-        uint16_t *p16 = row16;
+        RendererPixel *p16 = row16;
         size_t p16_idx = row16_idx;
 
         if (use_gour) {
+#ifdef AB3D_DOS
+            for (int level = gour_level_min; level <= gour_level_max; level++) {
+                if (ctx->floor_pal_cache_src != pal_lut_src || !ctx->floor_pal_cache_valid[level]) {
+                    const RendererPixel *prepared;
+                    floor_span_prepare_pal_cache(ctx, pal_lut_src, level, &prepared);
+                }
+            }
+#else
             floor_span_prepare_pal_cache_all_levels(ctx, pal_lut_src);
-            const uint16_t *const *gour_cw_levels = ctx->floor_pal_cw_levels;
+#endif
+            const RendererPixel *const *gour_cw_levels = ctx->floor_pal_cw_levels;
             const uint32_t *const *gour_rgb_levels = ctx->floor_pal_rgb_levels;
+#ifdef AB3D_DOS
+            /* Keep the gradient loop's live state small on the 486. The desktop
+             * four-pixel batches hold four levels and four texels at once. */
+            if (gour_level_step != 0) {
+                for (int i = 0; i < span_len; i++) {
+                    int level = gour_level_fp >> 16;
+                    gour_level_fp += gour_level_step;
+                    if (level < 0) level = 0;
+                    if (level >= FLOOR_PAL_LEVEL_COUNT) level = FLOOR_PAL_LEVEL_COUNT - 1;
+                    uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
+                    u_fp += (uint32_t)u_step;
+                    v_fp += (uint32_t)v_step;
+                    FLOOR_CW_STORE_P16(gour_cw_levels[level][texel]);
+                }
+                return;
+            }
+#endif
             uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
             uint32_t v_pf = v_fp + (uint32_t)v_step * 8u;
 
@@ -7836,7 +7919,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
              * run the same constant-level texture loop as non-Gouraud. */
             if (gour_level_step == 0) {
                 int level = (int)(gour_level_fp >> 16);
-                const uint16_t *span_cw;
+                const RendererPixel *span_cw;
                 const uint32_t *span_rgb;
 
                 if (level < 0) level = 0;
@@ -7862,10 +7945,10 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                         u_pf += (uint32_t)u_step * 4u;
                         v_pf += (uint32_t)v_step * 4u;
 
-                        *p8++ = 1; *p32++ = span_rgb[t0]; FLOOR_CW_STORE_P16(span_cw[t0]);
-                        *p8++ = 1; *p32++ = span_rgb[t1]; FLOOR_CW_STORE_P16(span_cw[t1]);
-                        *p8++ = 1; *p32++ = span_rgb[t2]; FLOOR_CW_STORE_P16(span_cw[t2]);
-                        *p8++ = 1; *p32++ = span_rgb[t3]; FLOOR_CW_STORE_P16(span_cw[t3]);
+                        RENDER_TAG_STORE(*p8++, 1); *p32++ = span_rgb[t0]; FLOOR_CW_STORE_P16(span_cw[t0]);
+                        RENDER_TAG_STORE(*p8++, 1); *p32++ = span_rgb[t1]; FLOOR_CW_STORE_P16(span_cw[t1]);
+                        RENDER_TAG_STORE(*p8++, 1); *p32++ = span_rgb[t2]; FLOOR_CW_STORE_P16(span_cw[t2]);
+                        RENDER_TAG_STORE(*p8++, 1); *p32++ = span_rgb[t3]; FLOOR_CW_STORE_P16(span_cw[t3]);
                     }
 
                     for (; i < span_len; i++) {
@@ -7879,7 +7962,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                         u_pf += (uint32_t)u_step;
                         v_pf += (uint32_t)v_step;
 
-                        *p8++ = 1;
+                        RENDER_TAG_STORE(*p8++, 1);
                         *p32++ = span_rgb[texel];
                         FLOOR_CW_STORE_P16(span_cw[texel]);
                     }
@@ -7901,10 +7984,10 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                         u_pf += (uint32_t)u_step * 4u;
                         v_pf += (uint32_t)v_step * 4u;
 
-                        *p8++ = 1; FLOOR_CW_STORE_P16(span_cw[t0]);
-                        *p8++ = 1; FLOOR_CW_STORE_P16(span_cw[t1]);
-                        *p8++ = 1; FLOOR_CW_STORE_P16(span_cw[t2]);
-                        *p8++ = 1; FLOOR_CW_STORE_P16(span_cw[t3]);
+                        RENDER_TAG_STORE(*p8++, 1); FLOOR_CW_STORE_P16(span_cw[t0]);
+                        RENDER_TAG_STORE(*p8++, 1); FLOOR_CW_STORE_P16(span_cw[t1]);
+                        RENDER_TAG_STORE(*p8++, 1); FLOOR_CW_STORE_P16(span_cw[t2]);
+                        RENDER_TAG_STORE(*p8++, 1); FLOOR_CW_STORE_P16(span_cw[t3]);
                     }
 
                     for (; i < span_len; i++) {
@@ -7918,7 +8001,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                         u_pf += (uint32_t)u_step;
                         v_pf += (uint32_t)v_step;
 
-                        *p8++ = 1;
+                        RENDER_TAG_STORE(*p8++, 1);
                         FLOOR_CW_STORE_P16(span_cw[texel]);
                     }
                 }
@@ -7952,10 +8035,10 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     u_pf += (uint32_t)u_step * 4u;
                     v_pf += (uint32_t)v_step * 4u;
 
-                    *p8++ = 1; *p32++ = gour_rgb_levels[g0][t0]; FLOOR_CW_STORE_P16(gour_cw_levels[g0][t0]);
-                    *p8++ = 1; *p32++ = gour_rgb_levels[g1][t1]; FLOOR_CW_STORE_P16(gour_cw_levels[g1][t1]);
-                    *p8++ = 1; *p32++ = gour_rgb_levels[g2][t2]; FLOOR_CW_STORE_P16(gour_cw_levels[g2][t2]);
-                    *p8++ = 1; *p32++ = gour_rgb_levels[g3][t3]; FLOOR_CW_STORE_P16(gour_cw_levels[g3][t3]);
+                    RENDER_TAG_STORE(*p8++, 1); *p32++ = gour_rgb_levels[g0][t0]; FLOOR_CW_STORE_P16(gour_cw_levels[g0][t0]);
+                    RENDER_TAG_STORE(*p8++, 1); *p32++ = gour_rgb_levels[g1][t1]; FLOOR_CW_STORE_P16(gour_cw_levels[g1][t1]);
+                    RENDER_TAG_STORE(*p8++, 1); *p32++ = gour_rgb_levels[g2][t2]; FLOOR_CW_STORE_P16(gour_cw_levels[g2][t2]);
+                    RENDER_TAG_STORE(*p8++, 1); *p32++ = gour_rgb_levels[g3][t3]; FLOOR_CW_STORE_P16(gour_cw_levels[g3][t3]);
                 }
 
                 for (; i < span_len; i++) {
@@ -7974,7 +8057,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     u_pf += (uint32_t)u_step;
                     v_pf += (uint32_t)v_step;
 
-                    *p8++ = 1;
+                    RENDER_TAG_STORE(*p8++, 1);
                     *p32++ = gour_rgb_levels[gour_level][texel];
                     FLOOR_CW_STORE_P16(gour_cw_levels[gour_level][texel]);
                 }
@@ -8005,10 +8088,10 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     u_pf += (uint32_t)u_step * 4u;
                     v_pf += (uint32_t)v_step * 4u;
 
-                    *p8++ = 1; FLOOR_CW_STORE_P16(gour_cw_levels[g0][t0]);
-                    *p8++ = 1; FLOOR_CW_STORE_P16(gour_cw_levels[g1][t1]);
-                    *p8++ = 1; FLOOR_CW_STORE_P16(gour_cw_levels[g2][t2]);
-                    *p8++ = 1; FLOOR_CW_STORE_P16(gour_cw_levels[g3][t3]);
+                    RENDER_TAG_STORE(*p8++, 1); FLOOR_CW_STORE_P16(gour_cw_levels[g0][t0]);
+                    RENDER_TAG_STORE(*p8++, 1); FLOOR_CW_STORE_P16(gour_cw_levels[g1][t1]);
+                    RENDER_TAG_STORE(*p8++, 1); FLOOR_CW_STORE_P16(gour_cw_levels[g2][t2]);
+                    RENDER_TAG_STORE(*p8++, 1); FLOOR_CW_STORE_P16(gour_cw_levels[g3][t3]);
                 }
 
                 for (; i < span_len; i++) {
@@ -8027,7 +8110,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     u_pf += (uint32_t)u_step;
                     v_pf += (uint32_t)v_step;
 
-                    *p8++ = 1;
+                    RENDER_TAG_STORE(*p8++, 1);
                     FLOOR_CW_STORE_P16(gour_cw_levels[gour_level][texel]);
                 }
             }
@@ -8050,7 +8133,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     v_pf += (uint32_t)v_step;
                     uint16_t out_cw = renderer_pixel_from_be(lut+texel*2);
 
-                    *p8++ = 1;
+                    RENDER_TAG_STORE(*p8++, 1);
                     *p32++ = renderer_pixel_to_argb(out_cw);
                     FLOOR_CW_STORE_P16(out_cw);
                 }
@@ -8068,7 +8151,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                     v_pf += (uint32_t)v_step;
                     uint16_t out_cw = renderer_pixel_from_be(lut+texel*2);
 
-                    *p8++ = 1;
+                    RENDER_TAG_STORE(*p8++, 1);
                     FLOOR_CW_STORE_P16(out_cw);
                 }
             }
@@ -8079,7 +8162,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     if (texture) {
         uint8_t *p8 = row8;
         uint32_t *p32 = row32;
-        uint16_t *p16 = row16;
+        RendererPixel *p16 = row16;
         size_t p16_idx = row16_idx;
 
         if (use_gour) {
@@ -8097,7 +8180,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
 
                 int lit = ((int)texel * gour_gray) >> 8;
                 uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)lit << 16) | ((uint32_t)lit << 8) | (uint32_t)lit);
-                *p8++ = 1;
+                RENDER_TAG_STORE(*p8++, 1);
                 RASTER_PUT_PP(&p32, argb);
                 FLOOR_CW_STORE_P16(argb_to_amiga12(argb));
             }
@@ -8110,7 +8193,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             v_fp += (uint32_t)v_step;
             int lit = ((int)texel * gray) >> 8;
             uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)lit << 16) | ((uint32_t)lit << 8) | (uint32_t)lit);
-            *row8++ = 1;
+            RENDER_TAG_STORE(*row8++, 1);
             RASTER_PUT_PP(&row32, argb);
             FLOOR_CW_STORE_ROW(argb_to_amiga12(argb));
         }
@@ -8126,7 +8209,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             if (d6 > 64) d6 = 64;
             int g = (64 - d6) * 255 / 64;
             uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)g << 16) | ((uint32_t)g << 8) | (uint32_t)g);
-            *row8++ = 1;
+            RENDER_TAG_STORE(*row8++, 1);
             RASTER_PUT_PP(&row32, argb);
             FLOOR_CW_STORE_ROW(argb_to_amiga12(argb));
         }
@@ -8134,7 +8217,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         uint32_t argb = RENDER_RGB_RASTER_PIXEL(((uint32_t)gray << 16) | ((uint32_t)gray << 8) | (uint32_t)gray);
         uint16_t out_cw = argb_to_amiga12(argb);
         for (int i = 0; i < span_len; i++) {
-            *row8++ = 1;
+            RENDER_TAG_STORE(*row8++, 1);
             RASTER_PUT_PP(&row32, argb);
             FLOOR_CW_STORE_ROW(out_cw);
         }
@@ -8151,12 +8234,14 @@ void renderer_draw_floor_span(int16_t y, int16_t x_left, int16_t x_right,
                               int16_t scaleval, int is_water,
                               int16_t water_rows_left)
 {
+    FloorDrawCommon common;
+    renderer_floor_prepare_common(&common, &g_renderer, floor_height, scaleval);
     RenderSliceContext ctx;
     render_slice_context_init(&ctx, g_renderer.left_clip, g_renderer.right_clip,
                               g_renderer.top_clip, g_renderer.bot_clip);
-    renderer_draw_floor_span_ctx(&ctx, y, x_left, x_right, x_left, x_right, floor_height, texture, floor_pal,
+    renderer_draw_floor_span_ctx(&ctx, y, x_left, x_right, x_left, x_right, &common, texture, floor_pal,
                                  brightness, left_brightness, right_brightness, use_gouraud,
-                                 scaleval, is_water, water_rows_left);
+                                 is_water, water_rows_left);
 }
 
 typedef struct {
@@ -8170,7 +8255,7 @@ typedef struct {
     int32_t bright_step_fp;
     int32_t bright_col_fp;
     int16_t bright_term;
-    const uint16_t *span_cw;
+    const RendererPixel *span_cw;
     const uint32_t *span_rgb;
     uint32_t u_col;
     uint32_t v_col;
@@ -8403,12 +8488,12 @@ static void renderer_floor_fast_seed_rows(FloorRowFast *rows,
 
 static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                                                 FloorRowFast *rows,
-                                                const uint16_t *const *gour_cw_levels,
+                                                const RendererPixel *const *gour_cw_levels,
                                                 const uint32_t *const *gour_rgb_levels,
                                                 const uint8_t *texture,
                                                 uint8_t *buf,
                                                 uint32_t *rgb,
-                                                uint16_t *cwbuf,
+                                                RendererPixel *cwbuf,
                                                 int w,
                                                 int h,
                                                 int y_base,
@@ -8427,7 +8512,7 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
     const int floor_pf_dist = 8;
     const size_t floor_pf_stride = (size_t)w * (size_t)floor_pf_dist;
 
-    if (!ctx || !rows || !texture || !buf || !cwbuf) return 0;
+    if (!ctx || !rows || !texture || (RENDER_TAGS_ENABLED && !buf) || !cwbuf) return 0;
     if (x < 0 || x >= w || top > bot) return 0;
 
     if (foreground_floor_occlude_top) {
@@ -8461,8 +8546,8 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                             uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
                             uint16_t out_cw = row->span_cw[texel];
 
-                            buf[pix] = 1;
-                            AB3D_NT_STORE_U16(&cwbuf[cw_idx], out_cw);
+                            RENDER_TAG_STORE(buf[pix], 1);
+                            AB3D_NT_STORE_PIXEL(&cwbuf[cw_idx], out_cw);
                             rgb[pix] = row->span_rgb[texel];
                             drawn_pixels++;
                         }
@@ -8478,7 +8563,7 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                         int draw_here = (x >= row->le && x <= row->re);
 
                         if (y + floor_pf_dist <= bot) {
-                            AB3D_PREFETCH_WRITE(&buf[pix + floor_pf_stride]);
+                            RENDER_TAG_PREFETCH(&buf[pix + floor_pf_stride]);
                             if(rgb)AB3D_PREFETCH_WRITE(&rgb[pix + floor_pf_stride]);
                         }
 
@@ -8494,8 +8579,8 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                             uint16_t out_cw = row->span_cw[texel];
 
                             if (run_start == -1) run_start = y;
-                            buf[pix] = 1;
-                            AB3D_NT_STORE_U16(&cwbuf[cw_idx], out_cw);
+                            RENDER_TAG_STORE(buf[pix], 1);
+                            AB3D_NT_STORE_PIXEL(&cwbuf[cw_idx], out_cw);
                             rgb[pix] = row->span_rgb[texel];
                             drawn_pixels++;
                             row->u_col += (uint32_t)row->u_step;
@@ -8525,8 +8610,8 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                             uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
                             uint16_t out_cw = row->span_cw[texel];
 
-                            buf[pix] = 1;
-                            AB3D_NT_STORE_U16(&cwbuf[cw_idx], out_cw);
+                            RENDER_TAG_STORE(buf[pix], 1);
+                            AB3D_NT_STORE_PIXEL(&cwbuf[cw_idx], out_cw);
                             drawn_pixels++;
                         }
                         row->u_col += (uint32_t)row->u_step;
@@ -8541,7 +8626,7 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                         int draw_here = (x >= row->le && x <= row->re);
 
                         if (y + floor_pf_dist <= bot) {
-                            AB3D_PREFETCH_WRITE(&buf[pix + floor_pf_stride]);
+                            RENDER_TAG_PREFETCH(&buf[pix + floor_pf_stride]);
                         }
 
                         if (draw_here) {
@@ -8556,8 +8641,8 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                             uint16_t out_cw = row->span_cw[texel];
 
                             if (run_start == -1) run_start = y;
-                            buf[pix] = 1;
-                            AB3D_NT_STORE_U16(&cwbuf[cw_idx], out_cw);
+                            RENDER_TAG_STORE(buf[pix], 1);
+                            AB3D_NT_STORE_PIXEL(&cwbuf[cw_idx], out_cw);
                             drawn_pixels++;
                             row->u_col += (uint32_t)row->u_step;
                             row->v_col += (uint32_t)row->v_step;
@@ -8594,14 +8679,14 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                             if (level < 0) level = 0;
                             if (level >= FLOOR_PAL_LEVEL_COUNT) level = FLOOR_PAL_LEVEL_COUNT - 1;
                             {
-                                const uint16_t *cw_level = gour_cw_levels[level];
+                                const RendererPixel *cw_level = gour_cw_levels[level];
                                 const uint32_t *rgb_level = gour_rgb_levels[level];
                                 out_cw = cw_level ? cw_level[texel] : row->span_cw ? row->span_cw[texel] : 0;
                                 out_rgb = rgb_level ? rgb_level[texel] : row->span_rgb ? row->span_rgb[texel] : renderer_pixel_to_argb(out_cw);
                             }
 
-                            buf[pix] = 1;
-                            AB3D_NT_STORE_U16(&cwbuf[cw_idx], out_cw);
+                            RENDER_TAG_STORE(buf[pix], 1);
+                            AB3D_NT_STORE_PIXEL(&cwbuf[cw_idx], out_cw);
                             rgb[pix] = out_rgb;
                             drawn_pixels++;
                         }
@@ -8618,7 +8703,7 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                         int draw_here = (x >= row->le && x <= row->re);
 
                         if (y + floor_pf_dist <= bot) {
-                            AB3D_PREFETCH_WRITE(&buf[pix + floor_pf_stride]);
+                            RENDER_TAG_PREFETCH(&buf[pix + floor_pf_stride]);
                             if(rgb)AB3D_PREFETCH_WRITE(&rgb[pix + floor_pf_stride]);
                         }
 
@@ -8639,15 +8724,15 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                             if (level < 0) level = 0;
                             if (level >= FLOOR_PAL_LEVEL_COUNT) level = FLOOR_PAL_LEVEL_COUNT - 1;
                             {
-                                const uint16_t *cw_level = gour_cw_levels[level];
+                                const RendererPixel *cw_level = gour_cw_levels[level];
                                 const uint32_t *rgb_level = gour_rgb_levels[level];
                                 out_cw = cw_level ? cw_level[texel] : row->span_cw ? row->span_cw[texel] : 0;
                                 out_rgb = rgb_level ? rgb_level[texel] : row->span_rgb ? row->span_rgb[texel] : renderer_pixel_to_argb(out_cw);
                             }
 
                             if (run_start == -1) run_start = y;
-                            buf[pix] = 1;
-                            AB3D_NT_STORE_U16(&cwbuf[cw_idx], out_cw);
+                            RENDER_TAG_STORE(buf[pix], 1);
+                            AB3D_NT_STORE_PIXEL(&cwbuf[cw_idx], out_cw);
                             rgb[pix] = out_rgb;
                             drawn_pixels++;
                             row->u_col += (uint32_t)row->u_step;
@@ -8683,12 +8768,12 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                             if (level < 0) level = 0;
                             if (level >= FLOOR_PAL_LEVEL_COUNT) level = FLOOR_PAL_LEVEL_COUNT - 1;
                             {
-                                const uint16_t *cw_level = gour_cw_levels[level];
+                                const RendererPixel *cw_level = gour_cw_levels[level];
                                 out_cw = cw_level ? cw_level[texel] : row->span_cw ? row->span_cw[texel] : 0;
                             }
 
-                            buf[pix] = 1;
-                            AB3D_NT_STORE_U16(&cwbuf[cw_idx], out_cw);
+                            RENDER_TAG_STORE(buf[pix], 1);
+                            AB3D_NT_STORE_PIXEL(&cwbuf[cw_idx], out_cw);
                             drawn_pixels++;
                         }
                         row->u_col += (uint32_t)row->u_step;
@@ -8704,7 +8789,7 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                         int draw_here = (x >= row->le && x <= row->re);
 
                         if (y + floor_pf_dist <= bot) {
-                            AB3D_PREFETCH_WRITE(&buf[pix + floor_pf_stride]);
+                            RENDER_TAG_PREFETCH(&buf[pix + floor_pf_stride]);
                         }
 
                         if (draw_here) {
@@ -8723,13 +8808,13 @@ static uint64_t renderer_draw_floor_fast_column(const RenderSliceContext *ctx,
                             if (level < 0) level = 0;
                             if (level >= FLOOR_PAL_LEVEL_COUNT) level = FLOOR_PAL_LEVEL_COUNT - 1;
                             {
-                                const uint16_t *cw_level = gour_cw_levels[level];
+                                const RendererPixel *cw_level = gour_cw_levels[level];
                                 out_cw = cw_level ? cw_level[texel] : row->span_cw ? row->span_cw[texel] : 0;
                             }
 
                             if (run_start == -1) run_start = y;
-                            buf[pix] = 1;
-                            AB3D_NT_STORE_U16(&cwbuf[cw_idx], out_cw);
+                            RENDER_TAG_STORE(buf[pix], 1);
+                            AB3D_NT_STORE_PIXEL(&cwbuf[cw_idx], out_cw);
                             drawn_pixels++;
                             row->u_col += (uint32_t)row->u_step;
                             row->v_col += (uint32_t)row->v_step;
@@ -8786,9 +8871,9 @@ static int renderer_draw_floor_columns_ctx_fast(RenderSliceContext *ctx,
     FloorDrawCommon floor_common;
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
-    uint16_t *cwbuf = renderer_active_cw();
+    RendererPixel *cwbuf = renderer_active_cw();
     if (!ctx || !left_edge || !right_edge_tab || !texture || !floor_pal) return 0;
-    if (!buf || !cwbuf || (g_renderer_rgb_raster_expand && !rgb)) return 0;
+    if ((RENDER_TAGS_ENABLED && !buf) || !cwbuf || (g_renderer_rgb_raster_expand && !rgb)) return 0;
 
     const int w = rs->width;
     const int h = rs->height;
@@ -8816,7 +8901,7 @@ static int renderer_draw_floor_columns_ctx_fast(RenderSliceContext *ctx,
         const int pick_capture_active = (g_pick_capture_active != 0);
         uint64_t drawn_px_count = 0;
         uint64_t drawn_col_count = 0;
-        const uint16_t *gour_cw_levels[FLOOR_PAL_LEVEL_COUNT];
+        const RendererPixel *gour_cw_levels[FLOOR_PAL_LEVEL_COUNT];
         const uint32_t *gour_rgb_levels[FLOOR_PAL_LEVEL_COUNT];
 
         renderer_floor_prepare_common(&floor_common, rs, floor_height, scaleval);
@@ -9173,7 +9258,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     (void)clip_bot_world;
     (void)sprite_type;
     uint32_t *rgb = renderer_active_rgb();
-    uint16_t *cw = renderer_active_cw();
+    RendererPixel *cw = renderer_active_cw();
     if (!ctx) return;
     if (!cw || (g_renderer_rgb_raster_expand && !rgb)) return;
     if (z <= SPRITE_NEAR_CLIP_Z) return;
@@ -9257,7 +9342,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     uint32_t pal_level_off = obj_scale_cols[bright_idx];
     if (pal && pal_size < 960) pal_level_off = 0;
 
-    uint16_t spr_cw[32];
+    RendererPixel spr_cw[32];
     uint32_t spr_rgb[32];
     if (pal && pal_size >= 64) {
         uint32_t level_off = (pal_level_off + 64 <= pal_size) ? pal_level_off : 0;
@@ -9899,8 +9984,8 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
 {
     uint8_t *buf = renderer_active_buf();
     uint32_t *rgb = renderer_active_rgb();
-    uint16_t *cw = renderer_active_cw();
-    if (!buf || !cw || (g_renderer_rgb_raster_expand && !rgb)) return;
+    RendererPixel *cw = renderer_active_cw();
+    if ((RENDER_TAGS_ENABLED && !buf) || !cw || (g_renderer_rgb_raster_expand && !rgb)) return;
     if (!state) return;
 
     int rw = g_renderer.width, rh = g_renderer.height;
@@ -10036,13 +10121,13 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
                     if (idx == 0) continue;
 
                     uint16_t c12 = (uint16_t)((gun_pal[idx * 2u] << 8) | gun_pal[idx * 2u + 1]);
-                    buf[sy * rw + sx] = 15;
+                    RENDER_TAG_STORE(buf[sy * rw + sx], 15);
                     if (g_renderer_rgb_raster_expand)
                         rgb[sy * rw + sx] = amiga12_to_argb(c12);
 #ifdef AB3D_NATIVE_RGB565
                     renderer_cw_store_xy(cw,sx,sy,rw,rh,native_gun_palette[idx]);
 #else
-                    renderer_cw_store_xy(cw, sx, sy, rw, rh, c12);
+                    renderer_cw_store_xy(cw, sx, sy, rw, rh, renderer_pixel_from_c12(c12));
 #endif
                 }
             }
@@ -10053,7 +10138,7 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
     /* Do not draw placeholder gun when real gun data is missing or slot unused */
 }
 
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
 /* Cache the exact source nearest-neighbor weapon sampling once per animation
  * frame/size. Native RGB565 + a reserved color key lets SDL RLE skip transparent
  * runs, instead of resampling tens of thousands of empty pixels every frame. */
@@ -10097,43 +10182,28 @@ static void renderer_dos_draw_gun_cached(GameState *state)
             }
         if(right<=left || bottom<=top){g_dos_gun_empty[slot]=1;return;}
         SDL_Rect crop={left,top,right-left,bottom-top};g_dos_gun_crops[slot]=crop;
-        gun=SDL_CreateSurface(crop.w,crop.h,SDL_PIXELFORMAT_RGB565);
+        gun=SDL_CreateSurface(crop.w,crop.h,DOS_PIXEL_FORMAT);
         if(!gun){fprintf(stderr,"DOS cropped weapon surface allocation failed\n");exit(1);}
+#ifdef AB3D_DOS_INDEXED
+        dos_palette_attach(gun);
+#endif
         /* Retain every opaque sampled pixel, without storing empty margins. */
-        SDL_FillSurfaceRect(gun,NULL,1);
+        SDL_FillSurfaceRect(gun,NULL,DOS_PIXEL_KEY);
         for(int sy=0;sy<sh;sy++)for(int sx=0;sx<sw;sx++) {
             unsigned color=renderer_dos_gun_source(slot,sx,sy);
             if(!color || edge_x[sx+1]<=edge_x[sx] || edge_y[sy+1]<=edge_y[sy])continue;
             uint16_t c12=(uint16_t)(color&0xfff);
             uint16_t pixel=renderer_pixel_from_c12(c12);
             for(int dy=edge_y[sy];dy<edge_y[sy+1];dy++) {
-                uint16_t *out=(uint16_t *)((uint8_t *)gun->pixels+(dy-crop.y)*gun->pitch);
+                RendererPixel *out=(RendererPixel *)((uint8_t *)gun->pixels+(dy-crop.y)*gun->pitch);
                 for(int dx=edge_x[sx];dx<edge_x[sx+1];dx++)out[dx-crop.x]=pixel;
             }
         }
-        int run_count=0;
-        for(int pass=0;pass<2;pass++) {
-            int at=0;
-            for(int dy=0;dy<crop.h;dy++) {
-                const uint16_t *row=(const uint16_t *)((uint8_t *)gun->pixels+dy*gun->pitch);
-                for(int dx=0;dx<crop.w;) {
-                    if(row[dx]==1){dx++;continue;}
-                    int start=dx;while(dx<crop.w && row[dx]!=1)dx++;
-                    if(pass)g_dos_gun_runs[slot][at]=(DOSGunRun){(uint16_t)(start+crop.x),(uint16_t)(dy+crop.y),(uint16_t)(dx-start)};
-                    at++;
-                }
-            }
-            if(!pass) {
-                run_count=at;g_dos_gun_runs[slot]=malloc((size_t)(at?at:1)*sizeof(DOSGunRun));
-                if(!g_dos_gun_runs[slot]){fprintf(stderr,"DOS weapon mask allocation failed\n");exit(1);}
-            }
-        }
-        g_dos_gun_run_counts[slot]=run_count;
-        if(!SDL_SetSurfaceColorKey(gun,true,1) || !SDL_SetSurfaceBlendMode(gun,SDL_BLENDMODE_NONE) ||
+        if(!SDL_SetSurfaceColorKey(gun,true,DOS_PIXEL_KEY) || !SDL_SetSurfaceBlendMode(gun,SDL_BLENDMODE_NONE) ||
            !SDL_SetSurfaceRLE(gun,true)) { fprintf(stderr,"DOS weapon RLE setup failed: %s\n",SDL_GetError());exit(1); }
         g_dos_gun_frames[slot]=gun;
     }
-    uint16_t *pixels=renderer_active_cw();int target_slot;
+    RendererPixel *pixels=renderer_active_cw();int target_slot;
     if(g_dos_gun_target_pixels[0]==pixels)target_slot=0;
     else if(g_dos_gun_target_pixels[1]==pixels)target_slot=1;
     else {target_slot=g_dos_gun_next_target;g_dos_gun_next_target^=1;}
@@ -10141,40 +10211,35 @@ static void renderer_dos_draw_gun_cached(GameState *state)
     if(!target || g_dos_gun_target_pixels[target_slot]!=pixels ||
        target->w!=g_renderer.width || target->h!=g_renderer.height) {
         if(target)SDL_DestroySurface(target);
-        target=SDL_CreateSurfaceFrom(g_renderer.width,g_renderer.height,SDL_PIXELFORMAT_RGB565,pixels,g_renderer.width*2);
+        target=SDL_CreateSurfaceFrom(g_renderer.width,g_renderer.height,DOS_PIXEL_FORMAT,pixels,g_renderer.width*DOS_PIXEL_BYTES);
         if(!target){fprintf(stderr,"DOS weapon target failed: %s\n",SDL_GetError());exit(1);}
+#ifdef AB3D_DOS_INDEXED
+        dos_palette_attach(target);
+#endif
         g_dos_gun_targets[target_slot]=target;g_dos_gun_target_pixels[target_slot]=pixels;
     }
     SDL_Rect crop=g_dos_gun_crops[slot];
     SDL_Rect dst={x+crop.x,y+crop.y,crop.w,crop.h};
     if(!SDL_BlitSurface(gun,NULL,target,&dst)) { fprintf(stderr,"DOS weapon blit failed: %s\n",SDL_GetError());exit(1); }
-    /* Preserve the source tag buffer for wall/water history and diagnostics. */
-    uint8_t *tags=renderer_active_buf();
-    for(int i=0;i<g_dos_gun_run_counts[slot];i++) {
-        DOSGunRun run=g_dos_gun_runs[slot][i];
-        memset(tags+(size_t)(y+run.y)*g_renderer.width+x+run.x,15,run.count);
-    }
 }
 #endif
 
 void renderer_draw_gun(GameState *state)
 {
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
     if(!g_renderer_rgb_raster_expand) { renderer_dos_draw_gun_cached(state);return; }
 #endif
     renderer_draw_gun_columns(state, 0, g_renderer.width);
 }
 
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
 void renderer_dos_check_gun_frames(GameState *state)
 {
     size_t count=(size_t)g_renderer.width*g_renderer.height;
     /* This end-of-run diagnostic may overwrite both history buffers. Reuse
-     * the inactive pair instead of allocating another 384 KiB on a 4 MB PC. */
-    uint16_t *cw=renderer_active_cw();
-    uint16_t *expected=cw==g_renderer.cw_buffer?g_renderer.cw_back_buffer:g_renderer.cw_buffer;
-    uint8_t *tags=renderer_active_buf();
-    uint8_t *expected_tags=tags==g_renderer.buffer?g_renderer.back_buffer:g_renderer.buffer;
+     * the inactive color buffer instead of allocating another 128 KiB on a 4 MB PC. */
+    RendererPixel *cw=renderer_active_cw();
+    RendererPixel *expected=cw==g_renderer.cw_buffer?g_renderer.cw_back_buffer:g_renderer.cw_buffer;
     GameMode mode=state->mode;state->mode=MODE_SINGLE;
     int gun=state->plr1.gun_selected,frame=state->plr1.gun_frame,checked=0;
     unsigned char seen[32]={0};
@@ -10183,18 +10248,18 @@ void renderer_dos_check_gun_frames(GameState *state)
         state->plr1.gun_selected=g;state->plr1.gun_frame=f;
         if(!renderer_get_gun_draw_info(state,&slot,&x,&y,&w,&h) || seen[slot])continue;
         seen[slot]=1;
-        for(size_t i=0;i<count;i++){cw[i]=renderer_pixel_from_c12((uint16_t)((i*37)&4095));tags[i]=7;}
+        for(size_t i=0;i<count;i++){cw[i]=renderer_pixel_from_c12((uint16_t)((i*37)&4095));}
         renderer_draw_gun_columns(state,0,g_renderer.width);
-        memcpy(expected,cw,count*2);memcpy(expected_tags,tags,count);
-        for(size_t i=0;i<count;i++){cw[i]=renderer_pixel_from_c12((uint16_t)((i*37)&4095));tags[i]=7;}
+        memcpy(expected,cw,count*sizeof(RendererPixel));
+        for(size_t i=0;i<count;i++){cw[i]=renderer_pixel_from_c12((uint16_t)((i*37)&4095));}
         renderer_dos_draw_gun_cached(state);
-        if(memcmp(expected,cw,count*2) || memcmp(expected_tags,tags,count)) {
-            fprintf(stderr,"DOS cached weapon pixels/tags differ: gun=%d animation=%d slot=%d\n",g,f,slot);exit(1);
+        if(memcmp(expected,cw,count*sizeof(RendererPixel))) {
+            fprintf(stderr,"DOS cached weapon pixels differ: gun=%d animation=%d slot=%d\n",g,f,slot);exit(1);
         }
         checked++;
     }
     state->mode=mode;state->plr1.gun_selected=gun;state->plr1.gun_frame=frame;
-    printf("[DOSCHECK] %d scaled weapon frames: SDL pixels and water-history tags match original draws\n",checked);
+    printf("[DOSCHECK] %d scaled weapon frames: SDL pixels match original draws\n",checked);
 }
 #endif
 
@@ -13478,7 +13543,7 @@ static void renderer_reset_level_sky_cache_internal(void)
 
 void renderer_reset_level_sky_cache(void)
 {
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
     renderer_dos_release_gun_frames();
 #endif
     renderer_reset_level_sky_cache_internal();
@@ -15106,6 +15171,11 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 break;
             }
 
+            /* AB3DI.s pastfloorbright: projection/camera setup is constant
+             * across this polygon, including spans split by foreground clipping. */
+            FloorDrawCommon span_common;
+            renderer_floor_prepare_common(&span_common, r, rel_h, scaleval);
+
             /* Fill between edges for each row (floor and ceiling/roof). Clamp to zone clip. */
             int row_start = poly_top;
             int row_end = poly_bot;
@@ -15160,9 +15230,9 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     uint64_t floor_t0 = SDL_GetPerformanceCounter();
                     renderer_draw_floor_span_ctx(ctx, (int16_t)row, le, re,
                                                  le, re,
-                                                 rel_h, floor_tex, floor_pal,
+                                                 &span_common, floor_tex, floor_pal,
                                                  bright, row_bright_l, row_bright_r, row_use_gour,
-                                                 scaleval, (entry_type == 7) ? 1 : 0,
+                                                 (entry_type == 7) ? 1 : 0,
                                                  water_rows_left);
                     {
                         uint64_t floor_ticks = SDL_GetPerformanceCounter() - floor_t0;
@@ -15172,9 +15242,9 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 } else {
                     renderer_draw_floor_span_ctx(ctx, (int16_t)row, le, re,
                                                  le, re,
-                                                 rel_h, floor_tex, floor_pal,
+                                                 &span_common, floor_tex, floor_pal,
                                                  bright, row_bright_l, row_bright_r, row_use_gour,
-                                                 scaleval, (entry_type == 7) ? 1 : 0,
+                                                 (entry_type == 7) ? 1 : 0,
                                                  water_rows_left);
                 }
             }
@@ -15881,8 +15951,8 @@ static void renderer_draw_world_slice(GameState *state,
 static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
                                                   int16_t row_start, int16_t row_end,
                                                   int16_t col_start, int16_t col_end,
-                                                  const uint32_t *src_rgb, const uint16_t *src_cw,
-                                                  uint32_t *dst_rgb, uint16_t *dst_cw)
+                                                  const uint32_t *src_rgb, const RendererPixel *src_cw,
+                                                  uint32_t *dst_rgb, RendererPixel *dst_cw)
 {
     if (fill_screen_water == 0) return;
     if (!src_cw || !dst_cw || (g_renderer_rgb_raster_expand && (!src_rgb || !dst_rgb))) return;
@@ -15954,7 +16024,7 @@ static void renderer_draw_display_impl(GameState *state)
         }
         renderer_f2_pick_snapshot_clear(g_renderer_f2_pick_snapshot);
     }
-    if (!r->buffer) {
+    if (!r->cw_buffer) {
         g_renderer_zone_trace_active = 0;
         g_renderer_profile_collect_stats = 0;
         return;
@@ -15964,6 +16034,11 @@ static void renderer_draw_display_impl(GameState *state)
         g_renderer_profile_collect_stats = 0;
         return;
     }
+#ifdef AB3D_DOS_INDEXED
+    /* Frontend/menu draws select their own palette. Establish world palette
+     * ownership here as well as at level load, including returning from menus. */
+    dos_palette_load(state->current_level);
+#endif
     int prof_on = renderer_profile_env_enabled() ? renderer_profile_enabled() : 0;
     uint64_t frame_perf_freq = 0;
     uint64_t t0 = 0;
@@ -16343,3 +16418,44 @@ void renderer_draw_display(GameState *state) {
     dos_profile_end();
 #endif
 }
+
+#ifdef AB3D_DOS_INDEXED
+void renderer_palette_changed(void)
+{
+    renderer_dos_release_gun_frames();
+    s_clear_rows_inited=0;
+    renderer_build_water_brighten_cw_lut(g_water_brighten,g_water_brighten_size);
+    for(int i=0;i<256;i++)s_sky_cw[i]=argb_to_amiga12(s_sky_argb[i]);
+    renderer_clear_frame_history();
+}
+
+void renderer_dos_check_indexed_pixels(GameState *state)
+{
+    dos_palette_load(state->current_level);
+    uint16_t original_palette[256];
+    memcpy(original_palette,dos_index_to_c12,sizeof(original_palette));
+    dos_palette_load(-1);
+    dos_palette_load(state->current_level);
+    if(memcmp(original_palette,dos_index_to_c12,sizeof(original_palette))) {
+        fprintf(stderr,"DOS palette roundtrip mismatch\n");exit(1);
+    }
+    if(!g_water_brighten_cw_lut_ready) {
+        fprintf(stderr,"DOS indexed water table missing\n");exit(1);
+    }
+    for(unsigned i=0;i<255;i++) {
+        unsigned gb=dos_index_to_c12[i]&255;
+        if(renderer_pixel_gb_index(i)!=gb ||
+           renderer_pixel_without_red(i)!=dos_c12_to_index[gb]) {
+            fprintf(stderr,"DOS indexed water/tint sample mismatch\n");exit(1);
+        }
+        for(unsigned row=0;row<WATER_BRIGHTEN_ROW_COUNT;row++) {
+            const uint8_t *src=g_water_brighten+row*WATER_BRIGHTEN_ROW_BYTES+gb*2;
+            if(g_water_brighten_cw_lut[row][gb]!=renderer_pixel_from_be(src)) {
+                fprintf(stderr,"DOS stale indexed water palette\n");exit(1);
+            }
+        }
+    }
+    renderer_dos_check_gun_frames(state);
+    printf("[DOSCHECK] indexed palette roundtrip, 255 water/tint samples and weapon cache refresh passed\n");
+}
+#endif

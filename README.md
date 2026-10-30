@@ -102,6 +102,10 @@ From PowerShell, with CMake, Ninja, Git, Python 3 and ffmpeg installed:
 The playable package is `build/dos/ABHD-DOS.zip`; extract it and run `ABHD.BAT`.
 See [DOS build and profiling notes](docs/dos-build.md) for reusing GloomAmiga's
 toolchain, hardware requirements, measured emulator results and validation.
+An optional direct 8-bit VGA trial uses source-derived per-level palettes:
+`./tools/build_dos.ps1 -BuildDir build/dos-indexed -Indexed`. It trades some
+color accuracy for smaller framebuffers and faster drawing; the RGB565 build
+remains the default.
 
 ### Releases
 

@@ -9,12 +9,14 @@ import subprocess
 import struct
 import sys
 import zipfile
+from dos_palette import stage_palettes
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build-dir', default='build/dos')
     parser.add_argument('--archive', action='store_true', help='Create the runnable DOS zip after compilation')
+    parser.add_argument('--indexed', action='store_true', help='Document the direct 8-bit VGA trial package')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     build = (root / args.build_dir).resolve()
@@ -82,6 +84,7 @@ def main():
         expected=int.from_bytes(source.read_bytes()[4:8],'big')
         if unpacked.stat().st_size!=expected:raise SystemExit(f'Incomplete unpacked level: {source}')
         sources[logical]=unpacked
+    stage_palettes(root, generated, sources)
     ffmpeg = shutil.which('ffmpeg')
     if not ffmpeg:
         raise SystemExit('ffmpeg is required to render DOS music at the native 8007 Hz mixer rate')
@@ -161,11 +164,26 @@ run_speed=100
 hud_bars=1
 quicksave_load=1
 '''
+    if args.indexed:
+        ini = ini.replace('RGB565 VESA output', 'indexed VGA output')
     if not (game / 'AB3D.INI').exists():
         (game / 'AB3D.INI').write_text(ini, encoding='ascii')
     (generated / 'default.ini').write_text(ini, encoding='ascii')
     (game / 'ABHD.BAT').write_text('@ECHO OFF\nIF "%BLASTER%"=="" SET BLASTER=A220 I7 D1 H5 T6\nCWSDPMI.EXE -s-\nABHD.EXE %1 %2 %3 %4 %5 %6 %7 %8 %9\n', encoding='ascii')
-    (game / 'README.TXT').write_bytes((root / 'docs/dos-readme.txt').read_text().replace('\n', '\r\n').encode('ascii'))
+    readme = (root / 'docs/dos-readme.txt').read_text()
+    if args.indexed:
+        readme = '''ALIEN BREED HD - DIRECT 8-BIT DOS TRIAL
+
+This build uses 320x200 indexed VGA output with a palette chosen per level
+from the original assets. Some colors/shades are merged. It draws palette
+indices directly; there is no per-frame RGB565-to-indexed conversion.
+UI and weapon surfaces also use indexed SDL blits. Cutouts reserve index 255.
+Requires a 486 with x87 FPU, 4 MB RAM, DOS 5+ and VGA. VESA RGB565 is not
+required by this build. Both the 8-bit and RGB565 builds retain 1:1 pixels.
+The remaining controls and audio instructions below apply to this trial.
+
+''' + readme[readme.index('Unzip'):].replace('native RGB565 pixels', 'native indexed pixels').replace("S3's 320x240\nmode centers the 320x200 view. Other modes also retain 1:1 pixels.", 'The standard 320x200 VGA mode retains 1:1 pixels.')
+    (game / 'README.TXT').write_bytes(readme.replace('\n', '\r\n').encode('ascii'))
     print(f'Staged {len(mapping)} source assets under DOS 8.3 names in {game}')
     if args.archive:
         names = ['ABHD.EXE', 'ABHD.BAT', 'AB3D.INI', 'CWSDPMI.EXE', 'CWSDPMI.DOC',

@@ -1,4 +1,4 @@
-param([string]$BuildDir = 'build/dos')
+param([string]$BuildDir = 'build/dos', [switch]$Indexed)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $repo $BuildDir
@@ -7,10 +7,12 @@ if (!(Test-Path $config)) { throw 'Run tools/setup_dos.ps1 first' }
 $toolchain = Get-Content $config -Raw | ConvertFrom-Json
 $env:Path = "$($toolchain.djgpp)/bin;$env:Path"
 function Check([string]$operation) { if ($LASTEXITCODE -ne 0) { throw "$operation failed ($LASTEXITCODE)" } }
-python (Join-Path $repo 'tools/package_dos.py') --build-dir $build
+$assetArgs = @('--build-dir', $build)
+if ($Indexed) { $assetArgs += '--indexed' }
+python (Join-Path $repo 'tools/package_dos.py') @assetArgs
 Check 'DOS asset packaging'
 cmake -S $repo -B $build -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$repo/cmake/djgpp.cmake" `
-  "-DDJGPP_ROOT=$($toolchain.djgpp)" "-DDOS_SDL_ROOT=$($toolchain.sdl)" -DCMAKE_BUILD_TYPE=Release
+  "-DDJGPP_ROOT=$($toolchain.djgpp)" "-DDOS_SDL_ROOT=$($toolchain.sdl)" "-DAB3D_DOS_INDEXED=$($Indexed.IsPresent)" -DCMAKE_BUILD_TYPE=Release
 Check 'DOS configure'
 cmake --build $build --parallel 4
 Check 'DOS build'
@@ -21,6 +23,6 @@ Copy-Item -LiteralPath (Join-Path $build 'ABHD.exe') -Destination (Join-Path $bu
 Copy-Item -LiteralPath (Join-Path $toolchain.dpmi 'bin/CWSDPMI.EXE') -Destination (Join-Path $build 'game/CWSDPMI.EXE') -Force
 Copy-Item -LiteralPath (Join-Path $toolchain.dpmi 'bin/cwsdpmi.doc') -Destination (Join-Path $build 'game/CWSDPMI.DOC') -Force
 Copy-Item -LiteralPath (Join-Path $toolchain.sdl 'SDL/LICENSE.txt') -Destination (Join-Path $build 'game/SDL-LIC.TXT') -Force
-python (Join-Path $repo 'tools/package_dos.py') --build-dir $build --archive
+python (Join-Path $repo 'tools/package_dos.py') @assetArgs --archive
 Check 'DOS distribution archive'
 Write-Output "Built $build/game/ABHD.EXE"

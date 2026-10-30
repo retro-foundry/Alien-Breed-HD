@@ -513,6 +513,9 @@ void play_the_game_prepare_level(GameState *state, bool *copper_screen_ready)
 #ifdef AB3D_DOS
     /* Reload the front-end picture on demand; it is not resident in a level. */
     display_release_title_memory();
+#ifdef AB3D_DOS_INDEXED
+    dos_palette_load(state->current_level);
+#endif
 #endif
     io_load_level_data(&state->level, state->current_level);
     io_load_level_graphics(&state->level, state->current_level);

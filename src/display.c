@@ -196,17 +196,17 @@ static SDL_Texture  *g_texture  = NULL;
 static int g_texture_is_4444_direct = 0;
 #ifdef AB3D_DOS
 static SDL_Surface *g_dos_frame_surfaces[2];
-static const uint16_t *g_dos_frame_pixels[2];
+static const RendererPixel *g_dos_frame_pixels[2];
 static int g_dos_frame_next;
 static unsigned char *g_dos_map_scratch;
 static int g_dos_map_capacity;
 
 /* Renderer output already matches SDL and VESA: native RGB565, row-major.
  * Surface descriptors borrow the two engine buffers. No conversion or scaling. */
-static void display_dos_copy_cw(const uint16_t *src,int w,int h,const SDL_Rect *rect)
+static void display_dos_copy_cw(const RendererPixel *src,int w,int h,const SDL_Rect *rect)
 {
     SDL_Surface *surface=SDL_GetWindowSurface(g_window);
-    if(!surface || surface->format!=SDL_PIXELFORMAT_RGB565) {
+    if(!surface || surface->format!=DOS_PIXEL_FORMAT) {
         fprintf(stderr,"DOS RGB565 framebuffer unavailable: %s\n",SDL_GetError());exit(1);
     }
     if(rect->w!=w || rect->h!=h || w>surface->w || h>surface->h) {
@@ -219,8 +219,11 @@ static void display_dos_copy_cw(const uint16_t *src,int w,int h,const SDL_Rect *
     SDL_Surface *frame=g_dos_frame_surfaces[slot];
     if(g_dos_frame_pixels[slot]!=src || !frame || frame->w!=w || frame->h!=h) {
         if(frame)SDL_DestroySurface(frame);
-        frame=SDL_CreateSurfaceFrom(w,h,SDL_PIXELFORMAT_RGB565,(void *)src,w*2);
+        frame=SDL_CreateSurfaceFrom(w,h,DOS_PIXEL_FORMAT,(void *)src,w*DOS_PIXEL_BYTES);
         if(!frame){fprintf(stderr,"DOS native surface failed: %s\n",SDL_GetError());exit(1);}
+#ifdef AB3D_DOS_INDEXED
+        dos_palette_attach(frame);
+#endif
         SDL_SetSurfaceBlendMode(frame,SDL_BLENDMODE_NONE);
         g_dos_frame_surfaces[slot]=frame;g_dos_frame_pixels[slot]=src;
     }
@@ -2761,7 +2764,7 @@ static void display_gl_resize_cw_texture(int w, int h)
         printf("[DISPLAY] GL_R16UI glTexImage2D reported an error (driver may not support integer textures)\n");
 }
 
-static void display_gl_present_cw(const uint16_t *src, int w, int h)
+static void display_gl_present_cw(const RendererPixel *src, int w, int h)
 {
     GLint loc_u;
     GLint loc_w;
@@ -2888,7 +2891,13 @@ static void display_update_letterbox(int win_w, int win_h)
 
 #ifdef AB3D_DOS
     int dw=rw,dh=rh;
-    printf("[DOS VIDEO] render %dx%d; native RGB565 SDL surface; 1:1 viewport\n",rw,rh);
+    printf("[DOS VIDEO] render %dx%d; native %s SDL surface; 1:1 viewport\n",rw,rh,
+#ifdef AB3D_DOS_INDEXED
+        "INDEX8"
+#else
+        "RGB565"
+#endif
+        );
 #else
     double sx = (double)win_w / (double)rw;
     double sy = (double)win_h / (double)rh;
@@ -3653,8 +3662,20 @@ void display_release_title_memory(void)     { display_title_screen_free(); }
 void display_alloc_panel_memory(void)       { }
 void display_release_panel_memory(void)     { }
 
-void display_setup_title_screen(void)       { display_title_screen_ensure_loaded(); }
-void display_load_title_screen(void)        { display_title_screen_ensure_loaded(); }
+void display_setup_title_screen(void)
+{
+#ifdef AB3D_DOS_INDEXED
+    dos_palette_load(-1);
+#endif
+    display_title_screen_ensure_loaded();
+}
+void display_load_title_screen(void)
+{
+#ifdef AB3D_DOS_INDEXED
+    dos_palette_load(-1);
+#endif
+    display_title_screen_ensure_loaded();
+}
 void display_clear_opt_screen(void)         { display_clear_text_screen(); }
 void display_draw_opt_screen(int screen_num) { (void)screen_num; }
 void display_fade_up_title(int amount)      { (void)amount; }
@@ -4982,7 +5003,7 @@ static void display_present_cw_frame(GameState *state)
 {
     if (!g_sdl_ren) return;
 
-    const uint16_t *src = renderer_get_cw_buffer();
+    const RendererPixel *src = renderer_get_cw_buffer();
     if (!src) return;
 
     display_sync_present_output_size(NULL, NULL);

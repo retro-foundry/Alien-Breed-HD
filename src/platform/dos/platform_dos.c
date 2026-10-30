@@ -15,6 +15,7 @@
 #include "audio.h"
 #include "player.h"
 #include "renderer_alloc.h"
+#include "renderer_fixed.h"
 #include "display.h"
 #include "renderer.h"
 #include "logging.h"
@@ -128,6 +129,28 @@ static void check_key(GameState *state,GameLoopCtx *ctx,SDL_Scancode code)
 }
 void dos_check_frontend(GameState *state)
 {
+    /* Compare the actual 486 IDIV path against the former 64-bit expression.
+     * Include signed coordinates, exact columns and both sides of boundaries. */
+    static const int32_t divisors[] = {1, 2, 3, 255, 256, 65535, 65536, 16777215, 16777216};
+    static const int32_t columns[] = {-32768, -123, -1, 0, 1, 123, 32767};
+    unsigned checked = 0;
+    for (unsigned d = 0; d < sizeof(divisors)/sizeof(divisors[0]); d++) {
+        int32_t divisor = divisors[d];
+        for (unsigned c = 0; c < sizeof(columns)/sizeof(columns[0]); c++) {
+            int32_t offsets[] = {-divisor+1, -1, 0, 1, divisor-1};
+            for (unsigned r = 0; r < sizeof(offsets)/sizeof(offsets[0]); r++) {
+                int64_t numerator = (int64_t)columns[c] * divisor + offsets[r];
+                /* The reference multiply itself must fit signed 64 bits. */
+                if (numerator < -(INT64_C(1) << 39) || numerator >= (INT64_C(1) << 39)) continue;
+                int32_t expected = (int32_t)(((numerator * INT64_C(16777216)) / divisor) >> 24);
+                if (renderer_wall_tex_column(numerator, divisor) != expected) {
+                    fprintf(stderr, "DOS wall texture division mismatch\n");exit(1);
+                }
+                checked++;
+            }
+        }
+    }
+    printf("[DOSCHECK] %u wall texture divisions match original fixed-point expression\n", checked);
     for(size_t size=1;size<2048;size+=31) {
         unsigned char *p=ab3d_aligned_calloc(64,size,1);
         if(!p || (uintptr_t)p%64) { fprintf(stderr,"DOS aligned allocation check failed\n");exit(1); }
@@ -270,9 +293,14 @@ void dos_check_ui_screens(GameState *state)
     dos_capture_frame("PAUSE.BMP");
     printf("[DOSCHECK] main/options/autosaves/load/new-game/pause menus fit 320x200/240\n");
     display_dos_check_text_layouts();
-#ifdef AB3D_NATIVE_RGB565
+#if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
     display_release_title_memory();
     renderer_dos_check_gun_frames(state);
+#endif
+#ifdef AB3D_DOS_INDEXED
+    renderer_dos_check_indexed_pixels(state);
+    display_draw_display(state);
+    dos_ui_check_indexed_images();
 #endif
     printf("[DOSCHECK] native pixel SDL UI, numeric HUD and map passed\n");
 }

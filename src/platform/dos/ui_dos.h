@@ -4,6 +4,10 @@
 /* Immediate native SDL surfaces; no SDL_Renderer or duplicate texture pixels. */
 typedef struct DosUiImage {
     SDL_Surface *normal,*grey;
+#ifdef AB3D_DOS_INDEXED
+    SDL_Surface *indexed_normal,*indexed_grey,**indexed_strips;
+    unsigned palette_epoch;
+#endif
     SDL_Surface **strips;
     int strip_count,width,height;
     Uint8 alpha,red,green,blue;
@@ -24,6 +28,9 @@ DosUiImage *dos_ui_create_striped_image(int width,int height);
 void dos_ui_texture_upload(DosUiImage *image,const SDL_Rect *rect,const void *pixels,int pitch);
 void dos_ui_texture_destroy(DosUiImage *image);
 void dos_ui_check_images(void);
+#ifdef AB3D_DOS_INDEXED
+void dos_ui_check_indexed_images(void);
+#endif
 int dos_ui_blit(DosUiRenderer *renderer, DosUiImage *texture,
                 const SDL_Rect *src, const SDL_Rect *dst);
 int dos_ui_color(DosUiRenderer *r,Uint8 red,Uint8 green,Uint8 blue,Uint8 alpha);

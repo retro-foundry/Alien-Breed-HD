@@ -150,6 +150,9 @@ int main(int argc, char *argv[])
 
 #ifdef AB3D_DOS
     dos_platform_init(argc, argv);
+#ifdef AB3D_DOS_INDEXED
+    dos_palette_load(-1);
+#endif
 #endif
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--3dobj-anim") == 0) {
@@ -197,8 +200,14 @@ int main(int argc, char *argv[])
             game_loop_tick(&g_state,&ctx);
             dos_profile_end();dos_profile_frame();
         }
-        printf("[DOSBENCH] draws=%d menu=%d buffers=%p %p\n",ctx.frame_count,ctx.ingame_menu_open,
-            (void *)g_renderer.buffer,(void *)g_renderer.cw_buffer);
+#if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
+        if (g_renderer.buffer || g_renderer.back_buffer || renderer_get_buffer()) {
+            fprintf(stderr,"DOS pixel tag buffers unexpectedly allocated\n");exit(1);
+        }
+        printf("[DOSCHECK] pixel tag buffers absent (0 bytes)\n");
+#endif
+        printf("[DOSBENCH] draws=%d menu=%d color-buffers=%p %p\n",ctx.frame_count,ctx.ingame_menu_open,
+            (void *)g_renderer.cw_buffer,(void *)g_renderer.cw_back_buffer);
         audio_dos_report_stats();
         dos_benchmark_frames=0;
         dos_capture_next_frame=1;

@@ -2,11 +2,20 @@
 #include <SDL3/SDL.h>
 #include "ui_dos.h"
 #include <stdlib.h>
+#ifdef AB3D_DOS_INDEXED
+#include "palette_dos.h"
+#endif
 
 DosUiRenderer *dos_ui_create_renderer(SDL_Window *window)
 {
     SDL_Surface *s=SDL_GetWindowSurface(window);
-    if(!s || s->format!=SDL_PIXELFORMAT_RGB565){SDL_SetError("DOS UI requires RGB565");return NULL;}
+    if(!s || s->format!=
+#ifdef AB3D_DOS_INDEXED
+       SDL_PIXELFORMAT_INDEX8
+#else
+       SDL_PIXELFORMAT_RGB565
+#endif
+       ){SDL_SetError("DOS UI requires native pixel format");return NULL;}
     DosUiRenderer *r=calloc(1,sizeof(*r));if(!r){SDL_OutOfMemory();return NULL;}
     r->window=window;r->surface=s;r->viewport=(SDL_Rect){0,0,s->w,s->h};return r;
 }
@@ -24,7 +33,12 @@ bool dos_ui_clip(DosUiRenderer *r,const SDL_Rect *rect)
 {if(!r)return SDL_SetError("Missing DOS renderer");r->clipped=rect!=NULL;if(rect)r->clip=*rect;return apply_clip(r);}
 int dos_ui_color(DosUiRenderer *r,Uint8 red,Uint8 green,Uint8 blue,Uint8 alpha)
 {if(!r || alpha!=255){SDL_SetError("DOS UI colors must be opaque");return -1;}
- r->color=(Uint16)(((red>>3)<<11)|((green>>2)<<5)|(blue>>3));return 0;}
+#ifdef AB3D_DOS_INDEXED
+ r->color=dos_c12_to_index[((red>>4)<<8)|((green>>4)<<4)|(blue>>4)];
+#else
+ r->color=(Uint16)(((red>>3)<<11)|((green>>2)<<5)|(blue>>3));
+#endif
+ return 0;}
 int dos_ui_fill(DosUiRenderer *r,const SDL_Rect *rect)
 {if(!r)return -1;SDL_Rect a=rect?*rect:(SDL_Rect){0,0,r->viewport.w,r->viewport.h};
  a.x+=r->viewport.x;a.y+=r->viewport.y;return SDL_FillSurfaceRect(r->surface,&a,r->color)?0:-1;}
@@ -39,8 +53,13 @@ int dos_ui_line(DosUiRenderer *r,int x0,int y0,int x1,int y1)
     int dx=abs(x1-x0),dy=-abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1,e=dx+dy;
     /* Same Bresenham pixels as the solid fill path, with one SDL lock per line. */
     for(;;) {
-        if(x0>=clip.x && x0<clip.x+clip.w && y0>=clip.y && y0<clip.y+clip.h)
+        if(x0>=clip.x && x0<clip.x+clip.w && y0>=clip.y && y0<clip.y+clip.h) {
+#ifdef AB3D_DOS_INDEXED
+            *((Uint8 *)surface->pixels+y0*surface->pitch+x0)=(Uint8)r->color;
+#else
             *(Uint16 *)((Uint8 *)surface->pixels+y0*surface->pitch+x0*2)=r->color;
+#endif
+        }
         if(x0==x1 && y0==y1)break;
         int twice=e*2;if(twice>=dy){e+=dy;x0+=sx;}if(twice<=dx){e+=dx;y0+=sy;}
     }

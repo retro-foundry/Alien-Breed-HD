@@ -126,10 +126,18 @@ exit
     if (args.frontend or args.exercise) and 'title, streamed music and keyboard New Game passed' not in log:
         raise SystemExit(f'DOS frontend traversal missing; see {run}')
     if args.exercise:
-        for check in ['four keys/underlines, 9999 FPS, crosshair and map fit 320x200/240',
+        if 'native INDEX8 SDL surface' in log:
+            for check in ['indexed palette roundtrip, 255 water/tint samples and weapon cache refresh passed',
+                          'indexed UI caches preserve current palette and exact cutouts']:
+                if check not in log:
+                    raise SystemExit(f'DOS indexed diagnostic missing: {check}; see {run}')
+        for check in ['wall texture divisions match original fixed-point expression',
+                      'pixel tag buffers absent (0 bytes)',
+                      'scaled weapon frames: SDL pixels match original draws',
+                      'four keys/underlines, 9999 FPS, crosshair and map fit 320x200/240',
                       'main/options/autosaves/load/new-game/pause menus fit 320x200/240']:
             if check not in log:
-                raise SystemExit(f'DOS screen-fit check missing: {check}; see {run}')
+                raise SystemExit(f'DOS diagnostic check missing: {check}; see {run}')
         if 'opaque grey UI images preserve exact cutout masks' not in log:
             raise SystemExit(f'DOS disabled-key rendering check failed; see {run}')
         for name in ['HUD200.BMP', 'BAR200.BMP']:

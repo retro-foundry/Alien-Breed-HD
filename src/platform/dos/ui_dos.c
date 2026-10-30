@@ -4,6 +4,18 @@
 #include "ui_dos.h"
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef AB3D_DOS_INDEXED
+#include "palette_dos.h"
+static void release_indexed(DosUiImage *i)
+{
+    SDL_DestroySurface(i->indexed_normal);i->indexed_normal=NULL;
+    SDL_DestroySurface(i->indexed_grey);i->indexed_grey=NULL;
+    if(i->indexed_strips)for(int n=0;n<i->strip_count;n++)SDL_DestroySurface(i->indexed_strips[n]);
+    free(i->indexed_strips);i->indexed_strips=NULL;
+}
+static void refresh_indexed(DosUiImage *i)
+{if(i->palette_epoch!=dos_palette_epoch){release_indexed(i);i->palette_epoch=dos_palette_epoch;}}
+#endif
 
 static DosUiImage *images;
 
@@ -57,6 +69,9 @@ void dos_ui_texture_destroy(DosUiImage *texture)
         DosUiImage *i = *link;
         if (i == texture) {
             *link = i->next;
+#ifdef AB3D_DOS_INDEXED
+            release_indexed(i);
+#endif
             SDL_DestroySurface(i->normal);
             SDL_DestroySurface(i->grey);
             if(i->strips)for(int n=0;n<i->strip_count;n++)SDL_DestroySurface(i->strips[n]);
@@ -69,6 +84,9 @@ void dos_ui_texture_destroy(DosUiImage *texture)
 
 void dos_ui_texture_upload(DosUiImage *image, const SDL_Rect *rect, const void *pixels, int pitch)
 {
+#ifdef AB3D_DOS_INDEXED
+    if(image)release_indexed(image);
+#endif
     SDL_Surface *src = image?image->normal:NULL;
     if (!src || src->format!=SDL_PIXELFORMAT_RGB565) ui_fail("native texture surface");
     if(rect || !pixels || pitch<src->w*4)ui_fail("expected full ARGB8888 UI upload");
@@ -172,6 +190,37 @@ void dos_ui_check_images(void)
     printf("[DOSCHECK] %d opaque grey UI images preserve exact cutout masks\n", count);
 }
 
+#ifdef AB3D_DOS_INDEXED
+void dos_ui_check_indexed_images(void)
+{
+    unsigned checked=0;
+    for(DosUiImage *i=images;i;i=i->next) {
+        if(i->palette_epoch!=dos_palette_epoch)continue; /* Unused cached images rebuild on next blit. */
+        SDL_Surface *sources[]={i->normal,i->grey};
+        SDL_Surface *targets[]={i->indexed_normal,i->indexed_grey};
+        for(unsigned n=0;n<2;n++) {
+            SDL_Surface *src=sources[n],*dst=targets[n];
+            if(!dst)continue;
+            Uint32 key=0;bool mask=SDL_SurfaceHasColorKey(src);
+            if(mask && !SDL_GetSurfaceColorKey(src,&key))ui_fail("indexed cache source mask");
+            if(!SDL_LockSurface(src) || !SDL_LockSurface(dst))ui_fail("indexed cache lock");
+            for(int y=0;y<src->h;y++) {
+                const Uint16 *a=(const Uint16 *)((const Uint8 *)src->pixels+y*src->pitch);
+                const Uint8 *b=(const Uint8 *)dst->pixels+y*dst->pitch;
+                for(int x=0;x<src->w;x++) {
+                    unsigned c=a[x],c12=(((c>>12)&15)<<8)|(((c>>7)&15)<<4)|((c>>1)&15);
+                    unsigned expected=(mask && c==key)?255:dos_c12_to_index[c12];
+                    if(b[x]!=expected)ui_fail("stale indexed UI pixels or changed cutout");
+                }
+            }
+            SDL_UnlockSurface(dst);SDL_UnlockSurface(src);checked++;
+        }
+    }
+    if(!checked)ui_fail("no indexed UI caches exercised");
+    printf("[DOSCHECK] %u indexed UI caches preserve current palette and exact cutouts\n",checked);
+}
+#endif
+
 int dos_ui_blit(DosUiRenderer *renderer, DosUiImage *image,
                 const SDL_Rect *src, const SDL_Rect *dst)
 {
@@ -180,21 +229,43 @@ int dos_ui_blit(DosUiRenderer *renderer, DosUiImage *image,
     if (!alpha) return 0;
     if (r != 255 || g != 255 || b != 255) ui_fail("unexpected color modulation");
     if(image->strips) {
+#ifdef AB3D_DOS_INDEXED
+        refresh_indexed(image);
+        if(!image->indexed_strips)image->indexed_strips=calloc(image->strip_count,sizeof(SDL_Surface *));
+        if(!image->indexed_strips)ui_fail("indexed title cache");
+#endif
         if(src || !dst || dst->w!=image->width || dst->h!=image->height || alpha!=255)
             ui_fail("strip picture must be opaque and 1:1");
         if(!renderer)ui_fail("missing strip target");
         for(int n=0;n<image->strip_count;n++) {
             SDL_Rect target={dst->x+renderer->viewport.x,dst->y+renderer->viewport.y+n*16,image->width,image->strips[n]->h};
-            if(!SDL_BlitSurface(image->strips[n],NULL,renderer->surface,&target))ui_fail("native picture strip");
+            SDL_Surface *strip=image->strips[n];
+#ifdef AB3D_DOS_INDEXED
+            if(!image->indexed_strips[n])image->indexed_strips[n]=dos_palette_convert(strip);
+            strip=image->indexed_strips[n];
+#endif
+            if(!SDL_BlitSurface(strip,NULL,renderer->surface,&target))ui_fail("native picture strip");
         }
         return 0;
     }
     SDL_Surface *pixels = alpha == 255 ? image->normal : grey_image(image);
+#ifdef AB3D_DOS_INDEXED
+    refresh_indexed(image);
+    SDL_Surface **native=alpha==255?&image->indexed_normal:&image->indexed_grey;
+    if(!*native)*native=dos_palette_convert(pixels);
+    pixels=*native;
+#endif
     if(!SDL_SetSurfaceBlendMode(pixels,SDL_BLENDMODE_NONE))ui_fail("opaque texture");
     SDL_Rect area = src ? *src : (SDL_Rect){0, 0, pixels->w, pixels->h};
     if (!dst || dst->w != area.w || dst->h != area.h) ui_fail("UI must be 1:1");
     SDL_Surface *screen = renderer?renderer->surface:NULL;
-    if (!screen || screen->format != SDL_PIXELFORMAT_RGB565) ui_fail("native RGB565 target");
+    if (!screen || screen->format !=
+#ifdef AB3D_DOS_INDEXED
+        SDL_PIXELFORMAT_INDEX8
+#else
+        SDL_PIXELFORMAT_RGB565
+#endif
+        ) ui_fail("native DOS target");
     SDL_Rect target = *dst;
     target.x+=renderer->viewport.x;target.y+=renderer->viewport.y;
     if (!SDL_BlitSurface(pixels, &area, screen, &target)) ui_fail("opaque blit");

@@ -38,6 +38,55 @@ the desktop build, compiles `ABHD.EXE`, sets a 128 KB stack, and creates
 SDL's license, game data, music, `AB3D.INI`, `README.TXT` and `ABHD.BAT`.
 Only the distribution manifest is archived, excluding local saves, logs and tests.
 
+### Direct 8-bit trial
+
+The default build retains exact RGB565 colors. To build the optional 8-bit
+version separately:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_dos.ps1 -BuildDir build/dos-indexed -Indexed
+```
+
+Its package is `build/dos-indexed/ABHD-DOS.zip`. This version uses native
+320x200 indexed VGA through SDL, with the same 1:1 world resolution and UI
+sizes. It needs no RGB565 VESA mode. The two color buffers each occupy 64,000
+bytes rather than 128,000. The game writes indices directly; there is no
+full-frame color conversion. Gameplay and source texture sampling are unchanged.
+
+`tools/dos_palette.py` builds the menu and 16 level palettes offline. It uses
+original sprite/weapon/floor/sky/polygon palettes, with wall usage counted from
+each level's original zone graphics streams. Weighted median cut selects actual
+source colors; neutral/UI colors are reserved. Each palette has 255 opaque
+entries and a separate cutout index. A packaged 4096-entry map resolves every
+original 0RGB word. Some shades merge, so color accuracy is reduced. Water and
+underwater tint decode palette representatives through the original color
+tables and map their results back to indices.
+
+World palette caches use the native pixel type. Weapon and UI cutouts remain
+exact. UI source images retain their RGB565 pixels and acquire indexed SDL
+caches when first used under a new palette. Palette changes invalidate weapon,
+water, sky and UI caches; no UI quantization runs during steady-state blits.
+
+Under the 128-frame level-1 comparison settings below, the 8-bit trial measures
+5.27 FPS at 20,000 cycles and 10.57 FPS at 40,000, versus 4.82/9.67 FPS for the
+current RGB565 build: about 9% faster in this starting view. Both builds run
+with 4 MB; the performance comparison itself uses 16 MB consistently.
+
+All 16 indexed level starts pass the 4 MB runner. RGB565 captures still match
+the original reference byte-for-byte. The indexed world comparison checks
+43,400 central world pixels per level against those RGB565 colors transformed
+by the packaged palette map. It excludes HUD regions because the native
+200-line VGA and 240-line VESA modes place UI differently. Run both variants
+and compare with:
+
+```powershell
+python tools/check_dos_indexed.py --dosbox <path-to-dosbox.exe>
+```
+
+Omit `--dosbox` to compare existing captures. The 4 MB indexed `--exercise`
+check also covers 24 weapon frames, palette changes, original water/tint
+tables, UI cache colors/cutouts, saves, menus and Sound Blaster underruns.
+
 GitHub Actions builds the DOS ZIP on main-branch pushes and pull requests.
 Version-tag releases also publish `ABHD-DOS.zip`, with its checksum and build
 provenance, alongside the Windows and Linux packages. CI uses the same setup
@@ -112,7 +161,11 @@ INI preserves local edits during rebuilds; the ZIP always contains clean default
   SDL surfaces borrow the two renderer buffers and blit directly in the same
   format. There is no full-frame color conversion, transpose, texture upload or
   automatic scaling. The DOS framebuffer backend copies the result to VESA.
-  Desktop ARGB and diagnostic pick buffers are not allocated. Thread-local
+  Desktop ARGB, diagnostic pick buffers and byte-sized pixel tag buffers are
+  not allocated. Tag stores and their pointer increments compile out of DOS
+  raster loops, saving 128,000 framebuffer bytes at 320x200. Water reads native
+  color words directly. Desktop tag tracing retains its buffers; requesting
+  tag-dependent floor tracing on DOS reports that it needs a desktop build. Thread-local
   caches become ordinary static storage in this single-threaded target, avoiding
   emulated TLS allocations. The unused GL line scratch buffer is omitted.
   Large debug snapshots allocate only when explicitly requested on desktop.
@@ -126,8 +179,8 @@ INI preserves local edits during rebuilds; the ZIP always contains clean default
   the 4096 source colors. Empty margins are cropped and only the selected
   weapon is retained. It decodes directly from the original PTR/WAD/palette
   without a temporary RGBA image. This skips transparent runs instead of resampling
-  thousands of empty pixels every frame. Opaque tag runs are cached too,
-  preserving the same water-history and occlusion tags as the original draws.
+  thousands of empty pixels every frame. The former opaque weapon tag runs and
+  their cache are omitted; the SDL surface already retains the cutout mask.
 - UI draws synchronously with SDL3 surface fills/blits, without an SDL renderer
   queue or OpenGL. PNG fonts are converted offline to native RGB565 with their
   authored cutout masks. The font packs the original sampled 8x13 glyphs
@@ -203,7 +256,8 @@ and mixes shotgun/flame effects. It captures
 the map, numeric HUD, grey/collected keys and options screen, verifies native UI blit dimensions
 and exact cutout masks in opaque grey images,
 checks all 16 level narratives for lost glyphs, and compares cached scaled
-weapon pixels and tags against the original CPU draw routine. Save tests
+weapon color pixels against the original CPU draw routine and verifies that
+both DOS tag buffer pointers remain null. Save tests
 write only inside that isolated test directory.
 Screen-fit diagnostics check every narrative page and the main, options,
 autosave, confirmation and pause menus at both 320x200 and 320x240. HUD
@@ -255,3 +309,72 @@ early smoke testing and is not used for the reported performance results.
 Windows Release and the single-threaded web Release also build. The existing
 movement, settings, audio/filter, enemy sound/shotgun, HUD, shooting, shared ammo
 and 96-case level 15 teleporter regressions pass through `tools/check_feedback.py`.
+
+### Renderer optimization measurements
+
+The first renderer pass removes software 64-bit division from wall texture
+column selection using an exact 386 IDIV and signed remainder correction.
+The near plane bounds inverse Z to at most 2^24; original signed 16-bit texture
+coordinates keep the reduced quotient within 32 bits. The desktop expression
+remains unchanged. Wall palettes also skip unused ARGB cache writes when RGB
+raster expansion is disabled. Floor projection/camera setup now runs once per
+polygon, including clipped subspans, and row distance is calculated once per span.
+These preserve the existing `WallRoutine3.ChipMem.s` wall raster and `AB3DI.s
+pastfloorbright` sampling and shading. No detail or gameplay settings are reduced.
+
+Level 1 stationary starting view, 128 real-time frames, DOSBox Staging 0.82.2,
+normal 486 core, 320x200, 16 MB for comparison with Duke shareware, SB16 effects
+and mouse enabled, music off, host OpenGL output and normal process priority:
+
+| Fixed cycles | Original | Arithmetic/setup pass | DOS tags removed |
+|---|---:|---:|---:|
+| 20,000 | 4.46 FPS | 4.59 FPS | 4.82 FPS |
+| 40,000 | 8.95 FPS | 9.20 FPS | 9.67 FPS |
+
+The arithmetic/setup pass gains about 3%, and removing DOS pixel tags adds
+about 5%, for about 8% overall in this view. Tag removal also saves 125 KiB of
+framebuffer allocations plus the weapon tag cache. A substantial gap to Duke's
+starting view remains.
+Optimizing the renderer translation units with `-O2` increased executable size
+without improving this scene, so the size flags remain unchanged.
+The DOS frontend diagnostic compares the hardware division against the former
+64-bit expression at signed column boundaries and near-plane extremes.
+Validation: 312 arithmetic cases passed on the DOS path; all 16 deterministic
+level-start captures match the saved original-renderer reference byte-for-byte
+with 4 MB. The 4 MB sound/mouse exercise passed save reloads, menus, weapon
+color pixels, absent tag-buffer assertions and zero audio underruns. Windows
+Release also builds.
+
+### DOS cache audit
+
+The optional indexed build still defaults to off. DOS already uses row-major
+color buffers, no SSE2 raster path, and ordinary GCC pixel stores. Unsupported
+prefetch instructions are not emitted for the forced i386/i486 target. Forcing
+the prefetch macros off gave no material improvement and was not retained.
+
+The retained DOS-only floor changes keep `BumpMap.s`/`AB3DI.s` Gouraud sampling:
+prepare just the palette levels between the clamped gradient endpoints, skip
+already prepared levels, and use a one-pixel loop for changing gradients.
+Constant-shade and desktop loops retain their existing batching. With DJGPP
+12.2 and the normal size/LTO flags, the indexed floor-span routine shrinks from
+7,332 to 6,598 bytes (about 10%). This is the routine's code size, not a whole
+renderer or frame-rate reduction.
+
+Matched indexed starting-view profiles at 40,000 fixed cycles, normal 486 core,
+16 MB, sound effects/mouse on and music off:
+
+| Level | Frames | Before audit | After audit |
+|---|---:|---:|---:|
+| 1 | 128 | 10.57 FPS | 10.58 FPS |
+| 6 | 64 | 10.20 FPS | 10.27 FPS |
+| 15 | 64 | 16.59 FPS | 16.81 FPS |
+
+The RGB565 level-1 profile moves from 9.67 to 9.69 FPS. These are small gains;
+the level-1 change is effectively flat. A compact scalar wall loop reduced
+code size but dropped the indexed level-1 result to 10.24 FPS, so it was
+discarded. DOSBox timing does not establish actual 486 cache behavior; real
+hardware measurements remain necessary for that comparison.
+Both DOS packages were rebuilt. All 16 RGB565 captures remain byte-identical
+to the original reference, and all 16 indexed center-world comparisons match
+the same palette mapping. Both 4 MB sound/mouse exercises pass saves, menus
+and weapon checks with zero audio underruns; Windows Release also builds.

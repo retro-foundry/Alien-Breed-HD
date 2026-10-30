@@ -240,7 +240,7 @@ static inline size_t poly_cw_index_xy(int x, int y, int width, int height)
 #endif
 }
 
-static inline void poly_cw_store_xy(uint16_t *cw, int x, int y, int width, int height, uint16_t v)
+static inline void poly_cw_store_xy(RendererPixel *cw, int x, int y, int width, int height, uint16_t v)
 {
     cw[poly_cw_index_xy(x, y, width, height)] = v;
 }
@@ -360,7 +360,7 @@ static void draw_filled_polygon(const int *sx, const int *sy, int n,
                                 int clip_top, int clip_bot)
 {
     uint32_t *rgb = renderer_get_active_rgb_target();
-    uint16_t *cw = renderer_get_active_cw_target();
+    RendererPixel *cw = renderer_get_active_cw_target();
     if (n < 3 || !cw || (renderer_get_rgb_raster_expand() && !rgb)) return;
 
     int min_y = sy[0], max_y = sy[0];
@@ -769,8 +769,7 @@ static uint16_t sample_poly_palette_cw(uint8_t pal_idx, int shade_level)
 #ifdef AB3D_NATIVE_RGB565
     return g_poly_native_palette[pal_off/2];
 #endif
-    return (uint16_t)(((uint16_t)g_poly_tex_pal[pal_off] << 8) |
-                       (uint16_t)g_poly_tex_pal[pal_off + 1u]);
+    return renderer_pixel_from_be(g_poly_tex_pal+pal_off);
 }
 
 static inline int poly_pixel_behind_wall(int x, int y, int32_t z_view)
@@ -791,7 +790,7 @@ static void draw_textured_triangle(const int *sx, const int *sy,
                                    int clip_top, int clip_bot)
 {
     uint32_t *rgb = renderer_get_active_rgb_target();
-    uint16_t *cw = renderer_get_active_cw_target();
+    RendererPixel *cw = renderer_get_active_cw_target();
     if (!cw || (renderer_get_rgb_raster_expand() && !rgb)) return;
 
     int min_x = sx[0], max_x = sx[0];

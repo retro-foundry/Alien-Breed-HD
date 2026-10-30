@@ -4,6 +4,9 @@
 
 #define SDL_DISABLE_OLD_NAMES 1
 #include <SDL3/SDL.h>
+#ifdef AB3D_DOS_INDEXED
+#include "palette_dos.h"
+#endif
 #include <SDL3/SDL_main.h>
 #include <sys/nearptr.h>
 #include "ui_dos.h"
@@ -173,7 +176,13 @@ static inline SDL_Window *Ab3dDos_CreateWindow(const char *title, int x, int y, 
     const SDL_DisplayMode *best = NULL;
     for (int i = 0; modes && i < count; i++) {
       const SDL_DisplayMode *m = modes[i];
-      if (m->format == SDL_PIXELFORMAT_RGB565 && m->w >= w && m->h >= h &&
+      if (m->format ==
+#ifdef AB3D_DOS_INDEXED
+          SDL_PIXELFORMAT_INDEX8
+#else
+          SDL_PIXELFORMAT_RGB565
+#endif
+          && m->w >= w && m->h >= h &&
           (!best || m->w * m->h < best->w * best->h)) best = m;
     }
     bool ok = best && SDL_SetWindowFullscreenMode(ab3d_dos_window, best) &&
@@ -182,9 +191,18 @@ static inline SDL_Window *Ab3dDos_CreateWindow(const char *title, int x, int y, 
     if (!ok) {
       SDL_DestroyWindow(ab3d_dos_window);
       ab3d_dos_window = NULL;
-      SDL_SetError("DOS requires a VESA RGB565 mode of at least 320x200");
+      SDL_SetError("DOS requires a native %s mode of at least 320x200",
+#ifdef AB3D_DOS_INDEXED
+                   "INDEX8"
+#else
+                   "RGB565"
+#endif
+                   );
     }
   }
+#ifdef AB3D_DOS_INDEXED
+  if(ab3d_dos_window)dos_palette_install(ab3d_dos_window);
+#endif
   return ab3d_dos_window;
 }
 
@@ -216,6 +234,10 @@ static inline int Ab3dDos_SetTextureBlendMode(SDL_Texture *t,SDL_BlendMode mode)
   return SDL_SetSurfaceBlendMode(t->normal,SDL_BLENDMODE_NONE)?0:-1;
 }
 static inline int Ab3dDos_SetTextureAlphaMod(SDL_Texture *t,Uint8 alpha) { if(!t)return -1;t->alpha=alpha;return 0; }
+static inline int Ab3dDos_GetTextureAlphaMod(SDL_Texture *t,Uint8 *alpha) { if(!t)return -1;if(alpha)*alpha=t->alpha;return 0; }
+static inline int Ab3dDos_GetTextureColorMod(SDL_Texture *t,Uint8 *r,Uint8 *g,Uint8 *b) {
+  if(!t)return -1;if(r)*r=t->red;if(g)*g=t->green;if(b)*b=t->blue;return 0;
+}
 static inline int Ab3dDos_SetTextureColorMod(SDL_Texture *t,Uint8 r,Uint8 g,Uint8 b) {
   if(!t)return -1;t->red=r;t->green=g;t->blue=b;return 0;
 }
@@ -438,6 +460,8 @@ static inline SDL_Texture *Ab3dDos_CreateTexture(SDL_Renderer *r,SDL_PixelFormat
 #define SDL_RenderClipEnabled Ab3dDos_RenderClipEnabled
 #define SDL_UnlockTexture Ab3dDos_UnlockTexture
 #define SDL_SetTextureAlphaMod Ab3dDos_SetTextureAlphaMod
+#define SDL_GetTextureAlphaMod Ab3dDos_GetTextureAlphaMod
+#define SDL_GetTextureColorMod Ab3dDos_GetTextureColorMod
 #define SDL_SetTextureColorMod Ab3dDos_SetTextureColorMod
 #define SDL_CreateTexture Ab3dDos_CreateTexture
 #define SDL_Init Ab3dDos_Init

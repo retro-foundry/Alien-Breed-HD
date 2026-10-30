@@ -5,7 +5,7 @@
  * Translated from: AB3DI.s (DrawDisplay, RotateLevelPts, RotateObjectPts),
  *                  WallRoutine3.ChipMem.s, ObjDraw3.ChipRam.s, BumpMap.s
  *
- * The renderer draws into a chunky (8-bit indexed) pixel buffer.
+ * The renderer draws native color words or optional DOS palette indices.
  * Displaying that buffer to the actual screen is platform-specific
  * and handled by the display backend (SDL/OpenGL, etc.).
  */
@@ -193,7 +193,7 @@ typedef struct {
     int32_t floor_uv_dist_max;
     int32_t floor_uv_dist_near;
 
-    /* Framebuffer (double-buffered); base pointers are cache-line-aligned. */
+    /* Desktop diagnostic tags (double-buffered); both remain NULL on DOS. */
     uint8_t *buffer;          /* Current render target (width * height bytes) */
     uint8_t *back_buffer;     /* Back buffer for swap */
 
@@ -202,10 +202,10 @@ typedef struct {
     uint32_t *rgb_buffer;
     uint32_t *rgb_back_buffer;
 
-    /* 12-bit Amiga color-word framebuffer (double-buffered).
-     * Each pixel stores the final 0x0RGB word used for water byte sampling. */
-    uint16_t *cw_buffer;
-    uint16_t *cw_back_buffer;
+    /* Color-word framebuffer (double-buffered): Amiga 0RGB on desktop,
+     * native RGB565 on DOS. Water samples this buffer directly. */
+    RendererPixel *cw_buffer;
+    RendererPixel *cw_back_buffer;
 
     /* View transform */
     int16_t view_angpos;     /* Render-frame view angle; ObjDraw3 PolygonObj uses global angpos */
@@ -342,9 +342,8 @@ void renderer_set_sky_assets(uint8_t *chunky_pixels, int tex_w, int tex_h, size_
 /* Swap front/back buffers */
 void renderer_swap(void);
 
-/* Main entry point: renders the full 3D scene to the chunky buffer.
- * Translated from AB3DI.s DrawDisplay.
- * After this call, g_renderer.buffer contains the rendered frame. */
+/* Main entry point: renders the full 3D scene, then swaps the color buffers.
+ * Translated from AB3DI.s DrawDisplay. Use renderer_get_cw_buffer() afterward. */
 void renderer_draw_display(GameState *state);
 /* Build/reset synthesized backdrop ceiling polygons for the currently loaded level.
  * Build once after level parse/load, then draw from cache each frame. */
@@ -429,7 +428,7 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                           int16_t brightness, int sprite_type,
                           int32_t clip_top_sy, int32_t clip_bot_sy);
 void renderer_draw_gun(GameState *state);
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
 void renderer_dos_check_gun_frames(GameState *state);
 #endif
 
@@ -455,12 +454,16 @@ int renderer_gun_src_width(void);
 int renderer_gun_src_height(void);
 
 /* Get pointer to the current rendered frame for display */
-const uint8_t *renderer_get_buffer(void);
+const uint8_t *renderer_get_buffer(void); /* Desktop diagnostic tags; NULL on DOS. */
 const uint32_t *renderer_get_rgb_buffer(void);
-/* Completed frame: 16-bit packed 4444, 0x0RGB (high nibble unused). Matches SDL ARGB4444 with A=0. */
-const uint16_t *renderer_get_cw_buffer(void);
+/* Completed native color frame: desktop 0RGB, DOS RGB565 or optional INDEX8. */
+const RendererPixel *renderer_get_cw_buffer(void);
 uint32_t *renderer_get_active_rgb_target(void);
-uint16_t *renderer_get_active_cw_target(void);
+RendererPixel *renderer_get_active_cw_target(void);
+#ifdef AB3D_DOS_INDEXED
+void renderer_palette_changed(void);
+void renderer_dos_check_indexed_pixels(GameState *state);
+#endif
 /* When zero (default), raster skips per-pixel ARGB expansion; cw_buffer is authoritative for display. */
 void renderer_set_rgb_raster_expand(int enabled);
 int renderer_get_rgb_raster_expand(void);
