@@ -45,7 +45,7 @@ export function importedAnimationTables(document: LevelDocument): { start: numbe
     for (;;) {
       const zone = reader.i16(cursor); cursor += 2;
       if (zone === -1) break;
-      if (entries.length >= 256 || !document.zones.some(room => room.id === zone)) throw new Error('A water animation has an invalid room list.');
+      if (entries.length >= 256 || !document.zones.some(room => room.id === zone || room.fileId === zone)) throw new Error('A water animation has an invalid room list.');
       entries.push({ zone, graphic: reader.i32(cursor) }); cursor += 4;
     }
     water.push({ header, entries });
@@ -62,6 +62,42 @@ export function importedAnimationTables(document: LevelDocument): { start: numbe
     }
   }
   return { start, tables: { doors, lifts, water, switches, trailing: reader.bytes.slice(cursor) } };
+}
+
+/** Validate live native writes before crossing the import/preview boundary.
+ * Switch graphics point ten bytes into a wall (phase/material), whereas
+ * moving rooms and water point at record starts. Inactive switch slots are
+ * deliberately ignored by SwitchRoutine and may retain unused stored values.
+ */
+export function validateAnimationReferences(document: LevelDocument): void {
+  const { tables } = importedAnimationTables(document);
+  const graphics = new Map(document.zones.flatMap(zone => [...zone.lower, ...zone.upper].map(record => [record.offset, record] as const)));
+  const room = (id: number, subject: string) => {
+    if (!document.zones.some(zone => zone.id === id || zone.fileId === id)) throw new Error(`${subject} refers to missing room ${id}. Repair its room link before previewing.`);
+  };
+  const target = (pointer: number, types: readonly number[], relative: number, subject: string) => {
+    const record = graphics.get(pointer - relative);
+    if (!record || !types.includes(record.type)) throw new Error(`${subject} has an invalid animation graphics target at byte ${pointer}. Repair its graphics link before previewing.`);
+  };
+  const reader = new BinaryReader(document.files.data, 'twolev.bin');
+  const lineCount = (Math.min(...document.zones.map(zone => zone.exitListOffset)) - 2 - reader.i32(26)) / 16;
+  for (const [kind, records] of [['Door', tables.doors], ['Lift', tables.lifts]] as const) records?.forEach((record, index) => {
+    const subject = `${kind} ${index}`;
+    room(record.zone, subject); target(record.graphic, [1, 2, 7, 8, 9, 10, 11], 0, subject);
+    record.walls.forEach(wall => {
+      if (!Number.isInteger(lineCount) || wall.line < 0 || wall.line >= lineCount) throw new Error(`${subject} refers to missing collision line ${wall.line}. Repair its wall link before previewing.`);
+      target(wall.graphic, [0, 5, 13], 0, `${subject} wall`);
+    });
+  });
+  tables.switches?.forEach((record, index) => {
+    if (record.zone < 0) return;
+    const subject = `Switch ${index}`; room(record.zone, subject);
+    if (record.point < 0 || record.point + 1 >= document.points.length) throw new Error(`${subject} has a missing activation point pair. Repair its wall attachment before previewing.`);
+    target(record.graphic, [0, 13], 10, subject);
+  });
+  tables.water.forEach((group, index) => group.entries.forEach(entry => {
+    const subject = `Water animation ${index}`; room(entry.zone, subject); target(entry.graphic, [7], 0, subject);
+  }));
 }
 
 export function buildAnimationTables(tables: AnimationTables, base: number, resolveGraphic: (source: number) => number):

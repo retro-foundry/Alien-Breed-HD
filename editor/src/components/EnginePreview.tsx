@@ -5,6 +5,7 @@ import { Icon } from './Icon';
 import { previewKeys, playKeys } from './ControlsHelp';
 import { encodeLevelSetup } from '../model/levelSetup';
 import { roomSourceMatchesLevel } from '../model/roomSource';
+import { validateAnimationReferences } from '../model/animationBuild';
 
 interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number }
 interface Props { document: LevelDocument; selection: Selection; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSlotChange: (slot: number) => void }
@@ -24,10 +25,12 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
   const current = useRef({ document, selection, layer, onSelectZone });
   current.current = { document, selection, layer, onSelectZone };
   const send = (type: string, detail: object = {}) => frame.current?.contentWindow?.postMessage({ source: 'ab3d-editor', type, ...detail }, location.origin);
-  function stopUnbuiltPreview() {
+  function stopInvalidPreview(message: string, notice: string) {
     send('play', { playing: false }); pendingPlay.current = false; setPlaying(false); setStarting(false); setLoaded(false);
-    setNotice('Room geometry needs compilation');
-    setError('This editor version cannot yet compile the changed room outlines. Save project keeps all editable geometry; the preview has stopped to avoid showing stale game files.');
+    setNotice(notice); setError(message);
+  }
+  function stopUnbuiltPreview() {
+    stopInvalidPreview('This editor version cannot yet compile the changed room outlines. Save project keeps all editable geometry; the preview has stopped to avoid showing stale game files.', 'Room geometry needs compilation');
   }
 
   function positionCamera() {
@@ -49,6 +52,8 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
     if (!roomSourceMatchesLevel(current.current.document)) {
       stopUnbuiltPreview(); return;
     }
+    try { validateAnimationReferences(current.current.document); }
+    catch (error) { stopInvalidPreview(error instanceof Error ? error.message : String(error), 'Animation links need repair'); return; }
     pendingPlay.current = play;
     setStarting(play); setLoaded(false); setError(''); setNotice('Loading current level…');
     const next = ++revisionRef.current; setRevision(next);

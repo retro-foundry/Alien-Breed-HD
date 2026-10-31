@@ -5,6 +5,7 @@ import { unpackSb } from './sb';
 import { readGraphicsStream, type Graphic } from './graphics';
 export type { Graphic } from './graphics';
 import { importRoomSource, type RoomSource } from './roomSource';
+import { validateAnimationReferences } from './animationBuild';
 
 export interface Point { id: number; x: number; z: number; offset: number }
 export interface FloorLine {
@@ -218,7 +219,9 @@ export function parseLevel(name: string, files: LevelFiles, encoded: LevelFiles 
 export function openLevel(name: string, encoded: LevelFiles, playtestSlot = 0, exitZone: number | null = null): LevelDocument {
   const files = { data: unpackSb(encoded.data, 'twolev.bin'), graphics: unpackSb(encoded.graphics, 'twolev.graph.bin'),
     clips: unpackSb(encoded.clips, 'twolev.clips') };
-  return parseLevel(name, files, encoded, files, playtestSlot, exitZone);
+  const document = parseLevel(name, files, encoded, files, playtestSlot, exitZone);
+  validateAnimationReferences(document);
+  return document;
 }
 
 export function zoneContainsPoint(document: LevelDocument, zone: Zone, x: number, z: number): boolean {

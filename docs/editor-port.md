@@ -503,3 +503,28 @@ fixtures can establish current-format support independently.
   After rebuilding the engine, both browsers pass the generated-room test and
   all sixteen original-map spawn comparisons through animation reassembly
   (four browser tests).
+- Validated level imports and preview loads now check live animation
+  relationships before handing bytes to the native engine. The validator uses
+  the shared table decoder, checks room and physical collision-line bounds,
+  polygon-height targets for moving rooms, moving-wall record targets, switch
+  activation point pairs and phase/material targets, and water polygon targets.
+  SwitchRoutine pointers address wall byte +10, not the record start; all 49
+  active shipped switches follow that contract. Inactive switch slots retain
+  unused stored values without dereferencing them. Room-file aliases are
+  accepted where the native animation loader resolves them.
+  `openLevel` is the validated import boundary; the low-level `parseLevel`
+  remains available for inspecting damaged data. Preview validation failures
+  stop playback and report the link that needs repair. Corrupt candidates do
+  not replace the open project. Tests reject out-of-file and misaligned/incorrect
+  record targets, missing rooms and collision lines, broken switch point pairs
+  and invalid water links, while accepting valid generated water animations and
+  ignored inactive-slot fields. Build and all 412 unit checks pass.
+  This validates animation references, not every authored gameplay constraint;
+  full source compilation, attachment remapping and mechanism authoring remain
+  required.
+  All 48 Chromium/Firefox scenarios pass, including malformed archive/triplet
+  rejection with retained preview/project/recovery and all original engine
+  views. Runtime decoder review found another required checkpoint for generated
+  moving rooms: `level_parse` still uses data-header +16 (last zone index) as
+  the door/lift normalization count. Test and correct final-slot controlled
+  rooms before enabling arbitrary generated mechanism allocation.
