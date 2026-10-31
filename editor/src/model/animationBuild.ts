@@ -120,12 +120,14 @@ export function validateAnimationReferences(document: LevelDocument): void {
   }));
 }
 
-export function buildAnimationTables(tables: AnimationTables, base: number, resolveGraphic: (source: number) => number):
+export interface AnimationTargetContext { kind: 'door' | 'lift' | 'moving-wall' | 'water' | 'switch'; zone: number; line?: number }
+
+export function buildAnimationTables(tables: AnimationTables, base: number, resolveGraphic: (source: number, context: AnimationTargetContext) => number):
   { bytes: Uint8Array; doors: number; lifts: number; switches: number } {
   checkedInteger(base, 16, 16 * 1024 * 1024, 'Animation table offset');
   const output = new BinaryWriter();
-  const pointer = (value: number) => checkedInteger(resolveGraphic(value), 0, 16 * 1024 * 1024 - 1, 'Animation graphics pointer');
-  const moving = (records: readonly MovingRoomAnimation[] | null) => {
+  const pointer = (value: number, context: AnimationTargetContext) => checkedInteger(resolveGraphic(value, context), 0, 16 * 1024 * 1024 - 1, 'Animation graphics pointer');
+  const moving = (records: readonly MovingRoomAnimation[] | null, kind: 'door' | 'lift') => {
     if (records === null) return 0;
     checkedInteger(records.length, 0, 256, 'Moving room count');
     const offset = base + output.offset;
@@ -135,22 +137,22 @@ export function buildAnimationTables(tables: AnimationTables, base: number, reso
       checkedInteger(record.walls.length, 0, 64, 'Moving wall count');
       const header = output.offset; output.write(record.header);
       output.patchWord(header + 12, checkedInteger(record.zone, 0, 255, 'Controlled room'));
-      output.patchLong(header + 8, pointer(record.graphic));
+      output.patchLong(header + 8, pointer(record.graphic, { kind, zone: record.zone }));
       for (const wall of record.walls) {
         output.word(checkedInteger(wall.line, 0, 32767, 'Animated collision line'));
-        output.long(pointer(wall.graphic)); output.long(checkedInteger(wall.base, -2147483648, 2147483647, 'Animated wall texture phase'));
+        output.long(pointer(wall.graphic, { kind: 'moving-wall', zone: record.zone, line: wall.line })); output.long(checkedInteger(wall.base, -2147483648, 2147483647, 'Animated wall texture phase'));
       }
       output.word(-1);
     }
     output.word(999); return offset;
   };
-  const doors = moving(tables.doors), lifts = moving(tables.lifts);
+  const doors = moving(tables.doors, 'door'), lifts = moving(tables.lifts, 'lift');
   if (tables.water.length !== (tables.lifts === null ? 0 : 21)) throw new Error('A lift table must be followed by exactly 21 water animation groups.');
   for (const group of tables.water) {
     if (group.header.length !== 14) throw new Error('A water animation needs a complete 14-byte header.');
     checkedInteger(group.entries.length, 0, 256, 'Water animation room count');
     output.write(group.header);
-    for (const entry of group.entries) { output.word(checkedInteger(entry.zone, 0, 255, 'Water animation room')); output.long(pointer(entry.graphic)); }
+    for (const entry of group.entries) { output.word(checkedInteger(entry.zone, 0, 255, 'Water animation room')); output.long(pointer(entry.graphic, { kind: 'water', zone: entry.zone })); }
     output.word(-1);
   }
   let switches = 0;
@@ -162,7 +164,7 @@ export function buildAnimationTables(tables: AnimationTables, base: number, reso
       output.patchWord(offset, checkedInteger(record.zone, -32768, 255, 'Switch room'));
       output.patchWord(offset + 4, checkedInteger(record.point, record.zone >= 0 ? 0 : -32768, record.zone >= 0 ? 2046 : 32767, 'Switch point pair'));
       // Inactive graphics fields are stored data, not live relocation targets.
-      output.patchLong(offset + 6, record.zone >= 0 ? pointer(record.graphic)
+      output.patchLong(offset + 6, record.zone >= 0 ? pointer(record.graphic, { kind: 'switch', zone: record.zone })
         : checkedInteger(record.graphic, -2147483648, 2147483647, 'Inactive switch graphics field'));
     }
   }

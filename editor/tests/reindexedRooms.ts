@@ -2,7 +2,9 @@
  * existing visibility membership stay fixed; every room identity changes. */
 import { BinaryReader } from '../src/model/binary';
 import { buildDataPrefix, importedDataTables } from '../src/model/dataBuild';
-import { buildGraphicsStreams } from '../src/model/graphicsBuild';
+import { importedGraphicsStreams } from '../src/model/graphicsBuild';
+import { buildGeneratedGraphics } from '../src/model/generatedGraphics';
+import { importedAnimationTables, remapAnimationRooms } from '../src/model/animationBuild';
 import { openLevel, type LevelDocument } from '../src/model/level';
 import { BinaryWriter } from '../src/model/writer';
 import { buildZoneRecords } from '../src/model/zoneBuild';
@@ -35,7 +37,9 @@ export function reindexRooms(document: LevelDocument, ids: ReadonlyMap<number, n
     return { id: remap(zone.id), header, boundaries: zone.boundaryIds, cornerWalls: zone.wallIds,
       visibility: zone.visibility.map(entry => ({ ...entry, zone: remap(entry.zone) })), rotationPoints: zone.rotationPointIds };
   }));
-  const graphics = buildGraphicsStreams(document, document.zones.map(zone => zone.id).toReversed(), undefined, { roomIds: ids });
-  const graphicView = new DataView(graphics.buffer); rooms.offsets.forEach((offset, id) => graphicView.setInt32(16 + id * 4, offset));
+  const streams = importedGraphicsStreams(document);
+  const graphics = buildGeneratedGraphics(document, document.zones.toReversed().map(zone => ({ id: remap(zone.id),
+    dataOffset: rooms.offsets[remap(zone.id)]!, ...streams.get(zone.id)! })),
+  remapAnimationRooms(document, importedAnimationTables(document).tables, ids));
   return openLevel(`${document.name} renumbered`, { data: rooms.data, graphics, clips: clips.finish() }, document.playtestSlot, remap(resolvedExit));
 }

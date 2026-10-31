@@ -4,6 +4,7 @@ import { encodePolygonSurface, encodeWallSurface } from './surfaces';
 import { BinaryWriter } from './writer';
 import { readGraphicRecord, type Graphic } from './graphics';
 import { buildAnimationTables, importedAnimationTables, remapAnimationRooms, type AnimationTables } from './animationBuild';
+import { relocateRecordPointer } from './graphicsRelocation';
 
 export interface GraphicsZoneInput { id: number; lower: readonly Uint8Array[]; upper?: readonly Uint8Array[] }
 export interface GraphicsRecordInput { bytes: Uint8Array; sourceOffset?: number }
@@ -135,12 +136,7 @@ export function buildGraphicsStreams(document: LevelDocument, order = document.z
     const range = ranges.find(range => offset >= range.start && offset < range.end);
     if (!range) throw new Error(`A graphics pointer at ${offset} is outside the compiled streams and animation tables.`);
     const relative = offset - range.start;
-    if (range.original && range.generated && range.original.size !== range.generated.size) {
-      if (!range.original.polygon || !range.generated.polygon) throw new Error('An unsupported graphics record changed size.');
-      const oldTail = 6 + range.original.points.length * 2, newTail = 6 + range.generated.points.length * 2;
-      if (relative >= oldTail) return range.destination + newTail + relative - oldTail;
-      if (relative >= 6) throw new Error('A graphics pointer targets a regenerated polygon corner array. Remap that dependency before building.');
-    }
+    if (range.original && range.generated) return relocateRecordPointer(range.original, range.generated, range.destination, offset);
     return range.destination + relative;
   };
   const imported = importedAnimationTables(document);

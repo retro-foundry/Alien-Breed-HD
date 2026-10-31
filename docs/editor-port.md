@@ -566,3 +566,25 @@ fixtures can establish current-format support independently.
   Arbitrary deletion, one-to-many geometry and animation attachment allocation,
   source-reference authoring and full compiler/UI integration remain required.
   Deployment remains pending that working authoring pipeline.
+- Added a generated graphics assembler whose room set is independent of the
+  imported room count. It accepts complete generated streams, dense runtime
+  IDs and compiled zone-data offsets, so removed rooms do not have to survive
+  as unused original slots. Present empty upper streams remain distinct from
+  absent streams. All sixteen original graphics files rebuild byte for byte
+  through this path.
+  Generated copies retain explicit source record identities. If an animation
+  target has multiple copies, the compiler must select its exact room, layer
+  and record; missing or ambiguous attachments fail before output is returned.
+  The animation writer supplies door/lift/water/switch context and controlled
+  room, plus the collision line for moving walls. Polygon-tail relocation is
+  shared with the existing writer. Rule bytes, texture phases and inactive
+  switch fields retain their existing format contracts from `amiga/Anims.s`.
+  Tests cover independent controllers addressing duplicated surfaces, explicit
+  attachment selection for every animation kind, room removal, absent/empty
+  streams, missing links and the full 256-room boundary.
+  The build, type checks and 465-test unit run pass; the subsequently added
+  capacity regression also passes. Both browsers pass the all-sixteen-map
+  renumbering comparisons using this assembler, including both starts and
+  the room-53 camera sweeps described above (two native engine tests).
+  Source geometry-to-stream generation and automatic attachment allocation
+  still need implementation before normal UI builds can use this assembler.
