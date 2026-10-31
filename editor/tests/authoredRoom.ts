@@ -4,7 +4,8 @@ import { BinaryReader } from '../src/model/binary';
 import { buildDataPrefix, importedDataTables } from '../src/model/dataBuild';
 import { buildGraphicsStreams } from '../src/model/graphicsBuild';
 import { buildZoneRecords } from '../src/model/zoneBuild';
-import { polygonForCell, encodePolygonSurface, encodeWallSurface } from '../src/model/surfaces';
+import { encodeWallSurface } from '../src/model/surfaces';
+import { buildCellPolygons, wallForSpan } from '../src/model/surfaceGeometry';
 import { normaliseRoomOutline } from '../src/model/geometry';
 import { openLevel, type LevelDocument } from '../src/model/level';
 import { applyCommand, setStart } from '../src/model/commands';
@@ -29,16 +30,19 @@ export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
   const topology = compileRoomTopology(original, roomSource);
   const remapped = buildRoomDataReferences(original, roomSource, topology, prefix);
   const addedCells = topology.cells.filter(cell => cell.id === id);
+  const polygons = buildCellPolygons(original, { ...topology, cells: addedCells }).get(id)!;
   const visibility = buildSourceVisibility({ ...topology, cells: addedCells }, new Map([[id, pointIds]]));
   const records = original.zones.map(zone => ({ id: zone.id, header: remapped.headers.get(zone.id)!,
     boundaries: zone.boundaryIds, cornerWalls: zone.wallIds, visibility: zone.visibility, rotationPoints: zone.rotationPointIds }));
   const rooms = buildZoneRecords(remapped.data, [...records, { id,
     header: remapped.headers.get(id)!, boundaries: vertices.map((_, index) => original.lines.length + index),
     cornerWalls: [], ...visibility.rooms.get(id)! }]);
+  const [wallStart, wallEnd] = wall.points.map(point => original.points[point]!);
+  const wallLength = Math.hypot(wallEnd!.x - wallStart!.x, wallEnd!.z - wallStart!.z);
   const lower = [
-    ...pointIds.map((point, index) => encodeWallSurface({ ...wall, points: [point, pointIds[(index + 1) % pointIds.length]!] })),
-    encodePolygonSurface(polygonForCell(floor, pointIds, floor.heightQuarter / 4)),
-    encodePolygonSurface(polygonForCell(roof, pointIds, roof.heightQuarter / 4)),
+    ...pointIds.map((point, index) => encodeWallSurface(wallForSpan(wall, wallLength, [point, pointIds[(index + 1) % pointIds.length]!],
+      0, Math.hypot(vertices[(index + 1) % vertices.length]!.x - vertices[index]!.x, vertices[(index + 1) % vertices.length]!.z - vertices[index]!.z)))),
+    ...polygons.lower.map(record => record.bytes),
   ];
   const graphics = buildGraphicsStreams(original, undefined, id + 1, { additions: [{ id, lower }] });
   const graphView = new DataView(graphics.buffer); rooms.offsets.forEach((offset, zone) => graphView.setInt32(16 + zone * 4, offset));

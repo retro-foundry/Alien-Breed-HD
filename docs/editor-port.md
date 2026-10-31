@@ -432,3 +432,24 @@ fixtures can establish current-format support independently.
   required; edited-room gameplay/export guards remain in place.
   All 46 Chromium/Firefox scenarios pass, including the new imported-wall edit,
   downloaded-project and browser-recovery check and all original engine views.
+- `surfaceGeometry.ts` now binds complete floor, roof and water material
+  records to generated convex cells. It retains original records exactly when
+  both the footprint and point identities are unchanged, otherwise writes the
+  generated corners with the original height, sampling scale, tile and light.
+  It retains record offsets as dependency identities for the graphics/animation
+  assembler. Partial or degenerate authored polygons remain byte-preserved on
+  unchanged geometry; regenerating them needs an explicit geometry mapping
+  rather than silently expanding their material across the whole new room.
+  Tests force polygon regeneration for every material template in all sixteen
+  maps, including both concave imports, and check reindexed points separately.
+  Wall-span binding uses the selected record's authored texels/world-unit ratio
+  over an explicit physical interval. Shared split endpoints receive identical
+  texture coordinates; horizontal/vertical phase, masks, heights and light stay
+  separate. This preserves authored density rather than guessing the lost AMOS
+  repeat/fit mode from a texture's dimensions. All 7,628 original straight wall
+  records bind back byte-for-byte. Span continuity, resize, limits and invalid
+  dependencies are covered. The generated-room fixture now uses both surface
+  binders; its textured view was inspected, and native spawn, wall picking and
+  gameplay start pass in Chromium and Firefox. Build and 364 unit checks pass.
+  Complete room stream generation, wall attachments, moving-wall dependencies,
+  material authoring and source compiler/UI integration remain required.
