@@ -12,6 +12,7 @@ import { beginRoomDraft, commitRoomDraft, setDraftCorners } from '../src/model/r
 import { compileRoomTopology } from '../src/model/roomTopology';
 import { buildRoomDataReferences } from '../src/model/roomDataReferences';
 import { buildSourceVisibility } from '../src/model/visibilityTables';
+import { buildPointLighting, type PointLightingBinding } from '../src/model/pointLighting';
 
 export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
   const template = original.zones[0]!, floor = template.lower.find(record => record.polygon && [1, 8, 9, 10, 11].includes(record.type))!.polygon!;
@@ -20,16 +21,17 @@ export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
   if (!floor || !roof || !wall) throw new Error('The fixture requires explicit original floor, roof and full-height wall materials.');
   const vertices = normaliseRoomOutline([{ x: 20000, z: 20000 }, { x: 20128, z: 20000 }, { x: 20128, z: 20128 }, { x: 20000, z: 20128 }]);
   const source = importedDataTables(original), pointIds = vertices.map((_, index) => source.points.length + index), id = original.zones.length;
-  const sample = source.points[floor.points[0]!]!;
-  const input = { points: [...source.points, ...vertices.map(point => ({ ...point, lowerBrightness: sample.lowerBrightness, upperBrightness: sample.upperBrightness }))],
-    collision: [...source.collision, ...vertices.map((start, index) => ({ start, end: vertices[(index + 1) % vertices.length]!, neighbour: -1 }))] };
-  const prefix = buildDataPrefix(original, input, id + 1);
   const roomSource = commitRoomDraft(original.roomSource,
     setDraftCorners(beginRoomDraft(original, original.roomSource, template.id), vertices)).after;
   const topology = compileRoomTopology(original, roomSource);
   const cellGraphics = buildCellGraphics(original, roomSource, topology,
     new Map([[topology.cells.find(cell => cell.id === id)!.sourceId, { walls: { lower: [wall] },
       wallInsertion: { lower: template.lower.findIndex(record => record.wall) } }]]));
+  const lighting = new Map<number, PointLightingBinding>(cellGraphics.pointReferences.get(id)!
+    .filter(point => point >= original.points.length).map(point => [point, { kind: 'copy', source: floor.points[0]! }]));
+  const input = { points: buildPointLighting(original, cellGraphics.topology.points, lighting),
+    collision: [...source.collision, ...vertices.map((start, index) => ({ start, end: vertices[(index + 1) % vertices.length]!, neighbour: -1 }))] };
+  const prefix = buildDataPrefix(original, input, id + 1);
   const remapped = buildRoomDataReferences(original, roomSource, topology, prefix);
   const addedCells = topology.cells.filter(cell => cell.id === id);
   const visibility = buildSourceVisibility({ ...cellGraphics.topology, cells: addedCells }, new Map([[id, cellGraphics.pointReferences.get(id)!]]));

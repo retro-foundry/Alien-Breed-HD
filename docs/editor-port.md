@@ -634,3 +634,26 @@ fixtures can establish current-format support independently.
   point brightness generation, portal height openings, general decorative
   geometry mapping and full compiler/UI integration remain required before
   deployment.
+- Generated point lighting now has an explicit compiler contract: preserve a
+  retained identity, copy a selected original point, sample an original segment
+  by a rational fraction, or assign lower/upper words directly. New or moved
+  identities without assignments fail before data assembly. Coordinate matches
+  do not silently select lighting from another original point.
+  Current `AB3DI.s:currentPointBrights` and `level_get_point_brightness` define
+  the packed words: signed low-byte brightness and high-byte animation controls.
+  Segment sampling is a new authoring operation; it interpolates signed bases
+  with truncation towards zero, retaining matching active control bits rather
+  than interpolating packed words. Endpoints and equal words remain exact.
+  Incompatible active animation settings require explicit point lighting.
+  Lower and upper channels are handled independently; original inactive bits
+  remain exact on retention/copy. The older AMOS LEVELSAVE brightness layout
+  is not used as the current runtime format.
+  All original point words across all sixteen maps pass retention checks.
+  Tests cover signed/static and animated sampling, endpoint retention, explicit
+  assignments, missing bindings, invalid targets and unchanged input data.
+  The generated-room fixture now uses this lighting builder and its final
+  graphics point table. All 540 unit checks, the build and Chromium/Firefox
+  native generated-room tests pass.
+  Automatic source-geometry lighting provenance and lighting authoring controls
+  remain required, alongside source animation attachments, portal openings,
+  decorative mappings and complete compiler/UI build/export integration.
