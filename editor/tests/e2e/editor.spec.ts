@@ -126,6 +126,21 @@ test('an invalid player position reports an error without changing the map or cr
   expect(errors).toEqual([]);
 });
 
+test('a valid level 3 spawn edit is not rejected by neighbouring corner-wall fences', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.getByRole('combobox', { name: 'Original level' }).selectOption({ value: '3' });
+  await expect(page.locator('.project-picker strong')).toHaveText('Level 3');
+  await page.getByRole('tab', { name: 'Starts', exact: true }).click();
+  await page.getByRole('button', { name: 'Player 1', exact: false }).click();
+  await page.getByRole('spinbutton', { name: 'Position X' }).fill('-623');
+  await page.getByRole('button', { name: 'Apply position' }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByRole('spinbutton', { name: 'Position X' })).toHaveValue('-624');
+});
+
 test('all sixteen shipped maps render through the real browser interface', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));

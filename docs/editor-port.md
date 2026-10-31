@@ -237,3 +237,19 @@ fixtures can establish current-format support independently.
   Combined data-table expansion, visibility rebuilding and reversed/relocated
   graphics pass all sixteen original spawn-frame comparisons in Chromium and
   Firefox, exercising all three assembly stages together in the actual engine.
+- `roomReferences.ts` resolves original player starts, active objects,
+  teleport destinations, switch point-pair midpoints and mechanism groups to
+  compiled source cells. Internal seams use a deterministic containing cell;
+  deleted rooms and points stranded by edits produce explicit errors, not
+  silently disabled dependencies. All sixteen original maps resolve, including
+  their concave splits. Six originally out-of-outline objects retain their
+  original relationships with warnings only while their source room remains
+  unchanged. Object `+26` is GraphicRoom/runtime state, not another authored
+  zone: this stage does not guess a remapping for it. Exit/game configuration
+  and complete mechanism/graphics reference rewriting remain pending.
+  The source suite now has 237 tests.
+- Current editor containment now uses primary outlines only. Adjoining
+  secondary collision fences had incorrectly rejected valid positions,
+  including the original level 3 start. All 32 original starts and 52 teleport
+  destinations pass containment; the browser regression moves that level 3
+  start and undoes it. Actual game movement/collision code is unchanged.

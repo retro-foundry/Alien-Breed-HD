@@ -260,8 +260,12 @@ export function openLevel(name: string, encoded: LevelFiles): LevelDocument {
 }
 
 export function zoneContainsPoint(document: LevelDocument, zone: Zone, x: number, z: number): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
   let inside = false;
-  for (const id of [...zone.boundaryIds, ...zone.wallIds]) {
+  // Authoring containment uses the closed primary outline. Secondary walls
+  // are adjoining collision fences, not additional polygon edges: including
+  // them in ray parity rejects valid original positions (level 3's spawn).
+  for (const id of zone.boundaryIds) {
     const line = document.lines[id];
     if (!line) continue;
     const x2 = line.x + line.dx, z2 = line.z + line.dz;

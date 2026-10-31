@@ -24,4 +24,17 @@ describe('current runtime map model', () => {
     new DataView(invalid.data.buffer).setInt32(22, -100);
     expect(() => openLevel('Bad offset', invalid)).toThrow(/byte -100/);
   });
+  it('accepts every original player start and teleport inside its primary room outline', () => {
+    for (let level = 1; level <= 16; level++) {
+      const document = openLevel(`Level ${level}`, originalFiles(level));
+      for (const start of document.starts) expect(zoneContainsPoint(document, document.zones.find(zone => zone.id === start.zone)!, start.x, start.z)).toBe(true);
+      for (const zone of document.zones) if (zone.teleport.zone >= 0)
+        expect(zoneContainsPoint(document, document.zones.find(item => item.id === zone.teleport.zone)!, zone.teleport.x, zone.teleport.z)).toBe(true);
+    }
+    const document = openLevel('Level 3', originalFiles(3)), start = document.starts[0]!, zone = document.zones[start.zone]!;
+    expect(zone.wallIds.length).toBeGreaterThan(0);
+    expect(zoneContainsPoint(document, zone, start.x + 1, start.z)).toBe(true);
+    expect(zoneContainsPoint(document, zone, NaN, start.z)).toBe(false);
+    expect(zoneContainsPoint(document, zone, start.x, Infinity)).toBe(false);
+  });
 });
