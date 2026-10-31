@@ -953,6 +953,10 @@ fixtures can establish current-format support independently.
   Source-build integration commit `fa701e6` has now completed its separate
   Windows/Ubuntu editor CI successfully, including the actual-engine browser
   suites. This does not substitute for CI of the later portal/closure changes.
-  All 628 model checks and TypeScript validation pass for closure authoring;
-  the opening/closure browser scenarios pass in both engines. The surrounding
-  full browser suite was still running at this checkpoint.
+  All 628 model checks, production build and TypeScript validation pass for
+  closure authoring. All 84 surrounding browser scenarios pass, including
+  complete original/source/visibility/renumbered-map engine comparisons in
+  Chromium and Firefox. A fresh production rebuild and all four focused
+  opening/closure scenarios also pass after the final split-wall and upper-layer
+  validation changes. Closure commit `06cd281` is pushed; its own remote editor
+  CI is still running and is not counted as passed here.
