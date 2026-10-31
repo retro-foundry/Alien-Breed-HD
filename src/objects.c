@@ -5599,7 +5599,8 @@ void do_water_anims(GameState *state)
 
         wl += 14;
 
-        int safety = 128;
+        /* Consume the terminator even when all 256 runtime rooms are listed. */
+        int safety = 257;
         while (safety-- > 0) {
             int16_t zone_id = be16(wl);
             wl += 2;

@@ -8,6 +8,7 @@ on:
       - 'tools/editor_oracles.py'
       - 'tools/build_editor_runtime.py'
       - 'tests/feedback_points.c'
+      - 'tests/feedback_animation_limits.c'
       - 'src/**'
       - 'cmake/**'
       - 'CMakeLists.txt'
@@ -19,6 +20,7 @@ on:
       - 'tools/editor_oracles.py'
       - 'tools/build_editor_runtime.py'
       - 'tests/feedback_points.c'
+      - 'tests/feedback_animation_limits.c'
       - 'src/**'
       - 'cmake/**'
       - 'CMakeLists.txt'
@@ -57,6 +59,8 @@ jobs:
           python tools/build_editor_runtime.py
           emcc tests/feedback_points.c src/level.c src/logging.c -Isrc -sUSE_SDL=2 -sENVIRONMENT=node -o "$RUNNER_TEMP/editor-point-test.js"
           node "$RUNNER_TEMP/editor-point-test.js"
+          emcc tests/feedback_animation_limits.c src/objects.c src/logging.c -Isrc -sUSE_SDL=2 -sENVIRONMENT=node -O2 -o "$RUNNER_TEMP/editor-animation-test.js"
+          node "$RUNNER_TEMP/editor-animation-test.js"
       - uses: actions/upload-artifact@v4
         with:
           name: editor-engine

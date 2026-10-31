@@ -474,3 +474,32 @@ fixtures can establish current-format support independently.
   stream assembly, and both generated-room scenarios pass (four tests).
   Resized polygons also produce identical files through complete-stream and
   individual-record inputs across all sixteen maps.
+- Animation tables now have a shared import/assembly model for 18-byte moving
+  room headers and variable wall lists, all 21 water groups, and eight fixed
+  switch slots. Authored room/line/point and graphics relationships are explicit;
+  rule/runtime bytes, wall texture phase and trailing opaque bytes are retained.
+  The graphics builder now emits these tables instead of copying and patching
+  the old tail, and accepts explicitly regenerated animation tables. Source
+  layouts with unexplained inter-section data reject rather than losing bytes.
+  Every original map's animation region reconstructs byte-for-byte. Tests
+  verify relocated section/graphics addresses, changed room and collision-line
+  references, expanded water lists, absent versus empty-present tables, fixed
+  switch slots, reserved terminators and limits. The parser now includes the
+  final permitted entry at its 256-mechanism and 64-wall bounds; dedicated
+  assembly/reparse tests cover those boundaries. Active switch pairs and total
+  generated graphics size are validated. The build and 402 unit checks pass.
+  This is animation-file assembly evidence, not completed authoring or source
+  dependency mapping: automatic allocation/cloning of moving walls, water links
+  and switch attachments across changed room geometry remains required.
+  Runtime review also found two water-list consumers capped at 128 reads,
+  which left the terminator unread for a full group and misparsed following
+  headers. Normalization and animation now allow 256 entries plus the
+  terminator. A C regression checks 0/1/127/128/256 entries, normalized room
+  aliases, subsequent group boundaries, live heights and graphics writes. It
+  fails against the old normalizer and independently against the old updater;
+  the fixed consumers pass. The regression runs in the editor CI. Windows and
+  WebAssembly builds pass. Imported-animation validation before preview and the
+  remaining source dependency/authoring stages still need completion.
+  After rebuilding the engine, both browsers pass the generated-room test and
+  all sixteen original-map spawn comparisons through animation reassembly
+  (four browser tests).

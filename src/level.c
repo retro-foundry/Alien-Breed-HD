@@ -236,7 +236,8 @@ static void normalize_amiga_water_list(uint8_t *water_src, const uint8_t *ld,
     uint8_t *p = water_src;
     for (int i = 0; i <= 20; i++) {
         p += 14; /* top, bot, curr, vel */
-        int safety = 128;
+        /* Up to 256 room entries plus the terminating negative word. */
+        int safety = 257;
         while (safety-- > 0) {
             int16_t zone = read_word(p);
             if (zone < 0) {

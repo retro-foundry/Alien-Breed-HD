@@ -72,8 +72,9 @@ function mechanismTable(reader: BinaryReader, offset: number, kind: 'door' | 'li
   if (offset <= 16) return [];
   const result: Mechanism[] = [];
   let cursor = offset;
-  for (let i = 0; i < 256; i++) {
+  for (let i = 0; i <= 256; i++) {
     if (reader.i16(cursor) === 999) return result;
+    if (i === 256) break;
     reader.require(cursor, 18);
     const mechanism: Mechanism = {
       id: i, kind, offset: cursor, bottom: reader.i16(cursor) / 4, top: reader.i16(cursor + 2) / 4,
@@ -83,9 +84,10 @@ function mechanismTable(reader: BinaryReader, offset: number, kind: 'door' | 'li
     };
     cursor += 18;
     let terminated = false;
-    for (let wall = 0; wall < 64; wall++) {
+    for (let wall = 0; wall <= 64; wall++) {
       const line = reader.i16(cursor);
       if (line < 0) { cursor += 2; terminated = true; break; }
+      if (wall === 64) break;
       mechanism.walls.push({ line, graphic: reader.i32(cursor + 2), base: reader.i32(cursor + 6) });
       cursor += 10;
     }

@@ -3,6 +3,7 @@ import type { LevelDocument } from './level';
 import { encodePolygonSurface, encodeWallSurface } from './surfaces';
 import { BinaryWriter } from './writer';
 import { readGraphicRecord, type Graphic } from './graphics';
+import { buildAnimationTables, importedAnimationTables, type AnimationTables } from './animationBuild';
 
 export interface GraphicsZoneInput { id: number; lower: readonly Uint8Array[]; upper?: readonly Uint8Array[] }
 export interface GraphicsRecordInput { bytes: Uint8Array; sourceOffset?: number }
@@ -11,6 +12,7 @@ export interface GraphicsEdits {
   replacements?: ReadonlyMap<number, Uint8Array>;
   additions?: readonly GraphicsZoneInput[];
   streams?: ReadonlyMap<number, GraphicsStreamInput>;
+  animations?: AnimationTables;
 }
 
 /** Explicit source identities let complete generated streams retain only the
@@ -119,9 +121,6 @@ export function buildGraphicsStreams(document: LevelDocument, order = document.z
     output.patchLong(table + zone.id * 8 + (upper ? 4 : 0), output.offset); output.word(zone.id);
     records.forEach(record => output.write(record)); output.long(-1);
   }
-  const destinationTail = output.offset;
-  output.write(reader.bytes.subarray(tail));
-  ranges.push({ start: tail, end: reader.bytes.length, destination: destinationTail });
   const relocate = (offset: number) => {
     if (offset === 0) return 0;
     const range = ranges.find(range => offset >= range.start && offset < range.end);
@@ -135,38 +134,11 @@ export function buildGraphicsStreams(document: LevelDocument, order = document.z
     }
     return range.destination + relative;
   };
-  for (const header of [0, 4, 8]) {
-    const offset = reader.i32(header);
-    if (offset > 16) output.patchLong(header, relocate(offset));
-  }
-  for (const mechanism of document.mechanisms) {
-    output.patchLong(relocate(mechanism.offset + 8), relocate(reader.i32(mechanism.offset + 8)));
-    mechanism.walls.forEach((wall, index) => output.patchLong(relocate(mechanism.offset + 18 + index * 10 + 2), relocate(wall.graphic)));
-  }
-  for (const item of document.switches) if (item.zone >= 0)
-    output.patchLong(relocate(item.offset + 6), relocate(item.graphic));
-  // The lift terminator is immediately followed by all 21 water animation
-  // groups: 14-byte header, (zone word + graphics pointer long)*, -1 word.
-  const lift = reader.i32(4);
-  if (lift > 16) {
-    let water = lift;
-    for (const mechanism of document.mechanisms.filter(item => item.kind === 'lift')) {
-      if (mechanism.offset !== water) throw new Error('The lift animation layout contains unaccounted source data.');
-      water += 18 + mechanism.walls.length * 10 + 2;
-    }
-    if (reader.i16(water) !== 999) throw new Error('The lift animation table has no supported terminator.');
-    water += 2;
-    for (let group = 0; group < 21; group++) {
-      reader.require(water, 14); water += 14;
-      let terminated = false;
-      for (let entry = 0; entry <= 256; entry++) {
-        const zone = reader.i16(water);
-        if (zone === -1) { water += 2; terminated = true; break; }
-        if (!document.zones.some(item => item.id === zone)) throw new Error('A water animation refers to a missing zone.');
-        output.patchLong(relocate(water + 2), relocate(reader.i32(water + 2))); water += 6;
-      }
-      if (!terminated) throw new Error('A water animation group has no terminator.');
-    }
-  }
+  const imported = importedAnimationTables(document);
+  if (imported.start !== tail) throw new Error('The graphics body and animation tables contain unaccounted source data.');
+  const animations = buildAnimationTables(edits.animations ?? imported.tables, output.offset, relocate);
+  output.write(animations.bytes);
+  for (const [field, offset] of [[0, animations.doors], [4, animations.lifts], [8, animations.switches]])
+    if (edits.animations !== undefined || reader.i32(field!) > 16) output.patchLong(field!, offset!);
   return output.finish();
 }
