@@ -5,7 +5,7 @@ import type { RoomSource, SourceRoom } from './roomSource';
 import type { RoomTopology } from './roomTopology';
 import { encodeWallSurface, type WallSurface } from './surfaces';
 import { wallForSpan } from './surfaceGeometry';
-import { closedPortalEdges, hasUpperLayer, newPortalTarget, portalWallSpans } from './portalWalls';
+import { changedPortalEdges, hasUpperLayer, newPortalTarget, portalWallSpans } from './portalWalls';
 
 export interface CellWalls { lower: GraphicsRecordInput[]; upper: GraphicsRecordInput[] }
 export interface NewRoomWallMaterials { lower: readonly WallSurface[]; upper?: readonly WallSurface[] }
@@ -52,10 +52,10 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
     if (walls.has(cell.id)) throw new Error('Wall geometry contains duplicate runtime room identities.');
     const room = source.rooms.find(room => room.id === cell.sourceId), template = document.zones.find(zone => zone.id === cell.recordZone);
     if (!room || !template) throw new Error(`Room ${cell.sourceId} has a missing wall source or settings template.`);
-    const closed = closedPortalEdges(document, cell), closing = closingMaterials.get(room.id);
-    if (closed.length && !closing?.walls.lower.length) throw new Error(`Room ${room.id.replace(/^room-/, '')} has a closed doorway needing a wall style. Select the room and apply its closure appearance before building.`);
-    if (closed.length && hasUpperLayer(document, template) && !closing?.walls.upper?.length)
-      throw new Error(`Room ${room.id.replace(/^room-/, '')} needs an upper wall style for its closed doorway. Apply its upper closure appearance before building.`);
+    const changed = changedPortalEdges(document, topology, cell), closing = closingMaterials.get(room.id);
+    if (changed.length && !closing?.walls.lower.length) throw new Error(`Room ${room.id.replace(/^room-/, '')} has a changed doorway needing a wall style. Select the room and apply its doorway repair appearance before building.`);
+    if (changed.length && hasUpperLayer(document, template) && !closing?.walls.upper?.length)
+      throw new Error(`Room ${room.id.replace(/^room-/, '')} needs an upper wall style for its changed doorway. Apply its upper doorway repair appearance before building.`);
     const outline = cell.vertices.map(id => {
       const point = points[id]; if (!point) throw new Error(`Room ${cell.sourceId} has a missing wall corner.`); return point;
     });
@@ -88,8 +88,8 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
           const line = document.lines[id]!; return on(a, line, { x: line.x + line.dx, z: line.z + line.dz }) && on(b, line, { x: line.x + line.dx, z: line.z + line.dz });
         });
         const opened = cell.vertices.some((_, edge) => cell.sourceLines[edge] === lineId && newPortalTarget(document, topology, cell, edge));
-        const closingLine = closed.some(edge => cell.sourceLines[edge] === lineId);
-        if (unchanged && retained(record) && !opened && !closingLine) return [{ sourceOffset: record.offset, bytes: document.files.graphics.slice(record.offset, record.offset + record.size) }];
+        const changedLine = changed.some(edge => cell.sourceLines[edge] === lineId);
+        if (unchanged && retained(record) && !opened && !changedLine) return [{ sourceOffset: record.offset, bytes: document.files.graphics.slice(record.offset, record.offset + record.size) }];
         if (lineId === undefined) {
           if (translatedWholeRoom) return [{ sourceOffset: record.offset, bytes: encodeWallSurface({ ...material,
             points: [pointId({ x: a.x + dx, z: a.z + dz }), pointId({ x: b.x + dx, z: b.z + dz })] }) }];
@@ -112,18 +112,18 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
           const from = last > first ? low : high, to = last > first ? high : low;
           const bound = wallForSpan(material, distance(a, b), [pointId(position(from)), pointId(position(to))], Math.abs(from - first), Math.abs(to - first));
           uncut.push(bound);
-          if (closed.includes(index)) continue;
+          if (changed.includes(index)) continue;
           const target = newPortalTarget(document, topology, cell, index);
           const spans = target ? portalWallSpans(document, bound, document.zones.find(zone => zone.id === target.recordZone)!) : [bound];
           result.push(...spans.map(span => ({ sourceOffset: record.offset, bytes: encodeWallSurface(span) })));
         }
-        if ((!opened && !closingLine) || !uncut.length) return result;
+        if ((!opened && !changedLine) || !uncut.length) return result;
         const starts = new Set(uncut.map(wall => wall.points[0])), ends = new Set(uncut.map(wall => wall.points[1]));
         const start = [...starts].filter(id => !ends.has(id)), end = [...ends].filter(id => !starts.has(id));
         if (start.length !== 1 || end.length !== 1) throw new Error(`Room ${room.id} has an ambiguous doorway material-lighting span.`);
         return result.map(item => ({ ...item, lightingSpan: [points[start[0]!]!, points[end[0]!]!] as const }));
       });
-      const fills = closed.flatMap(edge => (selected ?? []).map(material => {
+      const fills = changed.flatMap(edge => (selected ?? []).flatMap(material => {
         const start = document.points[material.points[0]], end = document.points[material.points[1]];
         if (!start || !end) throw new Error(`Room ${room.id} has a missing closure material endpoint.`);
         const a = cell.vertices[edge]!, b = cell.vertices[(edge + 1) % cell.vertices.length]!;
@@ -131,7 +131,10 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
         const piece = pieces.find(piece => on(points[a]!, piece.start, piece.end) && on(points[b]!, piece.start, piece.end));
         if (!piece) throw new Error(`Room ${room.id} lost its doorway closure material chain.`);
         const offset = piece.offset + distance(piece.start, points[a]!);
-        return { bytes: encodeWallSurface(wallForSpan(material, distance(start, end), [a, b], offset, offset + distance(points[a]!, points[b]!))), lightingPoint: closing!.lightingPoint };
+        const bound = wallForSpan(material, distance(start, end), [a, b], offset, offset + distance(points[a]!, points[b]!));
+        const target = newPortalTarget(document, topology, cell, edge);
+        const spans = target ? portalWallSpans(document, bound, document.zones.find(zone => zone.id === target.recordZone)!) : [bound];
+        return spans.map(span => ({ bytes: encodeWallSurface(span), lightingPoint: closing!.lightingPoint }));
       }));
       return [...original, ...fills];
     };

@@ -63,3 +63,14 @@ export function closedPortalFixture() {
   const appearance = { room: owner.id, lowerWall: choices.lower[0]!.offset, upperWall: null, lightingPoint: choices.points[0]! };
   return { ...fixture, baseline, removed, owner, document, appearance };
 }
+
+export function replacementPortalFixture() {
+  const fixture = closedPortalFixture();
+  const change = commitRoomDraft(fixture.document.roomSource, setDraftCorners(
+    beginRoomDraft(fixture.document, fixture.document.roomSource, fixture.removed.recordZone), fixture.removed.vertices));
+  let document = applyCommand(fixture.document, editRoomSource(change));
+  const replacement = document.roomSource.rooms.at(-1)!, choices = roomAppearanceChoices(document, replacement);
+  document = applyCommand(document, editRoomAppearance(document, { room: replacement.id, lowerWall: choices.lower[0]!.offset,
+    upperWall: null, lightingPoint: choices.points[0]! }));
+  return { ...fixture, document, replacement };
+}

@@ -42,8 +42,8 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
       throw new Error('A new doorway into a moving door or lift needs synchronized wall animation attachments before building. Choose a static room boundary.');
     if (cell.originZone !== null) {
       const line = cell.sourceLines[edge];
-      if (line === null || line === undefined || document.lines[line]!.connect >= 0)
-        throw new Error('Replacing an existing doorway or unassigned boundary needs an explicit wall material before building.');
+      if (line === null || line === undefined)
+        throw new Error('An unassigned boundary needs an explicit wall material before building.');
     }
   });
   const geometry = buildCellGraphics(document, source, topology, options.newRoomGraphics, options.closingRoomGraphics);

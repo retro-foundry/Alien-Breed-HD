@@ -26,6 +26,17 @@ export function closedPortalEdges(document: LevelDocument, cell: CompiledRoomCel
   });
 }
 
+/** Replace old portal materials when the generated boundary is solid or now
+ * opens into a different room. The new destination supplies the air bands. */
+export function changedPortalEdges(document: LevelDocument, topology: RoomTopology, cell: CompiledRoomCell): number[] {
+  if (cell.originZone === null) return [];
+  return cell.neighbours.flatMap((neighbour, edge) => {
+    const line = cell.sourceLines[edge];
+    return line != null && document.lines[line]!.connect >= 0
+      && (neighbour < 0 || newPortalTarget(document, topology, cell, edge)) ? [edge] : [];
+  });
+}
+
 export function hasUpperLayer(document: LevelDocument, zone: Zone): boolean {
   const reader = new BinaryReader(document.files.graphics, 'portal layer table');
   return reader.i32(reader.i32(12) + zone.id * 8 + 4) > 0 && zone.upperFloor > zone.upperCeiling;

@@ -46,7 +46,9 @@ starts/objects/teleports and explicit new-room appearance. Preview and export
 share the validated artifact, retain editable source, and map generated room
 IDs back to editor selections. Static new-room joins generate their openings,
 and imported doorway closures use explicit saved material/lighting selections.
-Controller groups and replacing existing portals remain required for
+Static imported portals can also reconnect to replacement authored rooms using
+the saved repair appearance and destination height bands. Controller groups and
+material assignment for boundaries without provenance remain required for
 unrestricted geometry authoring. Broader coverage is still needed
 before claiming the complete original editor workflow.
 Undo keeps the full action chain and has a 250-action

@@ -3,13 +3,13 @@ import { openLevel } from '../src/model/level';
 import { closedPortalEdges, hasUpperLayer, portalWallSpans } from '../src/model/portalWalls';
 import { buildPlayableLevel } from '../src/model/playableBuild';
 import { originalFiles } from './helpers';
-import { closedPortalFixture, importedPortalFixture } from './portalFixture';
+import { closedPortalFixture, importedPortalFixture, replacementPortalFixture } from './portalFixture';
 import { BinaryReader } from '../src/model/binary';
 import { buildCellGraphics } from '../src/model/cellGraphics';
 import { compileRoomTopology } from '../src/model/roomTopology';
 import { buildGeometryLighting } from '../src/model/geometryLighting';
 import { roomAppearanceBuildOptions, roomAppearanceChoices } from '../src/model/roomAppearance';
-import { applyCommand, editRoomAppearance, execute, redo, undo } from '../src/model/commands';
+import { applyCommand, editRoomAppearance, execute, numberPatch, redo, undo } from '../src/model/commands';
 import { decodeProject, encodeProject } from '../src/model/project';
 import { readWallSurface } from '../src/model/surfaces';
 import { importedDataTables } from '../src/model/dataBuild';
@@ -91,12 +91,12 @@ it('fills both storeys of a shipped two-floor doorway and rejects an omitted upp
   expect(() => buildCellGraphics(document, document.roomSource, topology, settings.newRoomGraphics,
     new Map([[room.id, { ...selected, walls: { ...selected.walls, upper: [] } }]]))).toThrow(/upper wall style/);
   expect(() => buildCellGraphics(document, document.roomSource, topology, settings.newRoomGraphics,
-    new Map([[room.id, { ...selected, walls: { ...selected.walls, lower: [] } }]]))).toThrow(/closed doorway needing a wall style/);
+    new Map([[room.id, { ...selected, walls: { ...selected.walls, lower: [] } }]]))).toThrow(/changed doorway needing a wall style/);
 });
 
 it('closes an imported doorway with explicitly selected material and lighting after deleting its neighbour', () => {
   const fixture = closedPortalFixture(), original = structuredClone(fixture.document.files);
-  expect(() => buildPlayableLevel(fixture.document, -1)).toThrow(/closed doorway needing a wall style/);
+  expect(() => buildPlayableLevel(fixture.document, -1)).toThrow(/changed doorway needing a wall style/);
   let history = execute({ document: fixture.document, past: [], future: [] }, editRoomAppearance(fixture.document, fixture.appearance));
   const restored = decodeProject(encodeProject(history.document));
   expect(restored.roomAppearances).toEqual([fixture.appearance]);
@@ -122,10 +122,49 @@ it('closes an imported doorway with explicitly selected material and lighting af
     expect(generatedPoints[id]!.lowerBrightness).toBe(sourcePoints[fixture.appearance.lightingPoint]!.lowerBrightness);
     expect(generatedPoints[id]!.upperBrightness).toBe(sourcePoints[fixture.appearance.lightingPoint]!.upperBrightness);
   }
-  history = undo(history); expect(() => buildPlayableLevel(history.document, -1)).toThrow(/closed doorway needing a wall style/);
+  history = undo(history); expect(() => buildPlayableLevel(history.document, -1)).toThrow(/changed doorway needing a wall style/);
   history = redo(history); expect(buildPlayableLevel(history.document, -1).document.files).toEqual(built.document.files);
   expect(fixture.document.files).toEqual(original);
 });
+
+it('replaces an imported portal with a new room, using selected material for its remaining lintel and preserving source', () => {
+  const fixture = replacementPortalFixture(), before = structuredClone(fixture.document.files);
+  expect(() => buildPlayableLevel(fixture.document, -1)).toThrow(/changed doorway needing a wall style/);
+  const document = applyCommand(fixture.document, editRoomAppearance(fixture.document, fixture.appearance));
+  const restored = decodeProject(encodeProject(document)), settings = roomAppearanceBuildOptions(restored);
+  const topology = compileRoomTopology(restored, restored.roomSource), owner = topology.cells.find(cell => cell.sourceId === fixture.owner.id)!;
+  const destination = topology.cells.find(cell => cell.sourceId === fixture.replacement.id)!;
+  expect(owner.neighbours).toContain(destination.id);
+  const graphics = buildCellGraphics(restored, restored.roomSource, topology, settings.newRoomGraphics, settings.closingRoomGraphics);
+  const generated = graphics.streams.get(owner.id)!.lower.filter(item => item.sourceOffset === undefined);
+  expect(generated).toHaveLength(1);
+  const wall = readWallSurface(new BinaryReader(generated[0]!.bytes, 'replacement lintel'), 0);
+  const target = restored.zones[destination.recordZone]!, template = restored.zones[owner.recordZone]!;
+  expect(wall.topFixed).toBe(template.ceiling * 256); expect(wall.bottomFixed).toBe(target.ceiling * 256);
+  expect(wall.texture).toBe(template.lower.find(record => record.offset === fixture.appearance.lowerWall)!.texture);
+  const built = buildPlayableLevel(restored, -1);
+  expect(built.topology!.cells[owner.id]!.neighbours).toContain(destination.id);
+  expect(built.topology!.cells[destination.id]!.neighbours).toContain(owner.id);
+  expect(fixture.document.files).toEqual(before);
+});
+
+it.each([{ floorShift: 0, roofShift: 0 }, { floorShift: -32, roofShift: 16 }])(
+  'rebuilds replacement portal bands for floor shift $floorShift and roof shift $roofShift', ({ floorShift, roofShift }) => {
+    const fixture = replacementPortalFixture(), own = fixture.document.zones[fixture.owner.recordZone]!, target = fixture.document.zones[fixture.replacement.recordZone]!;
+    const floor = own.floor + floorShift, roof = own.ceiling + roofShift;
+    let document = applyCommand(fixture.document, { label: 'Replacement template heights', patches: [
+      numberPatch(fixture.document, 'data', target.offset + 2, floor * 256, 4),
+      numberPatch(fixture.document, 'data', target.offset + 6, roof * 256, 4),
+    ] });
+    document = applyCommand(document, editRoomAppearance(document, fixture.appearance));
+    const settings = roomAppearanceBuildOptions(document), topology = compileRoomTopology(document, document.roomSource);
+    const owner = topology.cells.find(cell => cell.sourceId === fixture.owner.id)!;
+    const graphics = buildCellGraphics(document, document.roomSource, topology, settings.newRoomGraphics, settings.closingRoomGraphics);
+    const bands = graphics.streams.get(owner.id)!.lower.filter(item => item.sourceOffset === undefined)
+      .map(item => readWallSurface(new BinaryReader(item.bytes, 'replacement heights'), 0)).map(wall => [wall.topFixed, wall.bottomFixed]);
+    expect(bands).toEqual(floorShift === 0 ? [] : [[own.ceiling * 256, roof * 256], [floor * 256, own.floor * 256]]);
+    expect(() => buildPlayableLevel(document, -1)).not.toThrow();
+  });
 
 it('retains the middle band between real upper and lower layers and ignores absent upper streams', () => {
   const document = openLevel('two floors', originalFiles(1));

@@ -76,15 +76,18 @@ always keeps the editable outlines, appearance and gameplay links.
 Touching a new room against a static room boundary creates the doorway
 automatically. Its wall graphics leave the correct steps and lintels for the
 destination heights. If deleting or moving an imported neighbour closes an old
-doorway, select the remaining room, choose its Doorway closure appearance and
+doorway, select the remaining room, choose its Doorway repair appearance and
 click Apply appearance. This fills the closed opening with the chosen wall
 style and lighting; existing wall styles remain authored. The choice is saved
 with the project and supports undo/redo. A missing closure choice stops a build
 with instructions rather than exporting a collision wall with a visual hole.
+If a new room replaces the old neighbour, the same repair appearance generates
+the steps and lintels around the new destination's opening. Matching heights
+remove the old wall pieces entirely, leaving a full-height doorway.
 
 The application is not yet a complete replacement for the original editor.
-Broader material/asset authoring, source AMOS project adapters, replacing existing
-portals and openings into moving volumes, split mechanism/controller groups, control paths and full 3D surface
+Broader material/asset authoring, source AMOS project adapters, unassigned boundary
+materials and openings into moving volumes, split mechanism/controller groups, control paths and full 3D surface
 picking are still being implemented. Unsupported builds produce an actionable
 error and preserve source; they never export stale geometry in its place.
 

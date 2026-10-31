@@ -44,7 +44,7 @@ Each item needs implementation and direct verification before completion.
 | Open all original levels | Parse all 16 actual level triplets; labelled 2D geometry and object checks | All 16 pass model and browser checks |
 | Open/save AMOS projects | `.dat`, `.obj`, `.links` field contracts and round trips from original save/load routines | Checked reader/writer and constructed blank-source contracts pass; real authored-file, UI and compiler integration pending |
 | Lossless game data import/export | Exact unchanged round trips, including unknown records and visibility data | All 16 exact triplet round trips pass |
-| Geometry creation and editing | Points, sectors, shared portals, split/delete/join operations, upper/lower rooms; playable exports | Source outlines, static new-room openings and explicit imported doorway closures build/play/export; replacing portals, broader topology operations and controller groups pending |
+| Geometry creation and editing | Points, sectors, shared portals, split/delete/join operations, upper/lower rooms; playable exports | Source outlines, static new-room openings, imported doorway closures and replacements with authored neighbours build/play/export; unassigned boundaries, broader topology operations and controller groups pending |
 | Automatic geometry orientation | Either drawing/import direction produces the same valid geometry; shared portals paired automatically; no user-facing winding setting | Normalisation, partial-wall pairing and concave partition tests pass; canvas/compiler integration pending |
 | Materials and lighting | Wall/floor/roof textures, alignment/scaling, vertex/zone light and animations; rendered comparisons | Pending |
 | Objects and starts | Add/move/delete real object types, player starts, exit zone; engine playback | Pending |
@@ -960,3 +960,29 @@ fixtures can establish current-format support independently.
   opening/closure scenarios also pass after the final split-wall and upper-layer
   validation changes. Closure commit `06cd281` is pushed; its own remote editor
   CI is still running and is not counted as passed here.
+
+- An imported static portal can now connect to a replacement authored room.
+  The saved appearance is presented as Doorway repair appearance and handles
+  both closing and replacing a doorway. Replacements remove the old edge's
+  material fragments, bind the selected style to the source wall chain and
+  subtract the new destination's native air bands. This retains the correct
+  steps/lintels or removes all old portal pieces for matching heights. Original
+  unchanged portals still retain their authored graphics. Replacement identity
+  comes from source provenance rather than the runtime number, which can be
+  reused after deletion. The existing project appearance fields, explicit
+  lighting and ordered stream insertion are shared with closures; no material
+  is inferred from the room being removed. Missing appearance remains an
+  actionable build error. Moving-volume joins and boundaries without source
+  provenance still need their own authoring/attachment implementation.
+  All 631 model tests and production build pass. Six focused browser scenarios
+  pass in Chromium/Firefox, covering openings, solid closures and actual
+  keyboard movement through the replacement doorway after UI appearance
+  selection and export. Additional full-build model scenarios cover a changed
+  step/lintel and a full-height opening, with project/source preservation.
+  Screenshot camera directions now follow renderer.c's player-arrow
+  sine/cosine convention; inspected captures show the replacement opening
+  rather than the wall behind the player. The six browser scenarios pass
+  again after this test-camera correction; game rendering/input is unchanged.
+  The surrounding 84 browser cases passed at the prior closure milestone;
+  that full suite has not been repeated for this replacement change.
+  The complete editor requirements and deployment remain unfinished.

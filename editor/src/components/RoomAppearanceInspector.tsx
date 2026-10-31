@@ -16,9 +16,9 @@ export function RoomAppearanceInspector({ document, room, edit }: {
     setLight(selected ? String(selected.lightingPoint) : '');
   }, [room.id, selected?.lowerWall, selected?.upperWall, selected?.lightingPoint]);
   const hasUpper = choices.template.upper.length > 0, imported = room.originZone !== null;
-  return <section className="property-section"><h3>{imported ? 'Doorway closure appearance' : 'Room appearance'}</h3>
+  return <section className="property-section"><h3>{imported ? 'Doorway repair appearance' : 'Room appearance'}</h3>
     <p className="field-note">{imported
-      ? 'Choose the style and lighting for walls that close doorways after adjoining rooms are removed or moved. Existing wall styles stay as authored.'
+      ? 'Choose the style and lighting for doorways that close or lead into a replacement room. Steps and lintels follow the destination heights; other wall styles stay as authored.'
       : "Choose wall styles and template lighting for the new perimeter. Walls fill this room's floor-to-ceiling height."}</p>
     <form onSubmit={event => { event.preventDefault(); edit(() => editRoomAppearance(document, {
       room: room.id, lowerWall: Number(lower), upperWall: hasUpper ? Number(upper) : null, lightingPoint: Number(light),
