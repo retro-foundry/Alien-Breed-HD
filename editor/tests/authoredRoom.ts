@@ -4,8 +4,7 @@ import { BinaryReader } from '../src/model/binary';
 import { buildDataPrefix, importedDataTables } from '../src/model/dataBuild';
 import { buildGraphicsStreams } from '../src/model/graphicsBuild';
 import { buildZoneRecords } from '../src/model/zoneBuild';
-import { buildCellPolygons } from '../src/model/surfaceGeometry';
-import { buildCellWallGeometry } from '../src/model/wallGeometry';
+import { buildCellGraphics } from '../src/model/cellGraphics';
 import { normaliseRoomOutline } from '../src/model/geometry';
 import { openLevel, type LevelDocument } from '../src/model/level';
 import { applyCommand, setStart } from '../src/model/commands';
@@ -28,21 +27,18 @@ export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
   const roomSource = commitRoomDraft(original.roomSource,
     setDraftCorners(beginRoomDraft(original, original.roomSource, template.id), vertices)).after;
   const topology = compileRoomTopology(original, roomSource);
-  const wallGeometry = buildCellWallGeometry(original, roomSource, topology,
-    new Map([[topology.cells.find(cell => cell.id === id)!.sourceId, { lower: [wall] }]]));
+  const cellGraphics = buildCellGraphics(original, roomSource, topology,
+    new Map([[topology.cells.find(cell => cell.id === id)!.sourceId, { walls: { lower: [wall] },
+      wallInsertion: { lower: template.lower.findIndex(record => record.wall) } }]]));
   const remapped = buildRoomDataReferences(original, roomSource, topology, prefix);
   const addedCells = topology.cells.filter(cell => cell.id === id);
-  const polygons = buildCellPolygons(original, { ...topology, cells: addedCells }).get(id)!;
-  const visibility = buildSourceVisibility({ ...topology, cells: addedCells }, new Map([[id, pointIds]]));
+  const visibility = buildSourceVisibility({ ...cellGraphics.topology, cells: addedCells }, new Map([[id, cellGraphics.pointReferences.get(id)!]]));
   const records = original.zones.map(zone => ({ id: zone.id, header: remapped.headers.get(zone.id)!,
     boundaries: zone.boundaryIds, cornerWalls: zone.wallIds, visibility: zone.visibility, rotationPoints: zone.rotationPointIds }));
   const rooms = buildZoneRecords(remapped.data, [...records, { id,
     header: remapped.headers.get(id)!, boundaries: vertices.map((_, index) => original.lines.length + index),
     cornerWalls: [], ...visibility.rooms.get(id)! }]);
-  const lower = [
-    ...wallGeometry.walls.get(id)!.lower.map(record => record.bytes),
-    ...polygons.lower.map(record => record.bytes),
-  ];
+  const lower = cellGraphics.streams.get(id)!.lower.map(record => record.bytes);
   const graphics = buildGraphicsStreams(original, undefined, id + 1, { additions: [{ id, lower }] });
   const graphView = new DataView(graphics.buffer); rooms.offsets.forEach((offset, zone) => graphView.setInt32(16 + zone * 4, offset));
   const links = new Uint8Array(original.connectTableOffset + input.points.length * 4).fill(255);

@@ -613,3 +613,24 @@ fixtures can establish current-format support independently.
   source-reference authoring and full UI build/export integration are required.
   Fractional decoration endpoints fail with a grid-alignment diagnostic rather
   than exporting rounded, off-boundary geometry. No new editor deployment yet.
+- Complete cell graphics now combine regenerated polygons and walls at their
+  original stream positions, retaining clip setters, object draw passes and
+  backdrop controls in order. Upper-stream absence remains distinct from an
+  empty stream. New-room wall batches use an explicit insertion position in
+  the selected material template, including placement relative to water and
+  before/after-water object passes. The compiler returns all generated graphics
+  point references for the visibility/rotation stage.
+  `AB3DI.s:LightDraw` consumes two point indices. Opcode 6 parsing now exposes
+  and validates both instead of treating them as unreferenced payload bytes.
+  Arc and light-beam points translate with an imported room, retaining all
+  other payload fields; unsupported reshaping requires geometry mapping.
+  All sixteen maps pass ordered cell-stream checks. Whole-room records remain
+  byte exact; decomposed rooms preserve source record order. Dedicated cases
+  check water/object sequencing, invalid insertion settings, arc/beam point
+  movement, complete rotation references and unchanged input geometry.
+  The generated-room fixture uses the complete stream builder. Its native
+  render, selection, spawn and playtest checks pass in Chromium and Firefox.
+  All 522 unit checks and the build pass. Source animation attachment mapping,
+  point brightness generation, portal height openings, general decorative
+  geometry mapping and full compiler/UI integration remain required before
+  deployment.

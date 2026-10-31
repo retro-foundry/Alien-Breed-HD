@@ -19,7 +19,7 @@ export function readGraphicRecord(reader: BinaryReader, cursor: number, points: 
     }
   } else if (type === 3 || type === 12) size = 2;
   else if (type === 4) size = 4;
-  else if (type === 6) size = 6;
+  else if (type === 6) { size = 6; entry.points = [reader.i16(payload), reader.i16(payload + 2)]; }
   else if ([1, 2, 7, 8, 9, 10, 11].includes(type)) {
     const sides = reader.i16(payload + 2) + 1;
     if (sides < 0 || sides > 100) throw new LevelFormatError('polygon has an invalid vertex count', reader.name, payload + 2);
