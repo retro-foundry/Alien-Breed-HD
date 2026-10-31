@@ -22,10 +22,13 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
   const [actualExit, setActualExit] = useState<number>();
   const [spawnZone, setSpawnZone] = useState<number>();
   const revisionRef = useRef(0), pendingPlay = useRef(false);
+  const reloadTimer = useRef<number | undefined>(undefined);
+  const failedDocument = useRef<LevelDocument | undefined>(undefined);
   const current = useRef({ document, selection, layer, onSelectZone });
   current.current = { document, selection, layer, onSelectZone };
   const send = (type: string, detail: object = {}) => frame.current?.contentWindow?.postMessage({ source: 'ab3d-editor', type, ...detail }, location.origin);
   function stopInvalidPreview(message: string, notice: string) {
+    failedDocument.current = current.current.document;
     send('play', { playing: false }); pendingPlay.current = false; setPlaying(false); setStarting(false); setLoaded(false);
     setNotice(notice); setError(message);
   }
@@ -48,7 +51,14 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
   }
 
   function load(play = false) {
-    if (!ready) return;
+    if (!ready || (!play && (pendingPlay.current || failedDocument.current === current.current.document))) return;
+    if (play) failedDocument.current = undefined;
+    // An explicit play request supersedes the debounced inspection load.
+    // Otherwise a slow first load can receive a second, paused load request
+    // before its reply arrives, clearing the user's pending play intent.
+    if (play && reloadTimer.current !== undefined) {
+      window.clearTimeout(reloadTimer.current); reloadTimer.current = undefined;
+    }
     if (!sourceMatchesLevel(current.current.document)) {
       stopUnbuiltPreview(); return;
     }
@@ -74,7 +84,10 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
         if (pendingPlay.current) { pendingPlay.current = false; setPlaying(true); setStarting(false); send('play', { playing: true }); }
         else positionCamera();
       }
-      if (message.type === 'error') { setError(message.message ?? 'The engine preview stopped.'); setStarting(false); }
+      if (message.type === 'error') {
+        failedDocument.current = current.current.document; pendingPlay.current = false;
+        setError(message.message ?? 'The engine preview stopped.'); setStarting(false); setPlaying(false); setLoaded(false);
+      }
       if (message.type === 'stopped') { setPlaying(false); setStarting(false); setNotice('Playtest ended. Build and play again to restart.'); }
       if (message.type === 'pick' && message.zone !== undefined && message.zone >= 0) current.current.onSelectZone(message.zone);
     };
@@ -84,9 +97,10 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
 
   useEffect(() => {
     if (!ready || playing || starting) return;
-    const timer = window.setTimeout(() => load(), 180);
-    return () => window.clearTimeout(timer);
-  }, [ready, document, slot, playing]);
+    const timer = window.setTimeout(() => { reloadTimer.current = undefined; load(); }, 180);
+    reloadTimer.current = timer;
+    return () => { window.clearTimeout(timer); if (reloadTimer.current === timer) reloadTimer.current = undefined; };
+  }, [ready, document, slot, playing, starting]);
   useEffect(() => {
     if (ready && !sourceMatchesLevel(document)) {
       stopUnbuiltPreview();
@@ -99,6 +113,11 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
   }, [ready, playing]);
 
   function stop() { send('play', { playing: false }); setPlaying(false); setStarting(false); pendingPlay.current = false; }
+  function reloadEngine() {
+    pendingPlay.current = false; failedDocument.current = undefined;
+    setPlaying(false); setStarting(false); setReady(false); setLoaded(false); setError(''); setNotice('Loading the game engine…');
+    frame.current?.contentWindow?.location.reload();
+  }
   return <section className="engine-preview" aria-label="3D game engine preview" data-revision={revision} data-rendered-pixels={nonblack} data-level-slot={actualSlot} data-exit-zone={actualExit} data-spawn-zone={spawnZone}>
     <div className="engine-toolbar"><span className="eyebrow">3D VIEW</span><span className="engine-status" role="status">{playing ? 'Playtest running' : notice}</span>
       <label className="engine-slot">Slot <select aria-label="Playtest level slot" title="Choose the project's game level slot. Saved with your project and undoable; this controls the game's level-specific setup." value={slot} disabled={playing || starting} onChange={event => onSlotChange(Number(event.target.value))}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>{i + 1}</option>)}</select></label>
@@ -106,7 +125,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
     </div>
     <div className="engine-stage"><iframe ref={frame} title="Alien Breed game engine" src={`${import.meta.env.BASE_URL}runtime/frame.html`} allow="autoplay; fullscreen" onError={() => setError('The game preview could not be loaded. Your map is still available. Reload the preview to try again.')} />
       {!playing && loaded && <span className="engine-crosshair" aria-hidden="true">+</span>}
-      {error && <div className="engine-error" role="alert"><Icon name="alert" /><p>{error}</p><button title="Restart the preview engine. Your editable document is kept." onClick={() => { setReady(false); setLoaded(false); setError(''); setNotice('Loading the game engine…'); frame.current?.contentWindow?.location.reload(); }}>Reload engine</button></div>}
+      {error && <div className="engine-error" role="alert"><Icon name="alert" /><p>{error}</p><button title="Restart the preview engine. Your editable document is kept." onClick={reloadEngine}>Reload engine</button></div>}
     </div>
     <div className="engine-controls">{playing ? <span>Click to capture mouse · WASD move · C crouch · Space use · Esc release mouse · Stop returns to editing</span> : <><button disabled={!loaded} aria-label="Turn preview left" title="Turn the inspection camera left. Left Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: -256 })}>←</button><button disabled={!loaded} aria-label="Turn preview right" title="Turn the inspection camera right. Right Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: 256 })}>→</button><button disabled={!loaded} aria-label="Look up in preview" title="Look up. Up Arrow also looks up when the 3D view has focus." onClick={() => send('turn', { look: -12 })}>↑</button><button disabled={!loaded} aria-label="Look down in preview" title="Look down. Down Arrow also looks down when the 3D view has focus." onClick={() => send('turn', { look: 12 })}>↓</button><span>Select a zone to visit · Click the view to select under the crosshair and focus arrow keys</span></>}
       <details className="engine-key-help"><summary title="Show the keys for the current 3D mode. Enter or Space opens this list.">Controls</summary><div><strong>{playing ? 'Playtest controls' : '3D inspection controls'}</strong>{(playing ? playKeys : previewKeys).map(([key, action]) => <p key={key}><span>{action}</span><kbd>{key}</kbd></p>)}</div></details>

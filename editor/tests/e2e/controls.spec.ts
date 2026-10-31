@@ -48,3 +48,63 @@ test('3D controls explain the current mode and tooltips stay inside a narrow vie
   await expect(page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas')).toHaveAttribute('title', /C: Crouch/);
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
 });
+
+test('starting play before the initial preview loads survives delayed engine replies', async ({ page }) => {
+  await page.addInitScript(() => {
+    if (window !== window.top) return;
+    const earliestPlay = new MutationObserver(() => {
+      const button = [...document.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Build & play');
+      if (button && !button.disabled) { earliestPlay.disconnect(); button.click(); }
+    });
+    earliestPlay.observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
+    const delayed = new WeakSet<Event>();
+    window.addEventListener('message', event => {
+      if (delayed.has(event) || event.data?.source !== 'ab3d-engine' || event.data.type !== 'loaded') return;
+      // Keep the actual engine load/renderer. Delay delivery of its completed
+      // reply past the automatic-preview debounce to exercise the load race.
+      event.stopImmediatePropagation();
+      const reply = new MessageEvent('message', { data: event.data, origin: event.origin, source: event.source });
+      delayed.add(reply); setTimeout(() => window.dispatchEvent(reply), 600);
+    }, true);
+  });
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  const preview = page.getByRole('region', { name: '3D game engine preview' });
+  await expect(preview.getByRole('status')).toHaveText('Playtest running', { timeout: 60000 });
+  await expect(preview.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
+  await preview.locator('.engine-key-help summary').click();
+  await expect(preview.getByText('Playtest controls', { exact: true })).toBeVisible();
+  await preview.getByRole('button', { name: 'Stop', exact: true }).click();
+});
+
+test('a rejected play load remains actionable and engine reload can start a fresh playtest', async ({ page }) => {
+  await page.addInitScript(() => {
+    if (window === window.top) {
+      const earliestPlay = new MutationObserver(() => {
+        const button = [...document.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Build & play');
+        if (button && !button.disabled) { earliestPlay.disconnect(); button.click(); }
+      });
+      earliestPlay.observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
+    } else {
+      window.addEventListener('message', event => {
+        if (event.source !== parent || event.data?.source !== 'ab3d-editor' || event.data.type !== 'load'
+          || sessionStorage.getItem('ab3d-editor-test-rejected-load')) return;
+        sessionStorage.setItem('ab3d-editor-test-rejected-load', '1');
+        // Exercise the real iframe's rejection path, without corrupting level
+        // bytes or replacing the native game/renderer with a mock.
+        event.data.slot = 16;
+      }, true);
+    }
+  });
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  const preview = page.getByRole('region', { name: '3D game engine preview' });
+  await expect(preview.getByRole('alert')).toContainText('Invalid level slot', { timeout: 60000 });
+  await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await preview.getByRole('button', { name: 'Reload engine', exact: true }).click();
+  await expect(preview.getByRole('status')).toHaveText('138 zones loaded · Game engine', { timeout: 60000 });
+  await preview.getByRole('button', { name: 'Build & play', exact: true }).click();
+  await expect(preview.getByRole('status')).toHaveText('Playtest running');
+  await expect(preview.getByRole('alert')).toHaveCount(0);
+  await preview.getByRole('button', { name: 'Stop', exact: true }).click();
+});

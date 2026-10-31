@@ -6,6 +6,7 @@ import { BinaryReader } from './binary';
 import { restoreSourceStarts } from './sourceStarts';
 import { runtimeObjectPosition, validateSourceObjects } from './sourceObjects';
 import { restoreSourceTeleports } from './sourceTeleports';
+import { resolveAnimationRoom } from './animationRooms';
 
 export interface ReferenceDiagnostic { severity: 'error' | 'warning'; subject: string; message: string }
 export interface RoomReferencePlan {
@@ -111,7 +112,8 @@ export function planRoomReferences(document: LevelDocument, source: RoomSource, 
     switches.set(item.id, locate(item.zone, { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }, `Switch ${item.id}`));
   }
   const mechanisms = document.mechanisms.map(item => {
-    const cells = (byOrigin.get(item.zone) ?? []).map(cell => cell.id);
+    const origin = resolveAnimationRoom(document, item.zone, item.kind === 'lift');
+    const cells = (origin === undefined ? [] : byOrigin.get(origin) ?? []).map(cell => cell.id);
     if (!cells.length) error(`${item.kind} ${item.id}`, `Its controlled room ${item.zone} was deleted. Remove or reassign this mechanism before building.`);
     return { kind: item.kind, id: item.id, cells };
   });

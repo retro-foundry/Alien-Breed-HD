@@ -6,6 +6,7 @@ import type { GeneratedGraphicsTarget, SelectGraphicsTarget } from './generatedG
 import { readGraphicRecord, type Graphic } from './graphics';
 import type { LevelDocument } from './level';
 import type { PointLightingBinding } from './pointLighting';
+import { resolveAnimationRoom } from './animationRooms';
 
 const key = (pointer: number, context: AnimationTargetContext) => `${pointer}:${context.kind}:${context.zone}:${context.line ?? ''}`;
 const on = (p: { x: number; z: number }, a: { x: number; z: number }, b: { x: number; z: number }) =>
@@ -24,10 +25,8 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
   const points = topology.points.map(point => ({ ...point })), addedLighting = new Map<number, PointLightingBinding>();
   const origins = new Map<number, number[]>();
   for (const cell of topology.cells) if (cell.originZone !== null) origins.set(cell.originZone, [...(origins.get(cell.originZone) ?? []), cell.id]);
-  const capacity = (new BinaryReader(document.files.graphics, 'source graphics').i32(12) - 16) / 4;
-  const sourceRoom = (id: number, aliases: boolean) => aliases && id >= capacity ? document.zones.find(zone => zone.fileId === id)?.id : id;
   const rooms = (id: number, aliases = false) => {
-    const source = sourceRoom(id, aliases), result = source === undefined ? undefined : origins.get(source);
+    const source = resolveAnimationRoom(document, id, aliases), result = source === undefined ? undefined : origins.get(source);
     if (!result?.length) throw new Error(`Animation room ${id} was deleted or has no generated geometry. Remove or reassign its animation before building.`);
     return result;
   };

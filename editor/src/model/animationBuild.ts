@@ -1,6 +1,7 @@
 import { BinaryReader, checkedInteger } from './binary';
 import type { LevelDocument } from './level';
 import { BinaryWriter } from './writer';
+import { resolveAnimationRoom } from './animationRooms';
 
 export interface AnimationWall { line: number; graphic: number; base: number }
 export interface MovingRoomAnimation { header: Uint8Array; zone: number; graphic: number; walls: readonly AnimationWall[] }
@@ -18,10 +19,9 @@ export interface AnimationTables {
  * record fields and graphics identities remain separate compiler concerns.
  * Match native direct-index preference and lift/water file-ID fallback. */
 export function remapAnimationRooms(document: LevelDocument, tables: AnimationTables, ids: ReadonlyMap<number, number>): AnimationTables {
-  const capacity = (new BinaryReader(document.files.graphics, 'twolev.graph.bin').i32(12) - 16) / 4;
   const room = (id: number, aliases = false): number => {
-    const source = aliases && id >= capacity ? document.zones.find(zone => zone.fileId === id)?.id : id;
-    const target = source === undefined || !document.zones.some(zone => zone.id === source) ? undefined : ids.get(source);
+    const source = resolveAnimationRoom(document, id, aliases);
+    const target = source === undefined ? undefined : ids.get(source);
     if (target === undefined) throw new Error(`Animation room ${id} has no generated room mapping.`);
     return checkedInteger(target, 0, 255, 'Generated animation room');
   };
@@ -64,7 +64,7 @@ export function importedAnimationTables(document: LevelDocument): { start: numbe
     for (;;) {
       const zone = reader.i16(cursor); cursor += 2;
       if (zone === -1) break;
-      if (entries.length >= 256 || !document.zones.some(room => room.id === zone || room.fileId === zone)) throw new Error('A water animation has an invalid room list.');
+      if (entries.length >= 256 || resolveAnimationRoom(document, zone, true) === undefined) throw new Error('A water animation has an invalid room list.');
       entries.push({ zone, graphic: reader.i32(cursor) }); cursor += 4;
     }
     water.push({ header, entries });
@@ -91,9 +91,8 @@ export function importedAnimationTables(document: LevelDocument): { start: numbe
 export function validateAnimationReferences(document: LevelDocument): void {
   const { tables } = importedAnimationTables(document);
   const graphics = new Map(document.zones.flatMap(zone => [...zone.lower, ...zone.upper].map(record => [record.offset, record] as const)));
-  const slots = (new BinaryReader(document.files.graphics, 'twolev.graph.bin').i32(12) - 16) / 4;
   const room = (id: number, subject: string, aliases = false) => {
-    if (!document.zones.some(zone => zone.id === id || (aliases && id >= slots && zone.fileId === id))) throw new Error(`${subject} refers to missing room ${id}. Repair its room link before previewing.`);
+    if (resolveAnimationRoom(document, id, aliases) === undefined) throw new Error(`${subject} refers to missing room ${id}. Repair its room link before previewing.`);
   };
   const target = (pointer: number, types: readonly number[], relative: number, subject: string) => {
     const record = graphics.get(pointer - relative);

@@ -829,3 +829,37 @@ fixtures can establish current-format support independently.
   including original-map loading in both browsers. Portal openings, new object
   creation, full mechanism authoring and normal source Build & Play integration
   remain pending; no finished-editor deployment has been made.
+
+- Animation room resolution is now shared by import validation, animation
+  remapping, geometry attachments and source dependency planning. This fixes a
+  valid lift file-ID alias being reported as a deleted room by the reference
+  stage after the other stages had accepted it. The rule follows
+  `src/level.c` lift parsing and `normalize_amiga_water_list`: in-range words
+  address raw room slots; only out-of-range lift/water words resolve stored
+  file IDs. Doors and switches continue to require direct room indices. An
+  in-range missing slot cannot redirect to an unrelated stored file ID.
+  Regression fixtures compile lift/water aliases to exactly the same complete
+  generated triplets as their canonical equivalents, retain source bytes, and
+  diagnose deletion of the resolved lift volume. This clears one compiler
+  integration edge case; normal source Build & Play remains unfinished.
+
+- CI exposed a real initial-preview/play race in the narrow Firefox controls
+  scenario. Build & Play could become enabled while the automatic inspection
+  reload was still queued. If the play load's reply took longer than that
+  debounce, the inspection request overwrote the pending play intent and left
+  the engine paused. Explicit play requests now cancel queued inspection
+  reloads; automatic loads cannot replace a pending play request, and the
+  debounce lifecycle observes the starting state. A deterministic regression
+  clicks the earliest enabled play button and delays replies from the actual
+  engine. It reproduced the old paused state before the fix. The native game
+  simulation and its controls are unchanged. Failed load replies also clear
+  pending play/starting state, retain an actionable error, and suppress automatic
+  retries for that failed document; a changed document or explicit retry/reload
+  can try again. Reload engine clears the old intent and starts a fresh host.
+  A second browser regression exercises the real iframe's invalid-slot rejection
+  followed by a successful reload/play sequence. Production build and all 615
+  model tests pass. Both new scenarios and the original narrow controls case
+  pass in Chromium/Firefox, alongside existing native map loading, authored
+  spawn/object/teleport, persistence and source-guard browser regressions. The
+  new commit still needs its own remote CI result; the earlier failure was
+  investigated rather than treated as a completed cross-platform check.
