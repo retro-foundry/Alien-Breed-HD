@@ -17,8 +17,14 @@ export function wallForSpan(template: WallSurface, templateLength: number, point
     || startDistance < 0 || endDistance <= startDistance) throw new Error('Wall binding requires a nonzero material reference length and an increasing physical span.');
   points.forEach(point => checkedInteger(point, 0, 2047, 'Wall point index'));
   if (points.length !== 2 || points[0] === points[1]) throw new Error('A generated wall needs two different endpoints.');
-  const column = (distance: number) => checkedInteger(template.stripStart + Math.trunc((distance / templateLength) * (template.stripEnd - template.stripStart)),
-    -32768, 32767, 'Generated wall texture column');
+  const column = (distance: number) => {
+    const texels = (distance / templateLength) * (template.stripEnd - template.stripStart), nearest = Math.round(texels);
+    // Subtracting arc distances on a diagonal can put an exact texel boundary
+    // a few floating-point ULPs below its integer. Preserve that boundary;
+    // ordinary fractional columns still use the original truncation rule.
+    const integral = Math.abs(texels - nearest) <= Number.EPSILON * 8 * Math.max(1, Math.abs(texels)) ? nearest : Math.trunc(texels);
+    return checkedInteger(template.stripStart + integral, -32768, 32767, 'Generated wall texture column');
+  };
   return { ...template, points: [...points], stripStart: column(startDistance), stripEnd: column(endDistance) };
 }
 

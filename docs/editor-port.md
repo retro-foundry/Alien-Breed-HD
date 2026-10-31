@@ -588,3 +588,28 @@ fixtures can establish current-format support independently.
   the room-53 camera sweeps described above (two native engine tests).
   Source geometry-to-stream generation and automatic attachment allocation
   still need implementation before normal UI builds can use this assembler.
+- Wall geometry now binds original boundary material records to changed and
+  split source edges, retaining record identities for animation mapping.
+  Partial boundary decorations get regenerated endpoint IDs in the returned
+  compiler point table. Texture density, horizontal/vertical phases, sampling
+  masks, brightness and fixed-point heights retain their authored meanings
+  from `WallRoutine3.ChipMem.s`. Interior decorations support exact whole-room
+  translation. New-room perimeter materials are supplied explicitly; concave
+  decomposition does not generate walls across its internal portals.
+  An audit of all 7,628 shipped straight walls found 7,580 exact boundary
+  matches, 46 partial spans and two interior decorations. Unchanged room walls
+  retain their bytes. Translation/regeneration checks cover every original
+  straight wall across all sixteen maps, including total segment lengths and
+  strip coverage when a room decomposes. Further cases check stretched walls,
+  split-edge texture continuity, partial decorations and concave perimeters.
+  A diagonal decoration exposed floating-point cancellation one texel below
+  an exact boundary; the shared span binder now snaps only values within eight
+  scaled machine epsilons of an integer and retains truncation elsewhere.
+  The generated-room integration fixture now uses this wall stage. Its actual
+  native render, picking, spawn and gameplay checks pass in both browsers.
+  All 503 unit checks and the build pass.
+  This remains a compiler stage: general non-rigid interior-decoration mapping,
+  stream/control ordering, new portal height openings, attachment allocation,
+  source-reference authoring and full UI build/export integration are required.
+  Fractional decoration endpoints fail with a grid-alignment diagnostic rather
+  than exporting rounded, off-boundary geometry. No new editor deployment yet.
