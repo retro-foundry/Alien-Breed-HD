@@ -1,8 +1,8 @@
 import type { SourceRoom } from '../model/roomSource';
 import { NumberField } from './NumberField';
 
-export function RoomInspector({ room, onCorner, onDelete }: {
-  room: SourceRoom; onCorner: (index: number, axis: 'x' | 'z', value: number) => void; onDelete: () => void;
+export function RoomInspector({ room, onCorner, onRedraw, onDelete }: {
+  room: SourceRoom; onCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRedraw: () => void; onDelete: () => void;
 }) {
   return <section className="property-section"><h3>Room outline</h3>
     <p className="field-note">{room.vertices.length} corners · Surface template zone {room.recordZone}. Drag a highlighted map corner, or edit its coordinates below. Adjoining corners move together.</p>
@@ -13,6 +13,7 @@ export function RoomInspector({ room, onCorner, onDelete }: {
       </div></div>)}
     </details>
     <p className="field-note">The outline applies to both floors. Preview and Export level rebuild the game files; Save project keeps the editable source.</p>
+    <button className="small-button" title="Draw a replacement outline with any valid corner count. Enter applies one undoable edit; Escape or changing tools cancels. Room identity and links are retained; new walls need an explicit repair style and lighting." onClick={onRedraw}>Redraw outline</button>
     <button className="danger-button" title="Delete this room outline as one undoable edit. Objects and links are retained and will need reassignment before building." onClick={onDelete}>Delete room</button>
   </section>;
 }

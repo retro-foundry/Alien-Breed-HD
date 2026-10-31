@@ -37,6 +37,14 @@ export function changedPortalEdges(document: LevelDocument, topology: RoomTopolo
   });
 }
 
+/** True new perimeter edges need explicit material/lighting; decomposition
+ * seams are internal and must never acquire walls. */
+export function unassignedBoundaryEdges(topology: RoomTopology, cell: CompiledRoomCell): number[] {
+  if (cell.originZone === null) return [];
+  return cell.neighbours.flatMap((neighbour, edge) => cell.sourceLines[edge] == null
+    && (neighbour < 0 || topology.cells.find(target => target.id === neighbour)?.sourceId !== cell.sourceId) ? [edge] : []);
+}
+
 export function hasUpperLayer(document: LevelDocument, zone: Zone): boolean {
   const reader = new BinaryReader(document.files.graphics, 'portal layer table');
   return reader.i32(reader.i32(12) + zone.id * 8 + 4) > 0 && zone.upperFloor > zone.upperCeiling;

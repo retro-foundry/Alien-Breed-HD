@@ -96,7 +96,7 @@ test('deleting an adjoining room closes its doorway with an undoable saved appea
   await page.getByRole('button', { name: '3D view', exact: true }).click();
   await expect(preview.getByRole('alert')).toContainText('changed doorway needing a wall style', { timeout: 60000 });
   await selectZone(fixture.owner.originZone!);
-  await expect(page.getByRole('heading', { name: 'Doorway repair appearance' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Wall repair appearance' })).toBeVisible();
   await page.getByRole('combobox', { name: 'Lower wall style' }).selectOption(String(fixture.appearance.lowerWall));
   await page.getByRole('combobox', { name: 'Room corner lighting' }).selectOption(String(fixture.appearance.lightingPoint));
   await page.getByRole('button', { name: 'Apply appearance', exact: true }).click();

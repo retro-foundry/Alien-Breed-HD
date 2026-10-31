@@ -1,20 +1,20 @@
 import { expect, it } from 'vitest';
 import { openLevel } from '../src/model/level';
-import { closedPortalEdges, hasUpperLayer, portalWallSpans } from '../src/model/portalWalls';
+import { closedPortalEdges, hasUpperLayer, portalWallSpans, unassignedBoundaryEdges } from '../src/model/portalWalls';
 import { buildPlayableLevel } from '../src/model/playableBuild';
 import { originalFiles } from './helpers';
-import { closedPortalFixture, importedPortalFixture, replacementPortalFixture } from './portalFixture';
+import { closedPortalFixture, importedPortalFixture, redrawnRoomFixture, replacementPortalFixture } from './portalFixture';
 import { BinaryReader } from '../src/model/binary';
 import { buildCellGraphics } from '../src/model/cellGraphics';
 import { compileRoomTopology } from '../src/model/roomTopology';
 import { buildGeometryLighting } from '../src/model/geometryLighting';
 import { roomAppearanceBuildOptions, roomAppearanceChoices } from '../src/model/roomAppearance';
-import { applyCommand, editRoomAppearance, execute, numberPatch, redo, undo } from '../src/model/commands';
+import { applyCommand, editRoomAppearance, editRoomSource, execute, numberPatch, redo, undo } from '../src/model/commands';
 import { decodeProject, encodeProject } from '../src/model/project';
 import { readWallSurface } from '../src/model/surfaces';
 import { importedDataTables } from '../src/model/dataBuild';
 import { buildSourceLevel } from '../src/model/sourceBuild';
-import { removeSourceRooms } from '../src/model/roomSource';
+import { beginRoomDraft, commitRoomDraft, removeSourceRooms, setDraftCorners } from '../src/model/roomSource';
 
 it('cuts destination lower air out of the wall, leaving the authored step and lintel fields intact', () => {
   const document = openLevel('bounds', originalFiles(1)), zone = document.zones[0]!, material = zone.lower.find(record => record.wall)!.wall!;
@@ -23,6 +23,69 @@ it('cuts destination lower air out of the wall, leaving the authored step and li
   expect(spans).toEqual([{ ...full, bottomFixed: -96 * 256 }, { ...full, topFixed: -32 * 256 }]);
   expect(portalWallSpans(document, full, { ...zone, ceiling: -128, floor: 0, upperFloor: 0, upperCeiling: 0 })).toEqual([]);
   expect(portalWallSpans(document, full, { ...zone, ceiling: 0, floor: 0, upperFloor: 0, upperCeiling: 0 })).toEqual([full]);
+});
+
+it('builds a redrawn imported outline with a new wall and explicit polygon/corner lighting, without changing source files', () => {
+  const fixture = redrawnRoomFixture(), before = structuredClone(fixture.document.files);
+  expect(() => buildPlayableLevel(fixture.document, -1)).toThrow(/new boundary walls needing a wall style/);
+  const source = applyCommand(fixture.document, editRoomAppearance(fixture.document, fixture.appearance));
+  const document = decodeProject(encodeProject(source)), settings = roomAppearanceBuildOptions(document);
+  const topology = compileRoomTopology(document, document.roomSource), cell = topology.cells.find(cell => cell.sourceId === fixture.room.id)!;
+  expect(unassignedBoundaryEdges(topology, cell)).toHaveLength(1);
+  expect(document.roomSource.rooms.find(room => room.id === fixture.room.id)!.vertices).toHaveLength(5);
+  const graphics = buildCellGraphics(document, document.roomSource, topology, settings.newRoomGraphics, settings.closingRoomGraphics);
+  const generated = graphics.streams.get(cell.id)!.lower.filter(item => item.sourceOffset === undefined);
+  expect(generated).toHaveLength(1);
+  const newWall = readWallSurface(new BinaryReader(generated[0]!.bytes, 'redrawn wall'), 0);
+  const built = buildPlayableLevel(document, -1), light = importedDataTables(document).points[fixture.appearance.lightingPoint]!;
+  const actual = importedDataTables(built.document).points;
+  const endpoints = newWall.points.map(id => graphics.topology.points[id]!);
+  const newEndpoint = (id: number) => endpoints.some(p => p.x === actual[id]!.x && p.z === actual[id]!.z);
+  const zone = built.document.zones.find(zone => zone.id === built.topology!.cells.find(cell => cell.sourceId === fixture.room.id)!.id)!;
+  const walls = zone.lower.filter(record => record.wall && record.points.every(newEndpoint));
+  expect(walls).toHaveLength(1);
+  const polygonPoints = zone.lower.filter(record => record.polygon).flatMap(record => record.points.filter(newEndpoint));
+  expect(polygonPoints.length).toBeGreaterThanOrEqual(2);
+  for (const id of [...walls[0]!.points, ...polygonPoints]) {
+    expect(actual[id]!.lowerBrightness).toBe(light.lowerBrightness);
+    expect(actual[id]!.upperBrightness).toBe(light.upperBrightness);
+  }
+  expect(built.topology!.cells.some(cell => cell.sourceId === fixture.room.id && cell.neighbours.some(id => id >= 0))).toBe(true);
+  expect(fixture.document.files).toEqual(before);
+});
+
+it('joins an unassigned imported boundary to an authored neighbour without generating a solid seam', () => {
+  const fixture = redrawnRoomFixture();
+  const room = fixture.document.roomSource.rooms.find(room => room.id === fixture.room.id)!, edge = room.wallSources.indexOf(null);
+  expect(edge).toBeGreaterThanOrEqual(0);
+  const a = room.vertices[edge]!, b = room.vertices[(edge + 1) % room.vertices.length]!;
+  let document = applyCommand(fixture.document, editRoomSource(commitRoomDraft(fixture.document.roomSource,
+    setDraftCorners(beginRoomDraft(fixture.document, fixture.document.roomSource, room.recordZone), [a, fixture.corner, b]))));
+  const neighbour = document.roomSource.rooms.at(-1)!, choices = roomAppearanceChoices(document, neighbour);
+  document = applyCommand(document, editRoomAppearance(document, { ...fixture.appearance, room: neighbour.id,
+    lowerWall: choices.lower[0]!.offset, lightingPoint: choices.points[0]! }));
+  document = applyCommand(document, editRoomAppearance(document, fixture.appearance));
+  const settings = roomAppearanceBuildOptions(document), topology = compileRoomTopology(document, document.roomSource);
+  const cell = topology.cells.find(cell => cell.sourceId === room.id)!, target = topology.cells.find(cell => cell.sourceId === neighbour.id)!;
+  expect(cell.neighbours).toContain(target.id);
+  const graphics = buildCellGraphics(document, document.roomSource, topology, settings.newRoomGraphics, settings.closingRoomGraphics);
+  expect(graphics.streams.get(cell.id)!.lower.filter(item => item.sourceOffset === undefined)).toHaveLength(0);
+  const built = buildPlayableLevel(document, -1);
+  expect(built.topology!.cells[cell.id]!.neighbours).toContain(target.id);
+  expect(built.topology!.cells[target.id]!.neighbours).toContain(cell.id);
+});
+
+it('blocks newly drawn boundaries in a real moving door before changing animation attachments', () => {
+  const document = openLevel('redrawn moving door', originalFiles(1));
+  const door = document.mechanisms.find(item => item.kind === 'door' && document.roomSource.rooms.some(room => room.originZone === item.zone && room.vertices.length === 4))!;
+  expect(door).toBeDefined();
+  const room = document.roomSource.rooms.find(room => room.originZone === door.zone)!;
+  const a = room.vertices[0]!, b = room.vertices[1]!, previous = room.vertices.at(-1)!;
+  const outline = [{ x: (a.x + previous.x) / 2, z: (a.z + previous.z) / 2 },
+    { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }, ...room.vertices.slice(1)];
+  const source = applyCommand(document, editRoomSource(commitRoomDraft(document.roomSource,
+    setDraftCorners(beginRoomDraft(document, document.roomSource, room.recordZone, room.id), outline))));
+  expect(() => buildSourceLevel(source, { resolvedExit: -1 })).toThrow(/New boundaries in a moving door or lift/);
 });
 
 it('keeps closure texture columns continuous across an inserted corner on the old portal', () => {

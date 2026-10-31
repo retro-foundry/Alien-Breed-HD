@@ -64,6 +64,16 @@ corners and T joins move together; crossing and overlapping outlines reject
 atomically. Delete room supports undo. Templates remain available after
 deleting all outlines.
 
+To change an existing room's shape or corner count, select it and choose
+Redraw outline. Click the replacement corners in either direction, then press
+Enter to apply the whole outline as one undoable edit. Escape, Cancel room or
+changing tools discards the draft and keeps the old room. Saving during a draft
+saves only committed geometry. The room identity, starts, objects and links
+remain associated; reassign anything that falls outside the new outline.
+New boundary walls require a Wall repair appearance with an explicit wall style
+and corner lighting before preview/export. Existing wall references retain
+their styles, and internal decomposition seams do not acquire walls.
+
 For a new room, choose its Lower wall style and Corner lighting in the inspector
 and click Apply appearance (also choose an upper wall style for two-floor
 templates). Styles come from the selected room template, retaining texture,
@@ -76,7 +86,7 @@ always keeps the editable outlines, appearance and gameplay links.
 Touching a new room against a static room boundary creates the doorway
 automatically. Its wall graphics leave the correct steps and lintels for the
 destination heights. If deleting or moving an imported neighbour closes an old
-doorway, select the remaining room, choose its Doorway repair appearance and
+doorway, select the remaining room, choose its Wall repair appearance and
 click Apply appearance. This fills the closed opening with the chosen wall
 style and lighting; existing wall styles remain authored. The choice is saved
 with the project and supports undo/redo. A missing closure choice stops a build
@@ -86,8 +96,8 @@ the steps and lintels around the new destination's opening. Matching heights
 remove the old wall pieces entirely, leaving a full-height doorway.
 
 The application is not yet a complete replacement for the original editor.
-Broader material/asset authoring, source AMOS project adapters, unassigned boundary
-materials and openings into moving volumes, split mechanism/controller groups, control paths and full 3D surface
+Broader material/asset authoring, source AMOS project adapters, partial decorative
+geometry and openings into moving volumes, split mechanism/controller groups, control paths and full 3D surface
 picking are still being implemented. Unsupported builds produce an actionable
 error and preserve source; they never export stale geometry in its place.
 

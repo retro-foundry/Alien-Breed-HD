@@ -5,7 +5,7 @@ import type { RoomSource, SourceRoom } from './roomSource';
 import type { RoomTopology } from './roomTopology';
 import { encodeWallSurface, type WallSurface } from './surfaces';
 import { wallForSpan } from './surfaceGeometry';
-import { changedPortalEdges, hasUpperLayer, newPortalTarget, portalWallSpans } from './portalWalls';
+import { changedPortalEdges, hasUpperLayer, newPortalTarget, portalWallSpans, unassignedBoundaryEdges } from './portalWalls';
 
 export interface CellWalls { lower: GraphicsRecordInput[]; upper: GraphicsRecordInput[] }
 export interface NewRoomWallMaterials { lower: readonly WallSurface[]; upper?: readonly WallSurface[] }
@@ -52,10 +52,12 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
     if (walls.has(cell.id)) throw new Error('Wall geometry contains duplicate runtime room identities.');
     const room = source.rooms.find(room => room.id === cell.sourceId), template = document.zones.find(zone => zone.id === cell.recordZone);
     if (!room || !template) throw new Error(`Room ${cell.sourceId} has a missing wall source or settings template.`);
-    const changed = changedPortalEdges(document, topology, cell), closing = closingMaterials.get(room.id);
-    if (changed.length && !closing?.walls.lower.length) throw new Error(`Room ${room.id.replace(/^room-/, '')} has a changed doorway needing a wall style. Select the room and apply its doorway repair appearance before building.`);
+    const unassigned = unassignedBoundaryEdges(topology, cell);
+    const changed = [...changedPortalEdges(document, topology, cell), ...unassigned], closing = closingMaterials.get(room.id);
+    if (unassigned.length && !closing?.walls.lower.length) throw new Error(`Room ${room.id.replace(/^room-/, '')} has new boundary walls needing a wall style. Select the room and apply its wall repair appearance before building.`);
+    if (changed.length && !closing?.walls.lower.length) throw new Error(`Room ${room.id.replace(/^room-/, '')} has a changed doorway needing a wall style. Select the room and apply its wall repair appearance before building.`);
     if (changed.length && hasUpperLayer(document, template) && !closing?.walls.upper?.length)
-      throw new Error(`Room ${room.id.replace(/^room-/, '')} needs an upper wall style for its changed doorway. Apply its upper doorway repair appearance before building.`);
+      throw new Error(`Room ${room.id.replace(/^room-/, '')} needs an upper wall style for its changed doorway. Apply its upper wall repair appearance before building.`);
     const outline = cell.vertices.map(id => {
       const point = points[id]; if (!point) throw new Error(`Room ${cell.sourceId} has a missing wall corner.`); return point;
     });
@@ -127,7 +129,9 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
         const start = document.points[material.points[0]], end = document.points[material.points[1]];
         if (!start || !end) throw new Error(`Room ${room.id} has a missing closure material endpoint.`);
         const a = cell.vertices[edge]!, b = cell.vertices[(edge + 1) % cell.vertices.length]!;
-        const { pieces } = wallChain(room, cell.sourceLines[edge]!);
+        const line = cell.sourceLines[edge];
+        const pieces = line == null ? room.vertices.flatMap((start, index) => room.wallSources[index] === null
+          ? [{ start, end: room.vertices[(index + 1) % room.vertices.length]!, offset: 0 }] : []) : wallChain(room, line).pieces;
         const piece = pieces.find(piece => on(points[a]!, piece.start, piece.end) && on(points[b]!, piece.start, piece.end));
         if (!piece) throw new Error(`Room ${room.id} lost its doorway closure material chain.`);
         const offset = piece.offset + distance(piece.start, points[a]!);

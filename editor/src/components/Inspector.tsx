@@ -31,8 +31,8 @@ function SourceStartForm({ document, player, edit }: { document: LevelDocument; 
     onApply={(room, x, z) => edit(() => setSourceStart(document, player, room, x, z))} />;
 }
 
-export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner, onRoomDelete, onShowDestination }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
-  sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomDelete: () => void; onShowDestination: (room: string) => void }) {
+export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner, onRoomRedraw, onRoomDelete, onShowDestination }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
+  sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomRedraw: () => void; onRoomDelete: () => void; onShowDestination: (room: string) => void }) {
   if (!selection && !sourceRoom) return <aside className="inspector"><div className="panel-title">INSPECTOR</div><div className="empty-inspector"><Icon name="select" size={32} /><h2>Select something</h2><p>Click a zone, object or player start to inspect it.</p><p className="muted">Drag objects and starts to reposition them. Hold Alt to ignore the grid.</p></div></aside>;
   const zone = selection?.kind === 'zone' ? document.zones.find(zone => zone.id === selection.id) : undefined;
   const object = selection?.kind === 'object' ? editableObjects(document).find(object => object.id === selection.id) : undefined;
@@ -45,7 +45,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner,
     <div className="panel-title">INSPECTOR <span className="eyebrow">{selection?.kind.toUpperCase() ?? 'ROOM'}</span></div>
     <div className="inspector-heading"><span className="selection-symbol"><Icon name={zone || sourceRoom ? 'layers' : start ? 'pin' : 'object'} size={24} /></span><div><h2>{title}</h2><span className="muted">{zone ? `${zone.boundaryIds.length} edges · ${zone.upper.length > 0 ? 'two floors' : 'single floor'}` : object ? `Object ${object.id} · ${object.room === null ? 'Deleted' : object.room ? `Room ${object.room.replace(/^room-/, '')}` : `Zone ${object.zone}`}` : sourceRoom ? 'Editable room outline' : 'Level spawn point'}</span></div></div>
     <div className="inspector-scroll">
-      {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onDelete={onRoomDelete} />}
+      {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onRedraw={onRoomRedraw} onDelete={onRoomDelete} />}
       {sourceRoom && <RoomAppearanceInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && (!zone || !sourceMatchesLevel(document)) && <TeleportInspector document={document} room={sourceRoom} edit={edit} onShowDestination={onShowDestination} />}
       {zone && <>

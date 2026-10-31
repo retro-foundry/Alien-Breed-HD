@@ -44,7 +44,7 @@ Each item needs implementation and direct verification before completion.
 | Open all original levels | Parse all 16 actual level triplets; labelled 2D geometry and object checks | All 16 pass model and browser checks |
 | Open/save AMOS projects | `.dat`, `.obj`, `.links` field contracts and round trips from original save/load routines | Checked reader/writer and constructed blank-source contracts pass; real authored-file, UI and compiler integration pending |
 | Lossless game data import/export | Exact unchanged round trips, including unknown records and visibility data | All 16 exact triplet round trips pass |
-| Geometry creation and editing | Points, sectors, shared portals, split/delete/join operations, upper/lower rooms; playable exports | Source outlines, static new-room openings, imported doorway closures and replacements with authored neighbours build/play/export; unassigned boundaries, broader topology operations and controller groups pending |
+| Geometry creation and editing | Points, sectors, shared portals, split/delete/join operations, upper/lower rooms; playable exports | Source outlines/redrawing, explicit new boundary walls, static openings, imported doorway closures and replacements build/play/export; partial decorations, broader topology operations and controller groups pending |
 | Automatic geometry orientation | Either drawing/import direction produces the same valid geometry; shared portals paired automatically; no user-facing winding setting | Normalisation, partial-wall pairing and concave partition tests pass; canvas/compiler integration pending |
 | Materials and lighting | Wall/floor/roof textures, alignment/scaling, vertex/zone light and animations; rendered comparisons | Pending |
 | Objects and starts | Add/move/delete real object types, player starts, exit zone; engine playback | Pending |
@@ -986,3 +986,32 @@ fixtures can establish current-format support independently.
   The surrounding 84 browser cases passed at the prior closure milestone;
   that full suite has not been repeated for this replacement change.
   The complete editor requirements and deployment remain unfinished.
+
+- Redraw outline now replaces a selected room's perimeter and corner count as
+  one undoable command while keeping its source identity. The old room remains
+  committed throughout the draft; Escape, Cancel room and tool switches discard
+  it. Save during an unfinished draft preserves only committed geometry. The
+  action explains its controls and material requirements in status/tooltips.
+  Imported edges without original wall provenance now use the saved Wall repair
+  appearance rather than failing unconditionally. The compiler distinguishes
+  true perimeter edges from internal decomposition seams, emits selected wall
+  materials (or destination step/lintel spans), and gives newly authored
+  polygon corners explicit selected initial lighting. Existing authored corner
+  and material lighting remains separate where required. New boundaries into
+  authored neighbours can open fully without a solid seam; required lighting
+  is retained even when an opening emits no wall records. Missing appearance
+  still stops the build with a room-specific instruction. Moving volumes and
+  unsupported partial/interior decorations retain their explicit restrictions.
+  A real imported-room fixture cuts a corner into a new diagonal boundary,
+  compiles the complete map, checks actual wall/polygon lighting references and
+  preserves original files. UI scenarios save an unfinished draft, cancel by
+  Escape/tool switch, redraw in either direction, save and undo/redo the same
+  room, repair its missing appearance, export five collision edges and start
+  the real game. Inspected engine captures show the new textured wall.
+  These scenarios pass in Chromium/Firefox alongside doorway opening/closure/
+  replacement checks. All 634 model checks pass, including complete original
+  source builds and a moving-door redraw rejection; production build passes.
+  Eight focused Chromium/Firefox opening/closure/replacement/redraw scenarios
+  pass, followed by two reverse-direction redraw reruns and 26 surrounding
+  controls, tool cancellation, source persistence and build/export scenarios.
+  The full editor scope and deployment remain unfinished.

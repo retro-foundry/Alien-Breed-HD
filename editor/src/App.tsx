@@ -154,6 +154,12 @@ export function App() {
     setRoomDraft(beginRoomDraft(document, document.roomSource, template)); setTool('room'); setView('map');
     setStatus('Click corners in either direction. Enter finishes; Backspace removes the last corner; Escape cancels.');
   }
+  function redrawRoom() {
+    if (!document || !selectedRoom) return;
+    setRoomDraft(setDraftCorners(beginRoomDraft(document, document.roomSource, selectedRoom.recordZone, selectedRoom.id), []));
+    setTool('room'); setView('map');
+    setStatus('Redraw the outline in either direction. Enter applies it as one edit; Escape or changing tools keeps the original room. New walls need a wall repair appearance.');
+  }
   function addRoomPoint(x: number, z: number) {
     if (!roomDraft) return;
     try { setRoomDraft(setDraftCorners(roomDraft, [...roomDraft.vertices, { x, z }])); } catch (error) { fail(error); }
@@ -337,7 +343,7 @@ export function App() {
         </div></CanvasBoundary> : <div className="canvas-error"><Icon name="layers" size={36} /><h2>Open a level to begin</h2><p>Drop a project, level ZIP or the three twolev files here.</p><button className="primary-button" onClick={() => fileInput.current?.click()}>Open files</button></div>}
         {busy && <div className="busy-overlay" role="status"><span className="spinner" />{busy}</div>}
       </main>
-      {document && <Inspector document={document} selection={selection} edit={edit} sourceRoom={selectedRoom} onRoomCorner={editRoomCorner} onRoomDelete={deleteRoom} onShowDestination={id => { setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1, frame: true })); setView('map'); }} />}
+      {document && <Inspector document={document} selection={selection} edit={edit} sourceRoom={selectedRoom} onRoomCorner={editRoomCorner} onRoomRedraw={redrawRoom} onRoomDelete={deleteRoom} onShowDestination={id => { setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1, frame: true })); setView('map'); }} />}
     </div>
     <footer className="statusbar"><span className="status-dot" /><span>{autosave}</span><span className="status-message" aria-live="polite">{status || 'Choose a zone to start editing'}</span><span>X <strong>{Math.round(cursor.x)}</strong></span><span>Z <strong>{Math.round(cursor.z)}</strong></span><span className="status-size">{document?.points.length ?? 0} points · {document?.zones.length ?? 0} zones</span></footer>
     {(help || showRecents || choices.length > 0) && <div className="modal-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) { setHelp(false); setShowRecents(false); setChoices([]); } }}><section className="modal" role="dialog" aria-modal="true" aria-label={help ? 'Editor help' : choices.length ? 'Choose a level' : 'Recent workspaces'}><button className="modal-close icon-button" aria-label="Close dialog" title="Close this panel. Shortcut: Esc." onClick={() => { setHelp(false); setShowRecents(false); setChoices([]); }}><Icon name="close" /></button>

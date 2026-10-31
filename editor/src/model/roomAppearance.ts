@@ -68,9 +68,9 @@ export function roomAppearanceBuildOptions(document: LevelDocument) {
       lower: [{ ...lowerRecord.wall!, topFixed: template.ceiling * 256, bottomFixed: template.floor * 256 }],
       upper: upperRecord ? [{ ...upperRecord.wall!, topFixed: template.upperCeiling * 256, bottomFixed: template.upperFloor * 256 }] : [],
     }, wallInsertion: { lower: template.lower.indexOf(lowerRecord), ...(upperRecord ? { upper: template.upper.indexOf(upperRecord) } : {}) } };
-    if (room.originZone === null) {
-      newRoomGraphics.set(room.id, graphics); newRoomLighting.set(room.id, { kind: 'copy', source: selected.lightingPoint });
-    } else closingRoomGraphics.set(room.id, { ...graphics, lightingPoint: selected.lightingPoint });
+    newRoomLighting.set(room.id, { kind: 'copy', source: selected.lightingPoint });
+    if (room.originZone === null) newRoomGraphics.set(room.id, graphics);
+    else closingRoomGraphics.set(room.id, { ...graphics, lightingPoint: selected.lightingPoint });
   }
   return { newRoomGraphics, newRoomLighting, closingRoomGraphics };
 }

@@ -12,7 +12,7 @@ import { compileRoomTopology } from './roomTopology';
 import { buildSourceVisibility } from './visibilityTables';
 import { buildZoneRecords } from './zoneBuild';
 import { buildDrawTopology } from './drawTopology';
-import { closedPortalEdges, newPortalTarget } from './portalWalls';
+import { closedPortalEdges, newPortalTarget, unassignedBoundaryEdges } from './portalWalls';
 import { resolveAnimationRoom } from './animationRooms';
 
 export interface SourceBuildOptions {
@@ -20,6 +20,8 @@ export interface SourceBuildOptions {
    * The compiler does not duplicate the runtime's default exit table. */
   resolvedExit: number;
   newRoomGraphics?: ReadonlyMap<string, NewRoomGraphics>;
+  /** Initial lighting for new rooms and newly authored boundary corners in
+   * imported rooms. Existing material/corner identities remain authored. */
   newRoomLighting?: ReadonlyMap<string, PointLightingBinding>;
   closingRoomGraphics?: ReadonlyMap<string, ClosingRoomGraphics>;
 }
@@ -33,6 +35,8 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
   const moving = new Set(document.mechanisms.map(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift')));
   for (const cell of topology.cells) if (closedPortalEdges(document, cell).length && cell.originZone !== null && moving.has(cell.originZone))
     throw new Error('Closing a doorway in a moving door or lift needs synchronized animation attachments. Restore the doorway before building.');
+  for (const cell of topology.cells) if (unassignedBoundaryEdges(topology, cell).length && cell.originZone !== null && moving.has(cell.originZone))
+    throw new Error('New boundaries in a moving door or lift need synchronized animation attachments. Restore its outline before building.');
   for (const cell of topology.cells) cell.neighbours.forEach((neighbour, edge) => {
     if (neighbour < 0) return;
     const target = topology.cells.find(target => target.id === neighbour)!;
@@ -40,11 +44,6 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
     if (!newPortalTarget(document, topology, cell, edge)) return;
     if ((cell.originZone !== null && moving.has(cell.originZone)) || (target.originZone !== null && moving.has(target.originZone)))
       throw new Error('A new doorway into a moving door or lift needs synchronized wall animation attachments before building. Choose a static room boundary.');
-    if (cell.originZone !== null) {
-      const line = cell.sourceLines[edge];
-      if (line === null || line === undefined)
-        throw new Error('An unassigned boundary needs an explicit wall material before building.');
-    }
   });
   const geometry = buildCellGraphics(document, source, topology, options.newRoomGraphics, options.closingRoomGraphics);
   const lighting = buildGeometryLighting(document, source, geometry, options.newRoomLighting);

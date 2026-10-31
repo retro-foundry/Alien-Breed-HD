@@ -19,8 +19,8 @@ const same = (a: ReturnType<typeof resolvePointLighting>, b: ReturnType<typeof r
  */
 export function planGeometryLighting(document: LevelDocument, source: RoomSource, graphics: CellGraphics,
   newRoomLighting: ReadonlyMap<string, PointLightingBinding> = new Map()) {
-  for (const id of newRoomLighting.keys()) if (!source.rooms.some(room => room.id === id && room.originZone === null))
-    throw new Error(`New-room lighting refers to missing or imported room ${id}.`);
+  for (const id of newRoomLighting.keys()) if (!source.rooms.some(room => room.id === id))
+    throw new Error(`Initial geometry lighting refers to missing room ${id}.`);
   const claims: { id: number; binding: PointLightingBinding; recordOffset?: number }[] = [];
   const assigned = new Set<number>(); let activeRecord: number | undefined;
   const claim = (id: number, binding: PointLightingBinding, _owner: string) => {
@@ -93,6 +93,8 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
     const boundaryBinding = (id: number, candidates = sourcePoints): PointLightingBinding => {
       const point = points[id]!;
       if (candidates.has(id) && document.points[id]!.x === point.x && document.points[id]!.z === point.z) return { kind: 'copy', source: id };
+      const initial = newRoomLighting.get(room.id);
+      if (initial && room.vertices.some((a, index) => room.wallSources[index] === null && on(point, a, room.vertices[(index + 1) % room.vertices.length]!))) return initial;
       const edge = room.vertices.findIndex((a, index) => room.wallSources[index] !== null && on(point, a, room.vertices[(index + 1) % room.vertices.length]!));
       if (edge < 0) throw new Error(`Room ${room.id} point ${id} needs lighting provenance for its generated geometry.`);
       const lineId = room.wallSources[edge]!, line = document.lines[lineId]!;
@@ -134,8 +136,8 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
  */
 export function buildGeometryLighting(document: LevelDocument, source: RoomSource, graphics: CellGraphics,
   newRoomLighting: ReadonlyMap<string, PointLightingBinding> = new Map()) {
-  for (const id of newRoomLighting.keys()) if (!source.rooms.some(room => room.id === id && room.originZone === null))
-    throw new Error(`New-room lighting refers to missing or imported room ${id}.`);
+  for (const id of newRoomLighting.keys()) if (!source.rooms.some(room => room.id === id))
+    throw new Error(`Initial geometry lighting refers to missing room ${id}.`);
   const points = graphics.topology.points.map(point => ({ ...point })), bindings = new Map<number, PointLightingBinding>();
   const copies = new Map<string, number>(), streams = new Map(graphics.streams), pointReferences = new Map(graphics.pointReferences);
   for (const room of source.rooms) {

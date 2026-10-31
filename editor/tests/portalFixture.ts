@@ -74,3 +74,20 @@ export function replacementPortalFixture() {
     upperWall: null, lightingPoint: choices.points[0]! }));
   return { ...fixture, document, replacement };
 }
+
+export function redrawnRoomFixture() {
+  const fixture = closedPortalFixture(), room = fixture.removed;
+  const center = { x: Math.round(room.vertices.reduce((sum, point) => sum + point.x, 0) / room.vertices.length),
+    z: Math.round(room.vertices.reduce((sum, point) => sum + point.z, 0) / room.vertices.length) };
+  const baseline = applyCommand(fixture.baseline, setSourceStart(fixture.baseline, 1, room.id, center.x, center.z));
+  const index = room.vertices.map((point, index) => ({ index, distance: (point.x - fixture.x) * fixture.normal.x + (point.z - fixture.z) * fixture.normal.z }))
+    .toSorted((a, b) => b.distance - a.distance)[0]!.index;
+  const middle = (a: typeof center, b: typeof center) => ({ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 });
+  const corner = room.vertices[index]!, previous = room.vertices[(index + room.vertices.length - 1) % room.vertices.length]!, next = room.vertices[(index + 1) % room.vertices.length]!;
+  const vertices = room.vertices.flatMap((point, at) => at === index ? [middle(previous, corner), middle(corner, next)] : [point]);
+  const document = applyCommand(baseline, editRoomSource(commitRoomDraft(baseline.roomSource,
+    setDraftCorners(beginRoomDraft(baseline, baseline.roomSource, room.recordZone, room.id), vertices))));
+  const choices = roomAppearanceChoices(document, room);
+  const appearance = { room: room.id, lowerWall: choices.lower[0]!.offset, upperWall: null, lightingPoint: choices.points[0]! };
+  return { ...fixture, baseline, document, room, vertices, center, corner, appearance };
+}
