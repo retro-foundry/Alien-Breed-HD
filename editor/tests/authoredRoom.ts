@@ -12,7 +12,7 @@ import { beginRoomDraft, commitRoomDraft, setDraftCorners } from '../src/model/r
 import { compileRoomTopology } from '../src/model/roomTopology';
 import { buildRoomDataReferences } from '../src/model/roomDataReferences';
 import { buildSourceVisibility } from '../src/model/visibilityTables';
-import { buildPointLighting, type PointLightingBinding } from '../src/model/pointLighting';
+import { buildGeometryLighting } from '../src/model/geometryLighting';
 
 export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
   const template = original.zones[0]!, floor = template.lower.find(record => record.polygon && [1, 8, 9, 10, 11].includes(record.type))!.polygon!;
@@ -24,12 +24,13 @@ export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
   const roomSource = commitRoomDraft(original.roomSource,
     setDraftCorners(beginRoomDraft(original, original.roomSource, template.id), vertices)).after;
   const topology = compileRoomTopology(original, roomSource);
-  const cellGraphics = buildCellGraphics(original, roomSource, topology,
+  const geometry = buildCellGraphics(original, roomSource, topology,
     new Map([[topology.cells.find(cell => cell.id === id)!.sourceId, { walls: { lower: [wall] },
       wallInsertion: { lower: template.lower.findIndex(record => record.wall) } }]]));
-  const lighting = new Map<number, PointLightingBinding>(cellGraphics.pointReferences.get(id)!
-    .filter(point => point >= original.points.length).map(point => [point, { kind: 'copy', source: floor.points[0]! }]));
-  const input = { points: buildPointLighting(original, cellGraphics.topology.points, lighting),
+  const lighting = buildGeometryLighting(original, roomSource, geometry,
+    new Map([[topology.cells.find(cell => cell.id === id)!.sourceId, { kind: 'copy', source: floor.points[0]! }]]));
+  const cellGraphics = lighting.graphics;
+  const input = { points: lighting.points,
     collision: [...source.collision, ...vertices.map((start, index) => ({ start, end: vertices[(index + 1) % vertices.length]!, neighbour: -1 }))] };
   const prefix = buildDataPrefix(original, input, id + 1);
   const remapped = buildRoomDataReferences(original, roomSource, topology, prefix);

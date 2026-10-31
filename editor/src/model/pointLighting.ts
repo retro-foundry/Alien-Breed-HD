@@ -8,6 +8,20 @@ export type PointLightingBinding =
   | { kind: 'segment'; from: number; to: number; numerator: number; denominator: number }
   | { kind: 'value'; lowerBrightness: number; upperBrightness: number };
 
+export function resolvePointLighting(document: LevelDocument, binding: PointLightingBinding): Pick<DataPoint, 'lowerBrightness' | 'upperBrightness'> {
+  const reader = new BinaryReader(document.files.data, 'source point lighting');
+  const read = (id: number, upper: boolean) => {
+    checkedInteger(id, 0, document.points.length - 1, 'Source lighting point');
+    return reader.i16(document.pointBrightnessOffset + id * 4 + (upper ? 2 : 0));
+  };
+  const channel = (upper: boolean) => {
+    if (binding.kind === 'copy') return read(binding.source, upper);
+    if (binding.kind === 'segment') return interpolatePointBrightness(read(binding.from, upper), read(binding.to, upper), binding.numerator, binding.denominator);
+    return checkedInteger(upper ? binding.upperBrightness : binding.lowerBrightness, -32768, 32767, 'Explicit point brightness');
+  };
+  return { lowerBrightness: channel(false), upperBrightness: channel(true) };
+}
+
 /** Current AB3DI.s currentPointBrights / level_get_point_brightness encoding:
  * signed low-byte base; high-byte animation selector/blend. Linear sampling
  * is an explicit geometry-authoring operation, not an average of packed words.
@@ -48,16 +62,11 @@ export function buildPointLighting(document: LevelDocument, points: readonly Pos
   return points.map((point, id) => {
     checkedInteger(point.x, -32768, 32767, 'Generated point X'); checkedInteger(point.z, -32768, 32767, 'Generated point Z');
     const binding = bindings.get(id);
-    const value = (upper: boolean): number => {
-      if (!binding) {
-        if (document.points[id]?.x !== point.x || document.points[id]?.z !== point.z)
-          throw new Error(`Generated point ${id} at (${point.x}, ${point.z}) has no lighting assignment.`);
-        return read(id, upper);
-      }
-      if (binding.kind === 'copy') return read(binding.source, upper);
-      if (binding.kind === 'segment') return interpolatePointBrightness(read(binding.from, upper), read(binding.to, upper), binding.numerator, binding.denominator);
-      return checkedInteger(upper ? binding.upperBrightness : binding.lowerBrightness, -32768, 32767, 'Explicit point brightness');
-    };
-    return { x: point.x, z: point.z, lowerBrightness: value(false), upperBrightness: value(true) };
+    if (!binding) {
+      if (document.points[id]?.x !== point.x || document.points[id]?.z !== point.z)
+        throw new Error(`Generated point ${id} at (${point.x}, ${point.z}) has no lighting assignment.`);
+      return { x: point.x, z: point.z, lowerBrightness: read(id, false), upperBrightness: read(id, true) };
+    }
+    return { x: point.x, z: point.z, ...resolvePointLighting(document, binding) };
   });
 }

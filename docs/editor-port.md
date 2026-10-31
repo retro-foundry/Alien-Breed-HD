@@ -657,3 +657,28 @@ fixtures can establish current-format support independently.
   Automatic source-geometry lighting provenance and lighting authoring controls
   remain required, alongside source animation attachments, portal openings,
   decorative mappings and complete compiler/UI build/export integration.
+- Automatic geometry lighting now derives imported-room assignments from
+  source boundary identities and graphics-record endpoint roles. Partial wall
+  decorations, arcs and beams retain their own endpoint lighting. Polygon
+  corners use their own material record's source points; inserted straight-edge
+  points sample the lower/upper channels separately. New rooms receive one
+  explicit initial lighting selection rather than per-point assignments.
+  Level 1 exposed coincident points with distinct lighting, including separate
+  material records inside a room. The lighting assembler now allocates separate
+  graphics identities for those values, patches only the affected draw records
+  and polygon closing corners, and refreshes rotation references. Collision
+  vertices and portal geometry remain shared. Identical copies are reused, and
+  exceeding 2,048 points fails without mutating the source graphics.
+  All sixteen maps pass unchanged-point retention and translated-geometry
+  checks. Every generated material point is compared with its corresponding
+  original endpoint or explicit segment sample, including all packed words.
+  A separate gradient case checks an inserted midpoint with static lower and
+  animated upper lighting. Level 1's visibility membership, clipping prefix and
+  existing solid-wall links remain identical after graphics lighting copies;
+  only unused link slots and required rotation identities are added.
+  The native generated-room fixture now supplies a room-level lighting choice
+  and uses automatic assignment. All 558 unit checks, the build, and both
+  browser engine tests pass. These native runs cover that generated room, not
+  full translated-level gameplay. General nonuniform bent-wall light sampling,
+  automatic animation attachment allocation, portal height openings, remaining
+  decorative mappings and complete compiler/UI integration are still required.
