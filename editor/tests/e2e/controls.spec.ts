@@ -1,0 +1,50 @@
+import { expect, test } from '@playwright/test';
+
+test('tooltips explain actions on hover and keyboard focus; help works using the keyboard', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.getByRole('button', { name: 'Pan tool', exact: true }).hover();
+  await expect(page.getByRole('tooltip')).toContainText('hold Space');
+  const grid = page.getByRole('combobox', { name: 'Grid spacing' });
+  await grid.focus();
+  await expect(page.getByRole('tooltip')).toContainText('Hold Alt');
+  await expect(grid).toHaveAttribute('aria-describedby', /.+/);
+  await grid.press('Escape');
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
+  const help = page.getByRole('button', { name: 'Help and shortcuts' });
+  await help.focus(); await help.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'Editor help' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText('Crouch', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Use doors and switches', { exact: true })).toBeVisible();
+  const close = dialog.getByRole('button', { name: 'Close dialog' });
+  await expect(close).toBeFocused();
+  await close.press('Tab'); await expect(close).toBeFocused();
+  await close.press('Space');
+  await expect(dialog).toHaveCount(0);
+  await expect(help).toBeFocused();
+});
+
+test('3D controls explain the current mode and tooltips stay inside a narrow viewport', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 760, height: 900 });
+  await page.goto('/');
+  await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.getByRole('button', { name: 'Help and shortcuts' }).hover();
+  const tooltip = page.getByRole('tooltip');
+  await expect(tooltip).toBeVisible();
+  const bounds = await tooltip.boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(760);
+  await page.screenshot({ path: testInfo.outputPath('control-tooltip.png'), fullPage: true });
+  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  const details = page.locator('.engine-key-help');
+  await details.locator('summary').click();
+  await expect(details.getByText('3D inspection controls', { exact: true })).toBeVisible();
+  await expect(details.getByText('Turn the inspection camera', { exact: true })).toBeVisible();
+  const play = page.getByRole('button', { name: 'Build & play', exact: true });
+  await expect(play).toBeEnabled({ timeout: 60000 }); await play.click();
+  await expect(details.getByText('Playtest controls', { exact: true })).toBeVisible();
+  await expect(details.getByText('Crouch', { exact: true })).toBeVisible();
+  await expect(page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas')).toHaveAttribute('title', /C: Crouch/);
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+});

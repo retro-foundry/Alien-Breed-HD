@@ -4,8 +4,8 @@ import { moveObject, numberPatch, removeObject, setMechanismRules, setStart, set
 import type { Selection } from './MapCanvas';
 import { Icon } from './Icon';
 
-export function NumberField({ label, value, min = -32768, max = 32767, step = 1, onCommit }: {
-  label: string; value: number; min?: number; max?: number; step?: number; onCommit: (value: number) => void;
+export function NumberField({ label, value, min = -32768, max = 32767, step = 1, help, onCommit }: {
+  label: string; value: number; min?: number; max?: number; step?: number; help?: string; onCommit: (value: number) => void;
 }) {
   const [draft, setDraft] = useState(String(value));
   const cancelCommit = useRef(false);
@@ -17,7 +17,7 @@ export function NumberField({ label, value, min = -32768, max = 32767, step = 1,
       if (number !== value) onCommit(number);
     }
   }
-  return <label className="number-field"><span>{label}</span><input type="number" required aria-label={label} value={draft} min={min} max={max} step={step}
+  return <label className="number-field"><span>{label}</span><input type="number" required aria-label={label} title={`${help ?? `Change ${label.toLowerCase()} (${min} to ${max}).`} Enter applies; Escape cancels; leaving the field also applies a valid value.`} value={draft} min={min} max={max} step={step}
     onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { cancelCommit.current = true; setDraft(String(value)); event.currentTarget.blur(); } }} /></label>;
 }
 
@@ -25,8 +25,8 @@ function PositionForm({ x, z, zone, onApply }: { x: number; z: number; zone: num
   const [draft, setDraft] = useState({ x, z, zone });
   useEffect(() => setDraft({ x, z, zone }), [x, z, zone]);
   return <form className="position-form" onSubmit={event => { event.preventDefault(); onApply(draft.x, draft.z, draft.zone); }}>
-    <div className="field-grid">{(['x', 'z', 'zone'] as const).map(key => <label className="number-field" key={key}><span>{key === 'zone' ? 'Zone' : key.toUpperCase()}</span><input type="number" required aria-label={`Position ${key.toUpperCase()}`} value={draft[key]} min={key === 'zone' ? 0 : -32768} max={key === 'zone' ? 255 : 32767} step={1} onChange={event => setDraft({ ...draft, [key]: Number(event.target.value) })} /></label>)}</div>
-    <button type="submit" className="small-button" disabled={draft.x === x && draft.z === z && draft.zone === zone}>Apply position</button>
+    <div className="field-grid">{(['x', 'z', 'zone'] as const).map(key => <label className="number-field" key={key}><span>{key === 'zone' ? 'Zone' : key.toUpperCase()}</span><input type="number" required aria-label={`Position ${key.toUpperCase()}`} title={key === 'zone' ? 'Zone containing this position. The coordinates must be inside it. Choose Apply position to commit.' : `${key.toUpperCase()} coordinate on the overhead map. Choose Apply position, or press Enter in this form, to commit.`} value={draft[key]} min={key === 'zone' ? 0 : -32768} max={key === 'zone' ? 255 : 32767} step={1} onChange={event => setDraft({ ...draft, [key]: Number(event.target.value) })} /></label>)}</div>
+    <button type="submit" className="small-button" title="Validate and apply all three position fields together. Enter in this form also applies." disabled={draft.x === x && draft.z === z && draft.zone === zone}>Apply position</button>
   </form>;
 }
 
@@ -54,37 +54,37 @@ export function Inspector({ document, selection, edit }: { document: LevelDocume
           {(['brightness', 'upperBrightness'] as const).filter(property => property === 'brightness' || zone.upper.length > 0).map(property => {
             const value = zone[property], animation = (value >>> 8) & 255, animated = animation >= 1 && animation <= 3;
             return <div className="light-control" key={property}>
-              <label className="select-field"><span>{property === 'brightness' ? 'Lower light' : 'Upper light'}</span><select value={animated ? animation : 0} aria-label={`${property} animation`} onChange={event => edit(() => setZoneProperty(document, zone.id, property, Number(event.target.value) << 8))}><option value={0}>Static</option><option value={1}>Pulse</option><option value={2}>Flicker</option><option value={3}>Fire</option></select></label>
-              {!animated && <NumberField label={property === 'brightness' ? 'Brightness' : 'Upper brightness'} value={value} min={-128} max={127} onCommit={value => edit(() => setZoneProperty(document, zone.id, property, value))} />}
+              <label className="select-field"><span>{property === 'brightness' ? 'Lower light' : 'Upper light'}</span><select value={animated ? animation : 0} aria-label={`${property} animation`} title="Choose steady lighting, a pulse, a flicker or a fire effect. Static mode enables the brightness field." onChange={event => edit(() => setZoneProperty(document, zone.id, property, Number(event.target.value) << 8))}><option value={0}>Static</option><option value={1}>Pulse</option><option value={2}>Flicker</option><option value={3}>Fire</option></select></label>
+              {!animated && <NumberField help="Lower values make the room brighter; higher values make it darker." label={property === 'brightness' ? 'Brightness' : 'Upper brightness'} value={value} min={-128} max={127} onCommit={value => edit(() => setZoneProperty(document, zone.id, property, value))} />}
             </div>;
           })}
           <p className="field-note">Lower brightness values make the room brighter.</p>
         </section>
         <section className="property-section"><h3>Teleporter</h3>
-          <label className="check-field"><input type="checkbox" checked={zone.teleport.zone >= 0} onChange={event => { const spawn = document.starts[0]!; edit(() => setTeleport(document, zone.id, event.target.checked ? spawn.zone : -1, spawn.x, spawn.z)); }} />Enabled</label>
+          <label className="check-field"><input type="checkbox" title="Teleport the player to the destination when stepping into this zone. Apply a destination inside the target zone." checked={zone.teleport.zone >= 0} onChange={event => { const spawn = document.starts[0]!; edit(() => setTeleport(document, zone.id, event.target.checked ? spawn.zone : -1, spawn.x, spawn.z)); }} />Enabled</label>
           {zone.teleport.zone >= 0 && <PositionForm x={zone.teleport.x} z={zone.teleport.z} zone={zone.teleport.zone} onApply={(x, z, target) => edit(() => setTeleport(document, zone.id, target, x, z))} />}
         </section>
         {mechanisms.map(mechanism => <section className="property-section" key={`${mechanism.kind}-${mechanism.id}`}><h3>{mechanism.kind === 'door' ? 'Door' : 'Lift'} {mechanism.id}</h3>
           <InfoRow label="Closed / bottom" value={mechanism.bottom} /><InfoRow label="Open / top" value={mechanism.top} />
-          <label className="select-field"><span>Opens when</span><select aria-label={`${mechanism.kind} ${mechanism.id} opening rule`} value={mechanism.openRule} onChange={event => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, mechanism.conditions, Number(event.target.value), mechanism.closeRule))}>
+          <label className="select-field"><span>Opens when</span><select aria-label={`${mechanism.kind} ${mechanism.id} opening rule`} title="Choose what starts opening or raising this mechanism. All selected key and switch requirements must also be met." value={mechanism.openRule} onChange={event => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, mechanism.conditions, Number(event.target.value), mechanism.closeRule))}>
             {(mechanism.kind === 'door' ? ['Player uses it', 'Player touches it', 'Bullet hits it', 'Enemy touches it', 'Timer expires', 'Never'] : ['Player uses it', 'Player touches it', 'Timer expires', 'Never']).map((label, value) => <option key={value} value={value}>{label}</option>)}
           </select></label>
-          <label className="select-field"><span>Closes when</span><select aria-label={`${mechanism.kind} ${mechanism.id} closing rule`} value={mechanism.closeRule} onChange={event => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, mechanism.conditions, mechanism.openRule, Number(event.target.value)))}>
+          <label className="select-field"><span>Closes when</span><select aria-label={`${mechanism.kind} ${mechanism.id} closing rule`} title="Choose what starts closing or lowering this mechanism." value={mechanism.closeRule} onChange={event => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, mechanism.conditions, mechanism.openRule, Number(event.target.value)))}>
             {(mechanism.kind === 'door' ? ['Timer expires', 'Never'] : ['Player uses it', 'Player touches it', 'Timer expires', 'Never']).map((label, value) => <option key={value} value={value}>{label}</option>)}
           </select></label>
-          <h4>Requires all selected</h4><div className="condition-grid">{Array.from({ length: 12 }, (_, bit) => <label className="check-field" key={bit}><input type="checkbox" checked={(mechanism.conditions & (1 << bit)) !== 0} onChange={event => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, event.target.checked ? mechanism.conditions | (1 << bit) : mechanism.conditions & ~(1 << bit), mechanism.openRule, mechanism.closeRule))} />{bit < 4 ? `Key ${bit + 1}` : `Switch ${bit - 3}`}</label>)}</div>
+          <h4>Requires all selected</h4><div className="condition-grid">{Array.from({ length: 12 }, (_, bit) => <label className="check-field" key={bit}><input type="checkbox" title="This requirement must be met along with every other checked key or switch." checked={(mechanism.conditions & (1 << bit)) !== 0} onChange={event => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, event.target.checked ? mechanism.conditions | (1 << bit) : mechanism.conditions & ~(1 << bit), mechanism.openRule, mechanism.closeRule))} />{bit < 4 ? `Key ${bit + 1}` : `Switch ${bit - 3}`}</label>)}</div>
         </section>)}
         <section className="property-section"><h3>Visibility</h3><InfoRow label="Visible zones" value={zone.visibleZones.length} /><InfoRow label="Lower graphics" value={zone.lower.length} /><InfoRow label="Upper graphics" value={zone.upper.length} /></section>
       </>}
       {object && <>
         <section className="property-section"><h3>Position</h3><PositionForm x={object.x} z={object.z} zone={object.zone} onApply={(x, z, zone) => edit(() => moveObject(document, object.id, x, z, zone))} />
-          <NumberField label="Height" value={object.y} step={0.25} min={-8192} max={8191.75} onCommit={value => edit({ label: `Change object ${object.id} height`, patches: [numberPatch(document, 'data', object.offset + 4, value * 4, 2)] })} />
+          <NumberField help="Vertical object position. Larger values are farther down in the level." label="Height" value={object.y} step={0.25} min={-8192} max={8191.75} onCommit={value => edit({ label: `Change object ${object.id} height`, patches: [numberPatch(document, 'data', object.offset + 4, value * 4, 2)] })} />
           <InfoRow label="Floor" value={object.upper ? 'Upper' : 'Lower'} />
         </section>
         <section className="property-section"><h3>Object</h3><InfoRow label="Type" value={objectName(object.type)} /><InfoRow label="Collision ID" value={object.cid} />
           {[0, 6, 7, 8, 12, 13, 14, 15, 17, 18, 19].includes(object.type) && <NumberField label="Health" value={object.health} min={0} max={127} onCommit={value => edit({ label: `Change object ${object.id} health`, patches: [numberPatch(document, 'data', object.offset + 18, value, 1)] })} />}
         </section>
-        <section className="property-section"><button className="danger-button" onClick={() => edit(() => removeObject(document, object.id))}>Delete object</button></section>
+        <section className="property-section"><button className="danger-button" title="Remove this object. Undo restores it (Ctrl / Command + Z)." onClick={() => edit(() => removeObject(document, object.id))}>Delete object</button></section>
       </>}
       {start && <section className="property-section"><h3>Position</h3><PositionForm x={start.x} z={start.z} zone={start.zone} onApply={(x, z, zone) => edit(() => setStart(document, start.player, x, z, zone))} /><p className="field-note">Drag the triangle on the map to place this start. The point must stay inside its zone.</p></section>}
       {point && <section className="property-section"><h3>Coordinates</h3><InfoRow label="X" value={point.x} /><InfoRow label="Z" value={point.z} /></section>}

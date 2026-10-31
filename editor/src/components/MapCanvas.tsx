@@ -58,7 +58,10 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
   }, [focusZone, document.encoded.data]);
 
   useEffect(() => {
-    const down = (event: KeyboardEvent) => { if (event.code === 'Space' && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) { space.current = true; event.preventDefault(); } };
+    const down = (event: KeyboardEvent) => {
+      const control = event.target instanceof Element && event.target.closest('button, input, textarea, select, summary, a, [contenteditable="true"]');
+      if (event.code === 'Space' && !control) { space.current = true; event.preventDefault(); }
+    };
     const up = (event: KeyboardEvent) => { if (event.code === 'Space') space.current = false; };
     const blur = () => { space.current = false; };
     window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur);
@@ -175,7 +178,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
   }
 
   return <div className="map-holder" ref={holder}>
-    <canvas ref={canvas} aria-label="Level map" tabIndex={0} style={{ width: size.width, height: size.height, cursor: tool === 'pan' ? 'grab' : 'default' }}
+    <canvas ref={canvas} aria-label="Level map" aria-describedby="map-controls" tabIndex={0} style={{ width: size.width, height: size.height, cursor: tool === 'pan' ? 'grab' : 'default' }}
       onContextMenu={event => event.preventDefault()}
       onPointerDown={event => {
         const rect = event.currentTarget.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
@@ -207,7 +210,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       onLostPointerCapture={() => { setGhost(null); drag.current = null; }} />
     <div className="map-label"><span className="status-dot" /> ORTHOGRAPHIC <span className="muted">/</span> {layer.toUpperCase()} FLOOR</div>
     <div className="map-compass"><span>N</span><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 6 23-6-5-6 5z" fill="currentColor" /></svg></div>
-    <div className="map-help"><kbd>Space</kbd> drag to pan <span>·</span> scroll to zoom <span>·</span> <kbd>F</kbd> frame map</div>
+    <div id="map-controls" className="map-help"><kbd>Space</kbd> drag to pan <span>·</span> wheel to zoom <span>·</span> <kbd>F</kbd> fit <span>·</span> <kbd>?</kbd> controls</div>
     <div className="map-scale"><Icon name="grid" size={14} /> {Math.round(view.scale * 100)}%</div>
   </div>;
 }
