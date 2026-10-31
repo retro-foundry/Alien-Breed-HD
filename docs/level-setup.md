@@ -31,7 +31,8 @@ starts from `game_data.c`'s original `end_zones` value for that slot. The game
 loop uses the state's effective exit and otherwise retains the original
 completion condition: player one entering that zone completes the level.
 
-The editor project format is now version 3. Version 2 projects retain their
+The exit fields were added in project version 3 and remain in version 4,
+which also stores editable room source. Version 2 projects retain their
 saved slot and use the original exit. Version 1 projects did not save either
 setting and open at slot 1 with its original exit. Original game directories
 and exported ZIP directory names identify their slot independently of a

@@ -101,7 +101,7 @@ fixtures can establish current-format support independently.
   A cancelled backup download with unavailable recovery storage retains the
   dirty marker and unload protection. Only a completed IndexedDB save clears
   that marker; requesting a download cannot claim that a file was saved.
-- 244 unit/format/scenario tests currently pass. The portal compiler handles all
+- 265 unit/format/scenario tests currently pass. The portal compiler handles all
   16 maps, derives legacy-safe common clip bounds for alternate routes, and
   supplies exact sightline witnesses. All sixteen maps now pass deterministic
   binary assembly, content retention and matching original/rebuilt engine
@@ -287,3 +287,19 @@ fixtures can establish current-format support independently.
   engine loads and combined data/visibility/graphics frame comparisons. The
   complete unit suite has 244 passing checks; see [the format and installation
   guide](level-setup.md) for the sidecar's exact contract.
+- Project v4 stores `room-source.json` alongside the binary baseline, target
+  slot and exit setup. Room source is part of the editor document and shared
+  undo/redo commands, and participates in dirty tracking and recovery. Its
+  checked schema retains stable identities, original/material references,
+  concave outlines and the identity counter; partial gestures stay out of saved
+  source. All sixteen original imports round-trip both representations without
+  changing game bytes. Mixed source/record/setup edits undo together, while
+  deleted/empty source remains recoverable. Unsupported fields, duplicate IDs,
+  stale counters, missing templates and malformed outlines are rejected rather
+  than dropped. Older project versions derive source from their known game
+  geometry. Changed room source opens with an explicit limitation message and
+  stale game export/preview is blocked until full compilation is integrated.
+  Source archive/history integration is now in place; actual canvas topology
+  tools and the complete source compiler remain required. The suite has 265
+  passing unit checks and 22 targeted Chromium/Firefox browser checks, including
+  backup, recovery and corrupt-source rejection without losing the open source.

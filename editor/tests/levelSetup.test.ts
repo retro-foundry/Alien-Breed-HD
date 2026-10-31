@@ -35,6 +35,7 @@ describe('portable port exit setup', () => {
   });
   it('keeps v2 slots while migrating unspecified exits and rejects dangling saved exits', () => {
     const document = openLevel('Old setup', originalFiles(1), 8), entries = unzipSync(encodeProject(document));
+    delete entries['room-source.json'];
     entries['alien-breed-project.json'] = strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: 2, name: 'Old setup', playtestSlot: 8 }));
     expect(decodeProject(zipSync(entries))).toMatchObject({ playtestSlot: 8, exitZone: null });
     entries['alien-breed-project.json'] = strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: 3, name: 'Bad setup', playtestSlot: 8, exitZone: 250 }));

@@ -50,6 +50,13 @@ adapters, the complete compiler, control-path authoring and full 3D surface
 picking are still being implemented. The application is not yet
 a complete replacement for the original editor.
 
+Project format v4 also preserves committed room outlines separately from the
+binary baseline, including concave and unfinished source projects. Room-source
+edits use the shared undo/history model. Their canvas/compiler integration is
+still in progress: importing changed outlines preserves them for save/recovery
+and reports that game export/3D preview cannot yet compile them. It never
+silently exports the old geometry in their place.
+
 Room geometry will accept either drawing direction. The shared geometry module
 already normalises winding, pairs opposite shared edges, splits partially
 shared walls and decomposes concave outlines. These contracts are tested

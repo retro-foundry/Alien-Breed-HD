@@ -3,6 +3,7 @@
 import { BinaryReader, LevelFormatError } from './binary';
 import { unpackSb } from './sb';
 import { readWallSurface, readPolygonSurface, type WallSurface, type PolygonSurface } from './surfaces';
+import { importRoomSource, type RoomSource } from './roomSource';
 
 export interface Point { id: number; x: number; z: number; offset: number }
 export interface FloorLine {
@@ -44,6 +45,7 @@ export interface LevelDocument {
   name: string;
   playtestSlot: number;
   exitZone: number | null;
+  roomSource: RoomSource;
   files: LevelFiles;
   encoded: LevelFiles;
   original: LevelFiles;
@@ -139,7 +141,7 @@ function mechanismTable(reader: BinaryReader, offset: number, kind: 'door' | 'li
   throw new LevelFormatError(`${kind} table has no 999 terminator`, reader.name, offset);
 }
 
-export function parseLevel(name: string, files: LevelFiles, encoded: LevelFiles = files, original: LevelFiles = files, playtestSlot = 0, exitZone: number | null = null): LevelDocument {
+export function parseLevel(name: string, files: LevelFiles, encoded: LevelFiles = files, original: LevelFiles = files, playtestSlot = 0, exitZone: number | null = null, roomSource?: RoomSource): LevelDocument {
   if (!Number.isInteger(playtestSlot) || playtestSlot < 0 || playtestSlot > 15) throw new Error('Choose a game level slot from 1 to 16.');
   const data = new BinaryReader(files.data, 'twolev.bin');
   const graphics = new BinaryReader(files.graphics, 'twolev.graph.bin');
@@ -253,7 +255,7 @@ export function parseLevel(name: string, files: LevelFiles, encoded: LevelFiles 
   }
   clips.require(connectTableOffset, 2);
   if (exitZone !== null && (exitZone !== -1 && !zones.some(zone => zone.id === exitZone))) throw new Error('Choose an existing exit zone, the original slot exit or no exit.');
-  return { name, playtestSlot, exitZone, files, encoded, original, points, lines, zones, objects, mechanisms, switches, starts, controlPoints,
+  return { name, playtestSlot, exitZone, roomSource: roomSource ?? importRoomSource({ zones, lines }), files, encoded, original, points, lines, zones, objects, mechanisms, switches, starts, controlPoints,
     pointBrightnessOffset: pointOffset + pointCount * 4, objectPointsOffset, connectTableOffset };
 }
 

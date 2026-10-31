@@ -56,6 +56,7 @@ describe('portable project files', () => {
   });
   it('migrates v1 projects explicitly and rejects malformed saved slots', () => {
     const document = openLevel('Level 16', originalFiles(1)), entries = unzipSync(encodeProject(document));
+    delete entries['room-source.json'];
     entries['alien-breed-project.json'] = strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: 1, name: 'Level 16' }));
     expect(decodeProject(zipSync(entries)).playtestSlot).toBe(0);
     for (const slot of [null, '8', -1, 16, 0.5]) {

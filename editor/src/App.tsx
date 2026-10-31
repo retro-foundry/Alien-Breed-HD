@@ -2,7 +2,8 @@ import { Component, useCallback, useEffect, useMemo, useRef, useState, type Reac
 import { flushSync } from 'react-dom';
 import { openLevel, objectName, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './model/level';
 import { execute, redo, undo, moveObject, setStart, setPlaytestSlot, setExitZone, type EditCommand, type History } from './model/commands';
-import { decodeProject, encodeGameLevel, encodeProject, readFiles, type ProjectCandidate } from './model/project';
+import { decodeProject, encodeGameLevel, encodeProject, readFiles, openProjectCandidate, type ProjectCandidate } from './model/project';
+import { roomSourceMatchesLevel } from './model/roomSource';
 import { listWorkspaces, saveWorkspace, type SavedWorkspace } from './persistence';
 import { MapCanvas, type Selection } from './components/MapCanvas';
 import { Inspector } from './components/Inspector';
@@ -11,9 +12,9 @@ import { EnginePreview } from './components/EnginePreview';
 import { ControlTooltips } from './components/ControlTooltips';
 import { ControlsHelp } from './components/ControlsHelp';
 
-interface Workspace { id: string; history: History; saved: LevelFiles; savedSlot: number; savedExit: number | null }
+interface Workspace { id: string; history: History; saved: LevelFiles; savedSlot: number; savedExit: number | null; savedRoomSource: LevelDocument['roomSource'] }
 function workspaceDirty(workspace: Workspace): boolean {
-  return workspace.history.document.playtestSlot !== workspace.savedSlot || workspace.history.document.exitZone !== workspace.savedExit || (['data', 'graphics', 'clips'] as const).some(file => !sameBytes(workspace.history.document.files[file], workspace.saved[file]));
+  return workspace.history.document.roomSource !== workspace.savedRoomSource || workspace.history.document.playtestSlot !== workspace.savedSlot || workspace.history.document.exitZone !== workspace.savedExit || (['data', 'graphics', 'clips'] as const).some(file => !sameBytes(workspace.history.document.files[file], workspace.saved[file]));
 }
 class CanvasBoundary extends Component<{ children: ReactNode; onExport: () => void }, { error: string | null }> {
   state: { error: string | null } = { error: null };
@@ -41,7 +42,7 @@ async function originalLevel(number: number, signal?: AbortSignal): Promise<Leve
 }
 
 function makeWorkspace(document: LevelDocument, id: string = crypto.randomUUID()): Workspace {
-  return { id, history: { document, past: [], future: [] }, saved: document.files, savedSlot: document.playtestSlot, savedExit: document.exitZone };
+  return { id, history: { document, past: [], future: [] }, saved: document.files, savedSlot: document.playtestSlot, savedExit: document.exitZone, savedRoomSource: document.roomSource };
 }
 
 export function App() {
@@ -58,6 +59,7 @@ export function App() {
   const [help, setHelp] = useState(false), [choices, setChoices] = useState<ProjectCandidate[]>([]), [recents, setRecents] = useState<SavedWorkspace[]>([]), [showRecents, setShowRecents] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null), searchInput = useRef<HTMLInputElement>(null), generation = useRef(0);
   const document = workspace?.history.document;
+  const unbuiltRooms = useMemo(() => document ? !roomSourceMatchesLevel(document) : false, [document]);
   useEffect(() => {
     if (!help && !showRecents && choices.length === 0) return;
     const previous = window.document.activeElement;
@@ -103,7 +105,7 @@ export function App() {
       saveWorkspace(current.id, current.history.document).then(() => { if (!cancelled) {
         setAutosave('Workspace saved');
         setWorkspace(latest => latest?.id === current.id && latest.history.document === current.history.document
-          ? { ...latest, saved: current.history.document.files, savedSlot: current.history.document.playtestSlot, savedExit: current.history.document.exitZone } : latest);
+          ? { ...latest, saved: current.history.document.files, savedSlot: current.history.document.playtestSlot, savedExit: current.history.document.exitZone, savedRoomSource: current.history.document.roomSource } : latest);
       } })
         .catch(error => { if (!cancelled) { setAutosave('Autosave unavailable'); setError(error instanceof Error ? error.message : String(error)); } });
     }, 600);
@@ -186,7 +188,7 @@ export function App() {
     try {
       const candidates = await readFiles(files);
       if (request !== generation.current) return;
-      if (candidates.length === 1 && candidates[0]) await openDocument(openLevel(candidates[0].name, candidates[0].files, candidates[0].playtestSlot, candidates[0].exitZone), undefined, request);
+      if (candidates.length === 1 && candidates[0]) await openDocument(openProjectCandidate(candidates[0]), undefined, request);
       else setChoices(candidates);
     } catch (error) { if (request === generation.current) fail(error); }
     finally { if (request === generation.current) setBusy(''); }
@@ -214,6 +216,7 @@ export function App() {
       <input ref={fileInput} type="file" hidden multiple aria-label="Open level files" accept=".ab3d,.zip,.bin,.clips,.cfg" onChange={event => { const files = [...(event.target.files ?? [])]; if (files.length) void importFiles(files); event.target.value = ''; }} />
     </header>
     {error && <div className="error-banner" role="alert"><Icon name="alert" /><span>{error}</span><button className="icon-button" aria-label="Dismiss error" title="Close this message. Your current document stays open." onClick={() => setError('')}><Icon name="close" size={16} /></button></div>}
+    {unbuiltRooms && <div className="error-banner" role="status"><Icon name="layers" /><span>This project has room outlines that this version cannot compile yet. Save project keeps them; game export and 3D preview are unavailable.</span></div>}
     <div className="workspace">
       <aside className="navigator"><div className="panel-title">PROJECT <span className="eyebrow">LOCAL</span></div><div className="project-picker"><Icon name="layers" /><div><strong>{document?.name ?? 'Opening…'}</strong><span>{document?.zones.length ?? 0} zones · {activeObjects} objects</span></div></div>
         <label className="reference-picker"><span>Target game slot</span><select aria-label="Target game slot" title="Saved with this project. Build & play uses this game slot; Export level writes its matching level directory. Undo restores the previous slot." disabled={!document} value={document?.playtestSlot ?? 0} onChange={event => { if (document) edit(() => setPlaytestSlot(document, Number(event.target.value))); }}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>Level slot {i + 1}</option>)}</select></label>
@@ -247,7 +250,7 @@ export function App() {
     {(help || showRecents || choices.length > 0) && <div className="modal-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) { setHelp(false); setShowRecents(false); setChoices([]); } }}><section className="modal" role="dialog" aria-modal="true" aria-label={help ? 'Editor help' : choices.length ? 'Choose a level' : 'Recent workspaces'}><button className="modal-close icon-button" aria-label="Close dialog" title="Close this panel. Shortcut: Esc." onClick={() => { setHelp(false); setShowRecents(false); setChoices([]); }}><Icon name="close" /></button>
       {help && <ControlsHelp />}
       {showRecents && <><span className="eyebrow">SAVED IN THIS BROWSER</span><h2>Recent workspaces</h2>{recents.length === 0 && <p>No workspaces have been saved yet.</p>}{recents.map(recent => <button className="recent-entry" key={recent.id} onClick={() => { try { void openDocument(decodeProject(recent.bytes), recent.id).catch(fail); } catch (error) { fail(error); } }}><Icon name="layers" /><span><strong>{recent.name}</strong><small>{new Date(recent.updatedAt).toLocaleString()}</small></span><Icon name="chevron" size={15} /></button>)}</>}
-      {choices.length > 0 && <><span className="eyebrow">{choices.length} LEVELS FOUND</span><h2>Choose a level to open</h2>{choices.map(choice => <button className="recent-entry" key={choice.folder} onClick={() => { try { void openDocument(openLevel(choice.name, choice.files, choice.playtestSlot, choice.exitZone)).catch(fail); } catch (error) { fail(error); } }}><Icon name="layers" /><span><strong>{choice.name}</strong><small>{choice.folder}</small></span><Icon name="chevron" size={15} /></button>)}</>}
+      {choices.length > 0 && <><span className="eyebrow">{choices.length} LEVELS FOUND</span><h2>Choose a level to open</h2>{choices.map(choice => <button className="recent-entry" key={choice.folder} onClick={() => { try { void openDocument(openProjectCandidate(choice)).catch(fail); } catch (error) { fail(error); } }}><Icon name="layers" /><span><strong>{choice.name}</strong><small>{choice.folder}</small></span><Icon name="chevron" size={15} /></button>)}</>}
     </section></div>}
   </div>;
 }

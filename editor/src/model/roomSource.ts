@@ -1,5 +1,6 @@
 import { convexParts, normaliseRoomOutline, type Position } from './geometry';
 import type { LevelDocument } from './level';
+import { checkedInteger } from './binary';
 
 /** Editable room identities survive compiler zone renumbering. The imported
  * record remains the authority for materials/mechanisms until those authoring
@@ -22,9 +23,52 @@ function source(rooms: readonly SourceRoom[], nextId: number): RoomSource {
   return Object.freeze({ rooms: Object.freeze([...rooms]), nextId });
 }
 
-export function importRoomSource(document: LevelDocument): RoomSource {
+type RoomRecords = Pick<LevelDocument, 'zones' | 'lines'>;
+export function importRoomSource(document: RoomRecords): RoomSource {
   return source(document.zones.map(zone => frozenRoom(`room-${zone.id}`, zone.id,
-    zone.boundaryIds.map(id => { const line = document.lines[id]!; return { x: line.x, z: line.z }; }), zone.id)), document.zones.length);
+    zone.boundaryIds.map(id => { const line = document.lines[id]!; return { x: line.x, z: line.z }; }), zone.id)), Math.max(-1, ...document.zones.map(zone => zone.id)) + 1);
+}
+
+export function roomSourceSnapshot(current: RoomSource) {
+  return { format: 'alien-breed-room-source', version: 1, nextId: current.nextId, rooms: current.rooms };
+}
+
+export function roomSourceMatchesLevel(document: LevelDocument): boolean {
+  return JSON.stringify(document.roomSource.rooms) === JSON.stringify(importRoomSource(document).rooms);
+}
+
+/** Restore committed editable geometry, never a partially drawn gesture or
+ * generated runtime cells. Original binary records remain the material and
+ * dependency baseline; missing templates cannot be silently substituted. */
+export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSource {
+  if (!value || typeof value !== 'object' || !('format' in value) || value.format !== 'alien-breed-room-source'
+    || !('version' in value) || value.version !== 1 || !('rooms' in value) || !Array.isArray(value.rooms)
+    || !('nextId' in value) || typeof value.nextId !== 'number') throw new Error('Unsupported or damaged room source.');
+  if (Object.keys(value).some(key => !['format', 'version', 'rooms', 'nextId'].includes(key))) throw new Error('Room source contains unsupported fields; it has not been replaced or discarded.');
+  const nextId = checkedInteger(value.nextId, 0, Number.MAX_SAFE_INTEGER - 1, 'Next room identity');
+  const records = new Set(document.zones.map(zone => zone.id)), ids = new Set<string>(), origins = new Set<number>();
+  const rooms = value.rooms.map((item: unknown) => {
+    if (!item || typeof item !== 'object' || !('id' in item) || typeof item.id !== 'string' || !item.id || item.id.length > 128 || ids.has(item.id))
+      throw new Error('Room source contains an invalid or duplicate room identity.');
+    ids.add(item.id);
+    if (Object.keys(item).some(key => !['id', 'recordZone', 'originZone', 'vertices'].includes(key))) throw new Error(`Room ${item.id} contains unsupported source fields.`);
+    const numericId = /^room-(0|[1-9]\d*)$/.exec(item.id)?.[1];
+    if (numericId !== undefined && Number(numericId) >= nextId) throw new Error('The next room identity would reuse an existing room.');
+    if (!('recordZone' in item) || typeof item.recordZone !== 'number' || !records.has(item.recordZone)) throw new Error(`Room ${item.id} has a missing surface record.`);
+    if (!('originZone' in item) || (item.originZone !== null && (typeof item.originZone !== 'number' || !records.has(item.originZone) || origins.has(item.originZone))))
+      throw new Error(`Room ${item.id} has a missing or duplicate original-zone reference.`);
+    const origin = item.originZone as number | null;
+    if (origin !== null) origins.add(origin);
+    if (!('vertices' in item) || !Array.isArray(item.vertices) || item.vertices.length > 2048) throw new Error(`Room ${item.id} has an invalid corner list.`);
+    const vertices = item.vertices.map((point: unknown) => {
+      if (!point || typeof point !== 'object' || !('x' in point) || !('z' in point) || typeof point.x !== 'number' || typeof point.z !== 'number')
+        throw new Error(`Room ${item.id} contains an invalid corner.`);
+      if (Object.keys(point).some(key => key !== 'x' && key !== 'z')) throw new Error(`Room ${item.id} contains unsupported corner fields.`);
+      return { x: point.x, z: point.z };
+    });
+    return frozenRoom(item.id, item.recordZone, vertices, origin);
+  });
+  return source(rooms, nextId);
 }
 
 /** Drafts are separate from committed source: Escape/tool changes simply drop
@@ -50,9 +94,13 @@ export function setDraftCorners(draft: RoomDraft, vertices: readonly Position[])
 export function commitRoomDraft(current: RoomSource, draft: RoomDraft): RoomChange {
   if (current !== draft.base) throw new Error('The rooms changed while this outline was being drawn. No changes were saved.');
   const existing = draft.roomId === null ? undefined : current.rooms.find(room => room.id === draft.roomId);
+  if (!existing) checkedInteger(current.nextId, 0, Number.MAX_SAFE_INTEGER - 2, 'Next room identity');
   if (draft.roomId !== null && !existing) throw new Error('That room no longer exists.');
   const id = existing?.id ?? `room-${current.nextId}`;
   const room = frozenRoom(id, draft.recordZone, draft.vertices, existing?.originZone ?? null);
+  if (existing && existing.recordZone === room.recordZone && existing.vertices.length === room.vertices.length
+    && existing.vertices.every((point, i) => point.x === room.vertices[i]!.x && point.z === room.vertices[i]!.z))
+    return Object.freeze({ label: 'Edit room outline', before: current, after: current });
   // Enforce the actual convex-cell corner contract before accepting a command.
   // Concavity and winding remain editor responsibilities, not user settings.
   convexParts(room.vertices);
@@ -69,6 +117,7 @@ export function removeSourceRooms(current: RoomSource, ids: readonly string[]): 
 
 export function executeRoomChange(history: RoomHistory, change: RoomChange): RoomHistory {
   if (history.source !== change.before) throw new Error('The rooms changed before this edit could be applied. No changes were saved.');
+  if (change.before === change.after) return history;
   return { source: change.after, past: [...history.past, change], future: [] };
 }
 export function undoRoomChange(history: RoomHistory): RoomHistory {

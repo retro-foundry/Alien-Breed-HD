@@ -4,6 +4,7 @@ import { type Selection } from './MapCanvas';
 import { Icon } from './Icon';
 import { previewKeys, playKeys } from './ControlsHelp';
 import { encodeLevelSetup } from '../model/levelSetup';
+import { roomSourceMatchesLevel } from '../model/roomSource';
 
 interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number }
 interface Props { document: LevelDocument; selection: Selection; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSlotChange: (slot: number) => void }
@@ -39,6 +40,10 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
 
   function load(play = false) {
     if (!ready) return;
+    if (!roomSourceMatchesLevel(current.current.document)) {
+      pendingPlay.current = false; setStarting(false); setLoaded(false);
+      setError('This editor version cannot yet compile the changed room outlines. Save project keeps all editable geometry; the preview has stopped to avoid showing stale game files.'); return;
+    }
     pendingPlay.current = play;
     setStarting(play); setLoaded(false); setError(''); setNotice('Loading current level…');
     const next = ++revisionRef.current; setRevision(next);
