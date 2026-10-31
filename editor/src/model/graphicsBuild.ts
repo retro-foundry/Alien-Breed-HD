@@ -5,7 +5,24 @@ import { BinaryWriter } from './writer';
 import { readGraphicRecord, type Graphic } from './graphics';
 
 export interface GraphicsZoneInput { id: number; lower: readonly Uint8Array[]; upper?: readonly Uint8Array[] }
-export interface GraphicsEdits { replacements?: ReadonlyMap<number, Uint8Array>; additions?: readonly GraphicsZoneInput[] }
+export interface GraphicsRecordInput { bytes: Uint8Array; sourceOffset?: number }
+export interface GraphicsStreamInput { lower: readonly GraphicsRecordInput[]; upper?: readonly GraphicsRecordInput[] }
+export interface GraphicsEdits {
+  replacements?: ReadonlyMap<number, Uint8Array>;
+  additions?: readonly GraphicsZoneInput[];
+  streams?: ReadonlyMap<number, GraphicsStreamInput>;
+}
+
+/** Explicit source identities let complete generated streams retain only the
+ * records that still own animation dependencies. Upper-stream absence and an
+ * existing empty stream are distinct in the original table. */
+export function importedGraphicsStreams(document: LevelDocument): Map<number, GraphicsStreamInput> {
+  const reader = new BinaryReader(document.files.graphics, 'twolev.graph.bin'), table = reader.i32(12);
+  const records = (list: readonly Graphic[]) => list.map(record => ({ sourceOffset: record.offset,
+    bytes: reader.bytes.slice(record.offset, record.offset + record.size) }));
+  return new Map(document.zones.map(zone => [zone.id, { lower: records(zone.lower),
+    ...(reader.i32(table + zone.id * 8 + 4) ? { upper: records(zone.upper) } : {}) }]));
+}
 
 function checkedRecord(bytes: Uint8Array): Graphic {
   const record = readGraphicRecord(new BinaryReader(bytes, 'generated graphics record'), 0, 2048);
@@ -39,6 +56,26 @@ export function buildGraphicsStreams(document: LevelDocument, order = document.z
     const original = sourceRecords.get(offset);
     if (!original) throw new Error(`The replacement graphics record at ${offset} no longer exists.`);
     if (checkedRecord(bytes).type !== original.type) throw new Error('A replacement must retain its graphics opcode; changing record roles needs explicit dependency remapping.');
+    const stream = streams.find(stream => stream.records.some(record => record.offset === offset))!;
+    if (edits.streams?.has(stream.zone)) throw new Error('Use either complete stream assembly or individual replacements for a room, not both.');
+  }
+  for (const [id, generated] of edits.streams ?? []) {
+    if (!document.zones.some(zone => zone.id === id)) throw new Error('A complete graphics stream refers to a missing source room.');
+    if (!Array.isArray(generated.lower)) throw new Error('Complete room graphics need an explicit lower stream.');
+    if (generated.upper !== undefined && !Array.isArray(generated.upper)) throw new Error('An upper graphics stream must be a record list or be absent.');
+    for (const [upper, records] of [[false, generated.lower], [true, generated.upper]] as const) {
+      if (!records) continue;
+      checkedInteger(records.length, 0, 4095, 'Graphics record count');
+      const original = streams.find(stream => stream.zone === id && stream.upper === upper), identities = new Set<number>();
+      for (const item of records) {
+        const record = checkedRecord(item.bytes);
+        if (item.sourceOffset === undefined) continue;
+        const source = original?.records.find(record => record.offset === item.sourceOffset);
+        if (!source || identities.has(item.sourceOffset)) throw new Error(`Room ${id} has a missing or duplicate source graphics record identity.`);
+        identities.add(item.sourceOffset);
+        if (record.type !== source.type) throw new Error('A generated record must retain its source graphics opcode for dependency remapping.');
+      }
+    }
   }
   const additionIds = new Set<number>();
   for (const zone of edits.additions ?? []) {
@@ -60,18 +97,21 @@ export function buildGraphicsStreams(document: LevelDocument, order = document.z
   const ranges: { start: number; end: number; destination: number; original?: Graphic; generated?: Graphic }[] = [];
   for (const id of order) for (const upper of [false, true]) {
     const stream = streams.find(stream => stream.zone === id && stream.upper === upper);
-    if (!stream) continue;
+    const override = edits.streams?.get(id), generated = upper ? override?.upper : override?.lower;
+    if (override ? !generated : !stream) continue;
     const destination = output.offset;
     output.patchLong(table + id * 8 + (upper ? 4 : 0), destination); output.word(id);
-    ranges.push({ start: stream.start, end: stream.start + 2, destination });
-    for (const record of stream.records) {
-      const replacement = edits.replacements?.get(record.offset), start = output.offset;
-      output.write(replacement ?? (record.wall ? encodeWallSurface(record.wall)
-        : record.polygon ? encodePolygonSurface(record.polygon) : reader.bytes.subarray(record.offset, record.offset + record.size)));
-      ranges.push({ start: record.offset, end: record.offset + record.size, destination: start, original: record,
-        ...(replacement ? { generated: checkedRecord(replacement) } : {}) });
+    if (stream) ranges.push({ start: stream.start, end: stream.start + 2, destination });
+    const records = generated ?? stream!.records.map(record => ({ sourceOffset: record.offset,
+      bytes: edits.replacements?.get(record.offset) ?? (record.wall ? encodeWallSurface(record.wall)
+        : record.polygon ? encodePolygonSurface(record.polygon) : reader.bytes.subarray(record.offset, record.offset + record.size)) }));
+    for (const item of records) {
+      const start = output.offset; output.write(item.bytes);
+      if (item.sourceOffset === undefined) continue;
+      const record = sourceRecords.get(item.sourceOffset)!;
+      ranges.push({ start: record.offset, end: record.offset + record.size, destination: start, original: record, generated: checkedRecord(item.bytes) });
     }
-    ranges.push({ start: stream.end - 4, end: stream.end, destination: output.offset });
+    if (stream) ranges.push({ start: stream.end - 4, end: stream.end, destination: output.offset });
     output.long(-1);
   }
   for (const zone of edits.additions ?? []) for (const [upper, records] of [[false, zone.lower], [true, zone.upper]] as const) {

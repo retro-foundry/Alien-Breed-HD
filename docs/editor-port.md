@@ -453,3 +453,24 @@ fixtures can establish current-format support independently.
   gameplay start pass in Chromium and Firefox. Build and 364 unit checks pass.
   Complete room stream generation, wall attachments, moving-wall dependencies,
   material authoring and source compiler/UI integration remain required.
+- Graphics assembly now accepts complete lower/upper record lists for an
+  existing room, with optional original-record identities. This supports
+  insertion, removal, reordering, changed record lengths and adding an upper
+  stream without treating every original record as mandatory. Identity-bearing
+  records retain their role and layer; duplicate/missing identities and mixed
+  whole-stream/individual edits reject. A removed animation target rejects
+  instead of binding to an arbitrary identical-looking record. Imported stream
+  lists preserve absent versus existing empty upper streams.
+  All sixteen maps round-trip exactly through complete record lists. Reordered
+  record tests retain door/lift headers and wall targets, switch targets and all
+  twenty-one water animation groups. Tests also cover insertion/removal, upper
+  streams, role conflicts and invalid inputs without mutating the original.
+  The engine comparison pipeline now routes every original room through this
+  path, alongside table expansion, visibility rebuilding and physical stream/
+  room reordering. The build and 382 unit checks pass. Whole-level room identity
+  changes, deleted-room dependencies, cloned mechanism/water links and complete
+  source stream generation remain required before source compiler integration.
+  Both browsers preserve all sixteen original spawn views through complete
+  stream assembly, and both generated-room scenarios pass (four tests).
+  Resized polygons also produce identical files through complete-stream and
+  individual-record inputs across all sixteen maps.

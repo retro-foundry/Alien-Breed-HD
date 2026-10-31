@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { openLevel } from '../../src/model/level';
 import { buildVisibilityFiles } from '../../src/model/visibilityBuild';
-import { buildGraphicsStreams } from '../../src/model/graphicsBuild';
+import { buildGraphicsStreams, importedGraphicsStreams } from '../../src/model/graphicsBuild';
 import { buildDataTables, importedDataTables } from '../../src/model/dataBuild';
 import { buildZoneRecords } from '../../src/model/zoneBuild';
 import { encodeProject } from '../../src/model/project';
@@ -41,7 +41,8 @@ test('rebuilt visibility and relocated graphics load in the real engine and pres
     const expanded = openLevel(`${original.name} expanded`, buildDataTables(original, { ...tables,
       points: [...tables.points, { x: 20000, z: 20000, lowerBrightness: 0, upperBrightness: 0 }] }));
     const visibility = openLevel(`${original.name} visibility`, buildVisibilityFiles(expanded));
-    const graphics = buildGraphicsStreams(visibility, visibility.zones.map(zone => zone.id).toReversed(), visibility.zones.length + 2);
+    const graphics = buildGraphicsStreams(visibility, visibility.zones.map(zone => zone.id).toReversed(), visibility.zones.length + 2,
+      { streams: importedGraphicsStreams(visibility) });
     const rooms = buildZoneRecords(visibility.files.data.subarray(0, Math.min(...visibility.zones.map(zone => zone.exitListOffset))),
       visibility.zones.map(zone => ({ id: zone.id, header: visibility.files.data.slice(zone.offset, zone.offset + 48),
         boundaries: zone.boundaryIds, cornerWalls: zone.wallIds, visibility: zone.visibility, rotationPoints: zone.rotationPointIds })).toReversed());
