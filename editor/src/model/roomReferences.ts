@@ -8,6 +8,7 @@ export interface RoomReferencePlan {
   starts: { player: 1 | 2; cell: number | null }[];
   objects: Map<number, number | null>;
   teleports: Map<number, number | null>;
+  cellTeleports: Map<number, number | null>;
   switches: Map<number, number | null>;
   mechanisms: { kind: 'door' | 'lift'; id: number; cells: number[] }[];
   diagnostics: ReferenceDiagnostic[];
@@ -59,8 +60,20 @@ export function planRoomReferences(document: LevelDocument, source: RoomSource, 
   const objects = new Map(document.objects.map(object => [object.id, object.zone < 0 ? object.zone
     : locate(object.zone, object, `Object ${object.id}`, true)]));
   const teleports = new Map<number, number | null>();
-  for (const zone of document.zones) if (byOrigin.has(zone.id)) teleports.set(zone.id, zone.teleport.zone < 0 ? zone.teleport.zone
-    : locate(zone.teleport.zone, zone.teleport, `Room ${zone.id} teleport`));
+  for (const room of source.rooms) if (room.originZone !== null) {
+    const template = document.zones.find(zone => zone.id === room.recordZone)!;
+    teleports.set(room.originZone, template.teleport.zone < 0 ? template.teleport.zone
+      : locate(template.teleport.zone, template.teleport, `Room ${room.originZone} teleport`));
+  }
+  const cellTeleports = new Map<number, number | null>();
+  for (const cell of topology.cells) {
+    if (cell.originZone !== null) {
+      cellTeleports.set(cell.id, teleports.get(cell.originZone)!); continue;
+    }
+    const template = document.zones.find(zone => zone.id === cell.recordZone)!;
+    cellTeleports.set(cell.id, template.teleport.zone < 0 ? template.teleport.zone
+      : locate(template.teleport.zone, template.teleport, `Room ${cell.sourceId} template teleport`));
+  }
   const switches = new Map<number, number | null>();
   for (const item of document.switches) {
     if (item.zone < 0) { switches.set(item.id, item.zone); continue; }
@@ -73,7 +86,7 @@ export function planRoomReferences(document: LevelDocument, source: RoomSource, 
     if (!cells.length) error(`${item.kind} ${item.id}`, `Its controlled room ${item.zone} was deleted. Remove or reassign this mechanism before building.`);
     return { kind: item.kind, id: item.id, cells };
   });
-  return { starts, objects, teleports, switches, mechanisms, diagnostics };
+  return { starts, objects, teleports, cellTeleports, switches, mechanisms, diagnostics };
 }
 
 export function assertRoomReferences(plan: RoomReferencePlan): void {

@@ -361,3 +361,19 @@ fixtures can establish current-format support independently.
   Keep that UI guard and defer the finished-editor deployment until the source
   compiler and remaining requirements are ready. The requested deployment
   destination is `../retro-foundry.github.io/abhd-ed`.
+- The source reference planner now supplies per-cell teleport destinations,
+  including inherited teleports on newly drawn rooms. It validates the actual
+  selected template rather than an unused original room's teleport settings.
+  `roomDataReferences.ts` writes resolved player-start zone words, every
+  object's authored `OBJ_ZONE` field and generated room headers. It checks the
+  preserved object-prefix offsets/counts and rejects unresolved dependencies
+  before producing output. Opaque graphic-room state, mechanisms and graphics
+  dependencies remain separate compiler work.
+  All sixteen maps pass reference-write checks after reversing source-room
+  order and convex decomposition, with byte comparisons proving unrelated
+  data and header fields are retained. Tests cover new-room template teleports,
+  deleted destinations, unresolved starts and stale prefix offsets. The shared
+  new-room engine fixture now uses this writer; its native spawn, rendered wall
+  picking and gameplay start still pass in Chromium and Firefox. The build and
+  all 337 unit checks pass. Full source compilation and UI integration remain
+  required; changed outlines are still guarded from stale exports/playtests.

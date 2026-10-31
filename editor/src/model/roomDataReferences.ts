@@ -1,0 +1,53 @@
+import { BinaryReader, checkedInteger } from './binary';
+import type { LevelDocument } from './level';
+import type { RoomSource } from './roomSource';
+import type { RoomTopology } from './roomTopology';
+import { assertRoomReferences, planRoomReferences, type RoomReferencePlan } from './roomReferences';
+
+export interface RoomDataReferences {
+  data: Uint8Array;
+  headers: Map<number, Uint8Array>;
+  references: RoomReferencePlan;
+}
+
+/** Write authored room relationships consumed by player.c's level starts,
+ * objects.c's OBJ_ZONE (+12), and Defs.i's ToTelZone (+38). The data-table
+ * writer preserves the object prefix, including shot pools and avatar slots.
+ * Graphics-room state (+26), mechanisms and graphics pointers are separate
+ * dependencies, not additional authored zone fields to guess or overwrite.
+ * Call before assembling room records; their relative pointers are rebuilt
+ * by buildZoneRecords, not by this reference pass.
+ */
+export function buildRoomDataReferences(document: LevelDocument, source: RoomSource, topology: RoomTopology,
+  input = document.files.data): RoomDataReferences {
+  const references = planRoomReferences(document, source, topology);
+  assertRoomReferences(references);
+  const original = new BinaryReader(document.files.data, 'source level data');
+  const reader = new BinaryReader(input, 'generated level data');
+  // Existing object records and object-point identities must still occupy
+  // their preserved prefix. A later object-table editor must supply its own
+  // relocation map rather than patching stale offsets through this pass.
+  for (const field of [12, 20]) if (reader.i16(field) !== original.i16(field))
+    throw new Error('Room reference assembly requires the preserved object/control counts.');
+  for (const field of [22, 30, 34, 38, 42, 46, 50]) if (reader.i32(field) !== original.i32(field))
+    throw new Error('Room reference assembly requires the preserved object prefix offsets.');
+  reader.require(0, original.i32(22));
+  const data = input.slice(), view = new DataView(data.buffer);
+  for (const start of references.starts) {
+    view.setInt16(start.player === 1 ? 4 : 10, checkedInteger(start.cell!, 0, topology.cells.length - 1, 'Player start room'));
+  }
+  for (const object of document.objects) {
+    reader.require(object.offset, 64);
+    view.setInt16(object.offset + 12, checkedInteger(references.objects.get(object.id)!, -32768, topology.cells.length - 1, 'Object room'));
+  }
+  const headers = new Map<number, Uint8Array>();
+  for (const cell of topology.cells) {
+    const template = document.zones.find(zone => zone.id === cell.recordZone);
+    if (!template) throw new Error(`Room ${cell.sourceId} has no settings template.`);
+    const header = document.files.data.slice(template.offset, template.offset + 48), headerView = new DataView(header.buffer);
+    headerView.setInt16(0, cell.id);
+    headerView.setInt16(38, checkedInteger(references.cellTeleports.get(cell.id)!, -32768, topology.cells.length - 1, 'Teleport destination room'));
+    headers.set(cell.id, header);
+  }
+  return { data, headers, references };
+}

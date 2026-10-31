@@ -8,6 +8,9 @@ import { polygonForCell, encodePolygonSurface, encodeWallSurface } from '../src/
 import { normaliseRoomOutline } from '../src/model/geometry';
 import { openLevel, type LevelDocument } from '../src/model/level';
 import { applyCommand, setStart } from '../src/model/commands';
+import { beginRoomDraft, commitRoomDraft, setDraftCorners } from '../src/model/roomSource';
+import { compileRoomTopology } from '../src/model/roomTopology';
+import { buildRoomDataReferences } from '../src/model/roomDataReferences';
 
 export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
   const template = original.zones[0]!, floor = template.lower.find(record => record.polygon && [1, 8, 9, 10, 11].includes(record.type))!.polygon!;
@@ -21,10 +24,14 @@ export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
     collision: [...source.collision, ...vertices.map((start, index) => ({ start, end: vertices[(index + 1) % vertices.length]!, neighbour: -1 }))] };
   const tables = buildDataTables(original, input), displacement = tables.data.length - original.files.data.length;
   const prefixEnd = Math.min(...original.zones.map(zone => zone.exitListOffset)) + displacement;
-  const records = original.zones.map(zone => ({ id: zone.id, header: original.files.data.slice(zone.offset, zone.offset + 48),
+  const roomSource = commitRoomDraft(original.roomSource,
+    setDraftCorners(beginRoomDraft(original, original.roomSource, template.id), vertices)).after;
+  const topology = compileRoomTopology(original, roomSource);
+  const remapped = buildRoomDataReferences(original, roomSource, topology, tables.data.subarray(0, prefixEnd));
+  const records = original.zones.map(zone => ({ id: zone.id, header: remapped.headers.get(zone.id)!,
     boundaries: zone.boundaryIds, cornerWalls: zone.wallIds, visibility: zone.visibility, rotationPoints: zone.rotationPointIds }));
-  const rooms = buildZoneRecords(tables.data.subarray(0, prefixEnd), [...records, { id,
-    header: original.files.data.slice(template.offset, template.offset + 48), boundaries: vertices.map((_, index) => original.lines.length + index),
+  const rooms = buildZoneRecords(remapped.data, [...records, { id,
+    header: remapped.headers.get(id)!, boundaries: vertices.map((_, index) => original.lines.length + index),
     cornerWalls: [], visibility: [{ zone: id, clip: -1, mask: 0 }], rotationPoints: pointIds }]);
   const lower = [
     ...pointIds.map((point, index) => encodeWallSurface({ ...wall, points: [point, pointIds[(index + 1) % pointIds.length]!] })),
