@@ -220,3 +220,27 @@ or rule out the reported Windows crash. No production behavior was changed
 without a reproduced failure or a confirmed cause. The next native check
 needs the reported Windows version and its `ab3d.log`/crash details, or a
 save and combat sequence that reproduces the failure.
+
+## Crawling up the level 7 flame-spout stairs
+
+The level 7 (`level_g`) flame-spout stairways have authored 16*256 risers.
+The separate crouched 10*256 step allowance blocked these while standing
+could climb them. Player movement now shares the existing 40*256 step-up
+limit between both stances, as requested, while using the current body
+height for roof clearance. This deliberately adjusts the archived
+`AB3DI.s` `PLR1_Control`/`PLR2_Control` crouched override to provide the
+requested crawling behavior. The standing
+limit, step-down allowance and `ObjectMove.s` clearance rules are unchanged.
+
+`tests/feedback_stairs.c` loads the original `level_g/twolev.bin` and graphics.
+The zone 123->124 crouched ascent failed before the fix. All 96 authored
+crossings on both flame-spout stairways now pass for both players, both
+stances and three bob phases. Another 18 cases check the step-height limit
+and roof clearance, including openings that only admit a crouched player.
+The 28 hazard cases fire the seven actual stairway emitters through the
+production gas-pipe and bullet handlers: standing players are hit and
+crouched players pass beneath the flames. `Anims.s` `ItsAGasPipe`'s authored
+height minus 80 and `ItsABullet`'s collision-height checks are retained.
+
+The full `tools/check_feedback.py` suite, Windows Release build and
+single-threaded Emscripten Release build pass.

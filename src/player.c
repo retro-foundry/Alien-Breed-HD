@@ -67,11 +67,11 @@
 #define GAMEPAD_AIM_ASSIST_REGION_Y_BASE_PX 96
 #define GAMEPAD_AIM_ASSIST_REGION_Y_MIN_PX 48
 #define GAMEPAD_AIM_ASSIST_REGION_Y_MAX_PX 160
-/* Amiga step-up: same scale as zone floor heights. game_data uses 40*256 for marines;
- * movement.c default is 40*256. Step-UP blocked when ledge is higher than this.
- * Step-DOWN always passable (unlimited). */
-#define STEP_UP_NORMAL      (40 * 256)   /* 10240 - match Amiga ObjectMove step-up */
-#define STEP_UP_DUCKED      (10 * 256)   /* 2560 - AB3DI.s ducked step-up */
+/* AB3DI.s PLR1/2_Control supplies 40*256 to ObjectMove.s StepUpVal.
+ * Use that allowance in both stances so the requested crawl up level_g's
+ * flame-spout stairs is possible; the archived ASM's crouched 10*256 override
+ * blocks their 16*256 risers. Body height still controls roof clearance. */
+#define PLAYER_STEP_UP      (40 * 256)
 #define STEP_DOWN_DEFAULT   0x1000000    /* AB3DI.s step-down */
 #define INSTANT_TRACE_MAX_ITERS 1024
 /* PlayerShoot.s applies projectile bulyspd clamping in PLR1FIREBULLET. */
@@ -1598,7 +1598,7 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
     ctx.thing_height = plr->height - bob_val;
 
     /* Step values */
-    ctx.step_up_val = plr->ducked ? STEP_UP_DUCKED : STEP_UP_NORMAL;
+    ctx.step_up_val = PLAYER_STEP_UP;
     ctx.step_down_val = STEP_DOWN_DEFAULT;
 
     /* 4a. Set objroom from current zone (required for move_object wall checks).
