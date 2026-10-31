@@ -2,7 +2,10 @@
  * from original records, not a replacement renderer or a full-source compiler. */
 import { BinaryReader } from '../src/model/binary';
 import { buildDataPrefix, importedDataTables } from '../src/model/dataBuild';
-import { buildGraphicsStreams } from '../src/model/graphicsBuild';
+import { buildGeneratedGraphics } from '../src/model/generatedGraphics';
+import { buildAnimationAttachments } from '../src/model/animationAttachments';
+import { encodeCollisionSegments } from '../src/model/collisionBuild';
+import { buildPointLighting } from '../src/model/pointLighting';
 import { buildZoneRecords } from '../src/model/zoneBuild';
 import { buildCellGraphics } from '../src/model/cellGraphics';
 import { normaliseRoomOutline } from '../src/model/geometry';
@@ -29,9 +32,13 @@ export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
       wallInsertion: { lower: template.lower.findIndex(record => record.wall) } }]]));
   const lighting = buildGeometryLighting(original, roomSource, geometry,
     new Map([[topology.cells.find(cell => cell.id === id)!.sourceId, { kind: 'copy', source: floor.points[0]! }]]));
-  const cellGraphics = lighting.graphics;
-  const input = { points: lighting.points,
-    collision: [...source.collision, ...vertices.map((start, index) => ({ start, end: vertices[(index + 1) % vertices.length]!, neighbour: -1 }))] };
+  const segments = [...source.collision, ...vertices.map((start, index) => ({ start, end: vertices[(index + 1) % vertices.length]!, neighbour: -1 }))];
+  const collision = { bytes: encodeCollisionSegments(segments), segments,
+    boundaries: topology.cells.map(cell => cell.id === id ? vertices.map((_, index) => original.lines.length + index) : cell.sourceLines.map(line => {
+      if (line === null) throw new Error('The isolated-room fixture requires unchanged original convex boundaries.'); return line;
+    })), cornerWalls: topology.cells.map(cell => cell.id === id ? [] : original.zones[cell.recordZone]!.wallIds) };
+  const attachments = buildAnimationAttachments(original, lighting.graphics, collision), cellGraphics = attachments.graphics;
+  const input = { points: buildPointLighting(original, cellGraphics.topology.points, new Map([...lighting.bindings, ...attachments.addedLighting])), collision: segments };
   const prefix = buildDataPrefix(original, input, id + 1);
   const remapped = buildRoomDataReferences(original, roomSource, topology, prefix);
   const addedCells = topology.cells.filter(cell => cell.id === id);
@@ -41,9 +48,8 @@ export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
   const rooms = buildZoneRecords(remapped.data, [...records, { id,
     header: remapped.headers.get(id)!, boundaries: vertices.map((_, index) => original.lines.length + index),
     cornerWalls: [], ...visibility.rooms.get(id)! }]);
-  const lower = cellGraphics.streams.get(id)!.lower.map(record => record.bytes);
-  const graphics = buildGraphicsStreams(original, undefined, id + 1, { additions: [{ id, lower }] });
-  const graphView = new DataView(graphics.buffer); rooms.offsets.forEach((offset, zone) => graphView.setInt32(16 + zone * 4, offset));
+  const graphics = buildGeneratedGraphics(original, topology.cells.map(cell => ({ id: cell.id,
+    dataOffset: rooms.offsets[cell.id]!, ...cellGraphics.streams.get(cell.id)! })), attachments.tables, attachments.selectTarget);
   const links = new Uint8Array(original.connectTableOffset + input.points.length * 4).fill(255);
   links.set(original.files.clips.subarray(0, original.connectTableOffset));
   const old = new BinaryReader(original.files.clips, 'original clips'), oldCount = (old.bytes.length - original.connectTableOffset) / 4;

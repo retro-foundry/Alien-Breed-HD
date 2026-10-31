@@ -75,7 +75,8 @@ export function buildVisibilityTables(input: VisibilityTableInput): VisibilityTa
 
 /** Generated cells are runtime rooms themselves; they do not inherit the
  * imported logical-room aliases or the sixteen reserved switch-point gap. */
-export function buildSourceVisibility(topology: RoomTopology, graphicPoints: ReadonlyMap<number, readonly number[]>): VisibilityTables {
-  return buildVisibilityTables({ points: topology.points, cells: topology.cells, graphicPoints,
+export function buildSourceVisibility(topology: RoomTopology, graphicPoints: ReadonlyMap<number, readonly number[]>,
+  previousOrder?: ReadonlyMap<number, readonly number[]>): VisibilityTables {
+  return buildVisibilityTables({ points: topology.points, cells: topology.cells, graphicPoints, previousOrder,
     rooms: topology.cells.map(cell => ({ id: cell.id, outline: cell.vertices.map(id => topology.points[id]!), neighbours: cell.neighbours })) });
 }

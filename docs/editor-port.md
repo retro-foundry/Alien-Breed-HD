@@ -682,3 +682,35 @@ fixtures can establish current-format support independently.
   full translated-level gameplay. General nonuniform bent-wall light sampling,
   automatic animation attachment allocation, portal height openings, remaining
   decorative mappings and complete compiler/UI integration are still required.
+- Animation attachments now bind native moving-room polygon targets, animated
+  collision lines and wall records to generated identities. The mapper checks
+  the compiled line coordinates/neighbours against their advertised identities,
+  preserves native rule/state/texture-phase bytes, and resolves graphics copies
+  explicitly for the graphics assembler. New rooms using an original material
+  template do not inherit that original room's animation controllers.
+  Water polygons can fan out across runtime cells within their existing shared
+  native group. Switch activation pairs retain their stored geometry, including
+  authored offsets: unchanged pairs stay byte exact; translated/rotated walls
+  carry those offsets with them and allocate consecutive point pairs as needed.
+  Rotation snaps the generated pair to whole coordinates and enforces bounds.
+  Copying the stored pair is necessary: regenerating a nominal 64-unit segment
+  does not reproduce all 49 shipped activation pairs.
+  Moving-room volumes and switched volumes that split into several cells still
+  require synchronized controller grouping. The mapper rejects that case and
+  repeated collision-flag writes instead of creating independent controllers
+  with altered trigger behaviour. Those authoring capabilities remain required.
+  Tests cover all sixteen original and translated attachment sets, all 49 switch
+  pairs, independent water polygon targets and controlled-volume rejection.
+  The native isolated-room fixture now uses this attachment mapper and the
+  generated graphics assembler. Rendering, selection, spawn and playtests pass
+  in both browsers. Collision assembly also exposes its typed segments, and
+  visibility assembly accepts an original order hint while rebuilding masks.
+  A local complete-source compiler prototype now assembles all runtime tables
+  and passes deterministic data builds for all sixteen maps. Its broader native
+  comparison remains unverified: Level 2 room 67 changes pixels after convex
+  decomposition. Paired captures expose shared wall-endpoint draw ordering and
+  a remaining small floor/sprite region. Experimental static-batch changes were
+  removed; they did not establish complete fidelity. The complete compiler and
+  this failing browser scenario remain local work in progress, outside this
+  checkpoint. Logical draw-room membership versus collision cells needs further
+  tracing before the full Build & Play/export path or deployment is enabled.

@@ -6,6 +6,7 @@ import { BinaryWriter } from './writer';
 export interface CollisionSegment { start: Position; end: Position; neighbour: number }
 export interface CollisionGeometry {
   bytes: Uint8Array;
+  segments: CollisionSegment[];
   /** One primary collision-line index per convex-cell boundary segment. */
   boundaries: number[][];
   cornerWalls: number[][];
@@ -87,5 +88,5 @@ export function compileCollisionGeometry(topology: RoomTopology): CollisionGeome
   }
   const cornerWalls = buildCornerWallLists(topology.cells.map((cell, index) => ({ points: cell.vertices,
     lines: boundaries[index]!, neighbours: cell.neighbours })));
-  return { bytes: encodeCollisionSegments(segments), boundaries, cornerWalls };
+  return { bytes: encodeCollisionSegments(segments), segments, boundaries, cornerWalls };
 }
