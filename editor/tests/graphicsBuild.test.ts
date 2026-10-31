@@ -3,8 +3,48 @@ import { BinaryReader } from '../src/model/binary';
 import { buildGraphicsStreams } from '../src/model/graphicsBuild';
 import { openLevel, parseLevel } from '../src/model/level';
 import { originalFiles } from './helpers';
+import { encodePolygonSurface } from '../src/model/surfaces';
+import { buildAuthoredRoom } from './authoredRoom';
 
 describe('graphics stream assembly and relocation', () => {
+  it.each(Array.from({ length: 16 }, (_, i) => i + 1))('resizes level %i polygon records and retains the actual animation targets', level => {
+    const document = openLevel(`Level ${level}`, originalFiles(level));
+    const polygons = document.zones.flatMap(zone => [...zone.lower, ...zone.upper]).filter(record => record.polygon);
+    const replacements = new Map(polygons.map(record => [record.offset, encodePolygonSurface({ ...record.polygon!, points: [...record.points, record.points[0]!] })]));
+    const graphics = buildGraphicsStreams(document, undefined, undefined, { replacements });
+    expect(graphics.length).toBe(document.files.graphics.length + polygons.length * 2);
+    const rebuilt = parseLevel('resized polygons', { ...document.files, graphics });
+    const a = new BinaryReader(document.files.graphics, 'original'), b = new BinaryReader(graphics, 'resized');
+    document.mechanisms.forEach((mechanism, i) => {
+      const changed = rebuilt.mechanisms[i]!, oldTarget = a.i32(mechanism.offset + 8), newTarget = b.i32(changed.offset + 8);
+      expect(b.bytes.subarray(newTarget, newTarget + 4)).toEqual(a.bytes.subarray(oldTarget, oldTarget + 4));
+      mechanism.walls.forEach((wall, j) => expect(b.bytes.subarray(changed.walls[j]!.graphic, changed.walls[j]!.graphic + 30)).toEqual(a.bytes.subarray(wall.graphic, wall.graphic + 30)));
+    });
+    document.switches.forEach((item, i) => { if (item.zone >= 0) {
+      const changed = rebuilt.switches[i]!;
+      expect(b.bytes.subarray(changed.graphic, changed.graphic + 6)).toEqual(a.bytes.subarray(item.graphic, item.graphic + 6));
+    } });
+    for (const zone of rebuilt.zones) for (const record of [...zone.lower, ...zone.upper]) if (record.polygon)
+      expect(record.points.at(-1)).toBe(record.points[0]);
+  });
+  it('assembles a new coordinate set, collision boundary, room stream and player spawn using the shared builders', () => {
+    const original = openLevel('original', originalFiles(1)), compiled = buildAuthoredRoom(original), id = original.zones.length;
+    expect(compiled.zones).toHaveLength(id + 1); expect(compiled.points.length).toBe(original.points.length + 4);
+    expect(compiled.lines.length).toBe(original.lines.length + 4);
+    expect(compiled.starts[0]).toEqual({ player: 1, x: 20064, z: 20064, zone: id });
+    expect(compiled.zones[id]!.lower.filter(record => record.wall)).toHaveLength(4);
+    expect(compiled.objects).toHaveLength(original.objects.length);
+    const reader = new BinaryReader(compiled.files.clips, 'authored clipping');
+    expect(reader.bytes.length - compiled.connectTableOffset).toBe(compiled.points.length * 4);
+  });
+  it('rejects malformed replacements, changed opcodes and duplicate new stream identities', () => {
+    const document = openLevel('original', originalFiles(1)), polygon = document.zones[0]!.lower.find(record => record.polygon)!;
+    expect(() => buildGraphicsStreams(document, undefined, undefined, { replacements: new Map([[999999, new Uint8Array(2)]]) })).toThrow(/no longer exists/);
+    expect(() => buildGraphicsStreams(document, undefined, undefined, { replacements: new Map([[polygon.offset, new Uint8Array(2)]]) })).toThrow(/record extends/);
+    const encoded = encodePolygonSurface({ ...polygon.polygon!, type: 2 });
+    expect(() => buildGraphicsStreams(document, undefined, undefined, { replacements: new Map([[polygon.offset, encoded]]) })).toThrow(/retain its graphics opcode/);
+    expect(() => buildGraphicsStreams(document, undefined, undefined, { additions: [{ id: 0, lower: [encoded] }] })).toThrow(/unique new zone identities/);
+  });
   it.each(Array.from({ length: 16 }, (_, i) => i + 1))('reassembles level %i and relocates reversed streams without losing animation references', level => {
     const document = openLevel(`Level ${level}`, originalFiles(level));
     expect(buildGraphicsStreams(document)).toEqual(document.files.graphics);

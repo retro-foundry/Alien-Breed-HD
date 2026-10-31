@@ -337,3 +337,27 @@ fixtures can establish current-format support independently.
   including direction-independent gestures, cancellation, drag/coordinate
   edits, rejected crossings/overlap, deletion/undo and recovery from empty
   source. Updated room-inspector screenshots were visually checked.
+- Graphics assembly now accepts validated replacement records of different
+  lengths and additional room streams. Imported and generated records share
+  one opcode decoder. Relocation tracks individual records and polygon material
+  tails, retaining animation targets when a corner array changes size; pointers
+  into replaced corner arrays reject until explicitly remapped. All sixteen
+  original maps retain their animation targets in resized-record unit checks.
+  Those checks deliberately use repeated corners to stress byte relocation;
+  they are not visual-equivalence checks, since the renderer rasterizes the
+  resulting zero-length edges too.
+  An integration fixture assembles an isolated new room from explicit geometry
+  and original material records using the shared data, room and graphics
+  writers. Both browsers load its actual new spawn zone, pick its rendered
+  walls and start gameplay. Its textured inspection view was visually checked.
+  This exposed a preview-host initialization bug: game-loop context setup reset
+  interpolation after the host set it, leaving paused views at the previous
+  camera. The host now selects the current camera after context initialization
+  and when stopping play. The unit suite has 319 passing checks. After rebuilding
+  the WebAssembly host, all 44 Chromium/Firefox scenarios pass, including all
+  sixteen original-map spawn-view comparisons through the combined writers.
+  This fixture is compiler-stage evidence, not the complete source compiler:
+  arbitrary drawn/edited/deleted rooms still cannot build or export gameplay.
+  Keep that UI guard and defer the finished-editor deployment until the source
+  compiler and remaining requirements are ready. The requested deployment
+  destination is `../retro-foundry.github.io/abhd-ed`.

@@ -2,18 +2,14 @@
  * The older AMOS LEVELSAVE uses different header/graphics encodings. */
 import { BinaryReader, LevelFormatError } from './binary';
 import { unpackSb } from './sb';
-import { readWallSurface, readPolygonSurface, type WallSurface, type PolygonSurface } from './surfaces';
+import { readGraphicsStream, type Graphic } from './graphics';
+export type { Graphic } from './graphics';
 import { importRoomSource, type RoomSource } from './roomSource';
 
 export interface Point { id: number; x: number; z: number; offset: number }
 export interface FloorLine {
   id: number; offset: number; x: number; z: number; dx: number; dz: number;
   connect: number; length: number;
-}
-export interface Graphic {
-  type: number; offset: number; size: number; points: number[];
-  height?: number; top?: number; bottom?: number; texture?: number;
-  wall?: WallSurface; polygon?: PolygonSurface;
 }
 export interface Zone {
   id: number; fileId: number; offset: number;
@@ -70,48 +66,6 @@ export const OBJECT_NAMES = [
 
 export function objectName(type: number): string {
   return type === -1 ? 'Remains / decoration' : (OBJECT_NAMES[type] ?? `Object type ${type}`);
-}
-
-function graphicsStream(reader: BinaryReader, offset: number, points: number): Graphic[] {
-  if (offset === 0) return [];
-  reader.require(offset, 2);
-  const result: Graphic[] = [];
-  let cursor = offset + 2;
-  for (let count = 0; count < 4096; count++) {
-    const type = reader.i16(cursor);
-    if (type < 0) return result;
-    const entry: Graphic = { type, offset: cursor, size: 0, points: [] };
-    const payload = cursor + 2;
-    let size: number;
-    if (type === 0 || type === 13 || type === 5) {
-      size = 30;
-      entry.points = [reader.i16(payload), reader.i16(payload + 2)];
-      if (type !== 5) {
-        entry.wall = readWallSurface(reader, cursor);
-        entry.texture = entry.wall.texture;
-        entry.top = entry.wall.topFixed / 256;
-        entry.bottom = entry.wall.bottomFixed / 256;
-      }
-    } else if (type === 3 || type === 12) size = 2;
-    else if (type === 4) size = 4;
-    else if (type === 6) size = 6;
-    else if ([1, 2, 7, 8, 9, 10, 11].includes(type)) {
-      const sides = reader.i16(payload + 2) + 1;
-      if (sides < 0 || sides > 100) throw new LevelFormatError('polygon has an invalid vertex count', reader.name, payload + 2);
-      size = 14 + sides * 2;
-      entry.polygon = readPolygonSurface(reader, cursor);
-      entry.height = entry.polygon.heightQuarter / 4;
-      entry.points = entry.polygon.points;
-      entry.texture = entry.polygon.texture;
-    } else throw new LevelFormatError(`unrecognised graphics opcode ${type}`, reader.name, cursor);
-    reader.require(cursor, size);
-    if (entry.points.some(point => point < 0 || point >= points))
-      throw new LevelFormatError('graphic references a point outside the point table', reader.name, cursor);
-    entry.size = size;
-    result.push(entry);
-    cursor += size;
-  }
-  throw new LevelFormatError('graphics stream has no terminator', reader.name, offset);
 }
 
 function mechanismTable(reader: BinaryReader, offset: number, kind: 'door' | 'lift'): Mechanism[] {
@@ -203,8 +157,8 @@ export function parseLevel(name: string, files: LevelFiles, encoded: LevelFiles 
       teleport: { zone: data.i16(offset + 38), x: data.i16(offset + 40), z: data.i16(offset + 42) },
       floorSound: data.i16(offset + 44), upperFloorSound: data.i16(offset + 46),
       boundaryIds, wallIds, visibleZones, visibility, rotationPointIds, rotationOffset, exitListOffset, dataEnd,
-      lower: graphicsStream(graphics, graphics.i32(graphTable + id * 8), pointCount),
-      upper: graphicsStream(graphics, graphics.i32(graphTable + id * 8 + 4), pointCount),
+      lower: readGraphicsStream(graphics, graphics.i32(graphTable + id * 8), pointCount),
+      upper: readGraphicsStream(graphics, graphics.i32(graphTable + id * 8 + 4), pointCount),
     });
   }
   data.require(floorOffset, (maxLine + 1) * 16);

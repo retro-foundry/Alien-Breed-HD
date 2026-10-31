@@ -19,6 +19,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
   const [nonblack, setNonblack] = useState(0);
   const [actualSlot, setActualSlot] = useState(-1);
   const [actualExit, setActualExit] = useState<number>();
+  const [spawnZone, setSpawnZone] = useState<number>();
   const revisionRef = useRef(0), pendingPlay = useRef(false);
   const current = useRef({ document, selection, layer, onSelectZone });
   current.current = { document, selection, layer, onSelectZone };
@@ -63,6 +64,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
         setNonblack(message.nonblack ?? 0);
         setActualSlot(message.slot ?? -1);
         setActualExit(message.exitZone);
+        setSpawnZone(message.zone);
         setLoaded(true); setNotice(`${message.zones} zones loaded · Game engine`);
         if (pendingPlay.current) { pendingPlay.current = false; setPlaying(true); setStarting(false); send('play', { playing: true }); }
         else positionCamera();
@@ -92,7 +94,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
   }, [ready, playing]);
 
   function stop() { send('play', { playing: false }); setPlaying(false); setStarting(false); pendingPlay.current = false; }
-  return <section className="engine-preview" aria-label="3D game engine preview" data-revision={revision} data-rendered-pixels={nonblack} data-level-slot={actualSlot} data-exit-zone={actualExit}>
+  return <section className="engine-preview" aria-label="3D game engine preview" data-revision={revision} data-rendered-pixels={nonblack} data-level-slot={actualSlot} data-exit-zone={actualExit} data-spawn-zone={spawnZone}>
     <div className="engine-toolbar"><span className="eyebrow">3D VIEW</span><span className="engine-status" role="status">{playing ? 'Playtest running' : notice}</span>
       <label className="engine-slot">Slot <select aria-label="Playtest level slot" title="Choose the project's game level slot. Saved with your project and undoable; this controls the game's level-specific setup." value={slot} disabled={playing || starting} onChange={event => onSlotChange(Number(event.target.value))}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>{i + 1}</option>)}</select></label>
       <button title={playing ? 'Stop playing and return to inspection. Your editable map is kept.' : 'Load the latest map into the game and start from player one. Click the game view to capture the mouse.'} disabled={!ready || starting} className={playing ? '' : 'primary-button'} onClick={() => { if (playing) stop(); else load(true); }}>{playing ? 'Stop' : starting ? 'Starting…' : 'Build & play'}</button>

@@ -2,16 +2,26 @@ import { BinaryReader, checkedInteger } from './binary';
 import type { LevelDocument } from './level';
 import { encodePolygonSurface, encodeWallSurface } from './surfaces';
 import { BinaryWriter } from './writer';
+import { readGraphicRecord, type Graphic } from './graphics';
+
+export interface GraphicsZoneInput { id: number; lower: readonly Uint8Array[]; upper?: readonly Uint8Array[] }
+export interface GraphicsEdits { replacements?: ReadonlyMap<number, Uint8Array>; additions?: readonly GraphicsZoneInput[] }
+
+function checkedRecord(bytes: Uint8Array): Graphic {
+  const record = readGraphicRecord(new BinaryReader(bytes, 'generated graphics record'), 0, 2048);
+  if (record.size !== bytes.length) throw new Error('A generated graphics record contains trailing or incomplete data.');
+  return record;
+}
 
 /** Reassemble current-format graphics streams and relocate every known
  * graphics pointer consumed by Anims.s and level.c. Zone-data offsets remain
  * supplied by the data compiler; material phases and animation bases are not
  * pointers and must never be rebased. Extra slots support the geometry writer.
  */
-export function buildGraphicsStreams(document: LevelDocument, order = document.zones.map(zone => zone.id), slots?: number): Uint8Array {
+export function buildGraphicsStreams(document: LevelDocument, order = document.zones.map(zone => zone.id), slots?: number, edits: GraphicsEdits = {}): Uint8Array {
   const reader = new BinaryReader(document.files.graphics, 'twolev.graph.bin');
   const oldTable = reader.i32(12), oldSlots = (oldTable - 16) / 4;
-  const count = checkedInteger(slots ?? oldSlots, oldSlots, 256, 'Graphics zone capacity');
+  const count = checkedInteger(slots ?? Math.max(oldSlots, ...(edits.additions ?? []).map(zone => zone.id + 1)), oldSlots, 256, 'Graphics zone capacity');
   if (order.length !== document.zones.length || new Set(order).size !== order.length || order.some(id => !document.zones.some(zone => zone.id === id)))
     throw new Error('Graphics assembly must include each source zone exactly once.');
   const streams = document.zones.flatMap(zone => ([false, true] as const).flatMap(upper => {
@@ -24,6 +34,21 @@ export function buildGraphicsStreams(document: LevelDocument, order = document.z
     return [{ zone: zone.id, upper, start, end, records }];
   }));
   const sorted = streams.toSorted((a, b) => a.start - b.start), bodyStart = 16 + oldSlots * 12;
+  const sourceRecords = new Map(streams.flatMap(stream => stream.records.map(record => [record.offset, record] as const)));
+  for (const [offset, bytes] of edits.replacements ?? []) {
+    const original = sourceRecords.get(offset);
+    if (!original) throw new Error(`The replacement graphics record at ${offset} no longer exists.`);
+    if (checkedRecord(bytes).type !== original.type) throw new Error('A replacement must retain its graphics opcode; changing record roles needs explicit dependency remapping.');
+  }
+  const additionIds = new Set<number>();
+  for (const zone of edits.additions ?? []) {
+    checkedInteger(zone.id, 0, count - 1, 'Additional graphics zone');
+    if (document.zones.some(original => original.id === zone.id) || additionIds.has(zone.id)) throw new Error('Additional graphics streams must have unique new zone identities.');
+    additionIds.add(zone.id);
+    for (const records of [zone.lower, zone.upper].filter(records => records !== undefined)) {
+      checkedInteger(records.length, 1, 4095, 'Graphics record count'); records.forEach(checkedRecord);
+    }
+  }
   let cursor = bodyStart;
   for (const stream of sorted) {
     if (stream.start !== cursor) throw new Error('The graphics streams contain unaccounted source data. Original files have been kept.');
@@ -32,17 +57,27 @@ export function buildGraphicsStreams(document: LevelDocument, order = document.z
   const tail = cursor, output = new BinaryWriter(), table = 16 + count * 4;
   output.write(reader.bytes.subarray(0, 16)); output.reserve(count * 12); output.patchLong(12, table);
   for (let id = 0; id < count; id++) output.patchLong(16 + id * 4, id < oldSlots ? reader.i32(16 + id * 4) : -1);
-  const ranges: { start: number; end: number; destination: number }[] = [];
+  const ranges: { start: number; end: number; destination: number; original?: Graphic; generated?: Graphic }[] = [];
   for (const id of order) for (const upper of [false, true]) {
     const stream = streams.find(stream => stream.zone === id && stream.upper === upper);
     if (!stream) continue;
     const destination = output.offset;
     output.patchLong(table + id * 8 + (upper ? 4 : 0), destination); output.word(id);
-    for (const record of stream.records) output.write(record.wall ? encodeWallSurface(record.wall)
-      : record.polygon ? encodePolygonSurface(record.polygon) : reader.bytes.subarray(record.offset, record.offset + record.size));
+    ranges.push({ start: stream.start, end: stream.start + 2, destination });
+    for (const record of stream.records) {
+      const replacement = edits.replacements?.get(record.offset), start = output.offset;
+      output.write(replacement ?? (record.wall ? encodeWallSurface(record.wall)
+        : record.polygon ? encodePolygonSurface(record.polygon) : reader.bytes.subarray(record.offset, record.offset + record.size)));
+      ranges.push({ start: record.offset, end: record.offset + record.size, destination: start, original: record,
+        ...(replacement ? { generated: checkedRecord(replacement) } : {}) });
+    }
+    ranges.push({ start: stream.end - 4, end: stream.end, destination: output.offset });
     output.long(-1);
-    if (output.offset - destination !== stream.end - stream.start) throw new Error('A graphics record changed size without a relocation map.');
-    ranges.push({ start: stream.start, end: stream.end, destination });
+  }
+  for (const zone of edits.additions ?? []) for (const [upper, records] of [[false, zone.lower], [true, zone.upper]] as const) {
+    if (!records) continue;
+    output.patchLong(table + zone.id * 8 + (upper ? 4 : 0), output.offset); output.word(zone.id);
+    records.forEach(record => output.write(record)); output.long(-1);
   }
   const destinationTail = output.offset;
   output.write(reader.bytes.subarray(tail));
@@ -51,7 +86,14 @@ export function buildGraphicsStreams(document: LevelDocument, order = document.z
     if (offset === 0) return 0;
     const range = ranges.find(range => offset >= range.start && offset < range.end);
     if (!range) throw new Error(`A graphics pointer at ${offset} is outside the compiled streams and animation tables.`);
-    return range.destination + offset - range.start;
+    const relative = offset - range.start;
+    if (range.original && range.generated && range.original.size !== range.generated.size) {
+      if (!range.original.polygon || !range.generated.polygon) throw new Error('An unsupported graphics record changed size.');
+      const oldTail = 6 + range.original.points.length * 2, newTail = 6 + range.generated.points.length * 2;
+      if (relative >= oldTail) return range.destination + newTail + relative - oldTail;
+      if (relative >= 6) throw new Error('A graphics pointer targets a regenerated polygon corner array. Remap that dependency before building.');
+    }
+    return range.destination + relative;
   };
   for (const header of [0, 4, 8]) {
     const offset = reader.i32(header);

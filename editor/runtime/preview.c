@@ -45,9 +45,12 @@ EMSCRIPTEN_KEEPALIVE int editor_load_level(int slot)
     g_state.cfg_show_fps = false;
     g_state.cfg_weapon_draw = false;
     g_state.cfg_mouse_look = true;
-    g_state.obj_interp_alpha = 1.0f;
     preview_loaded = 1;
     game_loop_ctx_init(&preview_loop, &g_state);
+    /* Context initialization resets interpolation to the previous tick. A
+     * paused editor has no tick to advance it: show the loaded spawn instead
+     * of the previous level's camera (especially visible in authored rooms). */
+    g_state.obj_interp_alpha = 1.0f;
     preview_draw();
     preview_report(1, g_state.plr1.zone, level_zone_slot_count(&g_state.level));
     return 1;
@@ -137,7 +140,10 @@ EMSCRIPTEN_KEEPALIVE void editor_play(int playing)
     g_state.cfg_weapon_draw = preview_playing != 0;
     input_clear_keyboard(g_state.key_map);
     game_loop_ctx_init(&preview_loop, &g_state);
-    if (!preview_playing) preview_draw();
+    if (!preview_playing) {
+        g_state.obj_interp_alpha = 1.0f;
+        preview_draw();
+    }
 }
 
 static void preview_frame(void)
