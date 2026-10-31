@@ -5,6 +5,7 @@ import type { RoomSource } from './roomSource';
 import type { RoomTopology } from './roomTopology';
 import { encodeWallSurface, type WallSurface } from './surfaces';
 import { wallForSpan } from './surfaceGeometry';
+import { newPortalTarget, portalWallSpans } from './portalWalls';
 
 export interface CellWalls { lower: GraphicsRecordInput[]; upper: GraphicsRecordInput[] }
 export interface NewRoomWallMaterials { lower: readonly WallSurface[]; upper?: readonly WallSurface[] }
@@ -52,21 +53,26 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
       if (room.originZone === null) {
         if (!selected) throw new Error(`Room ${room.id} needs explicit wall materials before building.`);
         return cell.vertices.flatMap((a, index) => {
-          if (cell.neighbours[index] !== -1) return [];
+          const neighbour = cell.neighbours[index]!;
+          if (neighbour >= 0 && topology.cells.find(target => target.id === neighbour)?.sourceId === cell.sourceId) return [];
+          const destination = neighbour < 0 ? undefined : topology.cells.find(target => target.id === neighbour);
           const b = cell.vertices[(index + 1) % cell.vertices.length]!;
           return selected.map(material => {
             const start = document.points[material.points[0]], end = document.points[material.points[1]];
             if (!start || !end) throw new Error(`Room ${room.id} has a missing wall material reference endpoint.`);
-            return { bytes: encodeWallSurface(wallForSpan(material, distance(start, end), [a, b], 0, distance(points[a]!, points[b]!))) };
-          });
+            const bound = wallForSpan(material, distance(start, end), [a, b], 0, distance(points[a]!, points[b]!));
+            const spans = destination ? portalWallSpans(document, bound, document.zones.find(zone => zone.id === destination.recordZone)!) : [bound];
+            return spans.map(span => ({ bytes: encodeWallSurface(span) }));
+          }).flat();
         });
       }
       return records.filter(record => record.wall).flatMap(record => {
-        if (unchanged && retained(record)) return [{ sourceOffset: record.offset, bytes: document.files.graphics.slice(record.offset, record.offset + record.size) }];
         const material = record.wall!, a = document.points[material.points[0]]!, b = document.points[material.points[1]]!;
         const lineId = template.boundaryIds.find(id => {
           const line = document.lines[id]!; return on(a, line, { x: line.x + line.dx, z: line.z + line.dz }) && on(b, line, { x: line.x + line.dx, z: line.z + line.dz });
         });
+        const opened = cell.vertices.some((_, edge) => cell.sourceLines[edge] === lineId && newPortalTarget(document, topology, cell, edge));
+        if (unchanged && retained(record) && !opened) return [{ sourceOffset: record.offset, bytes: document.files.graphics.slice(record.offset, record.offset + record.size) }];
         if (lineId === undefined) {
           if (translatedWholeRoom) return [{ sourceOffset: record.offset, bytes: encodeWallSurface({ ...material,
             points: [pointId({ x: a.x + dx, z: a.z + dz }), pointId({ x: b.x + dx, z: b.z + dz })] }) }];
@@ -82,7 +88,7 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
           const end = room.vertices[(index + 1) % room.vertices.length]!, length = distance(start, end), offset = total;
           total += length; return [{ start, end, length, offset }];
         });
-        const first = fraction(a) * total, last = fraction(b) * total, result: GraphicsRecordInput[] = [];
+        const first = fraction(a) * total, last = fraction(b) * total, result: GraphicsRecordInput[] = [], uncut: WallSurface[] = [];
         for (let index = 0; index < cell.vertices.length; index++) {
           if (cell.sourceLines[index] !== lineId) continue;
           const start = points[cell.vertices[index]!]!, end = points[cell.vertices[(index + 1) % cell.vertices.length]!]!;
@@ -95,9 +101,16 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
             z: start.z + (end.z - start.z) * (arc - edgeStart) / (edgeEnd - edgeStart) });
           const from = last > first ? low : high, to = last > first ? high : low;
           const bound = wallForSpan(material, distance(a, b), [pointId(position(from)), pointId(position(to))], Math.abs(from - first), Math.abs(to - first));
-          result.push({ sourceOffset: record.offset, bytes: encodeWallSurface(bound) });
+          uncut.push(bound);
+          const target = newPortalTarget(document, topology, cell, index);
+          const spans = target ? portalWallSpans(document, bound, document.zones.find(zone => zone.id === target.recordZone)!) : [bound];
+          result.push(...spans.map(span => ({ sourceOffset: record.offset, bytes: encodeWallSurface(span) })));
         }
-        return result;
+        if (!opened || !uncut.length) return result;
+        const starts = new Set(uncut.map(wall => wall.points[0])), ends = new Set(uncut.map(wall => wall.points[1]));
+        const start = [...starts].filter(id => !ends.has(id)), end = [...ends].filter(id => !starts.has(id));
+        if (start.length !== 1 || end.length !== 1) throw new Error(`Room ${room.id} has an ambiguous doorway material-lighting span.`);
+        return result.map(item => ({ ...item, lightingSpan: [points[start[0]!]!, points[end[0]!]!] as const }));
       });
     };
     const selected = newMaterials.get(room.id);

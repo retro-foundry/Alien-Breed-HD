@@ -906,3 +906,20 @@ fixtures can establish current-format support independently.
   wheel coordinates, retaining the exact expected 16-unit drag result. Its
   Chromium/Firefox reruns pass locally; fresh remote CI is still required.
   Deployment remains deferred.
+
+- New static doorway openings now cut wall graphics when an authored room
+  touches a previously closed imported boundary, or another authored room.
+  Destination floor/ceiling air bands leave steps, lintels and any solid band
+  between lower and upper storeys. Upper-storey availability follows the native
+  graphics pointer and height tests. Existing imported portal records retain
+  their authored bytes. Texture columns keep their original distance and phase;
+  lighting interpolation keeps the full original wall anchors even when the
+  opening separates the remaining wall into disconnected pieces. Logical draw
+  cells remap external neighbours to their retained draw-room identities.
+  A shipped Level 1 fixture opens part of a real solid wall, checks exported
+  graphics and lighting, and crosses the opening with normal game input in
+  Chromium and Firefox. Both browser scenarios and all 623 model tests pass;
+  the production build passes. Screenshots confirm the opening into the new
+  room. New openings into moving doors/lifts, replacing existing portals,
+  assigning closing-wall materials and broader controller authoring remain
+  unfinished. This milestone does not complete the editor or its deployment.

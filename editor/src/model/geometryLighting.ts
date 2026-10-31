@@ -52,11 +52,11 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
     // when a boundary wall is emitted as several ordered segments.
     for (const record of records.filter(record => !record.polygon && record.points.length > 0)) {
       activeRecord = record.offset;
-      const emitted = cells.flatMap(cell => {
+      const emittedInputs = cells.flatMap(cell => {
         const stream = graphics.streams.get(cell.id)!;
-        return [...stream.lower, ...(stream.upper ?? [])].filter(item => item.sourceOffset === record.offset)
-          .map(item => readGraphicRecord(new BinaryReader(item.bytes, 'generated lighting target'), 0, points.length));
+        return [...stream.lower, ...(stream.upper ?? [])].filter(item => item.sourceOffset === record.offset);
       });
+      const emitted = emittedInputs.map(item => readGraphicRecord(new BinaryReader(item.bytes, 'generated lighting target'), 0, points.length));
       if (!emitted.length) continue;
       if (!record.wall) {
         emitted.forEach(item => item.points.forEach((id, index) => claim(id, { kind: 'copy', source: record.points[index]! }, room.id))); continue;
@@ -64,12 +64,15 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
       const segments = [...new Map(emitted.map(item => [`${item.points[0]},${item.points[1]}`, item.points])).values()];
       const starts = new Set(segments.map(pair => pair[0]!)), ends = new Set(segments.map(pair => pair[1]!));
       const first = [...starts].filter(id => !ends.has(id)), last = [...ends].filter(id => !starts.has(id));
-      if (first.length !== 1 || last.length !== 1) throw new Error(`Room ${room.id} has an ambiguous generated wall-lighting chain.`);
-      const from = record.points[0]!, to = record.points[1]!, a = points[first[0]!]!, b = points[last[0]!]!;
+      const supplied = emittedInputs.find(item => item.lightingSpan)?.lightingSpan;
+      if (supplied && emittedInputs.some(item => JSON.stringify(item.lightingSpan) !== JSON.stringify(supplied)))
+        throw new Error(`Room ${room.id} has conflicting doorway lighting spans.`);
+      if (!supplied && (first.length !== 1 || last.length !== 1)) throw new Error(`Room ${room.id} has an ambiguous generated wall-lighting chain.`);
+      const from = record.points[0]!, to = record.points[1]!, a = supplied?.[0] ?? points[first[0]!]!, b = supplied?.[1] ?? points[last[0]!]!;
       const lower = resolvePointLighting(document, { kind: 'copy', source: from }), upper = resolvePointLighting(document, { kind: 'copy', source: to });
       for (const id of new Set(segments.flat())) {
-        if (id === first[0]) claim(id, { kind: 'copy', source: from }, room.id);
-        else if (id === last[0]) claim(id, { kind: 'copy', source: to }, room.id);
+        if (supplied ? points[id]!.x === a.x && points[id]!.z === a.z : id === first[0]) claim(id, { kind: 'copy', source: from }, room.id);
+        else if (supplied ? points[id]!.x === b.x && points[id]!.z === b.z : id === last[0]) claim(id, { kind: 'copy', source: to }, room.id);
         else if (same(lower, upper)) claim(id, { kind: 'copy', source: from }, room.id);
         else {
           if (!on(points[id]!, a, b)) throw new Error(`Room ${room.id} needs explicit lighting along its bent material wall.`);

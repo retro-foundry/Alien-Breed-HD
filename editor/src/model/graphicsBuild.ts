@@ -5,9 +5,10 @@ import { BinaryWriter } from './writer';
 import { readGraphicRecord, type Graphic } from './graphics';
 import { buildAnimationTables, importedAnimationTables, remapAnimationRooms, type AnimationTables } from './animationBuild';
 import { relocateRecordPointer } from './graphicsRelocation';
+import type { Position } from './geometry';
 
 export interface GraphicsZoneInput { id: number; lower: readonly Uint8Array[]; upper?: readonly Uint8Array[] }
-export interface GraphicsRecordInput { bytes: Uint8Array; sourceOffset?: number }
+export interface GraphicsRecordInput { bytes: Uint8Array; sourceOffset?: number; /** Full authored lighting span before cutting a new opening. */ lightingSpan?: readonly [Position, Position] }
 export interface GraphicsStreamInput { lower: readonly GraphicsRecordInput[]; upper?: readonly GraphicsRecordInput[] }
 export interface GraphicsEdits {
   replacements?: ReadonlyMap<number, Uint8Array>;

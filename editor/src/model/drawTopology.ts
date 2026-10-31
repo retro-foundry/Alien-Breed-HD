@@ -27,5 +27,8 @@ export function buildDrawTopology(source: RoomSource, topology: RoomTopology) {
     if (ordered.length !== edges.length) throw new Error(`Room ${room.id} has disconnected draw boundaries.`);
     return [{ ...members[0]!, vertices: ordered.map(edge => edge.a), neighbours: ordered.map(edge => edge.neighbour), sourceLines: ordered.map(edge => edge.source) }];
   });
-  return { topology: { ...topology, cells }, owners };
+  // Draw volumes omit decomposition cells; their external neighbours must
+  // refer to the corresponding draw representative, not a removed cell ID.
+  return { topology: { ...topology, cells: cells.map(cell => ({ ...cell,
+    neighbours: cell.neighbours.map(id => id < 0 ? id : owners.get(id)!) })) }, owners };
 }

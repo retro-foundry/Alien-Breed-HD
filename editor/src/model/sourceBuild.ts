@@ -12,6 +12,8 @@ import { compileRoomTopology } from './roomTopology';
 import { buildSourceVisibility } from './visibilityTables';
 import { buildZoneRecords } from './zoneBuild';
 import { buildDrawTopology } from './drawTopology';
+import { newPortalTarget } from './portalWalls';
+import { resolveAnimationRoom } from './animationRooms';
 
 export interface SourceBuildOptions {
   /** Resolved game configuration in source room identities; -1 disables exit.
@@ -27,18 +29,18 @@ export interface SourceBuildOptions {
  */
 export function buildSourceLevel(document: LevelDocument, options: SourceBuildOptions) {
   const source = document.roomSource, topology = compileRoomTopology(document, source);
+  const moving = new Set(document.mechanisms.map(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift')));
   for (const cell of topology.cells) cell.neighbours.forEach((neighbour, edge) => {
     if (neighbour < 0) return;
     const target = topology.cells.find(target => target.id === neighbour)!;
     if (target.sourceId === cell.sourceId) return;
+    if (!newPortalTarget(document, topology, cell, edge)) return;
+    if ((cell.originZone !== null && moving.has(cell.originZone)) || (target.originZone !== null && moving.has(target.originZone)))
+      throw new Error('A new doorway into a moving door or lift needs synchronized wall animation attachments before building. Choose a static room boundary.');
     if (cell.originZone !== null) {
       const line = cell.sourceLines[edge];
-      if (line === null || document.lines[line!]!.connect !== target.originZone)
-        throw new Error('A new doorway needs regenerated wall openings before this geometry can be built.');
-    } else if (target.originZone === null) {
-      const a = document.zones[cell.recordZone]!, b = document.zones[target.recordZone]!;
-      if (a.floor !== b.floor || a.ceiling !== b.ceiling || a.upperFloor !== b.upperFloor || a.upperCeiling !== b.upperCeiling)
-        throw new Error('A new doorway between different room heights needs generated step and ceiling wall spans before building.');
+      if (line === null || line === undefined || document.lines[line]!.connect >= 0)
+        throw new Error('Replacing an existing doorway or unassigned boundary needs an explicit wall material before building.');
     }
   });
   const geometry = buildCellGraphics(document, source, topology, options.newRoomGraphics);
