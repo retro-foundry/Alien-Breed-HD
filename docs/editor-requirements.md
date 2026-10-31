@@ -36,8 +36,11 @@ LevelEditor v3.03 changelog reference still needs to be located and checked.
 The binary model, original-file preservation, supported record edits, recovery
 and basic React UI are implemented and tested. They cover parts of R4, R5, R7,
 R9 and R11. The geometry normaliser has unit/source-fixture coverage for part of
-R2, including all 2,496 original outlines, but still needs authoring/compiler
-integration. Undo now keeps the full action chain and has a 250-action
+R2, including all 2,496 original outlines. Source drawing, corner dragging and
+coordinate editing, shared T-junction moves, deletion, cancellation, overlap
+validation and source saves are now wired into the React canvas/inspector.
+Full compiler integration and playable authored-geometry evidence remain
+required. Undo keeps the full action chain and has a 250-action
 undo/redo regression.
 
 The actual game engine is now embedded beside the map, with zone visits,
@@ -48,10 +51,11 @@ Original assembly geometry helpers have 330 emulated parity fixtures, and all
 processes all 16 maps, including concave imports, emits common clip bounds and
 reproduces original solid-wall links. Generated-file and engine comparisons
 now cover deterministic assembly and unchanged engine spawn views in both
-browsers. Broader scenes, geometry edits and source/history integration are
-still required before enabling automatic rebuilt visibility in exports.
+browsers. Source history and project archives are integrated. Broader scenes,
+complete geometry compilation and authored engine runs are still required
+before enabling automatic rebuilt visibility in exports.
 
-The full compiler, topology tools, geometry validation UI, PVS generation and
+The full compiler, remaining topology/diagnostic tools, PVS generation and
 inspection, heights/stairs, asset pipeline, multiselect/clipboard, full 3D
 picking/overlays, full mechanism authoring and export profiles remain required.
 Do not mark this goal complete based only on the existing format/model/UI tests.

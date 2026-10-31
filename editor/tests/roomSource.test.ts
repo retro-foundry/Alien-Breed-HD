@@ -1,13 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { openLevel } from '../src/model/level';
 import { originalFiles } from './helpers';
-import { beginRoomDraft, commitRoomDraft, executeRoomChange, importRoomSource, redoRoomChange, removeSourceRooms, setDraftCorners, undoRoomChange, type RoomHistory } from '../src/model/roomSource';
+import { beginRoomDraft, commitRoomDraft, executeRoomChange, importRoomSource, redoRoomChange, removeSourceRooms, setDraftCorners, undoRoomChange, moveSourceCorner, type RoomHistory } from '../src/model/roomSource';
 
 const outline = [{ x: 0, z: 0 }, { x: 128, z: 0 }, { x: 128, z: 128 }, { x: 0, z: 128 }];
 const document = openLevel('Level 1', originalFiles(1));
 const initial = () => importRoomSource(document);
 
 describe('editable room source and transactional gestures', () => {
+  it('moves both sides of a shared T-junction atomically and keeps their portal paired', () => {
+    const empty = removeSourceRooms(initial(), initial().rooms.map(room => room.id)).after;
+    const first = commitRoomDraft(empty, setDraftCorners(beginRoomDraft(document, empty, 0), outline)).after;
+    const second = commitRoomDraft(first, setDraftCorners(beginRoomDraft(document, first, 0),
+      [{ x: 128, z: 32 }, { x: 256, z: 32 }, { x: 256, z: 96 }, { x: 128, z: 96 }])).after;
+    const room = second.rooms[1]!, index = room.vertices.findIndex(point => point.x === 128 && point.z === 32);
+    const changed = moveSourceCorner(second, room.id, index, { x: 136, z: 32 });
+    expect(changed.after.rooms.every(room => room.vertices.some(point => point.x === 136 && point.z === 32))).toBe(true);
+    expect(second.rooms[0]!.vertices).toHaveLength(4);
+    expect(changed.after.rooms[0]!.vertices.length).toBeGreaterThan(4);
+    const history = executeRoomChange({ source: second, past: [], future: [] }, changed);
+    expect(undoRoomChange(history).source).toBe(second);
+  });
   it('imports all original boundaries without changing game bytes or record relationships', () => {
     for (let level = 1; level <= 16; level++) {
       const document = openLevel(`Level ${level}`, originalFiles(level)), source = importRoomSource(document);

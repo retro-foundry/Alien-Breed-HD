@@ -5,6 +5,17 @@ export interface Position { x: number; z: number }
 export interface RoomOutline { id: string; vertices: Position[] }
 export interface RoomEdge { room: string; index: number; start: Position; end: Position; neighbour: string | null }
 
+export function pointInRoomOutline(vertices: readonly Position[], point: Position): boolean {
+  if (vertices.length < 3 || !Number.isFinite(point.x) || !Number.isFinite(point.z)) return false;
+  let inside = false;
+  for (let i = 0; i < vertices.length; i++) {
+    const a = vertices[i]!, b = vertices[(i + 1) % vertices.length]!;
+    if (onSegment(point, a, b)) return true;
+    if ((a.z > point.z) !== (b.z > point.z) && point.x < a.x + (b.x - a.x) * (point.z - a.z) / (b.z - a.z)) inside = !inside;
+  }
+  return inside;
+}
+
 function same(a: Position, b: Position): boolean { return a.x === b.x && a.z === b.z; }
 function cross(a: Position, b: Position, c: Position): number { return (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x); }
 export function signedArea(vertices: readonly Position[]): number {
@@ -146,5 +157,25 @@ export function buildRoomEdges(input: readonly RoomOutline[], anchors: readonly 
     }
     directed.set(ownKey, edge);
   }
+  return edges;
+}
+
+/** Validate the planar room arrangement while allowing shared walls and
+ * corner contacts. Splitting at every existing corner also makes midpoint
+ * containment exact for edges that meet at T junctions. */
+export function validateRoomInteriors(rooms: readonly RoomOutline[]): RoomEdge[] {
+  const edges = buildRoomEdges(rooms);
+  const strictInside = (room: RoomOutline, point: Position) => pointInRoomOutline(room.vertices, point)
+    && !room.vertices.some((a, i) => onSegment(point, a, room.vertices[(i + 1) % room.vertices.length]!));
+  for (let i = 0; i < edges.length; i++) for (let j = i + 1; j < edges.length; j++) {
+    const a = edges[i]!, b = edges[j]!;
+    if (a.room === b.room) continue;
+    if (cross(a.start, a.end, b.start) * cross(a.start, a.end, b.end) < 0
+      && cross(b.start, b.end, a.start) * cross(b.start, b.end, a.end) < 0)
+      throw new Error(`Rooms ${a.room} and ${b.room} cross each other. Move their corners apart.`);
+  }
+  for (const edge of edges) for (const room of rooms) if (room.id !== edge.room
+    && strictInside(room, { x: (edge.start.x + edge.end.x) / 2, z: (edge.start.z + edge.end.z) / 2 }))
+    throw new Error(`Rooms ${edge.room} and ${room.id} overlap. Move their outlines apart or join their boundaries.`);
   return edges;
 }

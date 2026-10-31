@@ -1,9 +1,9 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { openLevel, objectName, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './model/level';
-import { execute, redo, undo, moveObject, setStart, setPlaytestSlot, setExitZone, type EditCommand, type History } from './model/commands';
+import { execute, redo, undo, moveObject, setStart, setPlaytestSlot, setExitZone, editRoomSource, type EditCommand, type History } from './model/commands';
 import { decodeProject, encodeGameLevel, encodeProject, readFiles, openProjectCandidate, type ProjectCandidate } from './model/project';
-import { roomSourceMatchesLevel } from './model/roomSource';
+import { roomSourceMatchesLevel, beginRoomDraft, setDraftCorners, commitRoomDraft, removeSourceRooms, moveSourceCorner, type RoomDraft } from './model/roomSource';
 import { listWorkspaces, saveWorkspace, type SavedWorkspace } from './persistence';
 import { MapCanvas, type Selection } from './components/MapCanvas';
 import { Inspector } from './components/Inspector';
@@ -51,7 +51,10 @@ export function App() {
   const [error, setError] = useState(''), [busy, setBusy] = useState('Opening workspace…');
   const [status, setStatus] = useState(''), [autosave, setAutosave] = useState('Local workspace');
   const [selection, setSelection] = useState<Selection>(null), [tab, setTab] = useState<'zones' | 'objects' | 'starts'>('zones');
-  const [search, setSearch] = useState(''), [tool, setTool] = useState<'select' | 'pan'>('select');
+  const [search, setSearch] = useState(''), [tool, setTool] = useState<'select' | 'pan' | 'room'>('select');
+  const [roomDraft, setRoomDraft] = useState<RoomDraft | null>(null), [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [focusRoom, setFocusRoom] = useState<{ id: string; request: number }>();
+  const [roomTemplate, setRoomTemplate] = useState(0);
   const [layer, setLayer] = useState<'lower' | 'upper'>('lower'), [grid, setGrid] = useState(64), [showObjects, setShowObjects] = useState(true);
   const [view, setView] = useState<'map' | 'split' | '3d'>('map');
   const [cursor, setCursor] = useState({ x: 0, z: 0 }), [fitKey, setFitKey] = useState(0), [focusZone, setFocusZone] = useState<{ id: number; request: number }>();
@@ -60,6 +63,16 @@ export function App() {
   const fileInput = useRef<HTMLInputElement>(null), searchInput = useRef<HTMLInputElement>(null), generation = useRef(0);
   const document = workspace?.history.document;
   const unbuiltRooms = useMemo(() => document ? !roomSourceMatchesLevel(document) : false, [document]);
+  const selectedRoom = document?.roomSource.rooms.find(room => selectedRoomId ? room.id === selectedRoomId : selection?.kind === 'zone' && room.originZone === selection.id);
+  const template = selectedRoom?.recordZone ?? (document?.zones.some(zone => zone.id === roomTemplate) ? roomTemplate : document?.zones[0]?.id);
+  useEffect(() => { if (selectedRoom) setRoomTemplate(selectedRoom.recordZone); }, [selectedRoom?.recordZone]);
+  const select = useCallback((value: Selection) => { setSelection(value); setSelectedRoomId(null); }, []);
+  const selectRoom = useCallback((id: string) => { setSelection(null); setSelectedRoomId(id); setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1 })); }, []);
+  useEffect(() => { if (tool !== 'room' || view === '3d') setRoomDraft(null); }, [tool, view]);
+  useEffect(() => {
+    if (roomDraft && roomDraft.base !== document?.roomSource) { setRoomDraft(null); setTool('select'); }
+    if (selectedRoomId && !document?.roomSource.rooms.some(room => room.id === selectedRoomId)) setSelectedRoomId(null);
+  }, [document?.roomSource, selectedRoomId, roomDraft]);
   useEffect(() => {
     if (!help && !showRecents && choices.length === 0) return;
     const previous = window.document.activeElement;
@@ -124,6 +137,35 @@ export function App() {
     catch (error) { fail(error); }
   }, [fail]);
 
+  const finishRoom = useCallback(() => {
+    if (!document || !roomDraft) return;
+    try {
+      const change = commitRoomDraft(document.roomSource, roomDraft);
+      edit(editRoomSource(change)); selectRoom(roomDraft.roomId ?? `room-${document.roomSource.nextId}`);
+      setRoomDraft(null); setTool('select');
+    } catch (error) { fail(error); }
+  }, [document, roomDraft, edit, selectRoom, fail]);
+  function beginRoom() {
+    if (!document || template === undefined) return;
+    setRoomDraft(beginRoomDraft(document, document.roomSource, template)); setTool('room'); setView('map');
+    setStatus('Click corners in either direction. Enter finishes; Backspace removes the last corner; Escape cancels.');
+  }
+  function addRoomPoint(x: number, z: number) {
+    if (!roomDraft) return;
+    try { setRoomDraft(setDraftCorners(roomDraft, [...roomDraft.vertices, { x, z }])); } catch (error) { fail(error); }
+  }
+  function editRoomCorner(index: number, axis: 'x' | 'z', value: number) {
+    if (!document || !selectedRoom) return;
+    edit(() => editRoomSource(moveSourceCorner(document.roomSource, selectedRoom.id, index, { ...selectedRoom.vertices[index]!, [axis]: value })));
+  }
+  function moveRoomCorner(index: number, x: number, z: number) {
+    if (document && selectedRoom) edit(() => editRoomSource(moveSourceCorner(document.roomSource, selectedRoom.id, index, { x, z })));
+  }
+  function deleteRoom() {
+    if (!document || !selectedRoom) return;
+    edit(() => editRoomSource(removeSourceRooms(document.roomSource, [selectedRoom.id]))); select(null); setTool('select'); setRoomDraft(null);
+  }
+
   const save = useCallback(() => {
     // Blur commits a pending numeric property before reading the document.
     // This also covers Ctrl+S, where clicking a toolbar button would not blur it.
@@ -141,6 +183,7 @@ export function App() {
   }, [fail]);
 
   const historyAction = useCallback((direction: 'undo' | 'redo') => {
+    setRoomDraft(null); setTool('select');
     setWorkspace(current => {
       if (!current) return current;
       try { return { ...current, history: direction === 'undo' ? undo(current.history) : redo(current.history) }; }
@@ -154,24 +197,30 @@ export function App() {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); fileInput.current?.click(); return; }
       if (editing) return;
+      if (roomDraft && event.target instanceof HTMLCanvasElement) {
+        if (event.key === 'Enter') { event.preventDefault(); finishRoom(); return; }
+        if (event.key === 'Backspace' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.shiftKey)) {
+          event.preventDefault(); setRoomDraft(setDraftCorners(roomDraft, roomDraft.vertices.slice(0, -1))); return;
+        }
+      }
       if ((event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); historyAction(event.key.toLowerCase() === 'y' || event.shiftKey ? 'redo' : 'undo'); }
       if (event.key.toLowerCase() === 'f' && !event.ctrlKey && !event.metaKey) setFitKey(key => key + 1);
       if (event.key.toLowerCase() === 'v') setTool('select');
       if (event.key.toLowerCase() === 'h') setTool('pan');
       if (event.key === '/') { event.preventDefault(); flushSync(() => setNavigatorOpen(true)); searchInput.current?.focus(); }
-      if (event.key === 'Escape') { setSelection(null); setHelp(false); setShowRecents(false); setChoices([]); setNavigatorOpen(false); }
+      if (event.key === 'Escape') { select(null); setRoomDraft(null); setTool('select'); setHelp(false); setShowRecents(false); setChoices([]); setNavigatorOpen(false); }
       if (event.key === '?') setHelp(true);
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [save, historyAction]);
+  }, [save, historyAction, roomDraft, finishRoom, select]);
 
   async function openDocument(next: LevelDocument, id?: string, request = ++generation.current) {
     const current = workspaceRef.current;
     if (current && workspaceDirty(current))
       await saveWorkspace(current.id, current.history.document);
     if (request !== generation.current) return;
-    setWorkspace(makeWorkspace(next, id)); setSelection(null); setFocusZone(undefined); setSearch(''); setChoices([]); setShowRecents(false); setStatus(`Opened ${next.name}`);
+    setWorkspace(makeWorkspace(next, id)); select(null); setRoomDraft(null); setRoomTemplate(next.zones[0]?.id ?? 0); setTool('select'); setFocusZone(undefined); setFocusRoom(undefined); setSearch(''); setChoices([]); setShowRecents(false); setStatus(`Opened ${next.name}`);
   }
 
   async function loadOriginal(level: number) {
@@ -205,7 +254,8 @@ export function App() {
     } catch (error) { fail(error); }
   };
 
-  const filteredZones = document?.zones.filter(zone => String(zone.id).includes(search)) ?? [];
+  const filteredZones = document?.zones.filter(zone => document.roomSource.rooms.some(room => room.originZone === zone.id) && String(zone.id).includes(search)) ?? [];
+  const newRooms = document?.roomSource.rooms.filter(room => room.originZone === null && room.id.toLowerCase().includes(search.toLowerCase())) ?? [];
   const filteredObjects = document?.objects.filter(object => object.zone >= 0 && `${object.id} ${objectName(object.type)}`.toLowerCase().includes(search.toLowerCase())) ?? [];
   const activeObjects = document?.objects.filter(object => object.zone >= 0).length ?? 0;
   return <div className={`app ${navigatorOpen ? 'navigator-open' : ''}`} onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={event => { event.preventDefault(); if (event.dataTransfer.files.length) void importFiles([...event.dataTransfer.files]); }}>
@@ -218,33 +268,37 @@ export function App() {
     {error && <div className="error-banner" role="alert"><Icon name="alert" /><span>{error}</span><button className="icon-button" aria-label="Dismiss error" title="Close this message. Your current document stays open." onClick={() => setError('')}><Icon name="close" size={16} /></button></div>}
     {unbuiltRooms && <div className="error-banner" role="status"><Icon name="layers" /><span>This project has room outlines that this version cannot compile yet. Save project keeps them; game export and 3D preview are unavailable.</span></div>}
     <div className="workspace">
-      <aside className="navigator"><div className="panel-title">PROJECT <span className="eyebrow">LOCAL</span></div><div className="project-picker"><Icon name="layers" /><div><strong>{document?.name ?? 'Opening…'}</strong><span>{document?.zones.length ?? 0} zones · {activeObjects} objects</span></div></div>
+      <aside className="navigator"><div className="panel-title">PROJECT <span className="eyebrow">LOCAL</span></div><div className="project-picker"><Icon name="layers" /><div><strong>{document?.name ?? 'Opening…'}</strong><span>{document?.roomSource.rooms.length ?? 0} rooms · {activeObjects} objects</span></div></div>
         <label className="reference-picker"><span>Target game slot</span><select aria-label="Target game slot" title="Saved with this project. Build & play uses this game slot; Export level writes its matching level directory. Undo restores the previous slot." disabled={!document} value={document?.playtestSlot ?? 0} onChange={event => { if (document) edit(() => setPlaytestSlot(document, Number(event.target.value))); }}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>Level slot {i + 1}</option>)}</select></label>
         <label className="reference-picker"><span>Level exit</span><select aria-label="Level exit" title="Finish the level when player one enters this zone. Original uses the chosen game slot's built-in exit. No exit is useful for testing. Custom exits are supported by the updated game port." disabled={!document} value={document?.exitZone ?? 'original'} onChange={event => { if (document) edit(() => setExitZone(document, event.target.value === 'original' ? null : Number(event.target.value))); }}><option value="original">Original slot exit</option><option value="-1">No exit (playtest freely)</option>{document?.zones.map(zone => <option key={zone.id} value={zone.id}>Zone {zone.id}</option>)}</select></label>
         <label className="reference-picker"><span>Original levels</span><select aria-label="Original level" title="Open one of the sixteen shipped maps. Your current edits are saved in this browser first." value={/^Level (\d+)$/.exec(document?.name ?? '')?.[1] ?? ''} disabled={!!busy} onChange={event => { if (event.target.value) void loadOriginal(Number(event.target.value)); }}><option value="">Choose a reference level</option>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i + 1}>Level {String(i + 1).padStart(2, '0')}</option>)}</select></label>
         <div className="navigator-tabs" role="tablist" aria-label="Map contents">{(['zones', 'objects', 'starts'] as const).map(value => <button key={value} role="tab" title={value === 'starts' ? 'Find and select player starting positions.' : value === 'zones' ? 'Find and select rooms by zone number.' : 'Find enemies, pickups and scenery by name.'} aria-selected={tab === value} className={tab === value ? 'active' : ''} onClick={() => { setTab(value); setSearch(''); }}>{value === 'starts' ? 'Starts' : value[0]?.toUpperCase() + value.slice(1)}</button>)}</div>
         <label className="search-box"><Icon name="search" size={15} /><input ref={searchInput} aria-label="Search map contents" title="Find a zone number or object name. Press / from the map to focus search." value={search} onChange={event => setSearch(event.target.value)} placeholder={tab === 'zones' ? 'Find a zone…' : 'Find an object…'} /><kbd>/</kbd></label>
         <div className="contents-list">
-          {tab === 'zones' && filteredZones.map(zone => <button key={zone.id} className={`content-row ${selection?.kind === 'zone' && selection.id === zone.id ? 'selected' : ''}`} title={`Select zone ${zone.id} and centre the map. In 3D inspection, visit this zone.`} onClick={() => { setSelection({ kind: 'zone', id: zone.id }); setFocusZone(current => ({ id: zone.id, request: (current?.request ?? 0) + 1 })); setNavigatorOpen(false); }}><span className={`zone-dot ${document?.mechanisms.some(mechanism => mechanism.zone === zone.id && mechanism.kind === 'door') ? 'door-dot' : zone.water > zone.ceiling && zone.water < zone.floor ? 'water-dot' : ''}`} /><span>Zone {String(zone.id).padStart(3, '0')}</span>{zone.upper.length > 0 && <span className="row-badge">2F</span>}<span className="row-detail">{zone.floor}</span></button>)}
-          {tab === 'objects' && filteredObjects.map(object => <button key={object.id} className={`content-row ${selection?.kind === 'object' && selection.id === object.id ? 'selected' : ''}`} title={`Select ${objectName(object.type)} ${object.id}. Drag it on the map to move it.`} onClick={() => { setSelection({ kind: 'object', id: object.id }); setFocusZone(current => ({ id: object.zone, request: (current?.request ?? 0) + 1 })); setNavigatorOpen(false); }}><Icon name="object" size={14} /><span>{objectName(object.type)}</span><span className="row-detail">{object.id}</span></button>)}
-          {tab === 'starts' && document?.starts.map(start => <button key={start.player} className={`content-row ${selection?.kind === 'start' && selection.id === start.player ? 'selected' : ''}`} title={`Select player ${start.player} start. Drag the triangle on the map to reposition it.`} onClick={() => { setSelection({ kind: 'start', id: start.player }); setFocusZone(current => ({ id: start.zone, request: (current?.request ?? 0) + 1 })); setNavigatorOpen(false); }}><Icon name="pin" size={14} /><span>Player {start.player}</span><span className="row-detail">Z{start.zone}</span></button>)}
-          {tab !== 'starts' && (tab === 'zones' ? filteredZones : filteredObjects).length === 0 && <div className="list-empty">No matches</div>}
+          {tab === 'zones' && newRooms.map(room => <button key={room.id} className={`content-row ${selectedRoomId === room.id ? 'selected' : ''}`} title="Select this editable room outline. Game geometry compilation is still in progress." onClick={() => { selectRoom(room.id); setNavigatorOpen(false); }}><Icon name="layers" size={14} /><span>Room {room.id.replace(/^room-/, '')}</span><span className="row-badge">OUTLINE</span></button>)}
+          {tab === 'zones' && filteredZones.map(zone => <button key={zone.id} className={`content-row ${selection?.kind === 'zone' && selection.id === zone.id ? 'selected' : ''}`} title={`Select zone ${zone.id} and centre the map. In 3D inspection, visit this zone.`} onClick={() => { select({ kind: 'zone', id: zone.id }); setFocusZone(current => ({ id: zone.id, request: (current?.request ?? 0) + 1 })); setNavigatorOpen(false); }}><span className={`zone-dot ${document?.mechanisms.some(mechanism => mechanism.zone === zone.id && mechanism.kind === 'door') ? 'door-dot' : zone.water > zone.ceiling && zone.water < zone.floor ? 'water-dot' : ''}`} /><span>Zone {String(zone.id).padStart(3, '0')}</span>{zone.upper.length > 0 && <span className="row-badge">2F</span>}<span className="row-detail">{zone.floor}</span></button>)}
+          {tab === 'objects' && filteredObjects.map(object => <button key={object.id} className={`content-row ${selection?.kind === 'object' && selection.id === object.id ? 'selected' : ''}`} title={`Select ${objectName(object.type)} ${object.id}. Drag it on the map to move it.`} onClick={() => { select({ kind: 'object', id: object.id }); setFocusZone(current => ({ id: object.zone, request: (current?.request ?? 0) + 1 })); setNavigatorOpen(false); }}><Icon name="object" size={14} /><span>{objectName(object.type)}</span><span className="row-detail">{object.id}</span></button>)}
+          {tab === 'starts' && document?.starts.map(start => <button key={start.player} className={`content-row ${selection?.kind === 'start' && selection.id === start.player ? 'selected' : ''}`} title={`Select player ${start.player} start. Drag the triangle on the map to reposition it.`} onClick={() => { select({ kind: 'start', id: start.player }); setFocusZone(current => ({ id: start.zone, request: (current?.request ?? 0) + 1 })); setNavigatorOpen(false); }}><Icon name="pin" size={14} /><span>Player {start.player}</span><span className="row-detail">Z{start.zone}</span></button>)}
+          {tab !== 'starts' && (tab === 'zones' ? filteredZones.length + newRooms.length : filteredObjects.length) === 0 && <div className="list-empty">No matches</div>}
         </div>
         <button className="recent-button" title="Open a workspace previously saved in this browser." onClick={() => { listWorkspaces().then(setRecents).catch(fail); setShowRecents(true); }}><Icon name="open" size={15} />Recent workspaces<span>↗</span></button>
       </aside>
       <main className="map-main"><div className="map-toolbar"><div className="tool-group"><button className={`icon-button ${tool === 'select' ? 'active' : ''}`} aria-label="Select tool" aria-pressed={tool === 'select'} title="Click to select a zone, object or start. Drag objects and starts to move them. Shortcut: V." onClick={() => setTool('select')}><Icon name="select" /></button><button className={`icon-button ${tool === 'pan' ? 'active' : ''}`} aria-label="Pan tool" aria-pressed={tool === 'pan'} title="Drag to move around the map. Shortcut: H, or hold Space while dragging. Middle/right drag also pans." onClick={() => setTool('pan')}><Icon name="hand" /></button></div><span className="toolbar-divider" />
+        <label className="grid-select"><select aria-label="Room settings template" title="Copy room settings from this original zone when drawing a new outline. Available even after deleting all outlines. Selecting a room also picks its settings." disabled={!document || !!roomDraft} value={template ?? 0} onChange={event => { setRoomTemplate(Number(event.target.value)); select(null); }}>{document?.zones.map(zone => <option key={zone.id} value={zone.id}>Template {zone.id}</option>)}</select></label>
+        <button className={`small-button ${tool === 'room' ? 'active' : ''}`} aria-label="Draw room" aria-pressed={tool === 'room'} disabled={template === undefined} title="Draw an editable room outline using the chosen settings template, in either direction. Enter finishes; Escape cancels. Game geometry compilation is still in progress." onClick={beginRoom}>Draw room</button>
+        {roomDraft && <><button className="small-button" disabled={roomDraft.vertices.length < 3} title="Validate and commit this whole outline as one undoable edit. Shortcut: Enter on the map." onClick={finishRoom}>Finish room</button><button className="small-button" title="Discard this unfinished outline. No project geometry changes. Shortcut: Escape." onClick={() => { setRoomDraft(null); setTool('select'); }}>Cancel room</button></>}
         <button className="icon-button" aria-label="Undo" title={`Undo ${workspace?.history.past.at(-1)?.label ?? ''} (Ctrl+Z)`} disabled={!workspace?.history.past.length} onClick={() => historyAction('undo')}><Icon name="undo" /></button><button className="icon-button" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled={!workspace?.history.future.length} onClick={() => historyAction('redo')}><Icon name="redo" /></button><span className="toolbar-divider" />
         <div className="layer-toggle"><button className={layer === 'lower' ? 'active' : ''} title="Inspect the lower floor of each zone." onClick={() => setLayer('lower')}>Lower</button><button className={layer === 'upper' ? 'active' : ''} title="Inspect upper-floor geometry where a zone has two floors." onClick={() => setLayer('upper')}>Upper</button></div><span className="toolbar-spacer" />
         <label className="grid-select"><Icon name="grid" size={15} /><select aria-label="Grid spacing" title="Set snapping for dragged objects and starts. Hold Alt to bypass snapping; Grid off uses whole coordinates." value={grid} onChange={event => setGrid(Number(event.target.value))}>{[0, 8, 16, 32, 64, 128].map(value => <option key={value} value={value}>{value === 0 ? 'Grid off' : `Grid ${value}`}</option>)}</select></label><button className={`icon-button ${showObjects ? 'active' : ''}`} aria-label="Show objects" title="Show or hide enemies, pickups and scenery on the map." aria-pressed={showObjects} onClick={() => setShowObjects(show => !show)}><Icon name="eye" /></button><button className="icon-button" title="Fit the whole level into the map view. Shortcut: F." aria-label="Frame map" onClick={() => setFitKey(key => key + 1)}><Icon name="fit" /></button>
       </div>
         <div className="view-tabs" role="group" aria-label="Viewport layout"><button className="project-toggle" aria-label="Toggle project navigator" title="Show or hide the level picker and map contents. Shortcut / opens search." aria-expanded={navigatorOpen} onClick={() => setNavigatorOpen(open => !open)}><Icon name="layers" size={14} />Project</button>{(['map', 'split', '3d'] as const).map(mode => <button key={mode} aria-pressed={view === mode} className={view === mode ? 'active' : ''} title={mode === 'map' ? 'Edit and inspect the overhead map.' : mode === 'split' ? 'Show the map and actual game renderer together.' : 'Inspect the level in the actual game renderer.'} onClick={() => setView(mode)}>{mode === 'map' ? '2D map' : mode === 'split' ? 'Split view' : '3D view'}</button>)}</div>
         {document ? <CanvasBoundary key={workspace?.id} onExport={save}><div className={`viewports viewports-${view}`}>
-          {view !== '3d' && <MapCanvas document={document} selection={selection} onSelect={setSelection} onMove={move} tool={tool} layer={layer} grid={grid} showObjects={showObjects} onCursor={(x, z) => setCursor({ x, z })} fitKey={fitKey} focusZone={focusZone} />}
-          {view !== 'map' && <EnginePreview key={workspace?.id} document={document} selection={selection} layer={layer} onSelectZone={id => setSelection({ kind: 'zone', id })} onSlotChange={slot => edit(() => setPlaytestSlot(document, slot))} />}
+          {view !== '3d' && <MapCanvas document={document} selection={selection} onSelect={select} onMove={move} tool={tool} layer={layer} grid={grid} showObjects={showObjects} onCursor={(x, z) => setCursor({ x, z })} fitKey={fitKey} focusZone={focusZone} roomDraft={roomDraft} selectedRoom={selectedRoom} onRoomSelect={selectRoom} onRoomPoint={addRoomPoint} onRoomFinish={finishRoom} onRoomCornerMove={moveRoomCorner} focusRoom={focusRoom} />}
+          {view !== 'map' && <EnginePreview key={workspace?.id} document={document} selection={selection} layer={layer} onSelectZone={id => select({ kind: 'zone', id })} onSlotChange={slot => edit(() => setPlaytestSlot(document, slot))} />}
         </div></CanvasBoundary> : <div className="canvas-error"><Icon name="layers" size={36} /><h2>Open a level to begin</h2><p>Drop a project, level ZIP or the three twolev files here.</p><button className="primary-button" onClick={() => fileInput.current?.click()}>Open files</button></div>}
         {busy && <div className="busy-overlay" role="status"><span className="spinner" />{busy}</div>}
       </main>
-      {document && <Inspector document={document} selection={selection} edit={edit} />}
+      {document && <Inspector document={document} selection={selection} edit={edit} sourceRoom={selectedRoom} onRoomCorner={editRoomCorner} onRoomDelete={deleteRoom} />}
     </div>
     <footer className="statusbar"><span className="status-dot" /><span>{autosave}</span><span className="status-message" aria-live="polite">{status || 'Choose a zone to start editing'}</span><span>X <strong>{Math.round(cursor.x)}</strong></span><span>Z <strong>{Math.round(cursor.z)}</strong></span><span className="status-size">{document?.points.length ?? 0} points · {document?.zones.length ?? 0} zones</span></footer>
     {(help || showRecents || choices.length > 0) && <div className="modal-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) { setHelp(false); setShowRecents(false); setChoices([]); } }}><section className="modal" role="dialog" aria-modal="true" aria-label={help ? 'Editor help' : choices.length ? 'Choose a level' : 'Recent workspaces'}><button className="modal-close icon-button" aria-label="Close dialog" title="Close this panel. Shortcut: Esc." onClick={() => { setHelp(false); setShowRecents(false); setChoices([]); }}><Icon name="close" /></button>

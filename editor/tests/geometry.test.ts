@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { normaliseRoomOutline, signedArea, isConvex, convexParts, buildRoomEdges } from '../src/model/geometry';
+import { normaliseRoomOutline, signedArea, isConvex, convexParts, buildRoomEdges, validateRoomInteriors } from '../src/model/geometry';
 import { openLevel } from '../src/model/level';
 import { originalFiles } from './helpers';
 
 const square = [{ x: 0, z: 0 }, { x: 128, z: 0 }, { x: 128, z: 128 }, { x: 0, z: 128 }];
 
 describe('drawing direction is owned by the editor', () => {
+  it.each(Array.from({ length: 16 }, (_, i) => i + 1))('accepts every original room arrangement in level %i', level => {
+    const document = openLevel(`Level ${level}`, originalFiles(level));
+    expect(() => validateRoomInteriors(document.roomSource.rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })))).not.toThrow();
+  });
+  it('rejects crossing and contained rooms while allowing partial joins and corner contacts', () => {
+    expect(() => validateRoomInteriors([{ id: 'a', vertices: square }, { id: 'b', vertices: square.map(p => ({ x: p.x / 2 + 32, z: p.z / 2 + 32 })) }])).toThrow(/overlap/);
+    expect(() => validateRoomInteriors([{ id: 'a', vertices: square }, { id: 'b', vertices: square.map(p => ({ x: p.x + 64, z: p.z + 64 })) }])).toThrow(/cross/);
+    expect(() => validateRoomInteriors([{ id: 'a', vertices: square }, { id: 'b', vertices: square.map(p => ({ x: p.x + 128, z: p.z + 128 })) }])).not.toThrow();
+  });
   it('splits larger rooms within mask limits and merges unnecessary triangles automatically', () => {
     const room = Array.from({ length: 20 }, (_, i) => ({ x: Math.round(1000 * Math.cos(i * Math.PI / 10)), z: Math.round(1000 * Math.sin(i * Math.PI / 10)) }));
     const parts = convexParts(room);

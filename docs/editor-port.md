@@ -101,7 +101,7 @@ fixtures can establish current-format support independently.
   A cancelled backup download with unavailable recovery storage retains the
   dirty marker and unload protection. Only a completed IndexedDB save clears
   that marker; requesting a download cannot claim that a file was saved.
-- 283 unit/format/scenario tests currently pass. The portal compiler handles all
+- 301 unit/format/scenario tests currently pass. The portal compiler handles all
   16 maps, derives legacy-safe common clip bounds for alternate routes, and
   supplies exact sightline witnesses. All sixteen maps now pass deterministic
   binary assembly, content retention and matching original/rebuilt engine
@@ -318,3 +318,22 @@ fixtures can establish current-format support independently.
   Chromium and Firefox both preserve all sixteen original spawn-frame
   checksums after combining data-table expansion, visibility rebuilding,
   reversed room blocks and reversed/relocated graphics streams.
+- React now exposes source room drawing, corner dragging/numeric edits and
+  deletion. A retained settings-template selector also supports empty source
+  projects. Drawing uses either direction; Enter/first-corner completes one
+  command, Backspace/Ctrl+Z removes a draft point, and Escape, tool changes and
+  pointer cancellation do not commit unfinished work. Shared vertex edits move
+  the incident portal fan atomically, inserting the corner in a larger wall at
+  a T join. Crossings and overlaps reject before source changes. All sixteen
+  original planar arrangements pass this validator. Source picking/drawing,
+  fit bounds, list rows and inspector fields show changed outlines; selected
+  outlines recenter and their fields retain keyboard-focus tooltips. Numeric
+  fields now share a separate component rather than coupling inspector panels.
+  Room tools and their control help state that game compilation is unfinished;
+  source saves remain available and stale previews stop. The full source
+  geometry compiler and playable new-room validation remain required.
+  The unit suite has 301 passing checks. A full 40-scenario browser run passed;
+  after layout/template refinements, 32 targeted Chrome/Firefox checks passed,
+  including direction-independent gestures, cancellation, drag/coordinate
+  edits, rejected crossings/overlap, deletion/undo and recovery from empty
+  source. Updated room-inspector screenshots were visually checked.

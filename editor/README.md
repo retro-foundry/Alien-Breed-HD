@@ -45,22 +45,32 @@ Opening local files does not upload them anywhere.
   document being edited. Imports are transactional and stale asynchronous
   loads cannot overwrite newer work.
 
-Geometry creation/topology editing, material authoring, source AMOS project
-adapters, the complete compiler, control-path authoring and full 3D surface
-picking are still being implemented. The application is not yet
-a complete replacement for the original editor.
+Room outline drawing/editing/deletion is available as editable source. Choose
+a room settings template, click Draw room, then click corners in either
+direction. Enter or clicking the first corner finishes; Backspace removes the
+last corner, and Escape/changing tools cancels without committing. Select an
+outline to drag its corners or edit coordinates in the inspector. Shared
+corners and T joins move together; crossing and overlapping outlines reject
+atomically. Delete room supports undo. Templates remain available after
+deleting all outlines.
+
+Material authoring, source AMOS project adapters, the complete geometry
+compiler, control-path authoring and full 3D surface picking are still being
+implemented. The application is not yet a complete replacement for the
+original editor. Changed outlines save/recover as source; game export and 3D
+preview stop rather than use stale runtime geometry.
 
 Project format v4 also preserves committed room outlines separately from the
 binary baseline, including concave and unfinished source projects. Room-source
-edits use the shared undo/history model. Their canvas/compiler integration is
+edits use the shared undo/history model. Full compiler integration is
 still in progress: importing changed outlines preserves them for save/recovery
 and reports that game export/3D preview cannot yet compile them. It never
 silently exports the old geometry in their place.
 
-Room geometry will accept either drawing direction. The shared geometry module
-already normalises winding, pairs opposite shared edges, splits partially
+Room geometry accepts either drawing direction. The shared geometry module
+normalises winding, pairs opposite shared edges, splits partially
 shared walls and decomposes concave outlines. These contracts are tested
-against the orientation in all 2,496 original room outlines; canvas/compiler
+against the orientation in all 2,496 original room outlines; full compiler
 integration remains part of the geometry work. There is no user-facing
 clockwise/anticlockwise setting.
 

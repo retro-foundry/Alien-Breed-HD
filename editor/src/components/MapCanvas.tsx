@@ -1,13 +1,19 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { zoneContainsPoint, type LevelDocument, type Zone } from '../model/level';
 import { Icon } from './Icon';
+import { pointInRoomOutline, normaliseRoomOutline } from '../model/geometry';
+import { importRoomSource, type RoomDraft, type SourceRoom } from '../model/roomSource';
 
 export type Selection = { kind: 'zone' | 'object' | 'start' | 'point'; id: number } | null;
 export interface MapView { x: number; z: number; scale: number }
 interface Props {
   document: LevelDocument; selection: Selection; onSelect: (selection: Selection) => void;
   onMove: (selection: Exclude<Selection, null>, x: number, z: number) => void;
-  tool: 'select' | 'pan'; layer: 'lower' | 'upper'; grid: number; showObjects: boolean;
+  tool: 'select' | 'pan' | 'room'; layer: 'lower' | 'upper'; grid: number; showObjects: boolean;
+  roomDraft: RoomDraft | null; selectedRoom?: SourceRoom; onRoomSelect: (id: string) => void;
+  onRoomPoint: (x: number, z: number) => void; onRoomFinish: () => void;
+  onRoomCornerMove: (index: number, x: number, z: number) => void;
+  focusRoom?: { id: string; request: number };
   onCursor: (x: number, z: number) => void; focusZone?: { id: number; request: number }; fitKey: number;
 }
 
@@ -15,7 +21,7 @@ function floorPolygons(zone: Zone, upper: boolean) {
   return (upper ? zone.upper : zone.lower).filter(graphic => [1, 8, 9, 10, 11].includes(graphic.type) && graphic.points.length >= 3);
 }
 
-export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey }: Props) {
+export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, focusRoom }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null), holder = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const lastFit = useRef<{ data: Uint8Array; fit: number } | null>(null);
@@ -23,6 +29,16 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
   const space = useRef(false);
   const drag = useRef<{ x: number; y: number; view: MapView; selection: Selection; moved: boolean } | null>(null);
   const [ghost, setGhost] = useState<{ selection: Exclude<Selection, null>; x: number; z: number } | null>(null);
+  const cornerDrag = useRef<{ index: number } | null>(null);
+  const [cornerGhost, setCornerGhost] = useState<{ index: number; x: number; z: number } | null>(null);
+  useEffect(() => { cornerDrag.current = null; setCornerGhost(null); }, [selectedRoom?.id, tool, document.roomSource]);
+  const sourceView = useMemo(() => {
+    const baseline = new Map(importRoomSource(document).rooms.map(room => [room.id, room]));
+    const changed = document.roomSource.rooms.filter(room => JSON.stringify(room) !== JSON.stringify(baseline.get(room.id)));
+    const visibleOrigins = new Set(document.roomSource.rooms.map(room => room.originZone));
+    const hidden = new Set(document.zones.filter(zone => !visibleOrigins.has(zone.id) || changed.some(room => room.originZone === zone.id)).map(zone => zone.id));
+    return { changed, hidden };
+  }, [document]);
   const screen = useCallback((x: number, z: number) => ({ x: size.width / 2 + (x - view.x) * view.scale, y: size.height / 2 - (z - view.z) * view.scale }), [view, size]);
   const world = useCallback((x: number, y: number) => ({ x: view.x + (x - size.width / 2) / view.scale, z: view.z - (y - size.height / 2) / view.scale }), [view, size]);
 
@@ -39,7 +55,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
   useEffect(() => {
     if (size.width < 120 || size.height < 120) return;
     if (lastFit.current?.data === document.encoded.data && lastFit.current.fit === fitKey) return;
-    const points = document.points;
+    const points = [...document.points, ...document.roomSource.rooms.flatMap(room => [...room.vertices])];
     if (!points.length) return;
     const xs = points.map(point => point.x), zs = points.map(point => point.z);
     const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
@@ -56,6 +72,12 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
     const lines = zone.boundaryIds.map(id => document.lines[id]).filter(line => !!line);
     if (lines.length) setView(view => ({ ...view, x: lines.reduce((sum, line) => sum + line.x, 0) / lines.length, z: lines.reduce((sum, line) => sum + line.z, 0) / lines.length }));
   }, [focusZone, document.encoded.data]);
+  useEffect(() => {
+    const room = document.roomSource.rooms.find(room => room.id === focusRoom?.id);
+    if (room?.vertices.length) setView(view => ({ ...view,
+      x: room.vertices.reduce((sum, point) => sum + point.x, 0) / room.vertices.length,
+      z: room.vertices.reduce((sum, point) => sum + point.z, 0) / room.vertices.length }));
+  }, [focusRoom]);
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
@@ -63,7 +85,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       if (event.code === 'Space' && !control) { space.current = true; event.preventDefault(); }
     };
     const up = (event: KeyboardEvent) => { if (event.code === 'Space') space.current = false; };
-    const blur = () => { space.current = false; };
+    const blur = () => { space.current = false; drag.current = null; setGhost(null); cornerDrag.current = null; setCornerGhost(null); };
     window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); };
   }, []);
@@ -110,6 +132,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       context.closePath();
     };
     for (const zone of document.zones) {
+      if (sourceView.hidden.has(zone.id)) continue;
       const selected = selection?.kind === 'zone' && selection.id === zone.id;
       const height = layer === 'upper' ? zone.upperFloor : zone.floor;
       const shade = Math.max(17, Math.min(36, 24 + height / 45));
@@ -121,6 +144,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       }
     }
     for (const zone of document.zones) {
+      if (sourceView.hidden.has(zone.id)) continue;
       const selected = selection?.kind === 'zone' && selection.id === zone.id;
       for (const id of zone.boundaryIds) {
         const line = document.lines[id]; if (!line) continue;
@@ -132,6 +156,23 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       }
     }
     context.setLineDash([]);
+    const outline = (vertices: readonly { x: number; z: number }[], fill: boolean, colour: string) => {
+      context.beginPath(); vertices.forEach((point, index) => { const pixel = screen(point.x, point.z); if (index) context.lineTo(pixel.x, pixel.y); else context.moveTo(pixel.x, pixel.y); });
+      if (vertices.length >= 3) context.closePath();
+      if (fill) { context.fillStyle = '#36483d'; context.fill(); }
+      context.strokeStyle = colour; context.lineWidth = 2; context.stroke();
+      for (const point of vertices) { const pixel = screen(point.x, point.z); context.fillStyle = colour; context.fillRect(pixel.x - 3, pixel.y - 3, 6, 6); }
+    };
+    const previewVertices = (room: SourceRoom) => room.id === selectedRoom?.id && cornerGhost ? room.vertices.map((point, i) => i === cornerGhost.index ? { x: cornerGhost.x, z: cornerGhost.z } : point) : room.vertices;
+    let cornerValid = true;
+    if (selectedRoom && cornerGhost) try { normaliseRoomOutline(previewVertices(selectedRoom)); } catch { cornerValid = false; }
+    for (const room of sourceView.changed) outline(previewVertices(room), true, room.id === selectedRoom?.id ? cornerValid ? '#d0f6a5' : '#e98980' : '#84b99d');
+    if (selectedRoom && !sourceView.changed.some(room => room.id === selectedRoom.id)) outline(previewVertices(selectedRoom), false, cornerValid ? '#d0f6a5' : '#e98980');
+    if (roomDraft?.vertices.length) {
+      let valid = roomDraft.vertices.length < 3;
+      try { normaliseRoomOutline(roomDraft.vertices); valid = true; } catch { /* Incomplete gestures remain uncommitted. */ }
+      outline(roomDraft.vertices, roomDraft.vertices.length >= 3, valid ? '#f0c77e' : '#e98980');
+    }
     if (view.scale > 0.3) for (const point of document.points) {
       const pixel = screen(point.x, point.z); context.fillStyle = '#adb6ba'; context.fillRect(pixel.x - 1.5, pixel.y - 1.5, 3, 3);
     }
@@ -163,7 +204,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
         }
       }
     }
-  }, [document, selection, view, size, grid, showObjects, layer, ghost, screen, world]);
+  }, [document, selection, view, size, grid, showObjects, layer, ghost, screen, world, sourceView, roomDraft, selectedRoom, cornerGhost]);
 
   function hit(x: number, y: number): Selection {
     for (const start of document.starts) { const pixel = screen(start.x, start.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 13) return { kind: 'start', id: start.player }; }
@@ -172,17 +213,36 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       const pixel = screen(object.x, object.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 9) return { kind: 'object', id: object.id };
     }
     const point = world(x, y);
-    const zones = document.zones.filter(zone => zoneContainsPoint(document, zone, point.x, point.z));
+    const zones = document.zones.filter(zone => !sourceView.hidden.has(zone.id) && zoneContainsPoint(document, zone, point.x, point.z));
     const zone = zones.find(zone => floorPolygons(zone, layer === 'upper').length > 0) ?? zones[0];
     return zone ? { kind: 'zone', id: zone.id } : null;
   }
 
   return <div className="map-holder" ref={holder}>
-    <canvas ref={canvas} aria-label="Level map" aria-describedby="map-controls" tabIndex={0} style={{ width: size.width, height: size.height, cursor: tool === 'pan' ? 'grab' : 'default' }}
+    <canvas ref={canvas} aria-label="Level map" aria-describedby="map-controls" data-world-x={view.x} data-world-z={view.z} data-world-scale={view.scale} tabIndex={0} style={{ width: size.width, height: size.height, cursor: tool === 'pan' ? 'grab' : tool === 'room' ? 'crosshair' : 'default' }}
       onContextMenu={event => event.preventDefault()}
       onPointerDown={event => {
         const rect = event.currentTarget.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
         const panning = event.button !== 0 || space.current || tool === 'pan';
+        if (!panning && tool === 'room' && roomDraft) {
+          event.currentTarget.focus(); const point = world(x, y), step = event.altKey || grid === 0 ? 1 : grid;
+          const first = roomDraft.vertices[0], firstPixel = first ? screen(first.x, first.z) : undefined;
+          if (roomDraft.vertices.length >= 3 && firstPixel && Math.hypot(x - firstPixel.x, y - firstPixel.y) < 9) onRoomFinish();
+          else onRoomPoint(Math.round(point.x / step) * step, Math.round(point.z / step) * step);
+          return;
+        }
+        if (!panning && tool === 'select' && selectedRoom) {
+          const index = selectedRoom.vertices.findIndex(point => { const pixel = screen(point.x, point.z); return Math.hypot(x - pixel.x, y - pixel.y) < 9; });
+          if (index >= 0) {
+            const point = selectedRoom.vertices[index]!; cornerDrag.current = { index }; setCornerGhost({ index, x: point.x, z: point.z });
+            event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId); return;
+          }
+        }
+        if (!panning && sourceView.changed.length) {
+          const point = world(x, y), room = sourceView.changed.toReversed().find(room => pointInRoomOutline(room.vertices, point));
+          const selected = hit(x, y);
+          if (room && (!selected || selected.kind === 'zone')) { onRoomSelect(room.id); event.currentTarget.focus(); return; }
+        }
         const selected = panning ? null : hit(x, y);
         if (!panning) onSelect(selected);
         drag.current = { x, y, view, selection: selected, moved: false };
@@ -191,6 +251,10 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       onPointerMove={event => {
         const rect = event.currentTarget.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
         const point = world(x, y); onCursor(point.x, point.z);
+        if (cornerDrag.current) {
+          const step = event.altKey || grid === 0 ? 1 : grid;
+          setCornerGhost({ index: cornerDrag.current.index, x: Math.round(point.x / step) * step, z: Math.round(point.z / step) * step }); return;
+        }
         const current = drag.current;
         if (!current) return;
         const dx = x - current.x, dy = y - current.y;
@@ -202,15 +266,17 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
         }
       }}
       onPointerUp={event => {
+        if (cornerDrag.current && cornerGhost) onRoomCornerMove(cornerGhost.index, cornerGhost.x, cornerGhost.z);
+        cornerDrag.current = null; setCornerGhost(null);
         if (ghost && drag.current?.moved) onMove(ghost.selection, ghost.x, ghost.z);
         setGhost(null); drag.current = null;
         if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
       }}
-      onPointerCancel={() => { setGhost(null); drag.current = null; }}
-      onLostPointerCapture={() => { setGhost(null); drag.current = null; }} />
+      onPointerCancel={() => { setGhost(null); drag.current = null; cornerDrag.current = null; setCornerGhost(null); }}
+      onLostPointerCapture={() => { setGhost(null); drag.current = null; cornerDrag.current = null; setCornerGhost(null); }} />
     <div className="map-label"><span className="status-dot" /> ORTHOGRAPHIC <span className="muted">/</span> {layer.toUpperCase()} FLOOR</div>
     <div className="map-compass"><span>N</span><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 6 23-6-5-6 5z" fill="currentColor" /></svg></div>
-    <div id="map-controls" className="map-help"><kbd>Space</kbd> drag to pan <span>·</span> wheel to zoom <span>·</span> <kbd>F</kbd> fit <span>·</span> <kbd>?</kbd> controls</div>
+    <div id="map-controls" className="map-help">{roomDraft ? <><strong>{roomDraft.vertices.length} corners</strong> · Click corners · Enter or first corner finishes · Backspace removes last · Esc cancels · Alt bypasses snap</> : <><kbd>Space</kbd> drag to pan <span>·</span> wheel to zoom <span>·</span> <kbd>F</kbd> fit <span>·</span> <kbd>?</kbd> controls</>}</div>
     <div className="map-scale"><Icon name="grid" size={14} /> {Math.round(view.scale * 100)}%</div>
   </div>;
 }

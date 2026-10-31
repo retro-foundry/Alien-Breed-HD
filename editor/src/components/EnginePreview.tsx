@@ -23,6 +23,11 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
   const current = useRef({ document, selection, layer, onSelectZone });
   current.current = { document, selection, layer, onSelectZone };
   const send = (type: string, detail: object = {}) => frame.current?.contentWindow?.postMessage({ source: 'ab3d-editor', type, ...detail }, location.origin);
+  function stopUnbuiltPreview() {
+    send('play', { playing: false }); pendingPlay.current = false; setPlaying(false); setStarting(false); setLoaded(false);
+    setNotice('Room geometry needs compilation');
+    setError('This editor version cannot yet compile the changed room outlines. Save project keeps all editable geometry; the preview has stopped to avoid showing stale game files.');
+  }
 
   function positionCamera() {
     const { document, selection, layer } = current.current;
@@ -41,8 +46,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
   function load(play = false) {
     if (!ready) return;
     if (!roomSourceMatchesLevel(current.current.document)) {
-      pendingPlay.current = false; setStarting(false); setLoaded(false);
-      setError('This editor version cannot yet compile the changed room outlines. Save project keeps all editable geometry; the preview has stopped to avoid showing stale game files.'); return;
+      stopUnbuiltPreview(); return;
     }
     pendingPlay.current = play;
     setStarting(play); setLoaded(false); setError(''); setNotice('Loading current level…');
@@ -76,6 +80,11 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
     const timer = window.setTimeout(() => load(), 180);
     return () => window.clearTimeout(timer);
   }, [ready, document, slot, playing]);
+  useEffect(() => {
+    if (ready && !roomSourceMatchesLevel(document)) {
+      stopUnbuiltPreview();
+    }
+  }, [ready, document.roomSource]);
 
   useEffect(() => { if (loaded && !playing) positionCamera(); }, [selection, layer, loaded]);
   useEffect(() => {

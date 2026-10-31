@@ -1,4 +1,4 @@
-import { convexParts, normaliseRoomOutline, type Position } from './geometry';
+import { convexParts, normaliseRoomOutline, validateRoomInteriors, type Position } from './geometry';
 import type { LevelDocument } from './level';
 import { checkedInteger } from './binary';
 
@@ -105,8 +105,29 @@ export function commitRoomDraft(current: RoomSource, draft: RoomDraft): RoomChan
   // Concavity and winding remain editor responsibilities, not user settings.
   convexParts(room.vertices);
   const rooms = existing ? current.rooms.map(value => value.id === id ? room : value) : [...current.rooms, room];
+  validateRoomInteriors(rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
   return Object.freeze({ label: existing ? 'Edit room outline' : 'Create room', before: current,
     after: source(rooms, current.nextId + (existing ? 0 : 1)) });
+}
+
+/** Original authoring points are shared by adjoining rooms. Move the whole
+ * incident portal fan atomically, including a corner inserted at a T join. */
+export function moveSourceCorner(current: RoomSource, roomId: string, index: number, point: Position): RoomChange {
+  const room = current.rooms.find(room => room.id === roomId), original = room?.vertices[index];
+  if (!room || !original) throw new Error('That room corner no longer exists.');
+  if (original.x === point.x && original.z === point.z) return Object.freeze({ label: 'Move shared room corner', before: current, after: current });
+  const edges = validateRoomInteriors(current.rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
+  const same = (value: Position) => value.x === original.x && value.z === original.z;
+  const affected = new Set([roomId]);
+  for (;;) {
+    const count = affected.size;
+    for (const edge of edges) if (affected.has(edge.room) && edge.neighbour !== null && (same(edge.start) || same(edge.end))) affected.add(edge.neighbour);
+    if (count === affected.size) break;
+  }
+  const rooms = current.rooms.map(room => affected.has(room.id) ? frozenRoom(room.id, room.recordZone,
+    edges.filter(edge => edge.room === room.id).map(edge => same(edge.start) ? point : edge.start), room.originZone) : room);
+  validateRoomInteriors(rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
+  return Object.freeze({ label: 'Move shared room corner', before: current, after: source(rooms, current.nextId) });
 }
 
 export function removeSourceRooms(current: RoomSource, ids: readonly string[]): RoomChange {

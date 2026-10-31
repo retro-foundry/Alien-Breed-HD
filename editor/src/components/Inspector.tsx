@@ -1,25 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { objectName, type LevelDocument } from '../model/level';
 import { moveObject, numberPatch, removeObject, setMechanismRules, setStart, setTeleport, setZoneProperty, type EditCommand } from '../model/commands';
 import type { Selection } from './MapCanvas';
 import { Icon } from './Icon';
-
-export function NumberField({ label, value, min = -32768, max = 32767, step = 1, help, onCommit }: {
-  label: string; value: number; min?: number; max?: number; step?: number; help?: string; onCommit: (value: number) => void;
-}) {
-  const [draft, setDraft] = useState(String(value));
-  const cancelCommit = useRef(false);
-  useEffect(() => setDraft(String(value)), [value]);
-  function commit() {
-    if (cancelCommit.current) { cancelCommit.current = false; return; }
-    const number = Number(draft);
-    if (draft.trim() && Number.isFinite(number) && number >= min && number <= max && Number.isInteger(number / step)) {
-      if (number !== value) onCommit(number);
-    }
-  }
-  return <label className="number-field"><span>{label}</span><input type="number" required aria-label={label} title={`${help ?? `Change ${label.toLowerCase()} (${min} to ${max}).`} Enter applies; Escape cancels; leaving the field also applies a valid value.`} value={draft} min={min} max={max} step={step}
-    onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { cancelCommit.current = true; setDraft(String(value)); event.currentTarget.blur(); } }} /></label>;
-}
+import type { SourceRoom } from '../model/roomSource';
+import { RoomInspector } from './RoomInspector';
+import { NumberField } from './NumberField';
 
 function PositionForm({ x, z, zone, onApply }: { x: number; z: number; zone: number; onApply: (x: number, z: number, zone: number) => void }) {
   const [draft, setDraft] = useState({ x, z, zone });
@@ -32,18 +18,20 @@ function PositionForm({ x, z, zone, onApply }: { x: number; z: number; zone: num
 
 function InfoRow({ label, value }: { label: string; value: string | number }) { return <div className="info-row"><span>{label}</span><span>{value}</span></div>; }
 
-export function Inspector({ document, selection, edit }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void }) {
-  if (!selection) return <aside className="inspector"><div className="panel-title">INSPECTOR</div><div className="empty-inspector"><Icon name="select" size={32} /><h2>Select something</h2><p>Click a zone, object or player start to inspect it.</p><p className="muted">Drag objects and starts to reposition them. Hold Alt to ignore the grid.</p></div></aside>;
-  const zone = selection.kind === 'zone' ? document.zones.find(zone => zone.id === selection.id) : undefined;
-  const object = selection.kind === 'object' ? document.objects.find(object => object.id === selection.id) : undefined;
-  const start = selection.kind === 'start' ? document.starts.find(start => start.player === selection.id) : undefined;
-  const point = selection.kind === 'point' ? document.points[selection.id] : undefined;
+export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner, onRoomDelete }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
+  sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomDelete: () => void }) {
+  if (!selection && !sourceRoom) return <aside className="inspector"><div className="panel-title">INSPECTOR</div><div className="empty-inspector"><Icon name="select" size={32} /><h2>Select something</h2><p>Click a zone, object or player start to inspect it.</p><p className="muted">Drag objects and starts to reposition them. Hold Alt to ignore the grid.</p></div></aside>;
+  const zone = selection?.kind === 'zone' ? document.zones.find(zone => zone.id === selection.id) : undefined;
+  const object = selection?.kind === 'object' ? document.objects.find(object => object.id === selection.id) : undefined;
+  const start = selection?.kind === 'start' ? document.starts.find(start => start.player === selection.id) : undefined;
+  const point = selection?.kind === 'point' ? document.points[selection.id] : undefined;
   const mechanisms = zone ? document.mechanisms.filter(mechanism => mechanism.zone === zone.id || mechanism.zone === zone.fileId) : [];
-  const title = zone ? `Zone ${zone.id}` : object ? objectName(object.type) : start ? `Player ${start.player} start` : point ? `Point ${point.id}` : 'Selection';
+  const title = zone ? `Zone ${zone.id}` : object ? objectName(object.type) : start ? `Player ${start.player} start` : point ? `Point ${point.id}` : sourceRoom ? `Room ${sourceRoom.id.replace(/^room-/, '')}` : 'Selection';
   return <aside className="inspector">
-    <div className="panel-title">INSPECTOR <span className="eyebrow">{selection.kind.toUpperCase()}</span></div>
-    <div className="inspector-heading"><span className="selection-symbol"><Icon name={zone ? 'layers' : start ? 'pin' : 'object'} size={24} /></span><div><h2>{title}</h2><span className="muted">{zone ? `${zone.boundaryIds.length} edges · ${zone.upper.length > 0 ? 'two floors' : 'single floor'}` : object ? `Object ${object.id} · Zone ${object.zone}` : 'Level spawn point'}</span></div></div>
+    <div className="panel-title">INSPECTOR <span className="eyebrow">{selection?.kind.toUpperCase() ?? 'ROOM'}</span></div>
+    <div className="inspector-heading"><span className="selection-symbol"><Icon name={zone || sourceRoom ? 'layers' : start ? 'pin' : 'object'} size={24} /></span><div><h2>{title}</h2><span className="muted">{zone ? `${zone.boundaryIds.length} edges · ${zone.upper.length > 0 ? 'two floors' : 'single floor'}` : object ? `Object ${object.id} · Zone ${object.zone}` : sourceRoom ? 'Editable room outline' : 'Level spawn point'}</span></div></div>
     <div className="inspector-scroll">
+      {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onDelete={onRoomDelete} />}
       {zone && <>
         <section className="property-section"><h3>Geometry</h3><InfoRow label="Floor height" value={zone.floor} /><InfoRow label="Ceiling height" value={zone.ceiling} /><InfoRow label="Clearance" value={zone.floor - zone.ceiling} />
           {zone.upper.length > 0 && <><InfoRow label="Upper floor" value={zone.upperFloor} /><InfoRow label="Upper ceiling" value={zone.upperCeiling} /></>}
