@@ -35,7 +35,8 @@ export interface Mechanism {
   openRule: number; closeRule: number; walls: { line: number; graphic: number; base: number }[];
 }
 export interface Switch {
-  id: number; offset: number; zone: number; point: number; graphic: number; x: number; z: number;
+  id: number; offset: number; zone: number; type: number; countdown: number;
+  point: number; graphic: number; state: Uint8Array;
 }
 export interface Start { player: 1 | 2; x: number; z: number; zone: number }
 export interface LevelFiles { data: Uint8Array; graphics: Uint8Array; clips: Uint8Array }
@@ -226,8 +227,10 @@ export function parseLevel(name: string, files: LevelFiles, encoded: LevelFiles 
   if (switchesOffset > 16) for (let id = 0; id < 8; id++) {
     const offset = switchesOffset + id * 14;
     graphics.require(offset, 14);
-    switches.push({ id, offset, zone: graphics.i16(offset), point: graphics.i16(offset + 2),
-      graphic: graphics.i32(offset + 4), x: graphics.i16(offset + 10), z: graphics.i16(offset + 12) });
+    // Anims.s SwitchRoutine / objects.c switches: +2/+3 are type/countdown,
+    // +4 is a point pair, +6 a graphics pointer, +10..13 runtime state.
+    switches.push({ id, offset, zone: graphics.i16(offset), type: graphics.u8(offset + 2), countdown: graphics.i8(offset + 3),
+      point: graphics.i16(offset + 4), graphic: graphics.i32(offset + 6), state: graphics.bytes.slice(offset + 10, offset + 14) });
   }
   const controlCount = data.i16(12);
   if (controlCount < 0 || controlCount > 100) throw new LevelFormatError('invalid control-point count', data.name, 12);

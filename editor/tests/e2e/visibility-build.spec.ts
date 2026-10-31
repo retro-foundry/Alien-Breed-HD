@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { openLevel } from '../../src/model/level';
 import { buildVisibilityFiles } from '../../src/model/visibilityBuild';
+import { buildGraphicsStreams } from '../../src/model/graphicsBuild';
 import { encodeProject } from '../../src/model/project';
 import { originalFiles } from '../helpers';
 
@@ -18,7 +19,7 @@ async function capture(page: Page, camera: { zone: number; x: number; z: number;
   }), camera);
 }
 
-test('rebuilt visibility files load in the real engine and preserve original spawn views', async ({ page }, testInfo) => {
+test('rebuilt visibility and relocated graphics load in the real engine and preserve original spawn views', async ({ page }, testInfo) => {
   test.setTimeout(240000);
   page.on('dialog', dialog => void dialog.accept());
   const errors: string[] = [], comparisons: object[] = [];
@@ -34,11 +35,15 @@ test('rebuilt visibility files load in the real engine and preserve original spa
     const start = original.starts[0]!, camera = { zone: start.zone, x: start.x, z: start.z, upper: 0, angle: 0 };
     const before = await capture(page, camera);
     expect(before, `Level ${level} original capture`).not.toBe(0);
-    const rebuilt = openLevel(`${original.name} rebuilt`, buildVisibilityFiles(original));
+    const visibility = openLevel(`${original.name} visibility`, buildVisibilityFiles(original));
+    const graphics = buildGraphicsStreams(visibility, visibility.zones.map(zone => zone.id).toReversed(), visibility.zones.length + 2);
+    const rebuilt = openLevel(`${original.name} rebuilt`, { ...visibility.files, graphics });
     await page.locator('input[type=file]').setInputFiles({ name: `rebuilt-${level}.ab3d`, mimeType: 'application/zip', buffer: Buffer.from(encodeProject(rebuilt)) });
     await expect(page.locator('.project-picker strong')).toHaveText(rebuilt.name);
     await preview.getByRole('combobox', { name: 'Playtest level slot' }).selectOption({ value: String(level - 1) });
-    await expect(preview.getByRole('status')).toHaveText(`${original.zones.length} zones loaded · Game engine`, { timeout: 60000 });
+    // The host reports runtime zone-slot capacity, including the two empty
+    // slots deliberately added to exercise prologue and animation relocation.
+    await expect(preview.getByRole('status')).toHaveText(`${original.zones.length + 2} zones loaded · Game engine`, { timeout: 60000 });
     await expect(preview).toHaveAttribute('data-level-slot', String(level - 1));
     const after = await capture(page, camera);
     comparisons.push({ level, before, after, equal: before === after });

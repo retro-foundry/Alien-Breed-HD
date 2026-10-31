@@ -112,7 +112,8 @@ fixtures can establish current-format support independently.
   remote runs have now built the WebAssembly engine. The first Windows/Linux
   unit jobs failed because the former single all-map visibility test exceeded
   its five-second limit; it is now split into one complete rebuild test per
-  map. Subsequent cross-platform browser jobs are still being checked.
+  map. The subsequent Linux browser job has passed; Windows browser CI is
+  still being checked (run 41219390025).
 - Current `ToBack` is a **word** at zone offset 36 (`amiga/includes/Defs.i`).
   Every shipped value is 0 or -1. Do not expose its second byte as echo: that
   belongs to the older editor layout, not this runtime. Likewise, offset 28
@@ -204,3 +205,19 @@ fixtures can establish current-format support independently.
   current-format records. The suite now has 181 tests. Full wall-span/material
   authoring, curved surfaces, stream assembly/relocation and UI integration
   remain required before enabling geometry exports.
+- `graphicsBuild.ts` reassembles graphics streams and relocates door/lift
+  height-record and wall pointers, switch pointers, all 21 water animation
+  groups, and the graphics/animation table headers. It can grow the zone
+  prologue while leaving extra slots empty for the data compiler. Every shipped
+  graphics file reconstructs exactly in original order; reversing streams and
+  reconstructing again recovers the original bytes. Tests also compare the
+  actual relocated target records, retain animation texture bases unchanged,
+  and reject missing/out-of-range references. The current suite has 199 tests.
+  This work exposed and corrected the switch-reader layout: byte +2 is type,
+  +3 countdown, word +4 the point pair, long +6 the graphics pointer, and the
+  final four bytes are runtime state, not X/Z coordinates. The authority is
+  `Anims.s:SwitchRoutine` and `objects.c`'s switch loop. Chromium and Firefox
+  both load all sixteen rebuilt maps with reversed streams and expanded zone
+  prologues; every original/rebuilt spawn-view checksum matches. This stage still needs
+  generated surfaces and complete source dependency remapping before new-room
+  exports can be enabled.
