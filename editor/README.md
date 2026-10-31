@@ -33,6 +33,9 @@ Opening local files does not upload them anywhere.
 - Move existing enemies, pickups and scenery into edited/new rooms using the
   Object room selector or map dragging. Deletion is undoable, decimal coordinates
   are accepted, and project copies/recovery retain the authored positions.
+- Link edited/new teleporter rooms to a destination room and landing point.
+  Show destination frames the target and highlights the link on the map.
+  Broken destinations remain editable; disable/repair them without losing source.
 - Undo/redo binary edits, download portable project copies, export a game
   triplet ZIP, and recover the previous workspace through browser storage.
 - Open a simultaneous 2D/3D view, visit selected zones, inspect lighting with

@@ -3,9 +3,10 @@ import { parseLevel, sameBytes, zoneContainsPoint, type LevelDocument, type Leve
 import type { RoomChange, RoomSource } from './roomSource';
 import { placeSourceStart, type SourceStart } from './sourceStarts';
 import { placeSourceObject, type SourceObject } from './sourceObjects';
+import { placeSourceTeleport, type SourceTeleport } from './sourceTeleports';
 
 export interface BytePatch { file: keyof LevelFiles; offset: number; before: Uint8Array; after: Uint8Array }
-export interface EditCommand { label: string; patches: BytePatch[]; playtestSlot?: { before: number; after: number }; exitZone?: { before: number | null; after: number | null }; roomSource?: { before: RoomSource; after: RoomSource }; sourceStarts?: { before: readonly SourceStart[] | undefined; after: readonly SourceStart[] | undefined }; sourceObjects?: { before: readonly SourceObject[] | undefined; after: readonly SourceObject[] | undefined } }
+export interface EditCommand { label: string; patches: BytePatch[]; playtestSlot?: { before: number; after: number }; exitZone?: { before: number | null; after: number | null }; roomSource?: { before: RoomSource; after: RoomSource }; sourceStarts?: { before: readonly SourceStart[] | undefined; after: readonly SourceStart[] | undefined }; sourceObjects?: { before: readonly SourceObject[] | undefined; after: readonly SourceObject[] | undefined }; sourceTeleports?: { before: readonly SourceTeleport[] | undefined; after: readonly SourceTeleport[] | undefined } }
 export interface History { document: LevelDocument; past: EditCommand[]; future: EditCommand[] }
 
 export function numberPatch(document: LevelDocument, file: keyof LevelFiles, offset: number, value: number, size: 1 | 2 | 4, signed = true): BytePatch {
@@ -26,6 +27,12 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
   let roomSource = document.roomSource;
   let sourceStarts = document.sourceStarts;
   let sourceObjects = document.sourceObjects;
+  let sourceTeleports = document.sourceTeleports;
+  if (command.sourceTeleports) {
+    const { before, after } = command.sourceTeleports;
+    if (sourceTeleports !== (reverse ? after : before)) throw new Error('The teleporter links changed before this edit could be applied. No changes were saved.');
+    sourceTeleports = reverse ? before : after;
+  }
   if (command.sourceObjects) {
     const { before, after } = command.sourceObjects;
     if (sourceObjects !== (reverse ? after : before)) throw new Error('The object placements changed before this edit could be applied. No changes were saved.');
@@ -63,11 +70,12 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
     files[patch.file].set(after, patch.offset);
   }
   const result = parseLevel(document.name, files, document.encoded, document.original, playtestSlot, exitZone, roomSource, document.drawGroups);
-  return { ...result, ...(sourceStarts === undefined ? {} : { sourceStarts }), ...(sourceObjects === undefined ? {} : { sourceObjects }) };
+  return { ...result, ...(sourceStarts === undefined ? {} : { sourceStarts }), ...(sourceObjects === undefined ? {} : { sourceObjects }),
+    ...(sourceTeleports === undefined ? {} : { sourceTeleports }) };
 }
 
 export function execute(history: History, command: EditCommand): History {
-  if (command.patches.every(patch => sameBytes(patch.before, patch.after)) && (!command.playtestSlot || command.playtestSlot.before === command.playtestSlot.after) && (!command.exitZone || command.exitZone.before === command.exitZone.after) && (!command.roomSource || command.roomSource.before === command.roomSource.after) && (!command.sourceStarts || command.sourceStarts.before === command.sourceStarts.after) && (!command.sourceObjects || command.sourceObjects.before === command.sourceObjects.after)) return history;
+  if (command.patches.every(patch => sameBytes(patch.before, patch.after)) && (!command.playtestSlot || command.playtestSlot.before === command.playtestSlot.after) && (!command.exitZone || command.exitZone.before === command.exitZone.after) && (!command.roomSource || command.roomSource.before === command.roomSource.after) && (!command.sourceStarts || command.sourceStarts.before === command.sourceStarts.after) && (!command.sourceObjects || command.sourceObjects.before === command.sourceObjects.after) && (!command.sourceTeleports || command.sourceTeleports.before === command.sourceTeleports.after)) return history;
   const document = applyCommand(history.document, command);
   return { document, past: [...history.past, command], future: [] };
 }
@@ -110,6 +118,12 @@ export function setSourceObject(document: LevelDocument, id: number, room: strin
   } };
 }
 
+export function setSourceTeleport(document: LevelDocument, room: string, destination: string | null, x: number, z: number): EditCommand {
+  return { label: `Change room ${room.replace(/^room-/, '')} teleporter`, patches: [], sourceTeleports: {
+    before: document.sourceTeleports, after: placeSourceTeleport(document, room, destination, x, z),
+  } };
+}
+
 export type ZoneProperty = 'brightness' | 'upperBrightness' | 'floorSound' | 'upperFloorSound';
 export function setZoneProperty(document: LevelDocument, zoneId: number, property: ZoneProperty, value: number): EditCommand {
   const zone = document.zones.find(zone => zone.id === zoneId);
@@ -126,6 +140,12 @@ export function setZoneProperty(document: LevelDocument, zoneId: number, propert
 export function setTeleport(document: LevelDocument, zoneId: number, destination: number, x: number, z: number): EditCommand {
   const zone = document.zones.find(zone => zone.id === zoneId);
   if (!zone) throw new Error('That zone no longer exists.');
+  const room = document.roomSource.rooms.find(room => room.originZone === zoneId);
+  if (room && document.sourceTeleports?.some(item => item.room === room.id)) {
+    const target = destination === -1 ? null : document.roomSource.rooms.find(room => room.originZone === destination);
+    if (target === undefined) throw new Error('Choose an existing editable destination room, or disable the teleporter.');
+    return setSourceTeleport(document, room.id, target === null ? null : target.id, x, z);
+  }
   if (destination !== -1) {
     const target = document.zones.find(zone => zone.id === destination);
     if (!target) throw new Error('Choose a valid destination zone, or disable the teleporter.');

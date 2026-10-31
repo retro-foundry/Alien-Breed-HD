@@ -75,6 +75,9 @@
         if (!c || ![c.zone,c.x,c.z,c.upper,c.angle].every(Number.isInteger)) throw new Error('Invalid capture camera.');
         send('captured', {id:request.id, checksum:engine._editor_capture(c.zone,c.x,c.z,c.upper,c.angle) >>> 0});
       }
+      if (loaded && request.type === 'player-state') {
+        send('player-state', {id:request.id, zone:engine._editor_player_zone(), x:engine._editor_player_x(), z:engine._editor_player_z(), playing});
+      }
       if (loaded && request.type === 'play') {
         playing = !!request.playing;
         engine._editor_play(playing ? 1 : 0);

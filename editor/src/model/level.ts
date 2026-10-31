@@ -9,6 +9,7 @@ import { validateAnimationReferences } from './animationBuild';
 import { validateDrawGroups } from './levelSetup';
 import type { SourceStart } from './sourceStarts';
 import type { SourceObject } from './sourceObjects';
+import type { SourceTeleport } from './sourceTeleports';
 
 export interface Point { id: number; x: number; z: number; offset: number }
 export interface FloorLine {
@@ -44,6 +45,7 @@ export interface LevelFiles { data: Uint8Array; graphics: Uint8Array; clips: Uin
 export interface LevelDocument {
   sourceStarts?: readonly SourceStart[];
   sourceObjects?: readonly SourceObject[];
+  sourceTeleports?: readonly SourceTeleport[];
   drawGroups?: readonly number[];
   name: string;
   playtestSlot: number;

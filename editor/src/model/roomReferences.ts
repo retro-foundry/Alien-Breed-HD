@@ -5,6 +5,7 @@ import { compileRoomTopology, type CompiledRoomCell, type RoomTopology } from '.
 import { BinaryReader } from './binary';
 import { restoreSourceStarts } from './sourceStarts';
 import { runtimeObjectPosition, validateSourceObjects } from './sourceObjects';
+import { restoreSourceTeleports } from './sourceTeleports';
 
 export interface ReferenceDiagnostic { severity: 'error' | 'warning'; subject: string; message: string }
 export interface RoomReferencePlan {
@@ -89,20 +90,19 @@ export function planRoomReferences(document: LevelDocument, source: RoomSource, 
       : object.zone < 0 ? object.zone : locate(object.zone, object, `Object ${object.id}`, true)];
   }));
   const teleports = new Map<number, number | null>();
-  for (const room of source.rooms) if (room.originZone !== null) {
+  const authoredTeleports = restoreSourceTeleports(document.sourceTeleports ?? []);
+  const sourceTeleports = new Map<string, number | null>();
+  for (const room of source.rooms) {
     const template = document.zones.find(zone => zone.id === room.recordZone)!;
-    teleports.set(room.originZone, template.teleport.zone < 0 ? template.teleport.zone
-      : locate(template.teleport.zone, template.teleport, `Room ${room.originZone} teleport`));
+    const authored = authoredTeleports.find(item => item.room === room.id);
+    const destination = authored ? (authored.destination === null ? -1
+      : locateSource(authored.destination, authored, `Room ${room.id} teleport`))
+      : template.teleport.zone < 0 ? template.teleport.zone : locate(template.teleport.zone, template.teleport,
+        room.originZone === null ? `Room ${room.id} template teleport` : `Room ${room.originZone} teleport`);
+    sourceTeleports.set(room.id, destination);
+    if (room.originZone !== null) teleports.set(room.originZone, destination);
   }
-  const cellTeleports = new Map<number, number | null>();
-  for (const cell of topology.cells) {
-    if (cell.originZone !== null) {
-      cellTeleports.set(cell.id, teleports.get(cell.originZone)!); continue;
-    }
-    const template = document.zones.find(zone => zone.id === cell.recordZone)!;
-    cellTeleports.set(cell.id, template.teleport.zone < 0 ? template.teleport.zone
-      : locate(template.teleport.zone, template.teleport, `Room ${cell.sourceId} template teleport`));
-  }
+  const cellTeleports = new Map(topology.cells.map(cell => [cell.id, sourceTeleports.get(cell.sourceId)!]));
   const switches = new Map<number, number | null>();
   for (const item of document.switches) {
     if (item.zone < 0) { switches.set(item.id, item.zone); continue; }

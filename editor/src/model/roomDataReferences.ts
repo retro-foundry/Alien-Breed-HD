@@ -74,6 +74,10 @@ export function buildRoomDataReferences(document: LevelDocument, source: RoomSou
     const header = document.files.data.slice(template.offset, template.offset + 48), headerView = new DataView(header.buffer);
     headerView.setInt16(0, cell.id);
     headerView.setInt16(38, checkedInteger(references.cellTeleports.get(cell.id)!, -32768, topology.cells.length - 1, 'Teleport destination room'));
+    const teleport = document.sourceTeleports?.find(item => item.room === cell.sourceId);
+    if (teleport) {
+      headerView.setInt16(40, teleport.x); headerView.setInt16(42, teleport.z);
+    }
     headers.set(cell.id, header);
   }
   return { data, headers, references };

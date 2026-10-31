@@ -5,6 +5,7 @@ import { editableStarts } from '../model/sourceStarts';
 import { sourceMatchesLevel } from '../model/roomSource';
 import { editableObjects, objectIsActive, objectPlayer } from '../model/sourceObjects';
 import { RoomPositionForm } from './RoomPositionForm';
+import { TeleportInspector } from './TeleportInspector';
 import type { Selection } from './MapCanvas';
 import { Icon } from './Icon';
 import type { SourceRoom } from '../model/roomSource';
@@ -29,8 +30,8 @@ function SourceStartForm({ document, player, edit }: { document: LevelDocument; 
     onApply={(room, x, z) => edit(() => setSourceStart(document, player, room, x, z))} />;
 }
 
-export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner, onRoomDelete }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
-  sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomDelete: () => void }) {
+export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner, onRoomDelete, onShowDestination }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
+  sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomDelete: () => void; onShowDestination: (room: string) => void }) {
   if (!selection && !sourceRoom) return <aside className="inspector"><div className="panel-title">INSPECTOR</div><div className="empty-inspector"><Icon name="select" size={32} /><h2>Select something</h2><p>Click a zone, object or player start to inspect it.</p><p className="muted">Drag objects and starts to reposition them. Hold Alt to ignore the grid.</p></div></aside>;
   const zone = selection?.kind === 'zone' ? document.zones.find(zone => zone.id === selection.id) : undefined;
   const object = selection?.kind === 'object' ? editableObjects(document).find(object => object.id === selection.id) : undefined;
@@ -44,6 +45,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner,
     <div className="inspector-heading"><span className="selection-symbol"><Icon name={zone || sourceRoom ? 'layers' : start ? 'pin' : 'object'} size={24} /></span><div><h2>{title}</h2><span className="muted">{zone ? `${zone.boundaryIds.length} edges · ${zone.upper.length > 0 ? 'two floors' : 'single floor'}` : object ? `Object ${object.id} · ${object.room === null ? 'Deleted' : object.room ? `Room ${object.room.replace(/^room-/, '')}` : `Zone ${object.zone}`}` : sourceRoom ? 'Editable room outline' : 'Level spawn point'}</span></div></div>
     <div className="inspector-scroll">
       {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onDelete={onRoomDelete} />}
+      {sourceRoom && (!zone || !sourceMatchesLevel(document)) && <TeleportInspector document={document} room={sourceRoom} edit={edit} onShowDestination={onShowDestination} />}
       {zone && <>
         <section className="property-section"><h3>Geometry</h3><InfoRow label="Floor height" value={zone.floor} /><InfoRow label="Ceiling height" value={zone.ceiling} /><InfoRow label="Clearance" value={zone.floor - zone.ceiling} />
           {zone.upper.length > 0 && <><InfoRow label="Upper floor" value={zone.upperFloor} /><InfoRow label="Upper ceiling" value={zone.upperCeiling} /></>}
@@ -60,10 +62,10 @@ export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner,
           })}
           <p className="field-note">Lower brightness values make the room brighter.</p>
         </section>
-        <section className="property-section"><h3>Teleporter</h3>
+        {sourceMatchesLevel(document) && <section className="property-section"><h3>Teleporter</h3>
           <label className="check-field"><input type="checkbox" title="Teleport the player to the destination when stepping into this zone. Apply a destination inside the target zone." checked={zone.teleport.zone >= 0} onChange={event => { const spawn = document.starts[0]!; edit(() => setTeleport(document, zone.id, event.target.checked ? spawn.zone : -1, spawn.x, spawn.z)); }} />Enabled</label>
           {zone.teleport.zone >= 0 && <PositionForm x={zone.teleport.x} z={zone.teleport.z} zone={zone.teleport.zone} onApply={(x, z, target) => edit(() => setTeleport(document, zone.id, target, x, z))} />}
-        </section>
+        </section>}
         {mechanisms.map(mechanism => <section className="property-section" key={`${mechanism.kind}-${mechanism.id}`}><h3>{mechanism.kind === 'door' ? 'Door' : 'Lift'} {mechanism.id}</h3>
           <InfoRow label="Closed / bottom" value={mechanism.bottom} /><InfoRow label="Open / top" value={mechanism.top} />
           <label className="select-field"><span>Opens when</span><select aria-label={`${mechanism.kind} ${mechanism.id} opening rule`} title="Choose what starts opening or raising this mechanism. All selected key and switch requirements must also be met." value={mechanism.openRule} onChange={event => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, mechanism.conditions, Number(event.target.value), mechanism.closeRule))}>

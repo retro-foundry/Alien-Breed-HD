@@ -4,6 +4,7 @@ import { decodeLevelSetupDetails, encodeLevelSetup } from './levelSetup';
 import { roomSourceSnapshot, restoreRoomSource, sourceMatchesLevel } from './roomSource';
 import { restoreSourceStarts, type SourceStart } from './sourceStarts';
 import { restoreSourceObjects, validateSourceObjects, type SourceObject } from './sourceObjects';
+import { restoreSourceTeleports, type SourceTeleport } from './sourceTeleports';
 
 const MAX_ARCHIVE = 64 * 1024 * 1024;
 const MAX_FILE = 16 * 1024 * 1024;
@@ -12,15 +13,17 @@ const MANIFEST = 'alien-breed-project.json';
 const ROOM_SOURCE = 'room-source.json';
 const PLAYER_STARTS = 'player-starts.json';
 const OBJECT_PLACEMENTS = 'object-placements.json';
-export interface ProjectCandidate { name: string; folder: string; files: LevelFiles; playtestSlot: number; exitZone: number | null; roomSourceSnapshot?: unknown; drawGroups?: readonly number[]; sourceStarts?: readonly SourceStart[]; sourceObjects?: readonly SourceObject[] }
+const TELEPORTER_LINKS = 'teleporter-links.json';
+export interface ProjectCandidate { name: string; folder: string; files: LevelFiles; playtestSlot: number; exitZone: number | null; roomSourceSnapshot?: unknown; drawGroups?: readonly number[]; sourceStarts?: readonly SourceStart[]; sourceObjects?: readonly SourceObject[]; sourceTeleports?: readonly SourceTeleport[] }
 
 export function encodeProject(document: LevelDocument): Uint8Array {
   const files = exportLevel(document);
   return zipSync({
-    [MANIFEST]: strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: document.sourceObjects ? 6 : document.sourceStarts ? 5 : 4, name: document.name, playtestSlot: document.playtestSlot, exitZone: document.exitZone })),
+    [MANIFEST]: strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: document.sourceTeleports ? 7 : document.sourceObjects ? 6 : document.sourceStarts ? 5 : 4, name: document.name, playtestSlot: document.playtestSlot, exitZone: document.exitZone })),
     [ROOM_SOURCE]: strToU8(JSON.stringify(roomSourceSnapshot(document.roomSource))),
     ...(document.sourceStarts ? { [PLAYER_STARTS]: strToU8(JSON.stringify(restoreSourceStarts(document.sourceStarts))) } : {}),
     ...(document.sourceObjects ? { [OBJECT_PLACEMENTS]: strToU8(JSON.stringify(validateSourceObjects(document, document.sourceObjects))) } : {}),
+    ...(document.sourceTeleports ? { [TELEPORTER_LINKS]: strToU8(JSON.stringify(restoreSourceTeleports(document.sourceTeleports))) } : {}),
     'level/twolev.bin': files.data, 'level/twolev.graph.bin': files.graphics, 'level/twolev.clips': files.clips,
     ...(document.drawGroups ? { 'level/twolev.cfg': encodeLevelSetup(document.exitZone, document.drawGroups) } : {}),
   }, { level: 6 });
@@ -42,13 +45,14 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
   let sourceSnapshot: unknown;
   let sourceStarts: readonly SourceStart[] | undefined;
   let sourceObjects: readonly SourceObject[] | undefined;
+  let sourceTeleports: readonly SourceTeleport[] | undefined;
   const manifest = entries[MANIFEST];
   if (manifest) {
     if (manifest.length > 16384) throw new Error('The project manifest is too large.');
     let metadata: unknown;
     try { metadata = JSON.parse(strFromU8(manifest)); }
     catch { throw new Error('The project manifest is not valid JSON.'); }
-    if (!metadata || typeof metadata !== 'object' || !('format' in metadata) || metadata.format !== 'alien-breed-level-project' || !('version' in metadata) || typeof metadata.version !== 'number' || ![1, 2, 3, 4, 5, 6].includes(metadata.version))
+    if (!metadata || typeof metadata !== 'object' || !('format' in metadata) || metadata.format !== 'alien-breed-level-project' || !('version' in metadata) || typeof metadata.version !== 'number' || ![1, 2, 3, 4, 5, 6, 7].includes(metadata.version))
       throw new Error('This project format is not supported by this editor version.');
     if (metadata.version >= 2) {
       if (!('playtestSlot' in metadata) || typeof metadata.playtestSlot !== 'number' || !Number.isInteger(metadata.playtestSlot) || metadata.playtestSlot < 0 || metadata.playtestSlot > 15)
@@ -74,7 +78,7 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
       catch { throw new Error('The editable player starts are not valid JSON.'); }
       sourceStarts = restoreSourceStarts(value);
     } else if (entries[PLAYER_STARTS]) throw new Error('Editable player starts require project format version 5.');
-    if (metadata.version === 6) {
+    if (metadata.version >= 6 && (metadata.version === 6 || entries[OBJECT_PLACEMENTS])) {
       const objectBytes = entries[OBJECT_PLACEMENTS];
       if (!objectBytes || objectBytes.length > 65536) throw new Error('The editable object placements are missing or too large.');
       let value: unknown;
@@ -82,6 +86,14 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
       catch { throw new Error('The editable object placements are not valid JSON.'); }
       sourceObjects = restoreSourceObjects(value);
     } else if (entries[OBJECT_PLACEMENTS]) throw new Error('Editable object placements require project format version 6.');
+    if (metadata.version === 7) {
+      const linkBytes = entries[TELEPORTER_LINKS];
+      if (!linkBytes || linkBytes.length > 65536) throw new Error('The editable teleporter links are missing or too large.');
+      let value: unknown;
+      try { value = JSON.parse(strFromU8(linkBytes)); }
+      catch { throw new Error('The editable teleporter links are not valid JSON.'); }
+      sourceTeleports = restoreSourceTeleports(value);
+    } else if (entries[TELEPORTER_LINKS]) throw new Error('Editable teleporter links require project format version 7.');
     if ('name' in metadata && typeof metadata.name === 'string') projectName = metadata.name.slice(0, 200);
   }
   const groups = new Map<string, Record<string, Uint8Array>>();
@@ -107,12 +119,14 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
     result.push({ name: projectName ?? (letter ? `Level ${letter.toLowerCase().charCodeAt(0) - 96}` : title), folder, files: { data, graphics, clips },
       playtestSlot: projectSlot ?? (letter ? letter.toLowerCase().charCodeAt(0) - 97 : 0), exitZone: projectExit !== undefined ? projectExit : setupExit ?? null,
       ...(setup?.drawGroups ? { drawGroups: setup.drawGroups } : {}), ...(sourceSnapshot === undefined ? {} : { roomSourceSnapshot: sourceSnapshot }),
-      ...(sourceStarts === undefined ? {} : { sourceStarts }), ...(sourceObjects === undefined ? {} : { sourceObjects }) });
+      ...(sourceStarts === undefined ? {} : { sourceStarts }), ...(sourceObjects === undefined ? {} : { sourceObjects }),
+      ...(sourceTeleports === undefined ? {} : { sourceTeleports }) });
   }
   if (result.length === 0) throw new Error('No game level was found. Open an .ab3d project, a level ZIP, or select all three twolev files together.');
   if (entries[ROOM_SOURCE] && (!manifest || result.length !== 1)) throw new Error('Editable room source must belong to one saved project.');
   if (entries[PLAYER_STARTS] && (!manifest || result.length !== 1)) throw new Error('Editable player starts must belong to one saved project.');
   if (entries[OBJECT_PLACEMENTS] && (!manifest || result.length !== 1)) throw new Error('Editable object placements must belong to one saved project.');
+  if (entries[TELEPORTER_LINKS] && (!manifest || result.length !== 1)) throw new Error('Editable teleporter links must belong to one saved project.');
   return result.sort((a, b) => a.folder.localeCompare(b.folder, undefined, { numeric: true }));
 }
 
@@ -123,7 +137,7 @@ export function openArchive(bytes: Uint8Array, name: string): ProjectCandidate[]
   try {
     entries = unzipSync(bytes, { filter(file) {
       const base = file.name.replaceAll('\\', '/').split('/').at(-1)?.toLowerCase() ?? '';
-      if (!LEVEL_NAMES.includes(base) && file.name !== MANIFEST && file.name !== ROOM_SOURCE && file.name !== PLAYER_STARTS && file.name !== OBJECT_PLACEMENTS) return false;
+      if (!LEVEL_NAMES.includes(base) && file.name !== MANIFEST && file.name !== ROOM_SOURCE && file.name !== PLAYER_STARTS && file.name !== OBJECT_PLACEMENTS && file.name !== TELEPORTER_LINKS) return false;
       if (file.originalSize > MAX_FILE || (extracted += file.originalSize) > MAX_ARCHIVE)
         throw new Error('The archive contains too much unpacked level data.');
       return true;
@@ -145,7 +159,8 @@ export function openProjectCandidate(project: ProjectCandidate): LevelDocument {
   const document = openLevel(project.name, project.files, project.playtestSlot, project.exitZone, project.drawGroups);
   return { ...document, ...(project.roomSourceSnapshot === undefined ? {} : { roomSource: restoreRoomSource(document, project.roomSourceSnapshot) }),
     ...(project.sourceStarts === undefined ? {} : { sourceStarts: restoreSourceStarts(project.sourceStarts) }),
-    ...(project.sourceObjects === undefined ? {} : { sourceObjects: validateSourceObjects(document, project.sourceObjects) }) };
+    ...(project.sourceObjects === undefined ? {} : { sourceObjects: validateSourceObjects(document, project.sourceObjects) }),
+    ...(project.sourceTeleports === undefined ? {} : { sourceTeleports: restoreSourceTeleports(project.sourceTeleports) }) };
 }
 
 export async function readFiles(files: File[]): Promise<ProjectCandidate[]> {

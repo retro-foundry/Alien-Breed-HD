@@ -5,6 +5,7 @@ import { pointInRoomOutline, normaliseRoomOutline } from '../model/geometry';
 import { importRoomSource, type RoomDraft, type SourceRoom } from '../model/roomSource';
 import { editableStarts } from '../model/sourceStarts';
 import { editableObjects, objectIsActive } from '../model/sourceObjects';
+import { editableTeleport } from '../model/sourceTeleports';
 
 export type Selection = { kind: 'zone' | 'object' | 'start' | 'point'; id: number } | null;
 export interface MapView { x: number; z: number; scale: number }
@@ -15,7 +16,7 @@ interface Props {
   roomDraft: RoomDraft | null; selectedRoom?: SourceRoom; onRoomSelect: (id: string) => void;
   onRoomPoint: (x: number, z: number) => void; onRoomFinish: () => void;
   onRoomCornerMove: (index: number, x: number, z: number) => void;
-  focusRoom?: { id: string; request: number };
+  focusRoom?: { id: string; request: number; frame?: boolean };
   onCursor: (x: number, z: number) => void; focusZone?: { id: number; request: number }; fitKey: number;
 }
 
@@ -76,9 +77,16 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
   }, [focusZone, document.encoded.data]);
   useEffect(() => {
     const room = document.roomSource.rooms.find(room => room.id === focusRoom?.id);
-    if (room?.vertices.length) setView(view => ({ ...view,
-      x: room.vertices.reduce((sum, point) => sum + point.x, 0) / room.vertices.length,
-      z: room.vertices.reduce((sum, point) => sum + point.z, 0) / room.vertices.length }));
+    if (room?.vertices.length) setView(view => {
+      if (focusRoom?.frame) {
+        const xs = room.vertices.map(point => point.x), zs = room.vertices.map(point => point.z);
+        const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
+        return { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2,
+          scale: Math.max(0.02, Math.min(8, (size.width - 100) / Math.max(200, maxX - minX), (size.height - 100) / Math.max(200, maxZ - minZ))) };
+      }
+      return { ...view, x: room.vertices.reduce((sum, point) => sum + point.x, 0) / room.vertices.length,
+        z: room.vertices.reduce((sum, point) => sum + point.z, 0) / room.vertices.length };
+    });
   }, [focusRoom]);
 
   useEffect(() => {
@@ -170,6 +178,23 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
     if (selectedRoom && cornerGhost) try { normaliseRoomOutline(previewVertices(selectedRoom)); } catch { cornerValid = false; }
     for (const room of sourceView.changed) outline(previewVertices(room), true, room.id === selectedRoom?.id ? cornerValid ? '#d0f6a5' : '#e98980' : '#84b99d');
     if (selectedRoom && !sourceView.changed.some(room => room.id === selectedRoom.id)) outline(previewVertices(selectedRoom), false, cornerValid ? '#d0f6a5' : '#e98980');
+    if (selectedRoom) {
+      const teleport = editableTeleport(document, selectedRoom);
+      if (teleport.destination !== null) {
+        const target = document.roomSource.rooms.find(room => room.id === teleport.destination);
+        const valid = target && pointInRoomOutline(target.vertices, teleport);
+        if (target && target.id !== selectedRoom.id) outline(target.vertices, false, valid ? '#bbabef' : '#e98980');
+        const from = screen(selectedRoom.vertices.reduce((sum, point) => sum + point.x, 0) / selectedRoom.vertices.length,
+          selectedRoom.vertices.reduce((sum, point) => sum + point.z, 0) / selectedRoom.vertices.length);
+        const to = screen(teleport.x, teleport.z), angle = Math.atan2(to.y - from.y, to.x - from.x);
+        context.strokeStyle = valid ? '#bbabef' : '#e98980'; context.fillStyle = context.strokeStyle;
+        context.lineWidth = 2; context.setLineDash([6, 4]); context.beginPath(); context.moveTo(from.x, from.y); context.lineTo(to.x, to.y); context.stroke(); context.setLineDash([]);
+        context.beginPath(); context.arc(to.x, to.y, 10, 0, Math.PI * 2); context.stroke();
+        context.beginPath(); context.moveTo(to.x, to.y); context.lineTo(to.x - 10 * Math.cos(angle - 0.4), to.y - 10 * Math.sin(angle - 0.4));
+        context.lineTo(to.x - 10 * Math.cos(angle + 0.4), to.y - 10 * Math.sin(angle + 0.4)); context.closePath(); context.fill();
+        context.font = '11px ui-monospace, monospace'; context.fillText('Teleport destination', to.x + 14, to.y - 12);
+      }
+    }
     if (roomDraft?.vertices.length) {
       let valid = roomDraft.vertices.length < 3;
       try { normaliseRoomOutline(roomDraft.vertices); valid = true; } catch { /* Incomplete gestures remain uncommitted. */ }

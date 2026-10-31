@@ -146,6 +146,12 @@ EMSCRIPTEN_KEEPALIVE void editor_play(int playing)
     }
 }
 
+/* Read-only playtest inspection: report the actual simulation position,
+ * including teleports, rather than the imported header's spawn metadata. */
+EMSCRIPTEN_KEEPALIVE int editor_player_zone(void) { return preview_loaded ? g_state.plr1.zone : -1; }
+EMSCRIPTEN_KEEPALIVE int editor_player_x(void) { return preview_loaded ? g_state.plr1.xoff >> 16 : 0; }
+EMSCRIPTEN_KEEPALIVE int editor_player_z(void) { return preview_loaded ? g_state.plr1.zoff >> 16 : 0; }
+
 static void preview_frame(void)
 {
     if (!preview_loaded) return;

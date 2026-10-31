@@ -804,3 +804,28 @@ fixtures can establish current-format support independently.
   general editing browser regressions also pass.
   Adding new object records, source teleport links, portal openings and normal
   Build & Play integration remain pending; this does not complete the editor.
+
+- Authored teleporter links now use stable source-room IDs for both emitter and
+  destination. Per-room overrides preserve the imported template until changed;
+  an explicit null destination disables an inherited link. The source compiler
+  locates the landing point's convex cell and writes destination/X/Z to header
+  +38/+40/+42 in every emitted cell of the logical source room. Missing or
+  reshaped destination rooms are recoverable source dependencies and block the
+  build. Removing an emitter removes its runtime volume, while retaining its
+  source override for undo; it does not create an orphan runtime teleporter.
+  Inspector controls, landing-point validation, destination framing, map link
+  arrows/highlights, undo/redo and dirty/recovery tracking are integrated. The
+  unchanged original-map binary teleporter workflow remains available. Project
+  format 7 adds `teleporter-links.json`; source starts/objects remain optional,
+  earlier formats remain readable, and malformed/missing link data is rejected.
+  The editor host exposes a read-only actual player-position query. Native
+  browser tests verify the simulation moves from an authored room to the exact
+  saved destination room and coordinates after starting play, rather than only
+  asserting compiled header values. Source-model tests also cover concave
+  emitter/destination cells, disabled inheritance, stale commands, missing and
+  reshaped destinations, and retained import bytes. Production/WebAssembly
+  builds and all 612 model tests pass. Six Chromium/Firefox teleporter scenarios
+  pass, alongside 42 surrounding editor/room/start/object/recovery/engine checks,
+  including original-map loading in both browsers. Portal openings, new object
+  creation, full mechanism authoring and normal source Build & Play integration
+  remain pending; no finished-editor deployment has been made.
