@@ -11,6 +11,7 @@ import { applyCommand, setStart } from '../src/model/commands';
 import { beginRoomDraft, commitRoomDraft, setDraftCorners } from '../src/model/roomSource';
 import { compileRoomTopology } from '../src/model/roomTopology';
 import { buildRoomDataReferences } from '../src/model/roomDataReferences';
+import { buildSourceVisibility } from '../src/model/visibilityTables';
 
 export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
   const template = original.zones[0]!, floor = template.lower.find(record => record.polygon && [1, 8, 9, 10, 11].includes(record.type))!.polygon!;
@@ -27,11 +28,13 @@ export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
     setDraftCorners(beginRoomDraft(original, original.roomSource, template.id), vertices)).after;
   const topology = compileRoomTopology(original, roomSource);
   const remapped = buildRoomDataReferences(original, roomSource, topology, prefix);
+  const addedCells = topology.cells.filter(cell => cell.id === id);
+  const visibility = buildSourceVisibility({ ...topology, cells: addedCells }, new Map([[id, pointIds]]));
   const records = original.zones.map(zone => ({ id: zone.id, header: remapped.headers.get(zone.id)!,
     boundaries: zone.boundaryIds, cornerWalls: zone.wallIds, visibility: zone.visibility, rotationPoints: zone.rotationPointIds }));
   const rooms = buildZoneRecords(remapped.data, [...records, { id,
     header: remapped.headers.get(id)!, boundaries: vertices.map((_, index) => original.lines.length + index),
-    cornerWalls: [], visibility: [{ zone: id, clip: -1, mask: 0 }], rotationPoints: pointIds }]);
+    cornerWalls: [], ...visibility.rooms.get(id)! }]);
   const lower = [
     ...pointIds.map((point, index) => encodeWallSurface({ ...wall, points: [point, pointIds[(index + 1) % pointIds.length]!] })),
     encodePolygonSurface(polygonForCell(floor, pointIds, floor.heightQuarter / 4)),
@@ -43,10 +46,10 @@ export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
   links.set(original.files.clips.subarray(0, original.connectTableOffset));
   const old = new BinaryReader(original.files.clips, 'original clips'), oldCount = (old.bytes.length - original.connectTableOffset) / 4;
   links.set(old.bytes.subarray(original.connectTableOffset, original.connectTableOffset + oldCount * 4), original.connectTableOffset);
-  const clipView = new DataView(links.buffer);
-  pointIds.forEach((point, i) => {
-    clipView.setInt16(original.connectTableOffset + point * 4, pointIds[(i + pointIds.length - 1) % pointIds.length]!);
-    clipView.setInt16(original.connectTableOffset + point * 4 + 2, pointIds[(i + 1) % pointIds.length]!);
+  const clipView = new DataView(links.buffer), generatedLinks = new BinaryReader(visibility.clips, 'generated solid-wall links');
+  pointIds.forEach(point => {
+    clipView.setInt16(original.connectTableOffset + point * 4, generatedLinks.i16(visibility.connectTableOffset + point * 4));
+    clipView.setInt16(original.connectTableOffset + point * 4 + 2, generatedLinks.i16(visibility.connectTableOffset + point * 4 + 2));
   });
   const compiled = openLevel('Generated room', { data: rooms.data, graphics, clips: links }, original.playtestSlot, -1);
   return applyCommand(compiled, setStart(compiled, 1, 20064, 20064, id));

@@ -391,3 +391,24 @@ fixtures can establish current-format support independently.
   prefix directly with the new room count. Build and 338 unit checks pass.
   Both browser engines pass the generated-room scenario and all sixteen
   original spawn-view comparisons through the combined rebuild (four tests).
+- Visibility membership, ordering masks, rotation references, clip lists and
+  solid-wall point links now have one shared binary-table writer for imported
+  logical rooms and generated convex cells. `buildSourceVisibility` consumes
+  compiled topology and the generated graphics' actual point references;
+  source builds include all points instead of retaining the original reserved
+  switch-point gap. Imported rebuilds preserve their prior room ordering and
+  original link-table length. The new-room fixture uses this writer for its
+  isolated room's visibility, rotation list and solid links. A generated joined
+  corridor test walks the native left/-1/right/-2 clip format, checks self-first
+  ordering masks and the continuous outer solid boundary, and verifies rejection
+  of missing graphics, invalid points or mismatched room identities.
+  This audit also found a runtime off-by-one: header +14 is the last point
+  index, as confirmed by AB3DI.s's `Points + 4 + index*4` brightness address.
+  Brightness and renderer clip bounds now share `level_point_count`, allowing
+  the final generated point. A C regression checks final-point lower/upper
+  brightness, one-point counts and invalid bounds; it runs in the editor CI.
+  The Windows game and WebAssembly preview build successfully, and all 340
+  editor unit checks pass. After rebuilding the engine, both browsers pass the
+  generated-room scenario and all sixteen combined-rebuild spawn comparisons
+  (four browser tests). Full source surface/mechanism compilation and UI
+  integration remain required before enabling edited-room exports/playtests.

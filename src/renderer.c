@@ -15573,13 +15573,8 @@ static int renderer_compute_zone_clip_span_from_lgr_entry(GameState *state, int1
 
     int left_clip_px = 0;
     int right_clip_px = g_renderer.width;
-    int num_level_points = MAX_POINTS;
-    if (state->level.data) {
-        int npts = rd16(state->level.data + 14);
-        if (npts > 0 && npts < MAX_POINTS) {
-            num_level_points = npts;
-        }
-    }
+    int num_level_points = level_point_count(&state->level);
+    if (num_level_points > MAX_POINTS) num_level_points = MAX_POINTS;
     size_t clip_word_count = 0;
     if (state->level.clips && state->level.connect_table &&
         state->level.connect_table >= state->level.clips) {

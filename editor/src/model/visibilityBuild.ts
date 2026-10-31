@@ -1,9 +1,7 @@
 import { BinaryReader, checkedInteger } from './binary';
 import { type LevelDocument, type LevelFiles } from './level';
-import { BinaryWriter } from './writer';
 import { visibilityCells } from './visibilityImport';
-import { portalVisibility } from './portalVisibility';
-import { runtimeOrderingMask, type OrderingRoom } from './visibilityGeometry';
+import { buildVisibilityTables } from './visibilityTables';
 import { buildZoneRecords, type ZoneRecordInput } from './zoneBuild';
 
 /** Rebuild derived visibility, clipping and rotation lists from imported source
@@ -28,42 +26,24 @@ export function buildVisibilityFiles(document: LevelDocument): LevelFiles {
     if (stream <= 0 || sourceGraphics.i16(stream) !== zone.id || zone.fileId !== zone.id)
       throw new Error(`Zone ${zone.id} needs its graphics references normalised before visibility can be rebuilt.`);
   }
-  const geometry = visibilityCells(document), compiled = portalVisibility(geometry.points, geometry.rooms, geometry.owners);
-  const ordering = new Map(document.zones.map(zone => [zone.id, {
+  const geometry = visibilityCells(document);
+  const ordering = document.zones.map(zone => ({
     id: zone.id, outline: zone.boundaryIds.map(id => ({ x: document.lines[id]!.x, z: document.lines[id]!.z })),
     neighbours: zone.boundaryIds.map(id => document.lines[id]!.connect),
-  } satisfies OrderingRoom]));
+  }));
   const pointLinks = (document.files.clips.length - document.connectTableOffset) / 4;
   checkedInteger(pointLinks, 0, document.points.length, 'Solid-wall point link count');
-  const records: ZoneRecordInput[] = [], clips = new BinaryWriter();
+  const tables = buildVisibilityTables({ points: geometry.points, cells: geometry.rooms, owners: geometry.owners, rooms: ordering,
+    graphicPoints: new Map(document.zones.map(zone => [zone.id, [...zone.lower, ...zone.upper].flatMap(record => record.points)])),
+    previousOrder: new Map(document.zones.map(zone => [zone.id, zone.visibility.map(entry => entry.zone)])), pointLinkCount: pointLinks });
+  const records: ZoneRecordInput[] = [];
   for (const zone of document.zones) {
-    const visible = compiled.visible.get(zone.id)!, oldOrder = new Map(zone.visibility.map((entry, i) => [entry.zone, i]));
-    const rank = (id: number) => id === zone.id ? -1 : oldOrder.get(id) ?? zone.visibility.length + id;
-    const targets = [...visible].sort((a, b) => rank(a) - rank(b));
-    const rotate = new Set<number>();
-    const visibility: ZoneRecordInput['visibility'][number][] = [];
-    for (const target of targets) {
-      visibility.push({ zone: target, clip: target === zone.id ? -1 : 0,
-        mask: runtimeOrderingMask(ordering.get(zone.id)!, ordering.get(target)!, visible) });
-      const targetZone = document.zones.find(zone => zone.id === target)!;
-      for (const graphic of [...targetZone.lower, ...targetZone.upper]) for (const point of graphic.points) rotate.add(point);
-      if (target !== zone.id) {
-        checkedInteger(clips.offset / 2, 0, 32767, 'Clip word offset');
-        const bounds = compiled.clips.get(zone.id)!.get(target)!;
-        for (const id of bounds.left) { checkedInteger(id, 0, pointLinks - 1, 'Left clip point'); clips.word(id); rotate.add(id); }
-        clips.word(-1);
-        for (const id of bounds.right) { checkedInteger(id, 0, pointLinks - 1, 'Right clip point'); clips.word(id); rotate.add(id); }
-        clips.word(-2);
-      }
-    }
     records.push({ id: zone.id, header: sourceData.bytes.slice(zone.offset, zone.offset + 48), boundaries: zone.boundaryIds,
-      cornerWalls: zone.wallIds, visibility, rotationPoints: [...rotate].sort((a, b) => a - b) });
+      cornerWalls: zone.wallIds, ...tables.rooms.get(zone.id)! });
   }
   const data = buildZoneRecords(document.files.data.subarray(0, prefixEnd), records);
   data.offsets.forEach((offset, id) => graphicView.setInt32(16 + id * 4, offset));
-  checkedInteger(clips.offset / 2, 0, 32767, 'Total clip word count');
-  for (let id = 0; id < pointLinks; id++) { clips.word(compiled.previous[id]!); clips.word(compiled.next[id]!); }
   // Door/lift +8 pointers address LEVELGRAPHICS (Anims.s), which is unchanged
   // apart from ZoneAdds. They must never be relocated as level-data pointers.
-  return { data: data.data, graphics, clips: clips.finish() };
+  return { data: data.data, graphics, clips: tables.clips };
 }

@@ -172,6 +172,10 @@ void level_log_zone_full(const LevelState *level, int16_t zone_id, const char *l
  */
 int level_parse(LevelState *level);
 
+/* Header +14 stores the last point index. AB3DI.s derives pointBrights as
+ * Points + 4 + index*4, so the actual point count includes that final point. */
+int level_point_count(const LevelState *level);
+
 /*
  * Assign clip data to zone graph lists.
  * Translated from AB3DI.s assignclips loop (~line 812-843).
