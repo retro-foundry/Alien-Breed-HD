@@ -112,8 +112,8 @@ fixtures can establish current-format support independently.
   remote runs have now built the WebAssembly engine. The first Windows/Linux
   unit jobs failed because the former single all-map visibility test exceeded
   its five-second limit; it is now split into one complete rebuild test per
-  map. The subsequent Linux browser job has passed; Windows browser CI is
-  still being checked (run 41219390025).
+  map. The subsequent full Windows and Linux jobs both passed, including
+  browser checks and static artifacts (run 41219390025, commit c1e3994).
 - Current `ToBack` is a **word** at zone offset 36 (`amiga/includes/Defs.i`).
   Every shipped value is 0 or -1. Do not expose its second byte as echo: that
   belongs to the older editor layout, not this runtime. Likewise, offset 28
@@ -221,3 +221,19 @@ fixtures can establish current-format support independently.
   prologues; every original/rebuilt spawn-view checksum matches. This stage still needs
   generated surfaces and complete source dependency remapping before new-room
   exports can be enabled.
+- `dataBuild.ts` rebuilds current point coordinates/brightness and collision
+  tables while preserving original control data, object points, shot pools,
+  object records and player avatars. It accounts for every prefix byte before
+  writing, relocates ZoneAdds after table growth, and rejects table truncation,
+  invalid fields, missing collision destinations and unsupported layouts.
+  All sixteen data files reconstruct exactly. Scenario checks expand both
+  point and collision tables and verify unchanged room-region bytes and
+  preserved relationships after relocation. The suite now has 216 tests.
+  The word immediately **after** collision records is the zone count in all
+  original maps, matching `LEVELSAVE`'s `DK[NZ]`; it is distinct from the
+  obsolete exit-zone word before FloorLines. New room headers and dependency
+  remapping are separate stages: this table writer does not claim that a new
+  unused point or collision record is a complete authored room.
+  Combined data-table expansion, visibility rebuilding and reversed/relocated
+  graphics pass all sixteen original spawn-frame comparisons in Chromium and
+  Firefox, exercising all three assembly stages together in the actual engine.

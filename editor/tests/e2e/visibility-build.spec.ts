@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { openLevel } from '../../src/model/level';
 import { buildVisibilityFiles } from '../../src/model/visibilityBuild';
 import { buildGraphicsStreams } from '../../src/model/graphicsBuild';
+import { buildDataTables, importedDataTables } from '../../src/model/dataBuild';
 import { encodeProject } from '../../src/model/project';
 import { originalFiles } from '../helpers';
 
@@ -35,7 +36,10 @@ test('rebuilt visibility and relocated graphics load in the real engine and pres
     const start = original.starts[0]!, camera = { zone: start.zone, x: start.x, z: start.z, upper: 0, angle: 0 };
     const before = await capture(page, camera);
     expect(before, `Level ${level} original capture`).not.toBe(0);
-    const visibility = openLevel(`${original.name} visibility`, buildVisibilityFiles(original));
+    const tables = importedDataTables(original);
+    const expanded = openLevel(`${original.name} expanded`, buildDataTables(original, { ...tables,
+      points: [...tables.points, { x: 20000, z: 20000, lowerBrightness: 0, upperBrightness: 0 }] }));
+    const visibility = openLevel(`${original.name} visibility`, buildVisibilityFiles(expanded));
     const graphics = buildGraphicsStreams(visibility, visibility.zones.map(zone => zone.id).toReversed(), visibility.zones.length + 2);
     const rebuilt = openLevel(`${original.name} rebuilt`, { ...visibility.files, graphics });
     await page.locator('input[type=file]').setInputFiles({ name: `rebuilt-${level}.ab3d`, mimeType: 'application/zip', buffer: Buffer.from(encodeProject(rebuilt)) });
