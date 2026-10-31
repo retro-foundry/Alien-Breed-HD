@@ -52,8 +52,8 @@ it.each(Array.from({ length: 16 }, (_, i) => i + 1))('regenerates translated lev
 });
 
 it('retains wall phases and strip density when an existing boundary is lengthened', () => {
-  const document = openLevel('deform', originalFiles(1)), room = document.roomSource.rooms[0]!;
-  const source = { ...document.roomSource, rooms: [{ ...room, vertices: room.vertices.map(point => ({ x: point.x * 2, z: point.z * 2 })) }] };
+  const document = openLevel('deform', originalFiles(1));
+  const source = { ...document.roomSource, rooms: document.roomSource.rooms.map(room => ({ ...room, vertices: room.vertices.map(point => ({ x: point.x * 2, z: point.z * 2 })) })) };
   const topology = compileRoomTopology(document, source), result = buildCellWallGeometry(document, source, topology);
   const originalWalls = document.zones[0]!.lower.filter(record => record.wall);
   expect(result.walls.get(0)!.lower).toHaveLength(originalWalls.length);
@@ -68,26 +68,28 @@ it('retains wall phases and strip density when an existing boundary is lengthene
 it('generates new endpoints for a partial boundary decoration after its room moves', () => {
   const document = openLevel('decoration', originalFiles(1)), room = document.roomSource.rooms.find(room => room.originZone === 90)!;
   const moved = { ...room, vertices: room.vertices.map(point => ({ x: point.x + 8192, z: point.z + 8192 })) };
-  const source = { ...document.roomSource, rooms: [moved] }, topology = compileRoomTopology(document, source);
+  const source = { ...document.roomSource, rooms: document.roomSource.rooms.map(item => ({ ...item,
+    vertices: item.vertices.map(point => ({ x: point.x + 8192, z: point.z + 8192 })) })) }, topology = compileRoomTopology(document, source);
   const result = buildCellWallGeometry(document, source, topology);
   const partial = document.zones[90]!.lower.find(record => record.offset === 15426)!;
-  const item = result.walls.get(0)!.lower.find(item => item.sourceOffset === partial.offset)!;
+  const item = result.walls.get(topology.sourceCells.get(room.id)![0]!)!.lower.find(item => item.sourceOffset === partial.offset)!;
   const wall = readWallSurface(new BinaryReader(item.bytes, 'decoration'), 0);
   expect(wall.points.map(id => result.topology.points[id])).toEqual(partial.points.map(id => ({ x: document.points[id]!.x + 8192, z: document.points[id]!.z + 8192 })));
   expect(wall.stripStart).toBe(partial.wall!.stripStart); expect(wall.stripEnd).toBe(partial.wall!.stripEnd);
   expect(result.topology.points.length).toBeGreaterThan(topology.points.length);
-  expect(topology.points.length).toBe(document.points.length + moved.vertices.length);
+  for (const point of moved.vertices) expect(topology.points).toContainEqual(point);
 });
 
 it('translates interior decorations exactly and rejects unsupported reshaping without mutating input', () => {
   const document = openLevel('unattached', originalFiles(2)), room = document.roomSource.rooms.find(room => room.originZone === 150)!;
-  const source = { ...document.roomSource, rooms: [{ ...room, vertices: room.vertices.map(point => ({ x: point.x + 8192, z: point.z + 8192 })) }] };
-  const translated = buildCellWallGeometry(document, source, compileRoomTopology(document, source));
+  const source = { ...document.roomSource, rooms: document.roomSource.rooms.map(item => ({ ...item,
+    vertices: item.vertices.map(point => ({ x: point.x + 8192, z: point.z + 8192 })) })) };
+  const translatedTopology = compileRoomTopology(document, source), translated = buildCellWallGeometry(document, source, translatedTopology);
   const record = document.zones[150]!.lower.find(record => record.offset === 22706)!;
-  const item = translated.walls.get(0)!.lower.find(item => item.sourceOffset === record.offset)!;
+  const item = translated.walls.get(translatedTopology.sourceCells.get(room.id)![0]!)!.lower.find(item => item.sourceOffset === record.offset)!;
   const wall = readWallSurface(new BinaryReader(item.bytes, 'interior decoration'), 0);
   expect(wall.points.map(id => translated.topology.points[id])).toEqual(record.points.map(id => ({ x: document.points[id]!.x + 8192, z: document.points[id]!.z + 8192 })));
-  const reshaped = { ...source, rooms: source.rooms.map(room => ({ ...room, vertices: room.vertices.map((point, index) => ({ ...point, x: point.x + (index === 1 ? 32 : 0) })) })) };
+  const reshaped = { ...source, rooms: source.rooms.map(room => ({ ...room, vertices: room.vertices.map(point => ({ x: point.x * 2 - 8192, z: point.z * 2 - 8192 })) })) };
   const topology = compileRoomTopology(document, reshaped), before = structuredClone(topology);
   expect(() => buildCellWallGeometry(document, reshaped, topology)).toThrow(/not attached to a single boundary/);
   expect(topology).toEqual(before);
@@ -99,7 +101,7 @@ it('keeps texture columns continuous when one source wall becomes two cell bound
   const document = openLevel('split', originalFiles(1)), room = document.roomSource.rooms[0]!;
   const a = room.vertices[0]!, b = room.vertices[1]!, midpoint = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
   const split = { ...room, vertices: [a, midpoint, ...room.vertices.slice(1)], wallSources: [room.wallSources[0]!, ...room.wallSources] };
-  const source = { ...document.roomSource, rooms: [split] }, topology = compileRoomTopology(document, source);
+  const source = { ...document.roomSource, rooms: document.roomSource.rooms.map(item => item.id === room.id ? split : item) }, topology = compileRoomTopology(document, source);
   const result = buildCellWallGeometry(document, source, topology);
   const original = document.zones[0]!.lower.find(record => record.wall && record.points.every(id => {
     const point = document.points[id]!; return (point.x === a.x && point.z === a.z) || (point.x === b.x && point.z === b.z);

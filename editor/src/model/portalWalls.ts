@@ -16,13 +16,27 @@ export function newPortalTarget(document: LevelDocument, topology: RoomTopology,
   return cell.originZone !== null && line !== null && line !== undefined && document.lines[line]!.connect === target.originZone ? undefined : target;
 }
 
+/** Original portals whose destination no longer shares this generated edge
+ * need new solid graphics as well as closed collision geometry. */
+export function closedPortalEdges(document: LevelDocument, cell: CompiledRoomCell): number[] {
+  if (cell.originZone === null) return [];
+  return cell.neighbours.flatMap((neighbour, edge) => {
+    const line = cell.sourceLines[edge];
+    return neighbour < 0 && line != null && document.lines[line]!.connect >= 0 ? [edge] : [];
+  });
+}
+
+export function hasUpperLayer(document: LevelDocument, zone: Zone): boolean {
+  const reader = new BinaryReader(document.files.graphics, 'portal layer table');
+  return reader.i32(reader.i32(12) + zone.id * 8 + 4) > 0 && zone.upperFloor > zone.upperCeiling;
+}
+
 /** Match src/level.c level_zone_has_upper_layer and movement.c's lower/upper
  * floor/roof tests. Wall heights use the native signed 24.8 representation.
  * Subtract all destination air bands to leave steps, lintels and the solid
  * band between floors. Preserve every material/sampling/phase field. */
 export function portalWallSpans(document: LevelDocument, material: WallSurface, destination: Zone): WallSurface[] {
-  const reader = new BinaryReader(document.files.graphics, 'portal layer table');
-  const upper = reader.i32(reader.i32(12) + destination.id * 8 + 4) > 0 && destination.upperFloor > destination.upperCeiling;
+  const upper = hasUpperLayer(document, destination);
   const openings = [{ top: destination.ceiling * 256, bottom: destination.floor * 256 },
     ...(upper ? [{ top: destination.upperCeiling * 256, bottom: destination.upperFloor * 256 }] : [])]
     .filter(span => span.bottom > span.top).toSorted((a, b) => a.top - b.top);

@@ -40,11 +40,11 @@ Each item needs implementation and direct verification before completion.
 
 | Requirement | Evidence needed | State |
 | --- | --- | --- |
-| React app on Windows, Linux and web | Reproducible static build; Chromium and Firefox browser runs; documented local/offline use | Static build and Windows Chromium/Firefox runs pass; Linux CI/offline delivery pending |
+| React app on Windows, Linux and web | Reproducible static build; Chromium and Firefox browser runs; documented local/offline use | Source-build integration passes Windows/Ubuntu CI and Chromium/Firefox; later milestones need their own CI; offline delivery pending |
 | Open all original levels | Parse all 16 actual level triplets; labelled 2D geometry and object checks | All 16 pass model and browser checks |
 | Open/save AMOS projects | `.dat`, `.obj`, `.links` field contracts and round trips from original save/load routines | Checked reader/writer and constructed blank-source contracts pass; real authored-file, UI and compiler integration pending |
 | Lossless game data import/export | Exact unchanged round trips, including unknown records and visibility data | All 16 exact triplet round trips pass |
-| Geometry creation and editing | Points, sectors, shared portals, split/delete/join operations, upper/lower rooms; playable exports | Source outlines and supported new rooms build/play/export; new portal spans, broader topology operations and controller groups pending |
+| Geometry creation and editing | Points, sectors, shared portals, split/delete/join operations, upper/lower rooms; playable exports | Source outlines, static new-room openings and explicit imported doorway closures build/play/export; replacing portals, broader topology operations and controller groups pending |
 | Automatic geometry orientation | Either drawing/import direction produces the same valid geometry; shared portals paired automatically; no user-facing winding setting | Normalisation, partial-wall pairing and concave partition tests pass; canvas/compiler integration pending |
 | Materials and lighting | Wall/floor/roof textures, alignment/scaling, vertex/zone light and animations; rendered comparisons | Pending |
 | Objects and starts | Add/move/delete real object types, player starts, exit zone; engine playback | Pending |
@@ -61,6 +61,9 @@ Each item needs implementation and direct verification before completion.
 Current integration: `playableBuild.ts` is the shared preview/export entry point.
 Supported source edits compile automatically, with explicit appearance choices
 for new rooms; generated artifacts never replace editable source in saves.
+Static new-room joins generate wall openings automatically. Imported doorway
+closures require an explicit saved wall style and lighting selection; they
+replace the closed edge's old wall pieces while retaining other authored walls.
 Historical checkpoint notes below that retain the old blanket source-build guard
 are superseded by this integration. Unsupported portal/controller/surface cases
 still fail explicitly, and the remaining requirements are not complete.
@@ -923,3 +926,33 @@ fixtures can establish current-format support independently.
   room. New openings into moving doors/lifts, replacing existing portals,
   assigning closing-wall materials and broader controller authoring remain
   unfinished. This milestone does not complete the editor or its deployment.
+
+- Imported doorway closure now rebuilds solid wall graphics after an adjoining
+  room is deleted or moved away. The remaining room's inspector provides a
+  Doorway closure appearance, using actual template wall records and point
+  lighting. No texture is guessed. Missing lower/required upper selections
+  block the build with room-specific instructions. Existing wall records on
+  closed edge segments are removed before full-height fills are inserted at
+  the chosen style's draw-stream position, avoiding overlapping old steps and
+  lintels. Fill texture columns follow the source wall chain through inserted
+  corners; generated-wall lighting identities remain separate where other
+  materials need different values. Existing wall styles and original baseline
+  files remain authored, and assigning a closure appearance without closing a
+  portal leaves every generated graphics record unchanged. The existing v8
+  appearance fields now also store imported-room closure selections and retain
+  atomic undo/redo and recovery behavior. Moving-volume closures still fail
+  explicitly until synchronized animation attachments can be authored.
+  Model scenarios cover deletion, exact saved settings, undo/redo, continuous
+  texture columns, separate upper/lower spans, missing-style rejection and the
+  moving-volume restriction. Browser scenarios delete the adjoining room via
+  the actual UI, repair its visible build error, save original files and source,
+  undo/redo the appearance, and hold movement against the resulting native
+  collision wall in Chromium and Firefox. Screenshots show the opening filled.
+  Broader topology/controller and other outstanding requirements remain open;
+  deployment is still deferred.
+  Source-build integration commit `fa701e6` has now completed its separate
+  Windows/Ubuntu editor CI successfully, including the actual-engine browser
+  suites. This does not substitute for CI of the later portal/closure changes.
+  All 628 model checks and TypeScript validation pass for closure authoring;
+  the opening/closure browser scenarios pass in both engines. The surrounding
+  full browser suite was still running at this checkpoint.

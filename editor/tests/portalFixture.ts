@@ -3,7 +3,8 @@ import { pointInRoomOutline } from '../src/model/geometry';
 import { openLevel } from '../src/model/level';
 import { resolveAnimationRoom } from '../src/model/animationRooms';
 import { roomAppearanceChoices } from '../src/model/roomAppearance';
-import { beginRoomDraft, commitRoomDraft, setDraftCorners } from '../src/model/roomSource';
+import { beginRoomDraft, commitRoomDraft, removeSourceRooms, setDraftCorners } from '../src/model/roomSource';
+import { buildPlayableLevel } from '../src/model/playableBuild';
 import { originalFiles } from './helpers';
 
 /** An actual shipped solid wall with empty authoring space outside it. Keep
@@ -47,4 +48,18 @@ export function importedPortalFixture() {
     return { ...candidate, original, baseline: { ...baseline, name: 'Closed doorway reference' }, document, added };
   }
   throw new Error('No isolated static shipped-wall fixture was found for a partial doorway.');
+}
+
+/** Re-import a generated, playable portal as ordinary level data, then delete
+ * its empty adjoining room. This exercises closing an imported doorway rather
+ * than merely undoing construction of a source-only room. */
+export function closedPortalFixture() {
+  const fixture = importedPortalFixture(), built = buildPlayableLevel(fixture.document, -1);
+  const baseline = built.document, destination = built.topology!.cells.find(cell => cell.sourceId === fixture.added.id)!;
+  const removed = baseline.roomSource.rooms.find(room => room.originZone === destination.id)!;
+  const owner = baseline.roomSource.rooms.find(room => room.originZone === baseline.starts[0]!.zone)!;
+  const document = applyCommand(baseline, editRoomSource(removeSourceRooms(baseline.roomSource, [removed.id])));
+  const choices = roomAppearanceChoices(document, owner);
+  const appearance = { room: owner.id, lowerWall: choices.lower[0]!.offset, upperWall: null, lightingPoint: choices.points[0]! };
+  return { ...fixture, baseline, removed, owner, document, appearance };
 }

@@ -1,6 +1,6 @@
 import { buildAnimationAttachments } from './animationAttachments';
 import { checkedInteger } from './binary';
-import { buildCellGraphics, type NewRoomGraphics } from './cellGraphics';
+import { buildCellGraphics, type NewRoomGraphics, type ClosingRoomGraphics } from './cellGraphics';
 import { compileCollisionGeometry } from './collisionBuild';
 import { buildDataPrefix } from './dataBuild';
 import { buildGeneratedGraphics } from './generatedGraphics';
@@ -12,7 +12,7 @@ import { compileRoomTopology } from './roomTopology';
 import { buildSourceVisibility } from './visibilityTables';
 import { buildZoneRecords } from './zoneBuild';
 import { buildDrawTopology } from './drawTopology';
-import { newPortalTarget } from './portalWalls';
+import { closedPortalEdges, newPortalTarget } from './portalWalls';
 import { resolveAnimationRoom } from './animationRooms';
 
 export interface SourceBuildOptions {
@@ -21,6 +21,7 @@ export interface SourceBuildOptions {
   resolvedExit: number;
   newRoomGraphics?: ReadonlyMap<string, NewRoomGraphics>;
   newRoomLighting?: ReadonlyMap<string, PointLightingBinding>;
+  closingRoomGraphics?: ReadonlyMap<string, ClosingRoomGraphics>;
 }
 
 /** Atomic complete-source assembly. The source document/archive remains the
@@ -30,6 +31,8 @@ export interface SourceBuildOptions {
 export function buildSourceLevel(document: LevelDocument, options: SourceBuildOptions) {
   const source = document.roomSource, topology = compileRoomTopology(document, source);
   const moving = new Set(document.mechanisms.map(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift')));
+  for (const cell of topology.cells) if (closedPortalEdges(document, cell).length && cell.originZone !== null && moving.has(cell.originZone))
+    throw new Error('Closing a doorway in a moving door or lift needs synchronized animation attachments. Restore the doorway before building.');
   for (const cell of topology.cells) cell.neighbours.forEach((neighbour, edge) => {
     if (neighbour < 0) return;
     const target = topology.cells.find(target => target.id === neighbour)!;
@@ -43,7 +46,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
         throw new Error('Replacing an existing doorway or unassigned boundary needs an explicit wall material before building.');
     }
   });
-  const geometry = buildCellGraphics(document, source, topology, options.newRoomGraphics);
+  const geometry = buildCellGraphics(document, source, topology, options.newRoomGraphics, options.closingRoomGraphics);
   const lighting = buildGeometryLighting(document, source, geometry, options.newRoomLighting);
   const collision = compileCollisionGeometry(lighting.graphics.topology);
   const attachments = buildAnimationAttachments(document, lighting.graphics, collision);

@@ -46,8 +46,8 @@ it('translates arc and beam points while retaining surrounding control order and
   streams.set(0, { ...stream, lower: [{ bytes: new Uint8Array([0, 3]) }, { bytes: beam }, ...stream.lower,
     { bytes: new Uint8Array([0, 4, 0, 1]) }, { bytes: arc }, { bytes: new Uint8Array([0, 12]) }] });
   const document = openLevel('controls', { ...original.files, graphics: buildGraphicsStreams(original, undefined, undefined, { streams }) });
-  const room = document.roomSource.rooms[0]!, source = { ...document.roomSource,
-    rooms: [{ ...room, vertices: room.vertices.map(point => ({ x: point.x + 8192, z: point.z + 8192 })) }] };
+  const source = { ...document.roomSource,
+    rooms: document.roomSource.rooms.map(room => ({ ...room, vertices: room.vertices.map(point => ({ x: point.x + 8192, z: point.z + 8192 })) })) };
   const topology = compileRoomTopology(document, source), before = structuredClone(topology);
   const built = buildCellGraphics(document, source, topology), generated = built.streams.get(0)!.lower;
   expect(generated.map(item => new BinaryReader(item.bytes, 'record').i16(0))).toEqual(document.zones[0]!.lower.map(record => record.type));
@@ -60,7 +60,7 @@ it('translates arc and beam points while retaining surrounding control order and
     decoded.points.forEach(id => expect(built.pointReferences.get(0)).toContain(id));
   }
   expect(topology).toEqual(before);
-  const reshaped = { ...source, rooms: [{ ...room, vertices: room.vertices.map(point => ({ x: point.x * 2, z: point.z * 2 })) }] };
+  const reshaped = { ...source, rooms: document.roomSource.rooms.map(room => ({ ...room, vertices: room.vertices.map(point => ({ x: point.x * 2, z: point.z * 2 })) })) };
   expect(() => buildCellGraphics(document, reshaped, compileRoomTopology(document, reshaped))).toThrow(/explicit geometry mapping/);
 });
 

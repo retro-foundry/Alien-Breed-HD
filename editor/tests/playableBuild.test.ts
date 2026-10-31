@@ -58,13 +58,13 @@ it('persists appearance independently, preserves it through outline edits and su
   history = redo(history); expect(history.document.roomAppearances).toEqual([appearance]);
 });
 
-it('rejects missing, stale and imported-room material selections rather than inventing new wall or lighting data', () => {
+it('rejects missing and stale material selections rather than inventing new wall or lighting data', () => {
   const { document, room, appearance } = fixture();
   expect(() => buildPlayableLevel(document, -1)).toThrow(/needs an appearance/);
   expect(() => editRoomAppearance(document, { ...appearance, lowerWall: 0 })).toThrow(/no longer matches/);
   expect(() => editRoomAppearance(document, { ...appearance, lightingPoint: 2047 })).toThrow(/no longer matches/);
-  expect(() => editRoomAppearance(document, { ...appearance, room: document.roomSource.rooms[0]!.id })).toThrow(/Imported rooms/);
-  expect(() => editRoomAppearance(document, { ...appearance, room: 'missing' })).toThrow(/existing new room/);
+  expect(() => editRoomAppearance(document, { ...appearance, room: document.roomSource.rooms[0]!.id })).not.toThrow();
+  expect(() => editRoomAppearance(document, { ...appearance, room: 'missing' })).toThrow(/existing room/);
   expect(() => restoreRoomAppearances([appearance, appearance])).toThrow(/Duplicate/);
   expect(() => restoreRoomAppearances([{ ...appearance, unknown: true }])).toThrow(/Invalid/);
   const placed = applyCommand(document, editRoomAppearance(document, appearance)), entries = unzipSync(encodeProject(placed));

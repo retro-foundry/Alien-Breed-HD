@@ -1,19 +1,31 @@
 import { normaliseRoomOutline, type Position } from './geometry';
 import type { Graphic, LevelDocument } from './level';
 import type { GraphicsRecordInput } from './graphicsBuild';
-import type { RoomSource } from './roomSource';
+import type { RoomSource, SourceRoom } from './roomSource';
 import type { RoomTopology } from './roomTopology';
 import { encodeWallSurface, type WallSurface } from './surfaces';
 import { wallForSpan } from './surfaceGeometry';
-import { newPortalTarget, portalWallSpans } from './portalWalls';
+import { closedPortalEdges, hasUpperLayer, newPortalTarget, portalWallSpans } from './portalWalls';
 
 export interface CellWalls { lower: GraphicsRecordInput[]; upper: GraphicsRecordInput[] }
 export interface NewRoomWallMaterials { lower: readonly WallSurface[]; upper?: readonly WallSurface[] }
+export interface ClosingWallMaterials { walls: NewRoomWallMaterials; lightingPoint: number }
 export interface WallGeometry { topology: RoomTopology; walls: Map<number, CellWalls> }
 const distance = (a: Position, b: Position) => Math.hypot(b.x - a.x, b.z - a.z);
 const on = (p: Position, a: Position, b: Position) => (p.x - a.x) * (b.z - a.z) === (p.z - a.z) * (b.x - a.x)
   && p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x) && p.z >= Math.min(a.z, b.z) && p.z <= Math.max(a.z, b.z);
 const key = (points: readonly Position[]) => JSON.stringify(normaliseRoomOutline(points.map(({ x, z }) => ({ x, z }))));
+function wallChain(room: SourceRoom, lineId: number) {
+  let total = 0;
+  const first = room.wallSources.findIndex((id, index) => id === lineId && room.wallSources[(index + room.wallSources.length - 1) % room.wallSources.length] !== lineId);
+  const pieces = room.vertices.flatMap((_, step) => {
+    const index = (Math.max(first, 0) + step) % room.vertices.length, start = room.vertices[index]!;
+    if (room.wallSources[index] !== lineId) return [];
+    const end = room.vertices[(index + 1) % room.vertices.length]!, length = distance(start, end), offset = total;
+    total += length; return [{ start, end, length, offset }];
+  });
+  return { pieces, total };
+}
 
 /** Bind source boundary materials to deformed/split cell edges. Preserve
  * strip density, phase, sampling and heights (WallRoutine3.ChipMem.s), and
@@ -23,7 +35,7 @@ const key = (points: readonly Position[]) => JSON.stringify(normaliseRoomOutline
  * New-room perimeter materials are explicit selections, not guessed textures.
  */
 export function buildCellWallGeometry(document: LevelDocument, source: RoomSource, topology: RoomTopology,
-  newMaterials: ReadonlyMap<string, NewRoomWallMaterials> = new Map()): WallGeometry {
+  newMaterials: ReadonlyMap<string, NewRoomWallMaterials> = new Map(), closingMaterials: ReadonlyMap<string, ClosingWallMaterials> = new Map()): WallGeometry {
   const points = topology.points.map(point => ({ ...point })), coordinates = new Map<string, number>();
   points.forEach((point, id) => { const name = `${point.x},${point.z}`; if (!coordinates.has(name)) coordinates.set(name, id); });
   const pointId = (point: Position): number => {
@@ -40,6 +52,10 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
     if (walls.has(cell.id)) throw new Error('Wall geometry contains duplicate runtime room identities.');
     const room = source.rooms.find(room => room.id === cell.sourceId), template = document.zones.find(zone => zone.id === cell.recordZone);
     if (!room || !template) throw new Error(`Room ${cell.sourceId} has a missing wall source or settings template.`);
+    const closed = closedPortalEdges(document, cell), closing = closingMaterials.get(room.id);
+    if (closed.length && !closing?.walls.lower.length) throw new Error(`Room ${room.id.replace(/^room-/, '')} has a closed doorway needing a wall style. Select the room and apply its closure appearance before building.`);
+    if (closed.length && hasUpperLayer(document, template) && !closing?.walls.upper?.length)
+      throw new Error(`Room ${room.id.replace(/^room-/, '')} needs an upper wall style for its closed doorway. Apply its upper closure appearance before building.`);
     const outline = cell.vertices.map(id => {
       const point = points[id]; if (!point) throw new Error(`Room ${cell.sourceId} has a missing wall corner.`); return point;
     });
@@ -66,13 +82,14 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
           }).flat();
         });
       }
-      return records.filter(record => record.wall).flatMap(record => {
+      const original = records.filter(record => record.wall).flatMap(record => {
         const material = record.wall!, a = document.points[material.points[0]]!, b = document.points[material.points[1]]!;
         const lineId = template.boundaryIds.find(id => {
           const line = document.lines[id]!; return on(a, line, { x: line.x + line.dx, z: line.z + line.dz }) && on(b, line, { x: line.x + line.dx, z: line.z + line.dz });
         });
         const opened = cell.vertices.some((_, edge) => cell.sourceLines[edge] === lineId && newPortalTarget(document, topology, cell, edge));
-        if (unchanged && retained(record) && !opened) return [{ sourceOffset: record.offset, bytes: document.files.graphics.slice(record.offset, record.offset + record.size) }];
+        const closingLine = closed.some(edge => cell.sourceLines[edge] === lineId);
+        if (unchanged && retained(record) && !opened && !closingLine) return [{ sourceOffset: record.offset, bytes: document.files.graphics.slice(record.offset, record.offset + record.size) }];
         if (lineId === undefined) {
           if (translatedWholeRoom) return [{ sourceOffset: record.offset, bytes: encodeWallSurface({ ...material,
             points: [pointId({ x: a.x + dx, z: a.z + dz }), pointId({ x: b.x + dx, z: b.z + dz })] }) }];
@@ -80,14 +97,7 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
         }
         const line = document.lines[lineId]!, lengthSquared = line.dx ** 2 + line.dz ** 2;
         const fraction = (p: Position) => ((p.x - line.x) * line.dx + (p.z - line.z) * line.dz) / lengthSquared;
-        let total = 0;
-        const firstEdge = room.wallSources.findIndex((id, index) => id === lineId && room.wallSources[(index + room.wallSources.length - 1) % room.wallSources.length] !== lineId);
-        const pieces = room.vertices.flatMap((_, step) => {
-          const index = (Math.max(firstEdge, 0) + step) % room.vertices.length, start = room.vertices[index]!;
-          if (room.wallSources[index] !== lineId) return [];
-          const end = room.vertices[(index + 1) % room.vertices.length]!, length = distance(start, end), offset = total;
-          total += length; return [{ start, end, length, offset }];
-        });
+        const { pieces, total } = wallChain(room, lineId);
         const first = fraction(a) * total, last = fraction(b) * total, result: GraphicsRecordInput[] = [], uncut: WallSurface[] = [];
         for (let index = 0; index < cell.vertices.length; index++) {
           if (cell.sourceLines[index] !== lineId) continue;
@@ -102,18 +112,30 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
           const from = last > first ? low : high, to = last > first ? high : low;
           const bound = wallForSpan(material, distance(a, b), [pointId(position(from)), pointId(position(to))], Math.abs(from - first), Math.abs(to - first));
           uncut.push(bound);
+          if (closed.includes(index)) continue;
           const target = newPortalTarget(document, topology, cell, index);
           const spans = target ? portalWallSpans(document, bound, document.zones.find(zone => zone.id === target.recordZone)!) : [bound];
           result.push(...spans.map(span => ({ sourceOffset: record.offset, bytes: encodeWallSurface(span) })));
         }
-        if (!opened || !uncut.length) return result;
+        if ((!opened && !closingLine) || !uncut.length) return result;
         const starts = new Set(uncut.map(wall => wall.points[0])), ends = new Set(uncut.map(wall => wall.points[1]));
         const start = [...starts].filter(id => !ends.has(id)), end = [...ends].filter(id => !starts.has(id));
         if (start.length !== 1 || end.length !== 1) throw new Error(`Room ${room.id} has an ambiguous doorway material-lighting span.`);
         return result.map(item => ({ ...item, lightingSpan: [points[start[0]!]!, points[end[0]!]!] as const }));
       });
+      const fills = closed.flatMap(edge => (selected ?? []).map(material => {
+        const start = document.points[material.points[0]], end = document.points[material.points[1]];
+        if (!start || !end) throw new Error(`Room ${room.id} has a missing closure material endpoint.`);
+        const a = cell.vertices[edge]!, b = cell.vertices[(edge + 1) % cell.vertices.length]!;
+        const { pieces } = wallChain(room, cell.sourceLines[edge]!);
+        const piece = pieces.find(piece => on(points[a]!, piece.start, piece.end) && on(points[b]!, piece.start, piece.end));
+        if (!piece) throw new Error(`Room ${room.id} lost its doorway closure material chain.`);
+        const offset = piece.offset + distance(piece.start, points[a]!);
+        return { bytes: encodeWallSurface(wallForSpan(material, distance(start, end), [a, b], offset, offset + distance(points[a]!, points[b]!))), lightingPoint: closing!.lightingPoint };
+      }));
+      return [...original, ...fills];
     };
-    const selected = newMaterials.get(room.id);
+    const selected = room.originZone === null ? newMaterials.get(room.id) : closing?.walls;
     walls.set(cell.id, { lower: layer(template.lower, selected?.lower), upper: layer(template.upper, selected?.upper ?? (room.originZone === null ? [] : undefined)) });
   }
   return { topology: { ...topology, points }, walls };

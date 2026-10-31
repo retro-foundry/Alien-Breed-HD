@@ -66,12 +66,12 @@ it('interpolates static and animated channels automatically at an inserted bound
     if (point.x === b.x && point.z === b.z) { view.setInt16(original.pointBrightnessOffset + point.id * 4, 10); view.setInt16(original.pointBrightnessOffset + point.id * 4 + 2, 0x7112); }
   }
   const document = openLevel('split lighting', { ...original.files, data });
-  const source = { ...document.roomSource, rooms: [{ ...room, vertices: [a, midpoint, ...room.vertices.slice(1)],
-    wallSources: [room.wallSources[0]!, ...room.wallSources] }] };
+  const source = { ...document.roomSource, rooms: document.roomSource.rooms.map(item => item.id !== room.id ? item : ({ ...room, vertices: [a, midpoint, ...room.vertices.slice(1)],
+    wallSources: [room.wallSources[0]!, ...room.wallSources] })) };
   const graphics = buildCellGraphics(document, source, compileRoomTopology(document, source));
   const built = buildGeometryLighting(document, source, graphics);
   let samples = 0;
-  for (const stream of built.graphics.streams.values()) for (const item of [...stream.lower, ...(stream.upper ?? [])]) {
+  for (const stream of [built.graphics.streams.get(0)!]) for (const item of [...stream.lower, ...(stream.upper ?? [])]) {
     const record = readGraphicRecord(new BinaryReader(item.bytes, 'split lighting'), 0, built.points.length);
     for (const id of record.points) if (built.points[id]!.x === midpoint.x && built.points[id]!.z === midpoint.z) {
       expect(built.points[id]!.lowerBrightness).toBe(0); expect(built.points[id]!.upperBrightness).toBe(0x710a); samples++;

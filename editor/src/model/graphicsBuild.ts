@@ -8,7 +8,14 @@ import { relocateRecordPointer } from './graphicsRelocation';
 import type { Position } from './geometry';
 
 export interface GraphicsZoneInput { id: number; lower: readonly Uint8Array[]; upper?: readonly Uint8Array[] }
-export interface GraphicsRecordInput { bytes: Uint8Array; sourceOffset?: number; /** Full authored lighting span before cutting a new opening. */ lightingSpan?: readonly [Position, Position] }
+export interface GraphicsRecordInput {
+  bytes: Uint8Array;
+  sourceOffset?: number;
+  /** Full authored lighting span before cutting a new opening. */
+  lightingSpan?: readonly [Position, Position];
+  /** Explicit lighting for newly authored closing walls. */
+  lightingPoint?: number;
+}
 export interface GraphicsStreamInput { lower: readonly GraphicsRecordInput[]; upper?: readonly GraphicsRecordInput[] }
 export interface GraphicsEdits {
   replacements?: ReadonlyMap<number, Uint8Array>;

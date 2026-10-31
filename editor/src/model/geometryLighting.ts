@@ -37,6 +37,14 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
       if (!selection) throw new Error(`Room ${room.id} needs its initial point-lighting selection before building.`);
       references.forEach(id => claim(id, selection, room.id)); continue;
     }
+    activeRecord = undefined;
+    for (const cell of cells) {
+      const stream = graphics.streams.get(cell.id)!;
+      for (const item of [...stream.lower, ...(stream.upper ?? [])]) if (item.sourceOffset === undefined && item.lightingPoint !== undefined) {
+        const generated = readGraphicRecord(new BinaryReader(item.bytes, 'closing wall lighting'), 0, points.length);
+        generated.points.forEach(id => claim(id, { kind: 'copy', source: item.lightingPoint! }, room.id));
+      }
+    }
     const template = document.zones.find(zone => zone.id === room.recordZone)!;
     const records = [...template.lower, ...template.upper], sourcePoints = new Set(records.flatMap(record => record.points));
     const originalAt = (position: Position, candidates = sourcePoints): number => {

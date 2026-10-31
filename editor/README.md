@@ -73,13 +73,22 @@ one, or Export level to download the same compiled result. Source room visits
 and viewport picking follow compiler numbering automatically. Save project
 always keeps the editable outlines, appearance and gameplay links.
 
+Touching a new room against a static room boundary creates the doorway
+automatically. Its wall graphics leave the correct steps and lintels for the
+destination heights. If deleting or moving an imported neighbour closes an old
+doorway, select the remaining room, choose its Doorway closure appearance and
+click Apply appearance. This fills the closed opening with the chosen wall
+style and lighting; existing wall styles remain authored. The choice is saved
+with the project and supports undo/redo. A missing closure choice stops a build
+with instructions rather than exporting a collision wall with a visual hole.
+
 The application is not yet a complete replacement for the original editor.
-Broader material/asset authoring, source AMOS project adapters, new portal wall
-openings, split mechanism/controller groups, control paths and full 3D surface
+Broader material/asset authoring, source AMOS project adapters, replacing existing
+portals and openings into moving volumes, split mechanism/controller groups, control paths and full 3D surface
 picking are still being implemented. Unsupported builds produce an actionable
 error and preserve source; they never export stale geometry in its place.
 
-Project format v8 adds explicit new-room appearance alongside the editable
+Project format v8 stores new-room and doorway-closure appearance alongside the editable
 room/gameplay source and original binary baseline. Formats v1–v7 remain readable;
 projects without the newer fields retain their earlier format. Incomplete
 projects can be saved/recovered before all build dependencies are assigned.

@@ -1,5 +1,5 @@
 import { checkedInteger } from './binary';
-import type { NewRoomGraphics } from './cellGraphics';
+import type { NewRoomGraphics, ClosingRoomGraphics } from './cellGraphics';
 import type { LevelDocument } from './level';
 import type { PointLightingBinding } from './pointLighting';
 import type { SourceRoom } from './roomSource';
@@ -34,7 +34,6 @@ export function validateRoomAppearances(document: LevelDocument, value: unknown)
   for (const appearance of appearances) {
     const room = document.roomSource.rooms.find(room => room.id === appearance.room);
     if (!room) continue; // Deleted source volumes retain their settings for undo.
-    if (room.originZone !== null) throw new Error('Imported rooms retain their own surface records; choose a newly drawn room for perimeter appearance.');
     const choices = roomAppearanceChoices(document, room);
     if (!choices.lower.some(record => record.offset === appearance.lowerWall)
       || (appearance.upperWall !== null && !choices.upper.some(record => record.offset === appearance.upperWall))
@@ -45,7 +44,7 @@ export function validateRoomAppearances(document: LevelDocument, value: unknown)
 }
 
 export function setRoomAppearance(document: LevelDocument, appearance: RoomAppearance): readonly RoomAppearance[] {
-  if (!document.roomSource.rooms.some(room => room.id === appearance.room)) throw new Error('Choose an existing new room before changing its appearance.');
+  if (!document.roomSource.rooms.some(room => room.id === appearance.room)) throw new Error('Choose an existing room before changing its appearance.');
   const result = validateRoomAppearances(document, [...(document.roomAppearances ?? []).filter(item => item.room !== appearance.room), appearance]);
   const previous = document.roomAppearances?.find(item => item.room === appearance.room);
   return previous && JSON.stringify(previous) === JSON.stringify(appearance) ? document.roomAppearances! : result;
@@ -57,17 +56,21 @@ export function setRoomAppearance(document: LevelDocument, appearance: RoomAppea
 export function roomAppearanceBuildOptions(document: LevelDocument) {
   const appearances = validateRoomAppearances(document, document.roomAppearances ?? []);
   const newRoomGraphics = new Map<string, NewRoomGraphics>(), newRoomLighting = new Map<string, PointLightingBinding>();
-  for (const room of document.roomSource.rooms.filter(room => room.originZone === null)) {
+  const closingRoomGraphics = new Map<string, ClosingRoomGraphics>();
+  for (const room of document.roomSource.rooms) {
     const selected = appearances.find(item => item.room === room.id);
+    if (!selected && room.originZone !== null) continue;
     if (!selected) throw new Error(`Room ${room.id.replace(/^room-/, '')} needs an appearance. Select it and apply its wall style and lighting before building.`);
     const { template, lower, upper } = roomAppearanceChoices(document, room);
     const lowerRecord = lower.find(record => record.offset === selected.lowerWall)!;
     const upperRecord = upper.find(record => record.offset === selected.upperWall);
-    newRoomGraphics.set(room.id, { walls: {
+    const graphics: NewRoomGraphics = { walls: {
       lower: [{ ...lowerRecord.wall!, topFixed: template.ceiling * 256, bottomFixed: template.floor * 256 }],
       upper: upperRecord ? [{ ...upperRecord.wall!, topFixed: template.upperCeiling * 256, bottomFixed: template.upperFloor * 256 }] : [],
-    }, wallInsertion: { lower: template.lower.indexOf(lowerRecord), ...(upperRecord ? { upper: template.upper.indexOf(upperRecord) } : {}) } });
-    newRoomLighting.set(room.id, { kind: 'copy', source: selected.lightingPoint });
+    }, wallInsertion: { lower: template.lower.indexOf(lowerRecord), ...(upperRecord ? { upper: template.upper.indexOf(upperRecord) } : {}) } };
+    if (room.originZone === null) {
+      newRoomGraphics.set(room.id, graphics); newRoomLighting.set(room.id, { kind: 'copy', source: selected.lightingPoint });
+    } else closingRoomGraphics.set(room.id, { ...graphics, lightingPoint: selected.lightingPoint });
   }
-  return { newRoomGraphics, newRoomLighting };
+  return { newRoomGraphics, newRoomLighting, closingRoomGraphics };
 }
