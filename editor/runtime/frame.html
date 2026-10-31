@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alien Breed engine preview</title>
+<style>
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#090d12;color:#bcc8cf;font:12px system-ui}
+  canvas{display:block;width:100%;height:100%;outline:0;image-rendering:pixelated}
+  #message{position:absolute;inset:0;display:grid;place-content:center;text-align:center;padding:20px;pointer-events:none}
+  #message:empty{display:none}
+</style>
+<canvas id="canvas" tabindex="0" aria-label="Game engine viewport"></canvas>
+<div id="message" role="status">Loading game engine…</div>
+<script src="engine.js"></script>
+<script>
+  'use strict';
+  const canvas = document.getElementById('canvas'), message = document.getElementById('message');
+  let engine, loaded = false, playing = false, currentRevision = -1;
+  const send = (type, detail = {}) => parent.postMessage({source:'ab3d-engine', type, ...detail}, location.origin);
+  const fail = error => { message.textContent = 'Engine preview: ' + String(error); send('error', {message:String(error)}); };
+  createEditorEngine({
+    canvas, locateFile: name => new URL(name, location.href).href,
+    print: () => {}, printErr: text => console.error('[engine]', text),
+    onAbort: reason => fail(reason),
+    editorEvent(kind, zone, value) {
+      if (kind === 1) send('loaded', {revision:currentRevision, zone, zones:value, nonblack:engine._editor_nonblack_pixels(), slot:engine._editor_current_slot()});
+      if (kind === 2) { playing = false; document.exitPointerLock?.(); send('stopped', {zone, completed:!!value}); }
+    }
+  }).then(module => { engine = module; message.textContent = ''; send('ready'); }).catch(fail);
+  window.addEventListener('message', event => {
+    if (event.source !== parent || event.origin !== location.origin || event.data?.source !== 'ab3d-editor' || !engine) return;
+    const request = event.data;
+    try {
+      if (request.type === 'load') {
+        if (!Number.isInteger(request.slot) || request.slot < 0 || request.slot > 15) throw new Error('Invalid level slot.');
+        const folder = '/data/levels/level_' + String.fromCharCode(97 + request.slot) + '/';
+        for (const [key, file] of [['data','twolev.bin'],['graphics','twolev.graph.bin'],['clips','twolev.clips']]) {
+          const bytes = request.files?.[key];
+          if (!(bytes instanceof Uint8Array) || bytes.length > 16777216) throw new Error('Invalid ' + key + ' file.');
+          engine.FS.writeFile(folder + file, bytes);
+        }
+        playing = false; currentRevision = request.revision;
+        if (!engine._editor_load_level(request.slot)) throw new Error('The engine could not load this map.');
+        loaded = true;
+      }
+      if (loaded && request.type === 'camera') {
+        const c = request.camera;
+        if (!c || ![c.zone,c.x,c.z,c.upper,c.angle].every(Number.isInteger)) throw new Error('Invalid preview camera.');
+        if (!engine._editor_camera(c.zone,c.x,c.z,c.upper,c.angle)) throw new Error('Place the preview camera inside the selected zone.');
+      }
+      if (loaded && request.type === 'turn') engine._editor_turn(request.delta|0, request.look|0);
+      if (loaded && request.type === 'capture') {
+        const c = request.camera;
+        if (!c || ![c.zone,c.x,c.z,c.upper,c.angle].every(Number.isInteger)) throw new Error('Invalid capture camera.');
+        send('captured', {id:request.id, checksum:engine._editor_capture(c.zone,c.x,c.z,c.upper,c.angle) >>> 0});
+      }
+      if (loaded && request.type === 'play') {
+        playing = !!request.playing;
+        engine._editor_play(playing ? 1 : 0);
+        if (playing) canvas.focus(); else document.exitPointerLock?.();
+      }
+    } catch(error) { fail(error); }
+  });
+  canvas.addEventListener('click', () => {
+    if (loaded && !playing) send('pick', {zone:engine._editor_pick()});
+  });
+  canvas.addEventListener('keydown', event => {
+    if (playing || !loaded) return;
+    const controls = {ArrowLeft:[-128,0],ArrowRight:[128,0],ArrowUp:[0,-8],ArrowDown:[0,8]};
+    if (controls[event.key]) { event.preventDefault(); engine._editor_turn(...controls[event.key]); }
+  });
+</script>
+</html>

@@ -1,0 +1,108 @@
+name: Level editor
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'editor/**'
+      - 'tools/editor_oracles.py'
+      - 'tools/build_editor_runtime.py'
+      - 'src/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'amiga/data/levels/**'
+      - '.github/workflows/editor.yml'
+  pull_request:
+    paths:
+      - 'editor/**'
+      - 'tools/editor_oracles.py'
+      - 'tools/build_editor_runtime.py'
+      - 'src/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'amiga/data/levels/**'
+      - '.github/workflows/editor.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    name: Game engine preview / WebAssembly
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ffmpeg
+      - name: Build the actual game engine for the editor
+        shell: bash
+        run: |
+          git clone --depth 1 --branch 5.0.0 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/editor-emsdk"
+          cd "$RUNNER_TEMP/editor-emsdk"
+          ./emsdk install 5.0.0
+          ./emsdk activate 5.0.0
+          source ./emsdk_env.sh
+          cd "$GITHUB_WORKSPACE"
+          emcmake cmake --preset emscripten-release -G Ninja
+          python tools/build_editor_runtime.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: editor-engine
+          path: editor/public/runtime/
+          if-no-files-found: error
+  editor:
+    name: Editor / ${{ matrix.os }}
+    needs: engine
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: editor
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: editor/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Download game engine preview
+        uses: actions/download-artifact@v4
+        with:
+          name: editor-engine
+          path: editor/public/runtime/
+      - name: Validate binary contracts and editor commands
+        run: npm test
+      - name: Build static editor
+        run: npm run build
+      - name: Install browser engines
+        run: npx playwright install --with-deps chromium firefox
+      - name: Exercise editor in real browsers
+        run: npm run test:e2e
+      - name: Upload static editor
+        uses: actions/upload-artifact@v4
+        with:
+          name: level-editor-${{ matrix.os }}
+          path: editor/dist/
+          if-no-files-found: error
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: level-editor-failures-${{ matrix.os }}
+          path: editor/test-results/
+          if-no-files-found: ignore
