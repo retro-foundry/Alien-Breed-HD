@@ -109,7 +109,10 @@ fixtures can establish current-format support independently.
   differences from the shipped PVS and the remaining scenario requirements.
 - `npm run build` produces the static app. Browser screenshots have been
   inspected. `.github/workflows/editor.yml` adds Windows/Linux browser CI;
-  that workflow has not yet run remotely.
+  remote runs have now built the WebAssembly engine. The first Windows/Linux
+  unit jobs failed because the former single all-map visibility test exceeded
+  its five-second limit; it is now split into one complete rebuild test per
+  map. Subsequent cross-platform browser jobs are still being checked.
 - Current `ToBack` is a **word** at zone offset 36 (`amiga/includes/Defs.i`).
   Every shipped value is 0 or -1. Do not expose its second byte as echo: that
   belongs to the older editor layout, not this runtime. Likewise, offset 28
@@ -189,3 +192,15 @@ fixtures can establish current-format support independently.
   The suite now has 162 passing tests. Complete-file assembly, surface records,
   pointer relocation and dependency remapping are still pending; this is not
   evidence that newly drawn rooms are playable yet.
+- `surfaces.ts` provides typed current-format straight/see-through wall and
+  floor/roof/water polygon records, used directly by the level reader. Tests
+  decode and re-encode every supported surface in all sixteen maps byte for
+  byte. Horizontal/vertical phase, authored sampling masks, scale, material,
+  brightness and exact fixed/quarter-unit heights are retained separately.
+  `polygonForCell` binds an explicitly selected polygon material to generated
+  convex-cell point IDs without mutating the template. Contracts come from
+  `renderer.c` wall/polygon cases, `WallRoutine3.ChipMem.s:itsawalldraw` and
+  `AB3DI.s:itsafloordraw`; older AMOS packed-point output is not copied into
+  current-format records. The suite now has 181 tests. Full wall-span/material
+  authoring, curved surfaces, stream assembly/relocation and UI integration
+  remain required before enabling geometry exports.

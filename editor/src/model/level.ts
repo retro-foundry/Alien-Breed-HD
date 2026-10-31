@@ -2,6 +2,7 @@
  * The older AMOS LEVELSAVE uses different header/graphics encodings. */
 import { BinaryReader, LevelFormatError } from './binary';
 import { unpackSb } from './sb';
+import { readWallSurface, readPolygonSurface, type WallSurface, type PolygonSurface } from './surfaces';
 
 export interface Point { id: number; x: number; z: number; offset: number }
 export interface FloorLine {
@@ -11,6 +12,7 @@ export interface FloorLine {
 export interface Graphic {
   type: number; offset: number; size: number; points: number[];
   height?: number; top?: number; bottom?: number; texture?: number;
+  wall?: WallSurface; polygon?: PolygonSurface;
 }
 export interface Zone {
   id: number; fileId: number; offset: number;
@@ -80,9 +82,10 @@ function graphicsStream(reader: BinaryReader, offset: number, points: number): G
       size = 30;
       entry.points = [reader.i16(payload), reader.i16(payload + 2)];
       if (type !== 5) {
-        entry.texture = reader.i16(payload + 12);
-        entry.top = reader.i32(payload + 18) / 256;
-        entry.bottom = reader.i32(payload + 22) / 256;
+        entry.wall = readWallSurface(reader, cursor);
+        entry.texture = entry.wall.texture;
+        entry.top = entry.wall.topFixed / 256;
+        entry.bottom = entry.wall.bottomFixed / 256;
       }
     } else if (type === 3 || type === 12) size = 2;
     else if (type === 4) size = 4;
@@ -91,9 +94,10 @@ function graphicsStream(reader: BinaryReader, offset: number, points: number): G
       const sides = reader.i16(payload + 2) + 1;
       if (sides < 0 || sides > 100) throw new LevelFormatError('polygon has an invalid vertex count', reader.name, payload + 2);
       size = 14 + sides * 2;
-      entry.height = reader.i16(payload) / 4;
-      entry.points = Array.from({ length: sides }, (_, i) => reader.i16(payload + 4 + i * 2));
-      entry.texture = reader.i16(payload + 8 + sides * 2);
+      entry.polygon = readPolygonSurface(reader, cursor);
+      entry.height = entry.polygon.heightQuarter / 4;
+      entry.points = entry.polygon.points;
+      entry.texture = entry.polygon.texture;
     } else throw new LevelFormatError(`unrecognised graphics opcode ${type}`, reader.name, cursor);
     reader.require(cursor, size);
     if (entry.points.some(point => point < 0 || point >= points))
