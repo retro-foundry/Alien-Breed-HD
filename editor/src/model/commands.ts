@@ -2,7 +2,7 @@ import { BinaryReader, checkedInteger } from './binary';
 import { parseLevel, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './level';
 
 export interface BytePatch { file: keyof LevelFiles; offset: number; before: Uint8Array; after: Uint8Array }
-export interface EditCommand { label: string; patches: BytePatch[]; playtestSlot?: { before: number; after: number } }
+export interface EditCommand { label: string; patches: BytePatch[]; playtestSlot?: { before: number; after: number }; exitZone?: { before: number | null; after: number | null } }
 export interface History { document: LevelDocument; past: EditCommand[]; future: EditCommand[] }
 
 export function numberPatch(document: LevelDocument, file: keyof LevelFiles, offset: number, value: number, size: 1 | 2 | 4, signed = true): BytePatch {
@@ -19,6 +19,12 @@ export function numberPatch(document: LevelDocument, file: keyof LevelFiles, off
 
 export function applyCommand(document: LevelDocument, command: EditCommand, reverse = false): LevelDocument {
   let playtestSlot = document.playtestSlot;
+  let exitZone = document.exitZone;
+  if (command.exitZone) {
+    const { before, after } = command.exitZone;
+    if (exitZone !== (reverse ? after : before)) throw new Error('The exit zone changed before this edit could be applied. No changes were saved.');
+    exitZone = reverse ? before : after;
+  }
   if (command.playtestSlot) {
     const { before, after } = command.playtestSlot;
     if (playtestSlot !== (reverse ? after : before)) throw new Error('The project slot changed before this edit could be applied. No changes were saved.');
@@ -35,11 +41,11 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
       throw new Error('The document changed before this edit could be applied. No changes were saved.');
     files[patch.file].set(after, patch.offset);
   }
-  return parseLevel(document.name, files, document.encoded, document.original, playtestSlot);
+  return parseLevel(document.name, files, document.encoded, document.original, playtestSlot, exitZone);
 }
 
 export function execute(history: History, command: EditCommand): History {
-  if (command.patches.every(patch => sameBytes(patch.before, patch.after)) && (!command.playtestSlot || command.playtestSlot.before === command.playtestSlot.after)) return history;
+  if (command.patches.every(patch => sameBytes(patch.before, patch.after)) && (!command.playtestSlot || command.playtestSlot.before === command.playtestSlot.after) && (!command.exitZone || command.exitZone.before === command.exitZone.after)) return history;
   const document = applyCommand(history.document, command);
   return { document, past: [...history.past, command], future: [] };
 }
@@ -59,6 +65,11 @@ export function redo(history: History): History {
 export function setPlaytestSlot(document: LevelDocument, slot: number): EditCommand {
   checkedInteger(slot, 0, 15, 'Game level slot');
   return { label: `Use game level slot ${slot + 1}`, patches: [], playtestSlot: { before: document.playtestSlot, after: slot } };
+}
+
+export function setExitZone(document: LevelDocument, zone: number | null): EditCommand {
+  if (zone !== null && zone !== -1 && !document.zones.some(item => item.id === zone)) throw new Error('Choose an existing exit zone.');
+  return { label: zone === null ? 'Use original slot exit' : zone === -1 ? 'Disable level exit' : `Exit at zone ${zone}`, patches: [], exitZone: { before: document.exitZone, after: zone } };
 }
 
 export type ZoneProperty = 'brightness' | 'upperBrightness' | 'floorSound' | 'upperFloorSound';

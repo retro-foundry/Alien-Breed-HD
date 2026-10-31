@@ -25,7 +25,7 @@
     print: () => {}, printErr: text => console.error('[engine]', text),
     onAbort: reason => fail(reason),
     editorEvent(kind, zone, value) {
-      if (kind === 1) send('loaded', {revision:currentRevision, zone, zones:value, nonblack:engine._editor_nonblack_pixels(), slot:engine._editor_current_slot()});
+      if (kind === 1) send('loaded', {revision:currentRevision, zone, zones:value, nonblack:engine._editor_nonblack_pixels(), slot:engine._editor_current_slot(), exitZone:engine._editor_current_exit_zone()});
       if (kind === 2) { playing = false; document.exitPointerLock?.(); send('stopped', {zone, completed:!!value}); }
     }
   }).then(module => { engine = module; message.textContent = ''; send('ready'); }).catch(fail);
@@ -39,12 +39,14 @@
       }
       if (request.type === 'load') {
         if (!Number.isInteger(request.slot) || request.slot < 0 || request.slot > 15) throw new Error('Invalid level slot.');
+        if (!(request.setup instanceof Uint8Array) || request.setup.length !== 8) throw new Error('Invalid level exit setup.');
         const folder = '/data/levels/level_' + String.fromCharCode(97 + request.slot) + '/';
         for (const [key, file] of [['data','twolev.bin'],['graphics','twolev.graph.bin'],['clips','twolev.clips']]) {
           const bytes = request.files?.[key];
           if (!(bytes instanceof Uint8Array) || bytes.length > 16777216) throw new Error('Invalid ' + key + ' file.');
           engine.FS.writeFile(folder + file, bytes);
         }
+        engine.FS.writeFile(folder + 'twolev.cfg', request.setup);
         playing = false; currentRevision = request.revision;
         if (!engine._editor_load_level(request.slot)) throw new Error('The engine could not load this map.');
         loaded = true;

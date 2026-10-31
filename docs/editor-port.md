@@ -101,7 +101,7 @@ fixtures can establish current-format support independently.
   A cancelled backup download with unavailable recovery storage retains the
   dirty marker and unload protection. Only a completed IndexedDB save clears
   that marker; requesting a download cannot claim that a file was saved.
-- 104 unit/format/scenario tests currently pass. The portal compiler handles all
+- 244 unit/format/scenario tests currently pass. The portal compiler handles all
   16 maps, derives legacy-safe common clip bounds for alternate routes, and
   supplies exact sightline witnesses. All sixteen maps now pass deterministic
   binary assembly, content retention and matching original/rebuilt engine
@@ -268,3 +268,22 @@ fixtures can establish current-format support independently.
   A slot-only edit with unavailable storage keeps the dirty marker/unload
   protection after a cancelled backup and cannot be discarded by opening a
   different map. All 28 targeted browser checks pass alongside the unit suite.
+- Project v3 adds explicit exit setup, retaining v2 slots and migrating older
+  unspecified exits to the original slot behavior. Level exit is available in
+  Project, participates in undo and dirty/recovery tracking, and is written to
+  game exports as `twolev.cfg`. This is a documented port extension, not an
+  invented field in the original geometry. Its eight bytes are ASCII `ABEX`,
+  big-endian version word 1 and signed zone word: -2 original slot, -1 disabled,
+  0..255 explicit runtime zone. Exports always include it, including an explicit
+  original-exit reset so old setup cannot survive replacing a custom map.
+  `io_load_level_exit_zone` validates present files after level parsing; absent
+  files retain the original table. The actual game loop now reads the state's
+  end-zone table, initialised from `game_data.c` as before. Custom exit tests
+  exercise actual completion, disabled completion, original reset and game ZIP
+  re-import in Chromium/Firefox. The Windows native game and WebAssembly host
+  build. Full source-room exit remapping (including concave splits), strict
+  legacy export profiles and complete geometry authoring remain pending.
+  All 32 browser scenarios pass in Chromium/Firefox, including all-original
+  engine loads and combined data/visibility/graphics frame comparisons. The
+  complete unit suite has 244 passing checks; see [the format and installation
+  guide](level-setup.md) for the sidecar's exact contract.

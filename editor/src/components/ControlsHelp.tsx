@@ -16,7 +16,7 @@ export function ControlsHelp() {
       ['Ctrl / ⌘ + O', 'Open a project or level'], ['Enter', 'Apply a numeric property'], ['Esc', 'Cancel a numeric edit / clear selection / close help'], ['?', 'Open this help'],
     ]} />
     <h3>3D inspection</h3><p>Choose Split view or 3D view. Select a zone in the map or list to visit it. Click inside the 3D view before using its arrow keys.</p><Keys rows={previewKeys} />
-    <h3>Playtesting</h3><p>Choose Build & play, then click the game view to capture the mouse. The first click captures it; subsequent clicks fire. Use Stop to return to editing.</p><Keys rows={playKeys} />
+    <h3>Playtesting</h3><p>Choose the target game slot and Level exit in Project. Original slot exit retains the game's built-in completion zone; choose a zone for an authored exit, or No exit to test freely. Choose Build & play, then click the game view to capture the mouse. The first click captures it; subsequent clicks fire. Use Stop to return to editing.</p><Keys rows={playKeys} />
     <h3>Keeping your work</h3><p>Workspace changes are saved in this browser. Save project downloads a portable .ab3d backup, including the target game slot. Choose that slot in Project or the 3D toolbar; it is independent of the project name. Export level puts the game files in the matching levels/level_… directory with installation instructions. Keep project copies to transfer your work or recover it if browser storage is cleared.</p>
   </>;
 }

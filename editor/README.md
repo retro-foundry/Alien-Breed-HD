@@ -37,6 +37,10 @@ Opening local files does not upload them anywhere.
   `levels/level_a/` through `levels/level_p/` directory and installation notes.
   Extract those ZIPs into the game's data directory. Older v1 project backups
   did not store a slot and open at slot 1; select the intended slot before use.
+- Choose Level exit in Project: retain the original slot exit, finish when
+  entering a selected zone, or disable completion for free playtesting. It is
+  saved with undo/recovery and exported as `twolev.cfg`. Custom exits require
+  the updated game port; original Amiga engines keep their built-in exits.
 - Reject incomplete/corrupt input and invalid moves without replacing the
   document being edited. Imports are transactional and stale asynchronous
   loads cannot overwrite newer work.

@@ -1,7 +1,7 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { openLevel, objectName, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './model/level';
-import { execute, redo, undo, moveObject, setStart, setPlaytestSlot, type EditCommand, type History } from './model/commands';
+import { execute, redo, undo, moveObject, setStart, setPlaytestSlot, setExitZone, type EditCommand, type History } from './model/commands';
 import { decodeProject, encodeGameLevel, encodeProject, readFiles, type ProjectCandidate } from './model/project';
 import { listWorkspaces, saveWorkspace, type SavedWorkspace } from './persistence';
 import { MapCanvas, type Selection } from './components/MapCanvas';
@@ -11,9 +11,9 @@ import { EnginePreview } from './components/EnginePreview';
 import { ControlTooltips } from './components/ControlTooltips';
 import { ControlsHelp } from './components/ControlsHelp';
 
-interface Workspace { id: string; history: History; saved: LevelFiles; savedSlot: number }
+interface Workspace { id: string; history: History; saved: LevelFiles; savedSlot: number; savedExit: number | null }
 function workspaceDirty(workspace: Workspace): boolean {
-  return workspace.history.document.playtestSlot !== workspace.savedSlot || (['data', 'graphics', 'clips'] as const).some(file => !sameBytes(workspace.history.document.files[file], workspace.saved[file]));
+  return workspace.history.document.playtestSlot !== workspace.savedSlot || workspace.history.document.exitZone !== workspace.savedExit || (['data', 'graphics', 'clips'] as const).some(file => !sameBytes(workspace.history.document.files[file], workspace.saved[file]));
 }
 class CanvasBoundary extends Component<{ children: ReactNode; onExport: () => void }, { error: string | null }> {
   state: { error: string | null } = { error: null };
@@ -41,7 +41,7 @@ async function originalLevel(number: number, signal?: AbortSignal): Promise<Leve
 }
 
 function makeWorkspace(document: LevelDocument, id: string = crypto.randomUUID()): Workspace {
-  return { id, history: { document, past: [], future: [] }, saved: document.files, savedSlot: document.playtestSlot };
+  return { id, history: { document, past: [], future: [] }, saved: document.files, savedSlot: document.playtestSlot, savedExit: document.exitZone };
 }
 
 export function App() {
@@ -103,7 +103,7 @@ export function App() {
       saveWorkspace(current.id, current.history.document).then(() => { if (!cancelled) {
         setAutosave('Workspace saved');
         setWorkspace(latest => latest?.id === current.id && latest.history.document === current.history.document
-          ? { ...latest, saved: current.history.document.files, savedSlot: current.history.document.playtestSlot } : latest);
+          ? { ...latest, saved: current.history.document.files, savedSlot: current.history.document.playtestSlot, savedExit: current.history.document.exitZone } : latest);
       } })
         .catch(error => { if (!cancelled) { setAutosave('Autosave unavailable'); setError(error instanceof Error ? error.message : String(error)); } });
     }, 600);
@@ -186,7 +186,7 @@ export function App() {
     try {
       const candidates = await readFiles(files);
       if (request !== generation.current) return;
-      if (candidates.length === 1 && candidates[0]) await openDocument(openLevel(candidates[0].name, candidates[0].files, candidates[0].playtestSlot), undefined, request);
+      if (candidates.length === 1 && candidates[0]) await openDocument(openLevel(candidates[0].name, candidates[0].files, candidates[0].playtestSlot, candidates[0].exitZone), undefined, request);
       else setChoices(candidates);
     } catch (error) { if (request === generation.current) fail(error); }
     finally { if (request === generation.current) setBusy(''); }
@@ -211,12 +211,13 @@ export function App() {
     <header className="app-header"><a className="brand" href="." aria-label="Alien Breed editor home"><span className="brand-mark">AB</span><span>ALIEN BREED<span className="brand-sub">LEVEL EDITOR</span></span></a><span className="header-divider" />
       <div className="document-title">{dirty && <span className="dirty-dot" title="Changes waiting to be saved in this browser" />}{document?.name ?? 'Workspace'}<span className="document-type">PROJECT</span></div>
       <div className="header-actions"><button onClick={() => fileInput.current?.click()} title="Open an .ab3d project, a level ZIP or the three twolev files together. Ctrl / Command + O."><Icon name="open" />Open</button><button onClick={save} disabled={!document} title="Download a portable project backup. Recovery is saved separately in this browser. Ctrl / Command + S."><Icon name="save" />Save project</button><button className="export-button" title="Download the three game-level files in a ZIP for the game." disabled={!document} onClick={() => { if (document) try { download(encodeGameLevel(document), `${document.name.replace(/[^\w -]/g, '').trim() || 'level'}-game.zip`); setStatus('Game level ZIP downloaded'); } catch (error) { fail(error); } }}><Icon name="export" />Export level</button><button className="icon-button" aria-label="Help and shortcuts" title="Show map, 3D inspection and playtest controls. Shortcut: ?" onClick={() => setHelp(true)}><Icon name="help" /></button></div>
-      <input ref={fileInput} type="file" hidden multiple aria-label="Open level files" accept=".ab3d,.zip,.bin,.clips" onChange={event => { const files = [...(event.target.files ?? [])]; if (files.length) void importFiles(files); event.target.value = ''; }} />
+      <input ref={fileInput} type="file" hidden multiple aria-label="Open level files" accept=".ab3d,.zip,.bin,.clips,.cfg" onChange={event => { const files = [...(event.target.files ?? [])]; if (files.length) void importFiles(files); event.target.value = ''; }} />
     </header>
     {error && <div className="error-banner" role="alert"><Icon name="alert" /><span>{error}</span><button className="icon-button" aria-label="Dismiss error" title="Close this message. Your current document stays open." onClick={() => setError('')}><Icon name="close" size={16} /></button></div>}
     <div className="workspace">
       <aside className="navigator"><div className="panel-title">PROJECT <span className="eyebrow">LOCAL</span></div><div className="project-picker"><Icon name="layers" /><div><strong>{document?.name ?? 'Opening…'}</strong><span>{document?.zones.length ?? 0} zones · {activeObjects} objects</span></div></div>
         <label className="reference-picker"><span>Target game slot</span><select aria-label="Target game slot" title="Saved with this project. Build & play uses this game slot; Export level writes its matching level directory. Undo restores the previous slot." disabled={!document} value={document?.playtestSlot ?? 0} onChange={event => { if (document) edit(() => setPlaytestSlot(document, Number(event.target.value))); }}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>Level slot {i + 1}</option>)}</select></label>
+        <label className="reference-picker"><span>Level exit</span><select aria-label="Level exit" title="Finish the level when player one enters this zone. Original uses the chosen game slot's built-in exit. No exit is useful for testing. Custom exits are supported by the updated game port." disabled={!document} value={document?.exitZone ?? 'original'} onChange={event => { if (document) edit(() => setExitZone(document, event.target.value === 'original' ? null : Number(event.target.value))); }}><option value="original">Original slot exit</option><option value="-1">No exit (playtest freely)</option>{document?.zones.map(zone => <option key={zone.id} value={zone.id}>Zone {zone.id}</option>)}</select></label>
         <label className="reference-picker"><span>Original levels</span><select aria-label="Original level" title="Open one of the sixteen shipped maps. Your current edits are saved in this browser first." value={/^Level (\d+)$/.exec(document?.name ?? '')?.[1] ?? ''} disabled={!!busy} onChange={event => { if (event.target.value) void loadOriginal(Number(event.target.value)); }}><option value="">Choose a reference level</option>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i + 1}>Level {String(i + 1).padStart(2, '0')}</option>)}</select></label>
         <div className="navigator-tabs" role="tablist" aria-label="Map contents">{(['zones', 'objects', 'starts'] as const).map(value => <button key={value} role="tab" title={value === 'starts' ? 'Find and select player starting positions.' : value === 'zones' ? 'Find and select rooms by zone number.' : 'Find enemies, pickups and scenery by name.'} aria-selected={tab === value} className={tab === value ? 'active' : ''} onClick={() => { setTab(value); setSearch(''); }}>{value === 'starts' ? 'Starts' : value[0]?.toUpperCase() + value.slice(1)}</button>)}</div>
         <label className="search-box"><Icon name="search" size={15} /><input ref={searchInput} aria-label="Search map contents" title="Find a zone number or object name. Press / from the map to focus search." value={search} onChange={event => setSearch(event.target.value)} placeholder={tab === 'zones' ? 'Find a zone…' : 'Find an object…'} /><kbd>/</kbd></label>
@@ -246,7 +247,7 @@ export function App() {
     {(help || showRecents || choices.length > 0) && <div className="modal-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) { setHelp(false); setShowRecents(false); setChoices([]); } }}><section className="modal" role="dialog" aria-modal="true" aria-label={help ? 'Editor help' : choices.length ? 'Choose a level' : 'Recent workspaces'}><button className="modal-close icon-button" aria-label="Close dialog" title="Close this panel. Shortcut: Esc." onClick={() => { setHelp(false); setShowRecents(false); setChoices([]); }}><Icon name="close" /></button>
       {help && <ControlsHelp />}
       {showRecents && <><span className="eyebrow">SAVED IN THIS BROWSER</span><h2>Recent workspaces</h2>{recents.length === 0 && <p>No workspaces have been saved yet.</p>}{recents.map(recent => <button className="recent-entry" key={recent.id} onClick={() => { try { void openDocument(decodeProject(recent.bytes), recent.id).catch(fail); } catch (error) { fail(error); } }}><Icon name="layers" /><span><strong>{recent.name}</strong><small>{new Date(recent.updatedAt).toLocaleString()}</small></span><Icon name="chevron" size={15} /></button>)}</>}
-      {choices.length > 0 && <><span className="eyebrow">{choices.length} LEVELS FOUND</span><h2>Choose a level to open</h2>{choices.map(choice => <button className="recent-entry" key={choice.folder} onClick={() => { try { void openDocument(openLevel(choice.name, choice.files, choice.playtestSlot)).catch(fail); } catch (error) { fail(error); } }}><Icon name="layers" /><span><strong>{choice.name}</strong><small>{choice.folder}</small></span><Icon name="chevron" size={15} /></button>)}</>}
+      {choices.length > 0 && <><span className="eyebrow">{choices.length} LEVELS FOUND</span><h2>Choose a level to open</h2>{choices.map(choice => <button className="recent-entry" key={choice.folder} onClick={() => { try { void openDocument(openLevel(choice.name, choice.files, choice.playtestSlot, choice.exitZone)).catch(fail); } catch (error) { fail(error); } }}><Icon name="layers" /><span><strong>{choice.name}</strong><small>{choice.folder}</small></span><Icon name="chevron" size={15} /></button>)}</>}
     </section></div>}
   </div>;
 }

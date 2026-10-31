@@ -114,6 +114,7 @@ EMSCRIPTEN_KEEPALIVE int editor_nonblack_pixels(void)
 }
 
 EMSCRIPTEN_KEEPALIVE int editor_current_slot(void) { return g_state.current_level; }
+EMSCRIPTEN_KEEPALIVE int editor_current_exit_zone(void) { return g_state.end_zones[g_state.current_level & 0x0F]; }
 
 EMSCRIPTEN_KEEPALIVE unsigned editor_capture(int zone, int x, int z, int upper, int angle)
 {

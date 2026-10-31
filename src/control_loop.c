@@ -531,6 +531,8 @@ void play_the_game_prepare_level(GameState *state, bool *copper_screen_ready)
     /* Parse raw level data only once; level_parse resolves zone_adds/points. */
     if (state->level.data && state->level.graphics && !state->level.zone_adds) {
         level_parse(&state->level);
+        state->end_zones[state->current_level & 0x0F] = io_load_level_exit_zone(
+            &state->level, state->current_level, end_zones[state->current_level & 0x0F]);
 
         /* Assign clip data to zone graph lists */
         if (state->level.clips && state->level.num_zones > 0) {

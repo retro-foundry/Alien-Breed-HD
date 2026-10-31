@@ -3,8 +3,9 @@ import { type LevelDocument } from '../model/level';
 import { type Selection } from './MapCanvas';
 import { Icon } from './Icon';
 import { previewKeys, playKeys } from './ControlsHelp';
+import { encodeLevelSetup } from '../model/levelSetup';
 
-interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number }
+interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number }
 interface Props { document: LevelDocument; selection: Selection; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSlotChange: (slot: number) => void }
 
 export function EnginePreview({ document, selection, layer, onSelectZone, onSlotChange }: Props) {
@@ -16,6 +17,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
   const [revision, setRevision] = useState(0);
   const [nonblack, setNonblack] = useState(0);
   const [actualSlot, setActualSlot] = useState(-1);
+  const [actualExit, setActualExit] = useState<number>();
   const revisionRef = useRef(0), pendingPlay = useRef(false);
   const current = useRef({ document, selection, layer, onSelectZone });
   current.current = { document, selection, layer, onSelectZone };
@@ -40,7 +42,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
     pendingPlay.current = play;
     setStarting(play); setLoaded(false); setError(''); setNotice('Loading current level…');
     const next = ++revisionRef.current; setRevision(next);
-    send('load', { slot, revision: next, files: current.current.document.files });
+    send('load', { slot, revision: next, files: current.current.document.files, setup: encodeLevelSetup(current.current.document.exitZone) });
   }
 
   useEffect(() => {
@@ -51,6 +53,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
       if (message.type === 'loaded' && message.revision === revisionRef.current) {
         setNonblack(message.nonblack ?? 0);
         setActualSlot(message.slot ?? -1);
+        setActualExit(message.exitZone);
         setLoaded(true); setNotice(`${message.zones} zones loaded · Game engine`);
         if (pendingPlay.current) { pendingPlay.current = false; setPlaying(true); setStarting(false); send('play', { playing: true }); }
         else positionCamera();
@@ -75,7 +78,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
   }, [ready, playing]);
 
   function stop() { send('play', { playing: false }); setPlaying(false); setStarting(false); pendingPlay.current = false; }
-  return <section className="engine-preview" aria-label="3D game engine preview" data-revision={revision} data-rendered-pixels={nonblack} data-level-slot={actualSlot}>
+  return <section className="engine-preview" aria-label="3D game engine preview" data-revision={revision} data-rendered-pixels={nonblack} data-level-slot={actualSlot} data-exit-zone={actualExit}>
     <div className="engine-toolbar"><span className="eyebrow">3D VIEW</span><span className="engine-status" role="status">{playing ? 'Playtest running' : notice}</span>
       <label className="engine-slot">Slot <select aria-label="Playtest level slot" title="Choose the project's game level slot. Saved with your project and undoable; this controls the game's level-specific setup." value={slot} disabled={playing || starting} onChange={event => onSlotChange(Number(event.target.value))}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>{i + 1}</option>)}</select></label>
       <button title={playing ? 'Stop playing and return to inspection. Your editable map is kept.' : 'Load the latest map into the game and start from player one. Click the game view to capture the mouse.'} disabled={!ready || starting} className={playing ? '' : 'primary-button'} onClick={() => { if (playing) stop(); else load(true); }}>{playing ? 'Stop' : starting ? 'Starting…' : 'Build & play'}</button>

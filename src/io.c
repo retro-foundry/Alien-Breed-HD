@@ -6,6 +6,7 @@
  */
 
 #include "io.h"
+#include "level.h"
 #ifdef AB3D_DOS
 #include "platform_dos.h"
 #define shared_texture_alloc dos_shared_asset_alloc
@@ -24,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include "logging.h"
 #define printf ab3d_log_printf
 #if defined(_WIN32) || defined(_WIN64)
@@ -740,6 +742,38 @@ void io_shutdown(void)
     io_release_gun_graphics();
     poly_obj_set_texture_assets(NULL, 0, NULL, 0);
     printf("[IO] shutdown\n");
+}
+
+/* Optional port-only setup, never embedded in the Amiga geometry files.
+ * ABEX, BE version 1, signed exit zone: -2 original, -1 disabled, 0..255 zone.
+ * A missing file retains original behavior; malformed/present files are fatal
+ * instead of silently changing how the authored level completes. */
+int16_t io_load_level_exit_zone(LevelState *level, int level_num, int16_t original_exit)
+{
+    char subpath[256], path[512];
+    snprintf(subpath, sizeof(subpath), "levels/level_%c/twolev.cfg", 'a' + level_num);
+    make_data_path(path, sizeof(path), subpath);
+    FILE *file = fopen(path, "rb");
+    if (!file && errno == ENOENT) return original_exit;
+    if (!file) {
+        fprintf(stderr, "[IO] FATAL: cannot read level setup: %s (%s)\n", path, strerror(errno));
+        exit(1);
+    }
+    uint8_t bytes[9];
+    size_t length = fread(bytes, 1, sizeof(bytes), file);
+    int failed = ferror(file);
+    fclose(file);
+    if (failed || length != 8 || memcmp(bytes, "ABEX", 4) != 0 || bytes[4] != 0 || bytes[5] != 1) {
+        fprintf(stderr, "[IO] FATAL: invalid level setup header/size: %s\n", path);
+        exit(1);
+    }
+    int16_t zone = (int16_t)(((uint16_t)bytes[6] << 8) | bytes[7]);
+    if (zone == -2) return original_exit;
+    if (zone < -1 || (zone >= 0 && !level_get_zone_data_ptr(level, zone))) {
+        fprintf(stderr, "[IO] FATAL: exit zone %d is invalid for this level: %s\n", (int)zone, path);
+        exit(1);
+    }
+    return zone;
 }
 
 int io_load_level_data(LevelState *level, int level_num)
