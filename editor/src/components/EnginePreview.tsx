@@ -57,7 +57,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
     pendingPlay.current = play;
     setStarting(play); setLoaded(false); setError(''); setNotice('Loading current level…');
     const next = ++revisionRef.current; setRevision(next);
-    send('load', { slot, revision: next, files: current.current.document.files, setup: encodeLevelSetup(current.current.document.exitZone) });
+    send('load', { slot, revision: next, files: current.current.document.files, setup: encodeLevelSetup(current.current.document.exitZone, current.current.document.drawGroups) });
   }
 
   useEffect(() => {

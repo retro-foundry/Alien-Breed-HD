@@ -23,7 +23,9 @@ static void check_original(int map)
     assert(!sb_load_file(path, &level.graphics, &level.graphics_byte_count));
     const int doors = moving_count(level.graphics, read_long(level.graphics));
     const int lifts = moving_count(level.graphics, read_long(level.graphics + 4));
+    level.draw_group_count = 2;
     assert(!level_parse(&level));
+    assert(level.draw_group_count == 0);
     assert(level.num_doors == doors); assert(level.num_lifts == lifts);
 }
 

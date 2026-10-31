@@ -19,6 +19,7 @@ void io_shutdown(void);
 int  io_load_level_data(LevelState *level, int level_num);
 int  io_load_level_graphics(LevelState *level, int level_num);
 int  io_load_level_clips(LevelState *level, int level_num);
+/* Also applies optional authored draw-room identities from the level setup. */
 int16_t io_load_level_exit_zone(LevelState *level, int level_num, int16_t original_exit);
 void io_release_level_memory(LevelState *level);
 

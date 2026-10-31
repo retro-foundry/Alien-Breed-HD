@@ -745,11 +745,12 @@ void io_shutdown(void)
 }
 
 /* Optional port-only setup, never embedded in the Amiga geometry files.
- * ABEX, BE version 1, signed exit zone: -2 original, -1 disabled, 0..255 zone.
+ * ABEX, BE version 1 exit; version 2 also carries authored draw-room owners.
  * A missing file retains original behavior; malformed/present files are fatal
  * instead of silently changing how the authored level completes. */
 int16_t io_load_level_exit_zone(LevelState *level, int level_num, int16_t original_exit)
 {
+    level->draw_group_count = 0;
     char subpath[256], path[512];
     snprintf(subpath, sizeof(subpath), "levels/level_%c/twolev.cfg", 'a' + level_num);
     make_data_path(path, sizeof(path), subpath);
@@ -759,18 +760,13 @@ int16_t io_load_level_exit_zone(LevelState *level, int level_num, int16_t origin
         fprintf(stderr, "[IO] FATAL: cannot read level setup: %s (%s)\n", path, strerror(errno));
         exit(1);
     }
-    uint8_t bytes[9];
+    uint8_t bytes[523]; /* maximum v2 body plus one byte to reject trailing data */
     size_t length = fread(bytes, 1, sizeof(bytes), file);
     int failed = ferror(file);
     fclose(file);
-    if (failed || length != 8 || memcmp(bytes, "ABEX", 4) != 0 || bytes[4] != 0 || bytes[5] != 1) {
+    int16_t zone;
+    if (failed || level_apply_setup(level, bytes, length, original_exit, &zone)) {
         fprintf(stderr, "[IO] FATAL: invalid level setup header/size: %s\n", path);
-        exit(1);
-    }
-    int16_t zone = (int16_t)(((uint16_t)bytes[6] << 8) | bytes[7]);
-    if (zone == -2) return original_exit;
-    if (zone < -1 || (zone >= 0 && !level_get_zone_data_ptr(level, zone))) {
-        fprintf(stderr, "[IO] FATAL: exit zone %d is invalid for this level: %s\n", (int)zone, path);
         exit(1);
     }
     return zone;

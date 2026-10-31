@@ -39,7 +39,20 @@
       }
       if (request.type === 'load') {
         if (!Number.isInteger(request.slot) || request.slot < 0 || request.slot > 15) throw new Error('Invalid level slot.');
-        if (!(request.setup instanceof Uint8Array) || request.setup.length !== 8) throw new Error('Invalid level exit setup.');
+        if (!(request.setup instanceof Uint8Array) || request.setup.length < 8 || request.setup.length > 522) throw new Error('Invalid level setup size.');
+        const setup = new DataView(request.setup.buffer, request.setup.byteOffset, request.setup.byteLength);
+        const version = setup.getUint16(4);
+        if (setup.getUint32(0) !== 0x41424558 || ![1, 2].includes(version)
+          || (version === 1 && request.setup.length !== 8)) throw new Error('Invalid level setup header.');
+        if (version === 2) {
+          if (request.setup.length < 10) throw new Error('Invalid draw-room setup.');
+          const count = setup.getUint16(8);
+          if (count < 1 || count > 256 || request.setup.length !== 10 + count * 2) throw new Error('Invalid draw-room setup.');
+          for (let i = 0; i < count; i++) {
+            const owner = setup.getUint16(10 + i * 2);
+            if (owner >= count || setup.getUint16(10 + owner * 2) !== owner) throw new Error('Invalid draw-room owner.');
+          }
+        }
         const folder = '/data/levels/level_' + String.fromCharCode(97 + request.slot) + '/';
         for (const [key, file] of [['data','twolev.bin'],['graphics','twolev.graph.bin'],['clips','twolev.clips']]) {
           const bytes = request.files?.[key];

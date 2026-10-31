@@ -6,6 +6,7 @@ set(SOURCES
     src/ai.c
     src/movement.c
     src/level.c
+    src/level_setup.c
     src/objects.c
     src/visibility.c
     src/control_loop.c

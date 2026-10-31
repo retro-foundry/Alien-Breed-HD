@@ -48,7 +48,7 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
       throw new Error('The document changed before this edit could be applied. No changes were saved.');
     files[patch.file].set(after, patch.offset);
   }
-  return parseLevel(document.name, files, document.encoded, document.original, playtestSlot, exitZone, roomSource);
+  return parseLevel(document.name, files, document.encoded, document.original, playtestSlot, exitZone, roomSource, document.drawGroups);
 }
 
 export function execute(history: History, command: EditCommand): History {

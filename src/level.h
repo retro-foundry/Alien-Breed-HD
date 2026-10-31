@@ -19,6 +19,18 @@
 
 #include "game_state.h"
 
+/* Apply a validated optional setup atomically; invalid data leaves state intact. */
+int level_apply_setup(LevelState *level, const uint8_t *bytes, size_t length,
+                      int16_t original_exit, int16_t *out_exit);
+
+static inline int level_same_draw_room(const LevelState *level, int a, int b)
+{
+    if (a < 0 || b < 0) return 0;
+    int ga = (level && a < level->draw_group_count) ? level->draw_groups[a] : a;
+    int gb = (level && b < level->draw_group_count) ? level->draw_groups[b] : b;
+    return ga == gb;
+}
+
 /*
  * Zone info returned by level_get_zone_info (big-endian reads from level data).
  */

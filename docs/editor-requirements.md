@@ -39,8 +39,11 @@ R9 and R11. The geometry normaliser has unit/source-fixture coverage for part of
 R2, including all 2,496 original outlines. Source drawing, corner dragging and
 coordinate editing, shared T-junction moves, deletion, cancellation, overlap
 validation and source saves are now wired into the React canvas/inspector.
-Full compiler integration and playable authored-geometry evidence remain
-required. Undo keeps the full action chain and has a 250-action
+An atomic source-build API now assembles complete runtime tables and validates
+all sixteen original maps, including decomposed-room draw identities. Connecting
+it to normal source editing, new gameplay-reference authoring, controller groups
+and new portal openings remains required before drawn geometry can use the
+normal Build & Play/export workflow. Undo keeps the full action chain and has a 250-action
 undo/redo regression.
 
 The actual game engine is now embedded beside the map, with zone visits,
@@ -52,10 +55,10 @@ processes all 16 maps, including concave imports, emits common clip bounds and
 reproduces original solid-wall links. Generated-file and engine comparisons
 now cover deterministic assembly and unchanged engine spawn views in both
 browsers. Source history and project archives are integrated. Broader scenes,
-complete geometry compilation and authored engine runs are still required
-before enabling automatic rebuilt visibility in exports.
+arbitrary authored-geometry scenarios and UI compiler integration are still
+required before enabling automatic rebuilt visibility in normal exports.
 
-The full compiler, remaining topology/diagnostic tools, PVS generation and
+The remaining compiler/authoring integration, topology/diagnostic tools, PVS
 inspection, heights/stairs, asset pipeline, multiselect/clipboard, full 3D
 picking/overlays, full mechanism authoring and export profiles remain required.
 Do not mark this goal complete based only on the existing format/model/UI tests.

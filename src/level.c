@@ -279,6 +279,8 @@ int level_parse(LevelState *level)
         printf("[LEVEL] Cannot parse - data not loaded\n");
         return -1;
     }
+    /* Setup belongs to this geometry load and is applied after parsing. */
+    level->draw_group_count = 0;
 
     printf("[LEVEL] Parsing level data...\n");
 

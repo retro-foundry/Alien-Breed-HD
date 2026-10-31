@@ -10,6 +10,7 @@ on:
       - 'tests/feedback_points.c'
       - 'tests/feedback_animation_limits.c'
       - 'tests/feedback_animation_rooms.c'
+      - 'tests/feedback_draw_rooms.c'
       - 'src/**'
       - 'cmake/**'
       - 'CMakeLists.txt'
@@ -23,6 +24,7 @@ on:
       - 'tests/feedback_points.c'
       - 'tests/feedback_animation_limits.c'
       - 'tests/feedback_animation_rooms.c'
+      - 'tests/feedback_draw_rooms.c'
       - 'src/**'
       - 'cmake/**'
       - 'CMakeLists.txt'
@@ -65,6 +67,8 @@ jobs:
           node "$RUNNER_TEMP/editor-animation-test.js"
           emcc tests/feedback_animation_rooms.c src/sb_decompress.c src/logging.c -Isrc -sUSE_SDL=2 -sENVIRONMENT=node -O2 --embed-file amiga/data/levels -o "$RUNNER_TEMP/editor-animation-rooms.js"
           node "$RUNNER_TEMP/editor-animation-rooms.js"
+          emcc tests/feedback_draw_rooms.c src/level.c src/level_setup.c src/logging.c -Isrc -sUSE_SDL=2 -sENVIRONMENT=node -O2 -o "$RUNNER_TEMP/editor-draw-rooms.js"
+          node "$RUNNER_TEMP/editor-draw-rooms.js"
       - uses: actions/upload-artifact@v4
         with:
           name: editor-engine

@@ -7,6 +7,7 @@ import type { RoomSource } from './roomSource';
 import type { RoomTopology } from './roomTopology';
 import { buildCellPolygons } from './surfaceGeometry';
 import { buildCellWallGeometry, type NewRoomWallMaterials } from './wallGeometry';
+import { buildDrawTopology } from './drawTopology';
 
 export interface NewRoomGraphics {
   walls: NewRoomWallMaterials;
@@ -29,8 +30,12 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
   newRooms: ReadonlyMap<string, NewRoomGraphics> = new Map()): CellGraphics {
   for (const id of newRooms.keys()) if (!source.rooms.some(room => room.id === id && room.originZone === null))
     throw new Error(`New-room graphics settings refer to missing or imported room ${id}.`);
-  const generated = buildCellWallGeometry(document, source, topology, new Map([...newRooms].map(([id, room]) => [id, room.walls])));
-  const polygons = buildCellPolygons(document, generated.topology), points = generated.topology.points;
+  const draw = buildDrawTopology(source, topology);
+  const generated = buildCellWallGeometry(document, source, draw.topology, new Map([...newRooms].map(([id, room]) => [id, room.walls])));
+  const compiledTopology = { ...topology, points: generated.topology.points };
+  const polygons = buildCellPolygons(document, compiledTopology);
+  const wholePolygons = buildCellPolygons(document, { ...compiledTopology, cells: draw.topology.cells.filter(cell => cell.vertices.length <= 10) });
+  const points = compiledTopology.points;
   const coordinates = new Map<string, number>();
   points.forEach((point, id) => { const key = `${point.x},${point.z}`; if (!coordinates.has(key)) coordinates.set(key, id); });
   const pointId = (x: number, z: number): number => {
@@ -48,7 +53,9 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
     const dx = room.vertices[0]!.x - originalCorners[0]!.x, dz = room.vertices[0]!.z - originalCorners[0]!.z;
     const translation = room.originZone !== null && room.vertices.length === originalCorners.length
       && room.vertices.every((point, index) => point.x - originalCorners[index]!.x === dx && point.z - originalCorners[index]!.z === dz);
-    const polygonLayers = polygons.get(cell.id)!, wallLayers = generated.walls.get(cell.id)!, selection = newRooms.get(room.id);
+    const owner = draw.owners.get(cell.id)!, members = topology.cells.filter(target => target.sourceId === cell.sourceId);
+    const polygonLayers = wholePolygons.get(owner) ?? { lower: members.flatMap(member => polygons.get(member.id)!.lower), upper: members.flatMap(member => polygons.get(member.id)!.upper) };
+    const wallLayers = generated.walls.get(owner)!, selection = newRooms.get(room.id);
     const layer = (records: readonly Graphic[], upper: boolean): GraphicsRecordInput[] => {
       const wallRecords = upper ? wallLayers.upper : wallLayers.lower, polygonRecords = upper ? polygonLayers.upper : polygonLayers.lower;
       const insertion = upper ? selection?.wallInsertion.upper : selection?.wallInsertion.lower;
@@ -87,5 +94,5 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
     pointReferences.set(cell.id, [...new Set([...lower, ...(upper ?? [])].flatMap(item =>
       readGraphicRecord(new BinaryReader(item.bytes, 'compiled cell graphics'), 0, points.length).points))]);
   }
-  return { topology: generated.topology, streams, pointReferences };
+  return { topology: compiledTopology, streams, pointReferences };
 }

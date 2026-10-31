@@ -1,6 +1,6 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { exportLevel, openLevel, type LevelDocument, type LevelFiles } from './level';
-import { decodeLevelSetup, encodeLevelSetup } from './levelSetup';
+import { decodeLevelSetupDetails, encodeLevelSetup } from './levelSetup';
 import { roomSourceSnapshot, restoreRoomSource, roomSourceMatchesLevel } from './roomSource';
 
 const MAX_ARCHIVE = 64 * 1024 * 1024;
@@ -8,7 +8,7 @@ const MAX_FILE = 16 * 1024 * 1024;
 const LEVEL_NAMES = ['twolev.bin', 'twolev.graph.bin', 'twolev.clips', 'twolev.cfg'];
 const MANIFEST = 'alien-breed-project.json';
 const ROOM_SOURCE = 'room-source.json';
-export interface ProjectCandidate { name: string; folder: string; files: LevelFiles; playtestSlot: number; exitZone: number | null; roomSourceSnapshot?: unknown }
+export interface ProjectCandidate { name: string; folder: string; files: LevelFiles; playtestSlot: number; exitZone: number | null; roomSourceSnapshot?: unknown; drawGroups?: readonly number[] }
 
 export function encodeProject(document: LevelDocument): Uint8Array {
   const files = exportLevel(document);
@@ -16,6 +16,7 @@ export function encodeProject(document: LevelDocument): Uint8Array {
     [MANIFEST]: strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: 4, name: document.name, playtestSlot: document.playtestSlot, exitZone: document.exitZone })),
     [ROOM_SOURCE]: strToU8(JSON.stringify(roomSourceSnapshot(document.roomSource))),
     'level/twolev.bin': files.data, 'level/twolev.graph.bin': files.graphics, 'level/twolev.clips': files.clips,
+    ...(document.drawGroups ? { 'level/twolev.cfg': encodeLevelSetup(document.exitZone, document.drawGroups) } : {}),
   }, { level: 6 });
 }
 
@@ -24,7 +25,7 @@ export function encodeGameLevel(document: LevelDocument): Uint8Array {
   const files = exportLevel(document);
   const folder = `levels/level_${String.fromCharCode(97 + document.playtestSlot)}/`;
   return zipSync({ [`${folder}twolev.bin`]: files.data, [`${folder}twolev.graph.bin`]: files.graphics, [`${folder}twolev.clips`]: files.clips,
-    [`${folder}twolev.cfg`]: encodeLevelSetup(document.exitZone),
+    [`${folder}twolev.cfg`]: encodeLevelSetup(document.exitZone, document.drawGroups),
     'INSTALL.txt': strToU8(`Alien Breed level slot ${document.playtestSlot + 1}\n\nExtract this ZIP into the game's data directory. It replaces ${folder}\nKeep a copy of the original level before replacing it.\n${document.exitZone === null ? '' : 'Custom exit setup requires the updated Alien Breed port; the original Amiga engine uses its built-in exit.\n'}`) }, { level: 6 });
 }
 
@@ -77,11 +78,11 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
     const data = files['twolev.bin'], graphics = files['twolev.graph.bin'], clips = files['twolev.clips'];
     if (!data || !graphics || !clips) throw new Error(`The level in ${folder || 'this selection'} needs all three files: twolev.bin, twolev.graph.bin and twolev.clips.`);
     const letter = /level_([a-p])\/$/i.exec(folder)?.[1];
-    const setupExit = files['twolev.cfg'] ? decodeLevelSetup(files['twolev.cfg']) : undefined;
+    const setup = files['twolev.cfg'] ? decodeLevelSetupDetails(files['twolev.cfg']) : undefined, setupExit = setup?.exitZone;
     if (projectExit !== undefined && setupExit !== undefined && projectExit !== setupExit) throw new Error('The project manifest and level setup disagree about the exit zone.');
     result.push({ name: projectName ?? (letter ? `Level ${letter.toLowerCase().charCodeAt(0) - 96}` : title), folder, files: { data, graphics, clips },
       playtestSlot: projectSlot ?? (letter ? letter.toLowerCase().charCodeAt(0) - 97 : 0), exitZone: projectExit !== undefined ? projectExit : setupExit ?? null,
-      ...(sourceSnapshot === undefined ? {} : { roomSourceSnapshot: sourceSnapshot }) });
+      ...(setup?.drawGroups ? { drawGroups: setup.drawGroups } : {}), ...(sourceSnapshot === undefined ? {} : { roomSourceSnapshot: sourceSnapshot }) });
   }
   if (result.length === 0) throw new Error('No game level was found. Open an .ab3d project, a level ZIP, or select all three twolev files together.');
   if (entries[ROOM_SOURCE] && (!manifest || result.length !== 1)) throw new Error('Editable room source must belong to one saved project.');
@@ -114,7 +115,7 @@ export function decodeProject(bytes: Uint8Array): LevelDocument {
 }
 
 export function openProjectCandidate(project: ProjectCandidate): LevelDocument {
-  const document = openLevel(project.name, project.files, project.playtestSlot, project.exitZone);
+  const document = openLevel(project.name, project.files, project.playtestSlot, project.exitZone, project.drawGroups);
   return project.roomSourceSnapshot === undefined ? document : { ...document, roomSource: restoreRoomSource(document, project.roomSourceSnapshot) };
 }
 

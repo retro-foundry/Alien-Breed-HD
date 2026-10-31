@@ -154,6 +154,9 @@ typedef struct {
     size_t   graphics_byte_count;/* size of graphics buffer when loaded from file; 0 = unknown */
     uint8_t *clips;              /* LEVELCLIPS */
     size_t   clips_byte_count;   /* size of clips buffer when loaded from file; 0 = unknown */
+    /* Optional authored draw-room identity, independent of collision cells. */
+    uint16_t draw_group_count;
+    int16_t  draw_groups[256];
 
     /* Parsed pointers (offsets resolved at level load time) */
     uint8_t *door_data;

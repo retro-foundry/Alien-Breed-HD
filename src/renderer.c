@@ -12634,7 +12634,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
          * objects whose GraphicRoom matches currzone, then PolygonObj draws
          * from that owned-zone pass; it has no adjacent-zone redraw path. */
         int16_t obj_zone = rd16(obj + 12);
-        int in_this_zone = (obj_zone == (int16_t)zone_id);
+        int in_this_zone = level_same_draw_room(level, obj_zone, zone_id);
         int obj_on_upper = (obj[obj_off_in_top] != 0);
         if (obj_zone < 0) continue;
         if (!in_this_zone) {
@@ -12737,7 +12737,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             if (pt_num < 0 || (unsigned)pt_num >= (unsigned)num_pts) continue;
             int spill_world_w = 32, spill_world_h = 32;
             renderer_resolve_billboard_world_size_for_spill(obj, 1, &spill_world_w, &spill_world_h);
-            int in_this_zone = (shot_zone == (int16_t)zone_id);
+            int in_this_zone = level_same_draw_room(level, shot_zone, zone_id);
             int shot_on_upper = (obj[obj_off_in_top] != 0);
             if (!in_this_zone) {
                 if (!renderer_zone_list_contains(adjacent_source_zones, adjacent_source_count, shot_zone))
@@ -12814,7 +12814,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
 
         for (int ei = 0; ei < state->num_explosions && obj_count < max_draw_entries; ei++) {
             int16_t expl_zone = state->explosions[ei].zone;
-            int in_this_zone = (expl_zone == (int16_t)zone_id);
+            int in_this_zone = level_same_draw_room(level, expl_zone, zone_id);
             int expl_on_upper = (state->explosions[ei].in_top != 0);
             int expl_h_est = 100;
             if (state->explosions[ei].start_delay > 0) continue;
@@ -12992,7 +12992,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             const uint8_t *obj_pal = r->sprite_pal_data[expl_vect];
             size_t obj_pal_size = r->sprite_pal_size[expl_vect];
             int32_t expl_world_w = expl_w * EXPLOSION_SIZE_CORRECTION;
-            const int entry_is_spill = (entry->source_zone != zone_id) ? 1 : 0;
+            const int entry_is_spill = !level_same_draw_room(level, entry->source_zone, zone_id);
             if (expl_world_w < 1) expl_world_w = 1;
             scr_x = renderer_sprite_param_i16(scr_x);
             scr_y = renderer_sprite_param_i16(scr_y);
@@ -13249,7 +13249,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             int source_type = (entry_src == DRAW_SRC_OBJECT) ? DRAW_SRC_OBJECT : DRAW_SRC_SHOT;
             int32_t billboard_world_x = 0;
             int32_t billboard_world_z = 0;
-            const int entry_is_spill = (entry->source_zone != zone_id) ? 1 : 0;
+            const int entry_is_spill = !level_same_draw_room(level, entry->source_zone, zone_id);
 
             if (orp_z_int > 32767) orp_z_int = 32767;
             scr_x = renderer_sprite_param_i16(scr_x);
@@ -15819,7 +15819,7 @@ static void renderer_build_world_zone_prepass(GameState *state, uint32_t frame_i
             {
                 int clip_width = (int)right_px - (int)left_px;
                 int disable_flat_section_clip = 0;
-                if (zone_id == view_plr->zone) {
+                if (level_same_draw_room(&state->level, zone_id, view_plr->zone)) {
                     disable_flat_section_clip = 1;
                 } else if (clip_width > ((g_renderer.width * 3) / 4)) {
                     disable_flat_section_clip = 1;
@@ -15979,7 +15979,7 @@ static void renderer_draw_world_slice(GameState *state,
         frame_ctx.left_clip = (int16_t)left_clip_px;
         frame_ctx.right_clip = (int16_t)right_clip_px;
         frame_ctx.foreground_floor_occlude_top =
-            (have_viewer_floor_occlude && zone_id != plr->zone) ? viewer_floor_occlude_top : NULL;
+            (have_viewer_floor_occlude && !level_same_draw_room(&state->level, zone_id, plr->zone)) ? viewer_floor_occlude_top : NULL;
         if (trace_clip) {
             printf("[CLIP][frame %u] zone=%d slice_clip_px=[%d,%d)\n",
                    (unsigned)frame_idx, (int)zone_id, left_clip_px, right_clip_px);

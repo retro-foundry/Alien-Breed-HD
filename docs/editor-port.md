@@ -714,3 +714,41 @@ fixtures can establish current-format support independently.
   this failing browser scenario remain local work in progress, outside this
   checkpoint. Logical draw-room membership versus collision cells needs further
   tracing before the full Build & Play/export path or deployment is enabled.
+- The complete source-build API now connects topology, material streams,
+  lighting, collision, animation attachments, source references, visibility,
+  zone assembly and graphics relocation into a validated output document.
+  Source bytes and room history remain unchanged; repeat builds are identical.
+  New portal spans, split controllers and split exit destinations still fail
+  explicitly where their authoring/runtime adapters are not implemented.
+  The native decomposition mismatch was isolated using Level 2's marine: with
+  that same sprite hidden in both inputs, the remaining floor-region pixels
+  matched. Rendering ownership must therefore remain an authored-room identity
+  even though collision and AI ownership use convex runtime cells.
+  `buildDrawTopology` reconstructs each authored perimeter. Draw cells retain
+  their source-ordered static material batch; the native renderer treats
+  sprites, shots and effects in that authored draw room as local, avoiding
+  artificial sprite-spill clipping. Gameplay/collision room IDs remain distinct.
+  This does not implement synchronized door/lift/switch controller groups.
+  Optional `twolev.cfg` version 2 carries those draw identities: `ABEX`, BE word
+  version 2, signed exit word, unsigned slot-count word, then one representative
+  runtime-room word per slot. Owners must be in range and own themselves.
+  Version 1 remains byte exact. The pure native setup decoder applies valid
+  files atomically; malformed sizes, roots and exit destinations leave state
+  unchanged. Parsing new geometry clears old grouping, and missing/v1 setup
+  retains original per-zone rendering. Limits include the full 256 slots.
+  Grouping survives project/game archives and commands. The iframe validates
+  the extended setup before loading it. The browser harness now builds the
+  current production app itself and reserves its test server, preventing a
+  stale decoder/runtime from being mistaken for a source-compiler failure.
+  Complete rebuild comparisons retain direct shipped-frame checks at both
+  player starts. Views inside decomposed imports use an independent
+  visibility-only reference with original geometry/graphics/object ownership.
+  A separate Level 13 case proves why: its shipped white gap is repaired by
+  rebuilding only visibility/clipping tables, and the full compiler matches
+  that repaired frame exactly. The test does not accept arbitrary pixel drift.
+  Native setup/lifecycle regressions and Windows/WebAssembly builds pass.
+  All 595 unit checks and all 56 Chromium/Firefox scenarios pass, including
+  both full-source map comparisons and the isolated sprite/visibility cases.
+  The source build remains outside the normal UI
+  workflow until stable source gameplay references, portal spans, controller
+  grouping and other outstanding authoring requirements are completed.

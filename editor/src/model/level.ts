@@ -6,6 +6,7 @@ import { readGraphicsStream, type Graphic } from './graphics';
 export type { Graphic } from './graphics';
 import { importRoomSource, type RoomSource } from './roomSource';
 import { validateAnimationReferences } from './animationBuild';
+import { validateDrawGroups } from './levelSetup';
 
 export interface Point { id: number; x: number; z: number; offset: number }
 export interface FloorLine {
@@ -39,6 +40,7 @@ export interface Switch {
 export interface Start { player: 1 | 2; x: number; z: number; zone: number }
 export interface LevelFiles { data: Uint8Array; graphics: Uint8Array; clips: Uint8Array }
 export interface LevelDocument {
+  drawGroups?: readonly number[];
   name: string;
   playtestSlot: number;
   exitZone: number | null;
@@ -98,7 +100,7 @@ function mechanismTable(reader: BinaryReader, offset: number, kind: 'door' | 'li
   throw new LevelFormatError(`${kind} table has no 999 terminator`, reader.name, offset);
 }
 
-export function parseLevel(name: string, files: LevelFiles, encoded: LevelFiles = files, original: LevelFiles = files, playtestSlot = 0, exitZone: number | null = null, roomSource?: RoomSource): LevelDocument {
+export function parseLevel(name: string, files: LevelFiles, encoded: LevelFiles = files, original: LevelFiles = files, playtestSlot = 0, exitZone: number | null = null, roomSource?: RoomSource, drawGroups?: readonly number[]): LevelDocument {
   if (!Number.isInteger(playtestSlot) || playtestSlot < 0 || playtestSlot > 15) throw new Error('Choose a game level slot from 1 to 16.');
   const data = new BinaryReader(files.data, 'twolev.bin');
   const graphics = new BinaryReader(files.graphics, 'twolev.graph.bin');
@@ -212,14 +214,19 @@ export function parseLevel(name: string, files: LevelFiles, encoded: LevelFiles 
   }
   clips.require(connectTableOffset, 2);
   if (exitZone !== null && (exitZone !== -1 && !zones.some(zone => zone.id === exitZone))) throw new Error('Choose an existing exit zone, the original slot exit or no exit.');
-  return { name, playtestSlot, exitZone, roomSource: roomSource ?? importRoomSource({ zones, lines }), files, encoded, original, points, lines, zones, objects, mechanisms, switches, starts, controlPoints,
+  if (drawGroups) {
+    validateDrawGroups(drawGroups);
+    const slots = (new BinaryReader(files.graphics, 'graphics groups').i32(12) - 16) / 4;
+    if (drawGroups.length !== slots || drawGroups.some(group => !zones.some(zone => zone.id === group))) throw new Error('Draw room owners do not match the level room table.');
+  }
+  return { name, playtestSlot, exitZone, ...(drawGroups ? { drawGroups: Object.freeze([...drawGroups]) } : {}), roomSource: roomSource ?? importRoomSource({ zones, lines }), files, encoded, original, points, lines, zones, objects, mechanisms, switches, starts, controlPoints,
     pointBrightnessOffset: pointOffset + pointCount * 4, objectPointsOffset, connectTableOffset };
 }
 
-export function openLevel(name: string, encoded: LevelFiles, playtestSlot = 0, exitZone: number | null = null): LevelDocument {
+export function openLevel(name: string, encoded: LevelFiles, playtestSlot = 0, exitZone: number | null = null, drawGroups?: readonly number[]): LevelDocument {
   const files = { data: unpackSb(encoded.data, 'twolev.bin'), graphics: unpackSb(encoded.graphics, 'twolev.graph.bin'),
     clips: unpackSb(encoded.clips, 'twolev.clips') };
-  const document = parseLevel(name, files, encoded, files, playtestSlot, exitZone);
+  const document = parseLevel(name, files, encoded, files, playtestSlot, exitZone, undefined, drawGroups);
   validateAnimationReferences(document);
   return document;
 }
