@@ -4,6 +4,7 @@ import { Icon } from './Icon';
 import { pointInRoomOutline, normaliseRoomOutline } from '../model/geometry';
 import { importRoomSource, type RoomDraft, type SourceRoom } from '../model/roomSource';
 import { editableStarts } from '../model/sourceStarts';
+import { editableObjects, objectIsActive } from '../model/sourceObjects';
 
 export type Selection = { kind: 'zone' | 'object' | 'start' | 'point'; id: number } | null;
 export interface MapView { x: number; z: number; scale: number }
@@ -177,8 +178,8 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
     if (view.scale > 0.3) for (const point of document.points) {
       const pixel = screen(point.x, point.z); context.fillStyle = '#adb6ba'; context.fillRect(pixel.x - 1.5, pixel.y - 1.5, 3, 3);
     }
-    if (showObjects) for (const object of document.objects) {
-      if (object.zone < 0 || (layer === 'upper') !== object.upper) continue;
+    if (showObjects) for (const object of editableObjects(document)) {
+      if (!objectIsActive(object) || (layer === 'upper') !== object.upper) continue;
       const moving = ghost?.selection.kind === 'object' && ghost.selection.id === object.id;
       const pixel = screen(moving ? ghost.x : object.x, moving ? ghost.z : object.z);
       const selected = selection?.kind === 'object' && selection.id === object.id;
@@ -209,8 +210,8 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
 
   function hit(x: number, y: number): Selection {
     for (const start of editableStarts(document)) { const pixel = screen(start.x, start.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 13) return { kind: 'start', id: start.player }; }
-    if (showObjects) for (const object of document.objects.toReversed()) {
-      if (object.zone < 0 || (layer === 'upper') !== object.upper) continue;
+    if (showObjects) for (const object of editableObjects(document).toReversed()) {
+      if (!objectIsActive(object) || (layer === 'upper') !== object.upper) continue;
       const pixel = screen(object.x, object.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 9) return { kind: 'object', id: object.id };
     }
     const point = world(x, y);

@@ -4,7 +4,7 @@ import { type Selection } from './MapCanvas';
 import { Icon } from './Icon';
 import { previewKeys, playKeys } from './ControlsHelp';
 import { encodeLevelSetup } from '../model/levelSetup';
-import { roomSourceMatchesLevel } from '../model/roomSource';
+import { sourceMatchesLevel } from '../model/roomSource';
 import { validateAnimationReferences } from '../model/animationBuild';
 
 interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number }
@@ -49,7 +49,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
 
   function load(play = false) {
     if (!ready) return;
-    if (!roomSourceMatchesLevel(current.current.document)) {
+    if (!sourceMatchesLevel(current.current.document)) {
       stopUnbuiltPreview(); return;
     }
     try { validateAnimationReferences(current.current.document); }
@@ -88,7 +88,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
     return () => window.clearTimeout(timer);
   }, [ready, document, slot, playing]);
   useEffect(() => {
-    if (ready && !roomSourceMatchesLevel(document)) {
+    if (ready && !sourceMatchesLevel(document)) {
       stopUnbuiltPreview();
     }
   }, [ready, document.roomSource]);

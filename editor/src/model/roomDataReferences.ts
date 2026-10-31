@@ -3,6 +3,7 @@ import type { LevelDocument } from './level';
 import type { RoomSource } from './roomSource';
 import type { RoomTopology } from './roomTopology';
 import { assertRoomReferences, planRoomReferences, type RoomReferencePlan } from './roomReferences';
+import { runtimeObjectPosition } from './sourceObjects';
 
 export interface RoomDataReferences {
   data: Uint8Array;
@@ -39,6 +40,19 @@ export function buildRoomDataReferences(document: LevelDocument, source: RoomSou
   for (const object of document.objects) {
     reader.require(object.offset, 64);
     view.setInt16(object.offset + 12, checkedInteger(references.objects.get(object.id)!, -32768, topology.cells.length - 1, 'Object room'));
+  }
+  for (const authored of document.sourceObjects ?? []) {
+    const object = document.objects.find(item => item.id === authored.id)!;
+    const cell = references.objects.get(object.id)!;
+    // Authored moves use the same OBJ_ZONE (+12), OBJ_GROOM (+26) and
+    // 16.16 CID point-table contract as commands.moveObject.
+    view.setInt16(object.offset + 26, cell!);
+    if (authored.room !== null) {
+      const position = runtimeObjectPosition(authored);
+      reader.require(object.pointOffset, 8);
+      view.setInt32(object.pointOffset, position.x * 65536);
+      view.setInt32(object.pointOffset + 4, position.z * 65536);
+    }
   }
   for (const start of document.sourceStarts ?? []) {
     const offset = start.player === 1 ? 0 : 6;

@@ -776,3 +776,31 @@ fixtures can establish current-format support independently.
   Existing-object and teleport destination source authoring, portal wall spans,
   and the normal source build/export integration remain unfinished. No finished
   editor deployment has been made.
+
+- Existing objects now have stable authored room placements as well. Objects
+  keep their original record/CID identities and other binary attributes; an
+  explicit null room means deletion. The model, inspector room picker, map
+  drawing/hit-testing, drag handling, navigator focus, dirty state and recovery
+  all use authored placements. Source-only rooms are not misrepresented as the
+  template's old zone, and unresolved room IDs remain repairable dependencies.
+  The shared room-position form supplies controls/help for both objects and
+  player starts. Ordinary decimal coordinates are retained in editable source;
+  the compiler rounds them to the native 16.16 point precision, following
+  `commands.moveObject`, and locates the resulting point's convex cell.
+  Builds patch OBJ_ZONE (+12), OBJ_GROOM (+26) and the CID's point-table entry;
+  deletion patches both room fields to -1. Player avatars remain controlled by
+  Starts, including their map markers. Invalid upper-floor destinations and
+  shared point-slot moves are rejected before a corrupt placement can be built.
+  Project format 6 adds `object-placements.json`, with optional source starts;
+  formats 1–5 remain readable and saves without object placements keep their
+  previous format. Missing/malformed files, duplicate IDs and missing original
+  records are rejected. Geometry-only matching and full source-vs-runtime
+  matching are now separate checks, so preview/export cannot use stale gameplay
+  bytes when geometry itself is unchanged. Native browser comparisons isolate
+  a moved health pickup in a newly drawn room against its deleted counterpart.
+  Production build and all 607 model tests pass. The four new Chromium/Firefox
+  checks pass for browser placement/drag/delete/undo/recovery and real-engine
+  present/deleted sprite rendering; existing room, start, persistence and
+  general editing browser regressions also pass.
+  Adding new object records, source teleport links, portal openings and normal
+  Build & Play integration remain pending; this does not complete the editor.

@@ -1,11 +1,12 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { openLevel, objectName, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './model/level';
-import { execute, redo, undo, moveObject, setStart, setSourceStart, setPlaytestSlot, setExitZone, editRoomSource, type EditCommand, type History } from './model/commands';
+import { execute, redo, undo, moveObject, setStart, setSourceStart, setSourceObject, setPlaytestSlot, setExitZone, editRoomSource, type EditCommand, type History } from './model/commands';
 import { editableStarts } from './model/sourceStarts';
+import { editableObjects, objectIsActive } from './model/sourceObjects';
 import { pointInRoomOutline } from './model/geometry';
 import { decodeProject, encodeGameLevel, encodeProject, readFiles, openProjectCandidate, type ProjectCandidate } from './model/project';
-import { roomSourceMatchesLevel, beginRoomDraft, setDraftCorners, commitRoomDraft, removeSourceRooms, moveSourceCorner, type RoomDraft } from './model/roomSource';
+import { sourceMatchesLevel, beginRoomDraft, setDraftCorners, commitRoomDraft, removeSourceRooms, moveSourceCorner, type RoomDraft } from './model/roomSource';
 import { listWorkspaces, saveWorkspace, type SavedWorkspace } from './persistence';
 import { MapCanvas, type Selection } from './components/MapCanvas';
 import { Inspector } from './components/Inspector';
@@ -14,9 +15,9 @@ import { EnginePreview } from './components/EnginePreview';
 import { ControlTooltips } from './components/ControlTooltips';
 import { ControlsHelp } from './components/ControlsHelp';
 
-interface Workspace { id: string; history: History; saved: LevelFiles; savedSlot: number; savedExit: number | null; savedRoomSource: LevelDocument['roomSource']; savedSourceStarts: LevelDocument['sourceStarts'] }
+interface Workspace { id: string; history: History; saved: LevelFiles; savedSlot: number; savedExit: number | null; savedRoomSource: LevelDocument['roomSource']; savedSourceStarts: LevelDocument['sourceStarts']; savedSourceObjects: LevelDocument['sourceObjects'] }
 function workspaceDirty(workspace: Workspace): boolean {
-  return workspace.history.document.sourceStarts !== workspace.savedSourceStarts || workspace.history.document.roomSource !== workspace.savedRoomSource || workspace.history.document.playtestSlot !== workspace.savedSlot || workspace.history.document.exitZone !== workspace.savedExit || (['data', 'graphics', 'clips'] as const).some(file => !sameBytes(workspace.history.document.files[file], workspace.saved[file]));
+  return workspace.history.document.sourceObjects !== workspace.savedSourceObjects || workspace.history.document.sourceStarts !== workspace.savedSourceStarts || workspace.history.document.roomSource !== workspace.savedRoomSource || workspace.history.document.playtestSlot !== workspace.savedSlot || workspace.history.document.exitZone !== workspace.savedExit || (['data', 'graphics', 'clips'] as const).some(file => !sameBytes(workspace.history.document.files[file], workspace.saved[file]));
 }
 class CanvasBoundary extends Component<{ children: ReactNode; onExport: () => void }, { error: string | null }> {
   state: { error: string | null } = { error: null };
@@ -44,7 +45,7 @@ async function originalLevel(number: number, signal?: AbortSignal): Promise<Leve
 }
 
 function makeWorkspace(document: LevelDocument, id: string = crypto.randomUUID()): Workspace {
-  return { id, history: { document, past: [], future: [] }, saved: document.files, savedSlot: document.playtestSlot, savedExit: document.exitZone, savedRoomSource: document.roomSource, savedSourceStarts: document.sourceStarts };
+  return { id, history: { document, past: [], future: [] }, saved: document.files, savedSlot: document.playtestSlot, savedExit: document.exitZone, savedRoomSource: document.roomSource, savedSourceStarts: document.sourceStarts, savedSourceObjects: document.sourceObjects };
 }
 
 export function App() {
@@ -64,7 +65,7 @@ export function App() {
   const [help, setHelp] = useState(false), [choices, setChoices] = useState<ProjectCandidate[]>([]), [recents, setRecents] = useState<SavedWorkspace[]>([]), [showRecents, setShowRecents] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null), searchInput = useRef<HTMLInputElement>(null), generation = useRef(0);
   const document = workspace?.history.document;
-  const unbuiltRooms = useMemo(() => document ? !roomSourceMatchesLevel(document) : false, [document]);
+  const unbuiltRooms = useMemo(() => document ? !sourceMatchesLevel(document) : false, [document]);
   const selectedRoom = document?.roomSource.rooms.find(room => selectedRoomId ? room.id === selectedRoomId : selection?.kind === 'zone' && room.originZone === selection.id);
   const template = selectedRoom?.recordZone ?? (document?.zones.some(zone => zone.id === roomTemplate) ? roomTemplate : document?.zones[0]?.id);
   useEffect(() => { if (selectedRoom) setRoomTemplate(selectedRoom.recordZone); }, [selectedRoom?.recordZone]);
@@ -120,7 +121,7 @@ export function App() {
       saveWorkspace(current.id, current.history.document).then(() => { if (!cancelled) {
         setAutosave('Workspace saved');
         setWorkspace(latest => latest?.id === current.id && latest.history.document === current.history.document
-          ? { ...latest, saved: current.history.document.files, savedSlot: current.history.document.playtestSlot, savedExit: current.history.document.exitZone, savedRoomSource: current.history.document.roomSource, savedSourceStarts: current.history.document.sourceStarts } : latest);
+          ? { ...latest, saved: current.history.document.files, savedSlot: current.history.document.playtestSlot, savedExit: current.history.document.exitZone, savedRoomSource: current.history.document.roomSource, savedSourceStarts: current.history.document.sourceStarts, savedSourceObjects: current.history.document.sourceObjects } : latest);
       } })
         .catch(error => { if (!cancelled) { setAutosave('Autosave unavailable'); setError(error instanceof Error ? error.message : String(error)); } });
     }, 600);
@@ -248,13 +249,15 @@ export function App() {
   const move = (selected: Exclude<Selection, null>, x: number, z: number) => {
     if (!document) return;
     try {
-      if (selected.kind === 'start' && !roomSourceMatchesLevel(document)) {
-        const current = document.sourceStarts?.find(start => start.player === selected.id)?.room;
+      if ((selected.kind === 'start' || selected.kind === 'object') && !sourceMatchesLevel(document)) {
+        const current = selected.kind === 'start' ? document.sourceStarts?.find(start => start.player === selected.id)?.room
+          : document.sourceObjects?.find(object => object.id === selected.id)?.room;
         const rooms = document.roomSource.rooms;
         const target = rooms.find(room => room.id === current && pointInRoomOutline(room.vertices, { x, z }))
           ?? rooms.find(room => pointInRoomOutline(room.vertices, { x, z }));
-        if (!target) throw new Error('Place the player start inside an editable room.');
-        edit(setSourceStart(document, selected.id as 1 | 2, target.id, x, z));
+        if (!target) throw new Error('Place the object or player start inside an editable room.');
+        edit(selected.kind === 'start' ? setSourceStart(document, selected.id as 1 | 2, target.id, x, z)
+          : setSourceObject(document, selected.id, target.id, x, z));
         return;
       }
       const oldZone = selected.kind === 'object' ? document.objects.find(object => object.id === selected.id)?.zone : document.starts.find(start => start.player === selected.id)?.zone;
@@ -267,8 +270,9 @@ export function App() {
 
   const filteredZones = document?.zones.filter(zone => document.roomSource.rooms.some(room => room.originZone === zone.id) && String(zone.id).includes(search)) ?? [];
   const newRooms = document?.roomSource.rooms.filter(room => room.originZone === null && room.id.toLowerCase().includes(search.toLowerCase())) ?? [];
-  const filteredObjects = document?.objects.filter(object => object.zone >= 0 && `${object.id} ${objectName(object.type)}`.toLowerCase().includes(search.toLowerCase())) ?? [];
-  const activeObjects = document?.objects.filter(object => object.zone >= 0).length ?? 0;
+  const objects = document ? editableObjects(document) : [];
+  const filteredObjects = objects.filter(object => objectIsActive(object) && `${object.id} ${objectName(object.type)}`.toLowerCase().includes(search.toLowerCase()));
+  const activeObjects = objects.filter(objectIsActive).length;
   return <div className={`app ${navigatorOpen ? 'navigator-open' : ''}`} onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={event => { event.preventDefault(); if (event.dataTransfer.files.length) void importFiles([...event.dataTransfer.files]); }}>
     <ControlTooltips />
     <header className="app-header"><a className="brand" href="." aria-label="Alien Breed editor home"><span className="brand-mark">AB</span><span>ALIEN BREED<span className="brand-sub">LEVEL EDITOR</span></span></a><span className="header-divider" />
@@ -288,7 +292,12 @@ export function App() {
         <div className="contents-list">
           {tab === 'zones' && newRooms.map(room => <button key={room.id} className={`content-row ${selectedRoomId === room.id ? 'selected' : ''}`} title="Select this editable room outline. Game geometry compilation is still in progress." onClick={() => { selectRoom(room.id); setNavigatorOpen(false); }}><Icon name="layers" size={14} /><span>Room {room.id.replace(/^room-/, '')}</span><span className="row-badge">OUTLINE</span></button>)}
           {tab === 'zones' && filteredZones.map(zone => <button key={zone.id} className={`content-row ${selection?.kind === 'zone' && selection.id === zone.id ? 'selected' : ''}`} title={`Select zone ${zone.id} and centre the map. In 3D inspection, visit this zone.`} onClick={() => { select({ kind: 'zone', id: zone.id }); setFocusZone(current => ({ id: zone.id, request: (current?.request ?? 0) + 1 })); setNavigatorOpen(false); }}><span className={`zone-dot ${document?.mechanisms.some(mechanism => mechanism.zone === zone.id && mechanism.kind === 'door') ? 'door-dot' : zone.water > zone.ceiling && zone.water < zone.floor ? 'water-dot' : ''}`} /><span>Zone {String(zone.id).padStart(3, '0')}</span>{zone.upper.length > 0 && <span className="row-badge">2F</span>}<span className="row-detail">{zone.floor}</span></button>)}
-          {tab === 'objects' && filteredObjects.map(object => <button key={object.id} className={`content-row ${selection?.kind === 'object' && selection.id === object.id ? 'selected' : ''}`} title={`Select ${objectName(object.type)} ${object.id}. Drag it on the map to move it.`} onClick={() => { select({ kind: 'object', id: object.id }); setFocusZone(current => ({ id: object.zone, request: (current?.request ?? 0) + 1 })); setNavigatorOpen(false); }}><Icon name="object" size={14} /><span>{objectName(object.type)}</span><span className="row-detail">{object.id}</span></button>)}
+          {tab === 'objects' && filteredObjects.map(object => <button key={object.id} className={`content-row ${selection?.kind === 'object' && selection.id === object.id ? 'selected' : ''}`} title={`Select ${objectName(object.type)} ${object.id}. Drag it on the map to move it.`} onClick={() => {
+            select({ kind: 'object', id: object.id });
+            if (object.room) setFocusRoom(current => ({ id: object.room!, request: (current?.request ?? 0) + 1 }));
+            else setFocusZone(current => ({ id: object.zone, request: (current?.request ?? 0) + 1 }));
+            setNavigatorOpen(false);
+          }}><Icon name="object" size={14} /><span>{objectName(object.type)}</span><span className="row-detail">{object.id}</span></button>)}
           {tab === 'starts' && document && editableStarts(document).map(start => <button key={start.player} className={`content-row ${selection?.kind === 'start' && selection.id === start.player ? 'selected' : ''}`} title={`Select player ${start.player} start. Drag the triangle on the map to reposition it.`} onClick={() => {
             select({ kind: 'start', id: start.player });
             if (start.room) setFocusRoom(current => ({ id: start.room!, request: (current?.request ?? 0) + 1 }));

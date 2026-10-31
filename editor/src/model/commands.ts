@@ -2,9 +2,10 @@ import { BinaryReader, checkedInteger } from './binary';
 import { parseLevel, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './level';
 import type { RoomChange, RoomSource } from './roomSource';
 import { placeSourceStart, type SourceStart } from './sourceStarts';
+import { placeSourceObject, type SourceObject } from './sourceObjects';
 
 export interface BytePatch { file: keyof LevelFiles; offset: number; before: Uint8Array; after: Uint8Array }
-export interface EditCommand { label: string; patches: BytePatch[]; playtestSlot?: { before: number; after: number }; exitZone?: { before: number | null; after: number | null }; roomSource?: { before: RoomSource; after: RoomSource }; sourceStarts?: { before: readonly SourceStart[] | undefined; after: readonly SourceStart[] | undefined } }
+export interface EditCommand { label: string; patches: BytePatch[]; playtestSlot?: { before: number; after: number }; exitZone?: { before: number | null; after: number | null }; roomSource?: { before: RoomSource; after: RoomSource }; sourceStarts?: { before: readonly SourceStart[] | undefined; after: readonly SourceStart[] | undefined }; sourceObjects?: { before: readonly SourceObject[] | undefined; after: readonly SourceObject[] | undefined } }
 export interface History { document: LevelDocument; past: EditCommand[]; future: EditCommand[] }
 
 export function numberPatch(document: LevelDocument, file: keyof LevelFiles, offset: number, value: number, size: 1 | 2 | 4, signed = true): BytePatch {
@@ -24,6 +25,12 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
   let exitZone = document.exitZone;
   let roomSource = document.roomSource;
   let sourceStarts = document.sourceStarts;
+  let sourceObjects = document.sourceObjects;
+  if (command.sourceObjects) {
+    const { before, after } = command.sourceObjects;
+    if (sourceObjects !== (reverse ? after : before)) throw new Error('The object placements changed before this edit could be applied. No changes were saved.');
+    sourceObjects = reverse ? before : after;
+  }
   if (command.sourceStarts) {
     const { before, after } = command.sourceStarts;
     if (sourceStarts !== (reverse ? after : before)) throw new Error('The player starts changed before this edit could be applied. No changes were saved.');
@@ -56,11 +63,11 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
     files[patch.file].set(after, patch.offset);
   }
   const result = parseLevel(document.name, files, document.encoded, document.original, playtestSlot, exitZone, roomSource, document.drawGroups);
-  return sourceStarts === undefined ? result : { ...result, sourceStarts };
+  return { ...result, ...(sourceStarts === undefined ? {} : { sourceStarts }), ...(sourceObjects === undefined ? {} : { sourceObjects }) };
 }
 
 export function execute(history: History, command: EditCommand): History {
-  if (command.patches.every(patch => sameBytes(patch.before, patch.after)) && (!command.playtestSlot || command.playtestSlot.before === command.playtestSlot.after) && (!command.exitZone || command.exitZone.before === command.exitZone.after) && (!command.roomSource || command.roomSource.before === command.roomSource.after) && (!command.sourceStarts || command.sourceStarts.before === command.sourceStarts.after)) return history;
+  if (command.patches.every(patch => sameBytes(patch.before, patch.after)) && (!command.playtestSlot || command.playtestSlot.before === command.playtestSlot.after) && (!command.exitZone || command.exitZone.before === command.exitZone.after) && (!command.roomSource || command.roomSource.before === command.roomSource.after) && (!command.sourceStarts || command.sourceStarts.before === command.sourceStarts.after) && (!command.sourceObjects || command.sourceObjects.before === command.sourceObjects.after)) return history;
   const document = applyCommand(history.document, command);
   return { document, past: [...history.past, command], future: [] };
 }
@@ -97,6 +104,12 @@ export function setSourceStart(document: LevelDocument, player: 1 | 2, room: str
   } };
 }
 
+export function setSourceObject(document: LevelDocument, id: number, room: string | null, x: number, z: number): EditCommand {
+  return { label: room === null ? `Delete object ${id}` : `Move object ${id}`, patches: [], sourceObjects: {
+    before: document.sourceObjects, after: placeSourceObject(document, id, room, x, z),
+  } };
+}
+
 export type ZoneProperty = 'brightness' | 'upperBrightness' | 'floorSound' | 'upperFloorSound';
 export function setZoneProperty(document: LevelDocument, zoneId: number, property: ZoneProperty, value: number): EditCommand {
   const zone = document.zones.find(zone => zone.id === zoneId);
@@ -128,6 +141,11 @@ export function moveObject(document: LevelDocument, objectId: number, x: number,
   const object = document.objects.find(object => object.id === objectId);
   if (!object) throw new Error('That object no longer exists.');
   assertNotAuthoredAvatar(document, object.offset);
+  if (document.sourceObjects?.some(item => item.id === objectId)) {
+    const room = document.roomSource.rooms.find(room => room.originZone === zoneId);
+    if (!room) throw new Error('Choose an existing editable room for this object.');
+    return setSourceObject(document, objectId, room.id, x, z);
+  }
   const zone = document.zones.find(zone => zone.id === zoneId);
   if (!zone || !zoneContainsPoint(document, zone, x, z)) throw new Error('Place the object inside its selected zone.');
   return { label: `Move object ${objectId}`, patches: [
@@ -142,6 +160,8 @@ export function removeObject(document: LevelDocument, objectId: number): EditCom
   const object = document.objects.find(object => object.id === objectId);
   if (!object) throw new Error('That object no longer exists.');
   assertNotAuthoredAvatar(document, object.offset);
+  const authored = document.sourceObjects?.find(item => item.id === objectId);
+  if (authored) return setSourceObject(document, objectId, null, authored.x, authored.z);
   return { label: `Delete object ${objectId}`, patches: [
     numberPatch(document, 'data', object.offset + 12, -1, 2), numberPatch(document, 'data', object.offset + 26, -1, 2),
   ] };
