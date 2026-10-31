@@ -526,5 +526,26 @@ fixtures can establish current-format support independently.
   rejection with retained preview/project/recovery and all original engine
   views. Runtime decoder review found another required checkpoint for generated
   moving rooms: `level_parse` still uses data-header +16 (last zone index) as
-  the door/lift normalization count. Test and correct final-slot controlled
-  rooms before enabling arbitrary generated mechanism allocation.
+  the door/lift normalization count. The following checkpoint addresses this
+  before arbitrary generated mechanism allocation is enabled.
+- Native animation decoding now uses the graphics prologue's full slot count
+  before normalizing doors/lifts/water, rather than the inclusive last index
+  in data-header +16. The later stored header value remains unchanged for
+  existing inclusive loops. A shared parser helper checks the 1..256 capacity,
+  table alignment and consistency with the authored room count.
+  A C regression using original Level 1 data fails against the old decoder
+  when a door is assigned to its final existing room. The fixed decoder retains
+  both final-slot doors and lifts, including a lift file alias resolving to that
+  final slot. It also retains every original controller across all sixteen
+  maps. Boundary tests cover one slot, maximum capacity and invalid tables.
+  The regression is included in CI using embedded original map files.
+  Import validation now distinguishes direct door/switch indices from the
+  fallback file aliases supported by native lift/water normalization. Windows
+  and WebAssembly builds and all 413 editor unit checks pass. Full moving-room
+  authoring, generated dependency allocation and source compiler integration
+  remain required.
+  Before/after native comparison also identifies a shipped-map defect: Level
+  14 contains ten authored lifts, but the previous decoder retained only nine.
+  The corrected decoder retains all ten. Both browser engines pass the
+  generated-room test and all sixteen rebuilt/original spawn comparisons after
+  rebuilding the WebAssembly host (four tests).

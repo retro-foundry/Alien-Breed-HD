@@ -259,6 +259,20 @@ static void normalize_amiga_water_list(uint8_t *water_src, const uint8_t *ld,
  * This mirrors the "blag:" section in AB3DI.s where all offsets in the
  * level data are resolved to absolute pointers.
  * ----------------------------------------------------------------------- */
+static int parsed_zone_slot_count(const uint8_t *data, int32_t zone_graph_offset)
+{
+    /* Data +16 is an inclusive last index. ZoneAdds spans graphics +16 up
+     * to ZoneGraphAdds and is authoritative when its table is present. */
+    const int authored = (int)read_word(data + 16) + 1;
+    if (authored < 1 || authored > 256) return 0;
+    int slots = authored;
+    if (zone_graph_offset > 16) {
+        if ((zone_graph_offset - 16) % 4 != 0) return 0;
+        slots = (zone_graph_offset - 16) / 4;
+    }
+    return slots >= authored && slots <= 256 ? slots : 0;
+}
+
 int level_parse(LevelState *level)
 {
     if (!level->data || !level->graphics) {
@@ -310,8 +324,9 @@ int level_parse(LevelState *level)
     level->switch_data_owned = false;
     level->lift_data_owned = false;
 
-    int num_zones = (int)read_word(ld + 16);
-    if (num_zones <= 0) num_zones = 256;
+    const int num_zones = parsed_zone_slot_count(ld, zone_graph_offset);
+    if (num_zones == 0) return -1;
+    level->num_zone_slots = (int16_t)num_zones;
 
     /* Doors: Amiga format (match standalone). 999 terminator; 18-byte header + variable wall list. */
     level->door_wall_list = NULL;
@@ -545,29 +560,8 @@ int level_parse(LevelState *level)
     /* Byte 14: Number of points (word) */
     int16_t num_points = read_word(ld + 14);
 
-    /* Byte 16: Number of zones (word) */
+    /* Byte 16: Last zone index (word), retained for inclusive legacy loops. */
     level->num_zones = read_word(ld + 16);
-
-    /* zone_adds starts at lg+16 and runs until zone_graph_adds.
-     * On real Amiga data this can be num_zones+1 (extra connect slot). */
-    {
-        int32_t slots = level->num_zones;
-        if (zone_graph_offset > 16) {
-            int32_t table_bytes = zone_graph_offset - 16;
-            if ((table_bytes % 4) == 0) {
-                int32_t table_slots = table_bytes / 4;
-                if (table_slots > 0)
-                    slots = table_slots;
-            }
-        }
-        if (slots < level->num_zones)
-            slots = level->num_zones;
-        if (slots < 0)
-            slots = 0;
-        if (slots > 32767)
-            slots = 32767;
-        level->num_zone_slots = (int16_t)slots;
-    }
 
     /* Rows in zone_graph_adds (8 bytes each). Bounds draws/LOS without clamping to num_zones so
      * extra zone_adds slots (level 2) stay valid; graph index cap fixes level 3 OOB. */

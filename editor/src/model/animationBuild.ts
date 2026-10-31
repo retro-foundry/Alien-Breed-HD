@@ -72,8 +72,9 @@ export function importedAnimationTables(document: LevelDocument): { start: numbe
 export function validateAnimationReferences(document: LevelDocument): void {
   const { tables } = importedAnimationTables(document);
   const graphics = new Map(document.zones.flatMap(zone => [...zone.lower, ...zone.upper].map(record => [record.offset, record] as const)));
-  const room = (id: number, subject: string) => {
-    if (!document.zones.some(zone => zone.id === id || zone.fileId === id)) throw new Error(`${subject} refers to missing room ${id}. Repair its room link before previewing.`);
+  const slots = (new BinaryReader(document.files.graphics, 'twolev.graph.bin').i32(12) - 16) / 4;
+  const room = (id: number, subject: string, aliases = false) => {
+    if (!document.zones.some(zone => zone.id === id || (aliases && id >= slots && zone.fileId === id))) throw new Error(`${subject} refers to missing room ${id}. Repair its room link before previewing.`);
   };
   const target = (pointer: number, types: readonly number[], relative: number, subject: string) => {
     const record = graphics.get(pointer - relative);
@@ -83,7 +84,7 @@ export function validateAnimationReferences(document: LevelDocument): void {
   const lineCount = (Math.min(...document.zones.map(zone => zone.exitListOffset)) - 2 - reader.i32(26)) / 16;
   for (const [kind, records] of [['Door', tables.doors], ['Lift', tables.lifts]] as const) records?.forEach((record, index) => {
     const subject = `${kind} ${index}`;
-    room(record.zone, subject); target(record.graphic, [1, 2, 7, 8, 9, 10, 11], 0, subject);
+    room(record.zone, subject, kind === 'Lift'); target(record.graphic, [1, 2, 7, 8, 9, 10, 11], 0, subject);
     record.walls.forEach(wall => {
       if (!Number.isInteger(lineCount) || wall.line < 0 || wall.line >= lineCount) throw new Error(`${subject} refers to missing collision line ${wall.line}. Repair its wall link before previewing.`);
       target(wall.graphic, [0, 5, 13], 0, `${subject} wall`);
@@ -96,7 +97,7 @@ export function validateAnimationReferences(document: LevelDocument): void {
     target(record.graphic, [0, 13], 10, subject);
   });
   tables.water.forEach((group, index) => group.entries.forEach(entry => {
-    const subject = `Water animation ${index}`; room(entry.zone, subject); target(entry.graphic, [7], 0, subject);
+    const subject = `Water animation ${index}`; room(entry.zone, subject, true); target(entry.graphic, [7], 0, subject);
   }));
 }
 

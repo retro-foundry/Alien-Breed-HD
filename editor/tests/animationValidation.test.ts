@@ -17,6 +17,18 @@ const badLinks: BadLink[] = [
 ];
 
 describe('native animation import boundary', () => {
+  it('resolves lift file aliases but requires direct indices for doors and switches', () => {
+    const original = openLevel('original', originalFiles(1)), data = original.files.data.slice(), graphics = original.files.graphics.slice();
+    const last = original.zones.at(-1)!;
+    new DataView(data.buffer).setInt16(last.offset, 300);
+    const lift = original.mechanisms.find(item => item.kind === 'lift')!, door = original.mechanisms.find(item => item.kind === 'door')!;
+    const view = new DataView(graphics.buffer); view.setInt16(lift.offset + 12, 300);
+    expect(() => openLevel('lift alias', { ...original.files, data, graphics })).not.toThrow();
+    view.setInt16(door.offset + 12, 300);
+    expect(() => openLevel('door alias', { ...original.files, data, graphics })).toThrow(/Door.*missing room/);
+    view.setInt16(door.offset + 12, door.zone); view.setInt16(original.switches.find(item => item.zone >= 0)!.offset, 300);
+    expect(() => openLevel('switch alias', { ...original.files, data, graphics })).toThrow(/Switch.*missing room/);
+  });
   it.each(badLinks)('rejects $name before loading the engine and preserves original bytes', ({ change, error }) => {
     const document = openLevel('original', originalFiles(1)), graphics = document.files.graphics.slice(), before = document.files.graphics.slice();
     change(new DataView(graphics.buffer), document);

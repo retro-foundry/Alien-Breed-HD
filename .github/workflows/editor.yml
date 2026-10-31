@@ -9,6 +9,7 @@ on:
       - 'tools/build_editor_runtime.py'
       - 'tests/feedback_points.c'
       - 'tests/feedback_animation_limits.c'
+      - 'tests/feedback_animation_rooms.c'
       - 'src/**'
       - 'cmake/**'
       - 'CMakeLists.txt'
@@ -21,6 +22,7 @@ on:
       - 'tools/build_editor_runtime.py'
       - 'tests/feedback_points.c'
       - 'tests/feedback_animation_limits.c'
+      - 'tests/feedback_animation_rooms.c'
       - 'src/**'
       - 'cmake/**'
       - 'CMakeLists.txt'
@@ -61,6 +63,8 @@ jobs:
           node "$RUNNER_TEMP/editor-point-test.js"
           emcc tests/feedback_animation_limits.c src/objects.c src/logging.c -Isrc -sUSE_SDL=2 -sENVIRONMENT=node -O2 -o "$RUNNER_TEMP/editor-animation-test.js"
           node "$RUNNER_TEMP/editor-animation-test.js"
+          emcc tests/feedback_animation_rooms.c src/sb_decompress.c src/logging.c -Isrc -sUSE_SDL=2 -sENVIRONMENT=node -O2 --embed-file amiga/data/levels -o "$RUNNER_TEMP/editor-animation-rooms.js"
+          node "$RUNNER_TEMP/editor-animation-rooms.js"
       - uses: actions/upload-artifact@v4
         with:
           name: editor-engine
