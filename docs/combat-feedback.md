@@ -248,28 +248,43 @@ single-threaded Emscripten Release build pass.
 
 ## Door texture alignment across all levels
 
-Updating a door used its legacy texture-byte base directly as the newer
-wall record's tile/row words. This discarded the horizontal tile offset
-on 25 door faces. Scrolling relative to the closed position also discarded
-the authored vertical offset on doors whose closed height was not zero.
-For example, level 6's zone 120/123 faces changed from tile 2, row 32 to
-tile 0, row 0; level 12's zone 72 faces lost their row 80 offset.
+The door routine decodes legacy texture-byte bases into the separate tile
+and row words read by `amiga/WallRoutine3.ChipMem.s` `itsawalldraw`. The
+original lists use 4096 bytes per tile, including faces with a different
+`VALSHIFT`. This preserves the horizontal tile on 25 door faces and keeps
+the legacy wall-list/save bytes intact.
 
-The shared door routine now decodes the legacy base into the separate
-tile/row fields read by `amiga/WallRoutine3.ChipMem.s` `itsawalldraw`, then
-applies `amiga/Anims.s` `DoorRoutine`'s absolute `-(curr>>2)&255` scroll.
-The original door lists use 4096 bytes per tile, including faces with a
-different wall `VALSHIFT`. Existing wall scaling, door motion, authored
-level data and full-save layouts remain unchanged.
+The first global fix incorrectly treated preservation of the authored
+absolute row offset as proof of visible alignment. It regressed the C
+renderer, whose raster starts at the visible wall top and fits one texture
+period to the authored closed panel. The original `amiga/Anims.s`
+`DoorRoutine` scroll is in world units; it cannot be passed directly to
+that fitted, top-relative raster. Level 1's first stairway door (zone 22)
+demonstrated both the shifted closed texture and the wrong scrolling speed.
 
-`tests/feedback_doors.c` loads all 16 original maps and compares every door
-face against its authored initial texture origin throughout opening and
-closing. The old code failed on level 1's zone 22 before any movement.
-All 123 doors / 245 faces now pass 8,085 texture samples, including 25
-nonzero horizontal tile offsets and 151 faces at nonzero height. The test
-also checks wall heights, untouched graphics fields and unchanged legacy
-door-list bytes. The full feedback suite, Windows Release build and
-single-threaded Emscripten Release build pass.
+Rendering now anchors the texture to the moving lower edge. The closed
+position provides the zero origin; displacement and visible span are both
+converted with the same texture-period/authored-height ratio. Both retain
+16.16 precision through the wall raster, avoiding independent whole-row
+rounding as the door opens or closes. Fully hidden panels are skipped.
+Other walls and lifts retain their existing integer texture inputs through
+the fixed-point conversion. Door movement, level data and save layouts do
+not change.
+
+`tests/feedback_doors.c` explicitly checks legacy records: 8,085 samples
+over 123 doors / 245 faces on all 16 levels. It does not claim to prove
+visible alignment. `tests/feedback_door_render.c` adds 23,514 actual
+framebuffer texel samples. Its independent reference keeps material points
+fixed relative to the moving lower edge, covering closed alignment and
+opening/closing across every door face. The regressed build fails on level
+1 zone 22 while closed: rendered row 79 versus expected row 32.
+
+Browser screenshots reproduce the reported stairway view. During a quarter
+opening the regressed texture moved 81 pixels while the panel moved 92.46;
+the corrected texture moves 92 pixels. The closed scene outside that door
+is pixel-identical. The rendered checks also pass with native RGB565
+pixels. The full feedback suite, Windows Release build and single-threaded
+Emscripten Release build pass.
 
 ## Level 8 robot movement, attacks and death
 

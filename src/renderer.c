@@ -6275,8 +6275,8 @@ static void draw_wall_rasterize_segment(
     int16_t top, int16_t bot,
     const uint8_t *texture,
     uint8_t valand, uint8_t valshift, int16_t horand,
-    int16_t totalyoff, int16_t fromtile,
-    int16_t tex_id, int16_t wall_height_for_tex,
+    int32_t texture_yoff_fp, int16_t fromtile,
+    int16_t tex_id, int32_t texture_span_fp,
     int16_t d6_max)
 {
     const int64_t INVZ_ONE = (1LL << 24);
@@ -6315,12 +6315,12 @@ static void draw_wall_rasterize_segment(
 
     /* Precompute texture height constants */
     const int rows = 1 << valshift;
-    int tex_h = (int)wall_height_for_tex;
-    if (tex_h < 1) tex_h = 1;
-    if (tex_id == SWITCHES_WALL_TEX_ID) tex_h = rows;
-    else if (rows < 64 && tex_h < 64) tex_h = 64;
-    const int64_t h_shifted = (int64_t)tex_h << 16;
-    const int32_t yoff_base = (int32_t)((unsigned)totalyoff & (unsigned)valand);
+    int64_t h_shifted = texture_span_fp;
+    if (h_shifted < 1) h_shifted = 1LL << 16;
+    if (tex_id == SWITCHES_WALL_TEX_ID) h_shifted = (int64_t)rows << 16;
+    else if (rows < 64 && h_shifted < (64LL << 16)) h_shifted = 64LL << 16;
+    const int32_t yoff_base_fp = (int32_t)((uint32_t)texture_yoff_fp &
+                                         (((uint32_t)valand << 16) | 0xFFFFu));
 
     const uint8_t *pal = ctx->cur_wall_pal;
     const int has_tex_pal = (texture != NULL && pal != NULL);
@@ -6434,7 +6434,7 @@ static void draw_wall_rasterize_segment(
         int wall_pixels = yb - y_top_scr;
         if (wall_pixels < 1) wall_pixels = 1;
         int32_t tex_step = (int32_t)(h_shifted / wall_pixels);
-        int32_t tex_y = (ct - y_top_scr) * tex_step + ((int32_t)yoff_base << 16);
+        int32_t tex_y = (ct - y_top_scr) * tex_step + yoff_base_fp;
 
         /* Edge extension only on segment boundary columns.  Interior columns
          * of the same segment are consecutive, so the ±1 extension from one
@@ -6716,8 +6716,8 @@ static void renderer_draw_wall_ctx(RenderSliceContext *ctx,
                                    const uint8_t *texture, int16_t tex_start,
                                    int16_t tex_end, int16_t left_brightness, int16_t right_brightness,
                                    uint8_t valand, uint8_t valshift, int16_t horand,
-                                   int16_t totalyoff, int16_t fromtile,
-                                   int16_t tex_id, int16_t wall_height_for_tex,
+                                   int32_t texture_yoff_fp, int16_t fromtile,
+                                   int16_t tex_id, int32_t texture_span_fp,
                                    int16_t d6_max)
 {
     /* Both behind camera - skip */
@@ -6805,8 +6805,8 @@ static void renderer_draw_wall_ctx(RenderSliceContext *ctx,
                                 tex_over_z1_fp, tex_over_z_delta_fp,
                                 (int32_t)left_brightness, bright_delta,
                                 top, bot, texture,
-                                valand, valshift, horand, totalyoff, fromtile,
-                                tex_id, wall_height_for_tex, d6_max);
+                                valand, valshift, horand, texture_yoff_fp, fromtile,
+                                tex_id, texture_span_fp, d6_max);
     if (profile_collect_stats) {
         ctx->workload_stats.ticks_wall += SDL_GetPerformanceCounter() - wall_t0;
     }
@@ -6829,7 +6829,8 @@ void renderer_draw_wall(int32_t x1, int32_t z1, int32_t x2, int32_t z2,
     ctx.cur_wall_pal = g_renderer.cur_wall_pal;
     renderer_draw_wall_ctx(&ctx, x1, z1, x2, z2, top, bot, texture, tex_start, tex_end,
                            left_brightness, right_brightness, valand, valshift, horand,
-                           totalyoff, fromtile, tex_id, wall_height_for_tex, d6_max);
+                           (int32_t)((uint32_t)(uint16_t)totalyoff << 16), fromtile,
+                           tex_id, (int32_t)wall_height_for_tex * 65536, d6_max);
 }
 
 /* -----------------------------------------------------------------------
@@ -13454,12 +13455,13 @@ static int renderer_lift_zone_wall_height_for_bounds(const LevelState *level,
     return 0;
 }
 
-static int renderer_door_wall_texture_height_for_gfx_off(const LevelState *level,
-                                                         uint32_t gfx_off,
-                                                         int16_t *out_wall_height_for_tex)
+static int renderer_door_wall_texture_info_for_gfx_off(const LevelState *level,
+                                                       uint32_t gfx_off, uint8_t valshift,
+                                                       int32_t *out_span_fp, int32_t *out_phase_fp)
 {
-    if (out_wall_height_for_tex) *out_wall_height_for_tex = 0;
-    if (!level || !out_wall_height_for_tex ||
+    if (out_span_fp) *out_span_fp = 0;
+    if (out_phase_fp) *out_phase_fp = 0;
+    if (!level || !out_span_fp || !out_phase_fp || !level->graphics || !level->door_data ||
         !level->door_wall_list || !level->door_wall_list_offsets ||
         !level->door_wall_texture_heights || level->num_doors <= 0) {
         return 0;
@@ -13475,7 +13477,24 @@ static int renderer_door_wall_texture_height_for_gfx_off(const LevelState *level
             if (ent_gfx == gfx_off) {
                 int16_t h = level->door_wall_texture_heights[j];
                 if (h > 0) {
-                    *out_wall_height_for_tex = h;
+                    /* Anims.s stores an absolute world-height phase. The C
+                     * raster instead starts at the visible wall's top and fits
+                     * one texture period to the authored closed panel. Anchor
+                     * its UVs to the moving lower edge, converting displacement
+                     * to texels at that same scale. Keep 16.16 precision so the
+                     * scroll and span do not round independently each tick. */
+                    const uint8_t *wall = level->graphics + gfx_off;
+                    int32_t bottom = rd32(wall + 24);
+                    int32_t top = rd32(wall + 20);
+                    int32_t closed = rd32(level->door_data + di * DOOR_ENTRY_SIZE + 14);
+                    int64_t full_height = (int64_t)h * 256;
+                    int64_t period_fp = (int64_t)renderer_wall_texture_period_height(valshift) * 65536;
+                    int64_t span = ((int64_t)bottom - top) * period_fp / full_height;
+                    int64_t base_phase = ((uint32_t)rd32(ent + 6) & 0x0FFFu) * 65536LL;
+                    int64_t phase = base_phase + ((int64_t)closed - bottom) * period_fp / full_height;
+                    if (span > INT32_MAX) span = INT32_MAX;
+                    *out_span_fp = span > 0 ? (int32_t)span : 0;
+                    *out_phase_fp = (int32_t)(phase % period_fp);
                     return 1;
                 }
             }
@@ -14593,6 +14612,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 if (wall_height_for_tex < 1) wall_height_for_tex = 1;
                 int32_t door_yoff_add = 0;
                 int skip_this_wall = 0;
+                int has_door_texture_mapping = 0;
+                int32_t door_span_fp = 0, door_phase_fp = 0;
 
                 /* Lift zone: clip all walls to current zone floor/roof so we don't draw wall below the platform. */
                 if (!has_lift_wall_list && zone_has_lift_flag && tex_id != SWITCHES_WALL_TEX_ID) {
@@ -14641,16 +14662,11 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     }
                 }
                 else if (has_door_wall_list && tex_id != SWITCHES_WALL_TEX_ID) {
-                    int16_t door_wall_height_for_tex = 0;
-                    if (renderer_door_wall_texture_height_for_gfx_off(level, wall_gfx_off,
-                                                                       &door_wall_height_for_tex)) {
-                        /* Anims.s DoorRoutine patches the moving wall edge each frame. Keep
-                         * texture scale tied to the VALSHIFT period, scaled by the live panel
-                         * fraction from the authored wall span captured at level load. */
-                        wall_height_for_tex =
-                            renderer_scaled_dynamic_wall_texture_height(wall_height_for_tex,
-                                                                        door_wall_height_for_tex,
-                                                                        use_valshift);
+                    if (renderer_door_wall_texture_info_for_gfx_off(level, wall_gfx_off,
+                                                                    use_valshift,
+                                                                    &door_span_fp, &door_phase_fp)) {
+                        has_door_texture_mapping = 1;
+                        if (door_span_fp <= 0) skip_this_wall = 1;
                     } else if (!use_upper) {
                         int16_t door_zone_height_for_tex = 0;
                         int32_t abs_topwall = topwall + y_off;
@@ -14680,6 +14696,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                                      &lift_totalyoff,
                                                                      &lift_fromtile,
                                                                      &lift_wall_height_for_tex)) {
+                        has_door_texture_mapping = 0;
                         eff_totalyoff = lift_totalyoff;
                         eff_fromtile = lift_fromtile;
                         if (lift_wall_height_for_tex > 0)
@@ -14731,8 +14748,12 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                wall_tex, leftend, rightend,
                                                wall_bright_l, wall_bright_r,
                                                use_valand, use_valshift, horand,
-                                               eff_totalyoff, eff_fromtile, tex_id,
-                                               wall_height_for_tex, wall_d6_max);
+                                               has_door_texture_mapping ? door_phase_fp :
+                                                   (int32_t)((uint32_t)(uint16_t)eff_totalyoff << 16),
+                                               eff_fromtile, tex_id,
+                                               has_door_texture_mapping ? door_span_fp :
+                                                   (int32_t)wall_height_for_tex * 65536,
+                                               wall_d6_max);
                         ctx->update_column_clip = prev_wall_update_column_clip;
                     }
                 }
@@ -15380,7 +15401,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                (int16_t)(topwall >> 8), (int16_t)(botwall >> 8),
                                                arc_tex, (int16_t)prev_t, (int16_t)new_t,
                                                base_bright, base_bright, 63, 6, 255,
-                                               0, 0, tex_id, wall_ht, 64);
+                                               0, 0, tex_id, (int32_t)wall_ht * 65536, 64);
                     }
                     
                     prev_x = new_x;

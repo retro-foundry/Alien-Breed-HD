@@ -1,5 +1,5 @@
-/* Check every authored door face against its initial texture origin, then
- * replay opening/closing with Anims.s DoorRoutine's absolute Y scroll. */
+/* Check legacy door texture records, not visible alignment. Rendered motion
+ * and closed-panel alignment are checked by feedback_door_render.c. */
 #include "../src/objects.c"
 #include "sb_decompress.h"
 #include <assert.h>
@@ -95,7 +95,7 @@ int main(void)
         free(expected); free(original_graphics); free(original_list); free(patched);
     }
     assert(faces == 245 && nonzero_tiles == 25 && shifted_doors > 0);
-    printf("PASS: %d doors / %d faces across all 16 levels, %d opening/closing texture samples; %d tile offsets and %d nonzero-height faces\n",
+    printf("PASS: %d doors / %d faces across all 16 levels, %d legacy texture-record samples; %d tile offsets and %d nonzero-height faces\n",
            doors, faces, samples, nonzero_tiles, shifted_doors);
     return 0;
 }
