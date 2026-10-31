@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { openLevel } from '../../src/model/level';
 import { buildVisibilityFiles } from '../../src/model/visibilityBuild';
 import { buildGraphicsStreams, importedGraphicsStreams } from '../../src/model/graphicsBuild';
@@ -6,20 +6,7 @@ import { buildDataTables, importedDataTables } from '../../src/model/dataBuild';
 import { buildZoneRecords } from '../../src/model/zoneBuild';
 import { encodeProject } from '../../src/model/project';
 import { originalFiles } from '../helpers';
-
-async function capture(page: Page, camera: { zone: number; x: number; z: number; upper: number; angle: number }) {
-  return page.evaluate(camera => new Promise<number>((resolve, reject) => {
-    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!;
-    const id = crypto.randomUUID();
-    const timer = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('Engine frame capture timed out')); }, 10000);
-    const receive = (event: MessageEvent) => {
-      if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'captured' || event.data.id !== id) return;
-      clearTimeout(timer); window.removeEventListener('message', receive); resolve(event.data.checksum);
-    };
-    window.addEventListener('message', receive);
-    frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'capture', id, camera }, location.origin);
-  }), camera);
-}
+import { captureEngine as capture } from '../engineCapture';
 
 test('rebuilt visibility and relocated graphics load in the real engine and preserve original spawn views', async ({ page }, testInfo) => {
   test.setTimeout(240000);

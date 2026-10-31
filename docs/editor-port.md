@@ -549,3 +549,20 @@ fixtures can establish current-format support independently.
   The corrected decoder retains all ten. Both browser engines pass the
   generated-room test and all sixteen rebuilt/original spawn comparisons after
   rebuilding the WebAssembly host (four tests).
+- Graphics assembly now supports a validated permutation of runtime room IDs,
+  including stream headers, graphics rows, ZoneAdds and imported door, lift,
+  water and switch room references. Explicit animation tables use their supplied
+  target IDs. Native lift/water aliases resolve before remapping; source graphics
+  identities remain available for pointer relocation.
+  An integration fixture reverses every room ID across all sixteen maps and
+  rebuilds zone blocks, clip ordering, portal links, teleports, starts, object
+  rooms and exit configuration. Unit checks also require identity mapping to
+  preserve original graphics bytes. All 446 unit checks and the build pass.
+  Chromium and Firefox pass native comparisons at both player starts and eight
+  directions around both the original and remapped numeric room 53, where
+  present. Every sampled frame matches its original checksum. This covers room
+  renumbering, not all viewpoints or gameplay. The visibility batch now runs as
+  sixteen separate test cases so each map has its own existing timeout.
+  Arbitrary deletion, one-to-many geometry and animation attachment allocation,
+  source-reference authoring and full compiler/UI integration remain required.
+  Deployment remains pending that working authoring pipeline.

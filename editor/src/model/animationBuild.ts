@@ -14,6 +14,25 @@ export interface AnimationTables {
   trailing: Uint8Array;
 }
 
+/** Rebind source animation rooms to generated runtime identities. Other
+ * record fields and graphics identities remain separate compiler concerns.
+ * Match native direct-index preference and lift/water file-ID fallback. */
+export function remapAnimationRooms(document: LevelDocument, tables: AnimationTables, ids: ReadonlyMap<number, number>): AnimationTables {
+  const capacity = (new BinaryReader(document.files.graphics, 'twolev.graph.bin').i32(12) - 16) / 4;
+  const room = (id: number, aliases = false): number => {
+    const source = aliases && id >= capacity ? document.zones.find(zone => zone.fileId === id)?.id : id;
+    const target = source === undefined || !document.zones.some(zone => zone.id === source) ? undefined : ids.get(source);
+    if (target === undefined) throw new Error(`Animation room ${id} has no generated room mapping.`);
+    return checkedInteger(target, 0, 255, 'Generated animation room');
+  };
+  return { ...tables,
+    doors: tables.doors?.map(record => ({ ...record, zone: room(record.zone) })) ?? null,
+    lifts: tables.lifts?.map(record => ({ ...record, zone: room(record.zone, true) })) ?? null,
+    water: tables.water.map(group => ({ ...group, entries: group.entries.map(entry => ({ ...entry, zone: room(entry.zone, true) })) })),
+    switches: tables.switches?.map(record => record.zone < 0 ? record : { ...record, zone: room(record.zone) }) ?? null,
+  };
+}
+
 /** Current Anims.s/level.c layout, not the older AMOS header variant. Preserve
  * opaque position/rule/runtime bytes; identify authored room/line/point and
  * graphics relationships explicitly for the geometry compiler to remap. */

@@ -3,7 +3,7 @@ import type { LevelDocument } from './level';
 import { encodePolygonSurface, encodeWallSurface } from './surfaces';
 import { BinaryWriter } from './writer';
 import { readGraphicRecord, type Graphic } from './graphics';
-import { buildAnimationTables, importedAnimationTables, type AnimationTables } from './animationBuild';
+import { buildAnimationTables, importedAnimationTables, remapAnimationRooms, type AnimationTables } from './animationBuild';
 
 export interface GraphicsZoneInput { id: number; lower: readonly Uint8Array[]; upper?: readonly Uint8Array[] }
 export interface GraphicsRecordInput { bytes: Uint8Array; sourceOffset?: number }
@@ -13,6 +13,9 @@ export interface GraphicsEdits {
   additions?: readonly GraphicsZoneInput[];
   streams?: ReadonlyMap<number, GraphicsStreamInput>;
   animations?: AnimationTables;
+  /** Source-to-runtime permutation. Explicit animation tables already use
+   * target IDs; otherwise imported animation rooms are remapped automatically. */
+  roomIds?: ReadonlyMap<number, number>;
 }
 
 /** Explicit source identities let complete generated streams retain only the
@@ -41,6 +44,11 @@ export function buildGraphicsStreams(document: LevelDocument, order = document.z
   const reader = new BinaryReader(document.files.graphics, 'twolev.graph.bin');
   const oldTable = reader.i32(12), oldSlots = (oldTable - 16) / 4;
   const count = checkedInteger(slots ?? Math.max(oldSlots, ...(edits.additions ?? []).map(zone => zone.id + 1)), oldSlots, 256, 'Graphics zone capacity');
+  if (edits.roomIds && (edits.roomIds.size !== document.zones.length || [...edits.roomIds.keys()].some(id => !document.zones.some(zone => zone.id === id))
+    || new Set(edits.roomIds.values()).size !== document.zones.length)) throw new Error('Graphics room remapping needs each source room exactly once and unique target identities.');
+  for (const id of edits.roomIds?.values() ?? []) checkedInteger(id, 0, document.zones.length - 1, 'Generated graphics room');
+  const destinationId = (id: number) => edits.roomIds?.get(id) ?? id;
+  const destinations = new Set(document.zones.map(zone => destinationId(zone.id)));
   if (order.length !== document.zones.length || new Set(order).size !== order.length || order.some(id => !document.zones.some(zone => zone.id === id)))
     throw new Error('Graphics assembly must include each source zone exactly once.');
   const streams = document.zones.flatMap(zone => ([false, true] as const).flatMap(upper => {
@@ -82,7 +90,7 @@ export function buildGraphicsStreams(document: LevelDocument, order = document.z
   const additionIds = new Set<number>();
   for (const zone of edits.additions ?? []) {
     checkedInteger(zone.id, 0, count - 1, 'Additional graphics zone');
-    if (document.zones.some(original => original.id === zone.id) || additionIds.has(zone.id)) throw new Error('Additional graphics streams must have unique new zone identities.');
+    if (destinations.has(zone.id) || additionIds.has(zone.id)) throw new Error('Additional graphics streams must have unique new zone identities.');
     additionIds.add(zone.id);
     for (const records of [zone.lower, zone.upper].filter(records => records !== undefined)) {
       checkedInteger(records.length, 1, 4095, 'Graphics record count'); records.forEach(checkedRecord);
@@ -95,14 +103,15 @@ export function buildGraphicsStreams(document: LevelDocument, order = document.z
   }
   const tail = cursor, output = new BinaryWriter(), table = 16 + count * 4;
   output.write(reader.bytes.subarray(0, 16)); output.reserve(count * 12); output.patchLong(12, table);
-  for (let id = 0; id < count; id++) output.patchLong(16 + id * 4, id < oldSlots ? reader.i32(16 + id * 4) : -1);
+  for (let id = 0; id < count; id++) output.patchLong(16 + id * 4, !edits.roomIds && id < oldSlots ? reader.i32(16 + id * 4) : -1);
+  if (edits.roomIds) for (const zone of document.zones) output.patchLong(16 + destinationId(zone.id) * 4, reader.i32(16 + zone.id * 4));
   const ranges: { start: number; end: number; destination: number; original?: Graphic; generated?: Graphic }[] = [];
   for (const id of order) for (const upper of [false, true]) {
     const stream = streams.find(stream => stream.zone === id && stream.upper === upper);
     const override = edits.streams?.get(id), generated = upper ? override?.upper : override?.lower;
     if (override ? !generated : !stream) continue;
     const destination = output.offset;
-    output.patchLong(table + id * 8 + (upper ? 4 : 0), destination); output.word(id);
+    output.patchLong(table + destinationId(id) * 8 + (upper ? 4 : 0), destination); output.word(destinationId(id));
     if (stream) ranges.push({ start: stream.start, end: stream.start + 2, destination });
     const records = generated ?? stream!.records.map(record => ({ sourceOffset: record.offset,
       bytes: edits.replacements?.get(record.offset) ?? (record.wall ? encodeWallSurface(record.wall)
@@ -136,7 +145,8 @@ export function buildGraphicsStreams(document: LevelDocument, order = document.z
   };
   const imported = importedAnimationTables(document);
   if (imported.start !== tail) throw new Error('The graphics body and animation tables contain unaccounted source data.');
-  const animations = buildAnimationTables(edits.animations ?? imported.tables, output.offset, relocate);
+  const animationInput = edits.animations ?? (edits.roomIds ? remapAnimationRooms(document, imported.tables, edits.roomIds) : imported.tables);
+  const animations = buildAnimationTables(animationInput, output.offset, relocate);
   output.write(animations.bytes);
   for (const [field, offset] of [[0, animations.doors], [4, animations.lifts], [8, animations.switches]])
     if (edits.animations !== undefined || reader.i32(field!) > 16) output.patchLong(field!, offset!);

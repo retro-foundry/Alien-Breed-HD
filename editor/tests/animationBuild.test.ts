@@ -1,11 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { importedAnimationTables, buildAnimationTables } from '../src/model/animationBuild';
+import { importedAnimationTables, buildAnimationTables, remapAnimationRooms } from '../src/model/animationBuild';
 import { BinaryReader } from '../src/model/binary';
 import { openLevel } from '../src/model/level';
 import { originalFiles } from './helpers';
 import { buildGraphicsStreams } from '../src/model/graphicsBuild';
 
 describe('current animation table assembly', () => {
+  it('maps live animation rooms and file aliases while retaining graphics, switch slots and source state', () => {
+    const original = openLevel('original', originalFiles(1)), data = original.files.data.slice(), last = original.zones.at(-1)!;
+    new DataView(data.buffer).setInt16(last.offset, 300);
+    const document = openLevel('alias source', { ...original.files, data }), { tables } = importedAnimationTables(document);
+    const graphic = document.zones.flatMap(zone => [...zone.lower, ...zone.upper]).find(record => record.type === 7)!.offset;
+    const source = { ...tables, lifts: tables.lifts!.map((record, i) => i ? record : { ...record, zone: 300 }),
+      water: tables.water.map((group, i) => i ? group : { ...group, entries: [{ zone: 300, graphic }] }) };
+    const before = structuredClone(source), ids = new Map(document.zones.map(zone => [zone.id, document.zones.length - 1 - zone.id]));
+    const mapped = remapAnimationRooms(document, source, ids);
+    expect(mapped.lifts![0]!.zone).toBe(0); expect(mapped.water[0]!.entries).toEqual([{ zone: 0, graphic }]);
+    source.doors!.forEach((record, i) => expect(mapped.doors![i]).toEqual({ ...record, zone: ids.get(record.zone) }));
+    source.switches!.forEach((record, i) => expect(mapped.switches![i]).toEqual(record.zone < 0 ? record : { ...record, zone: ids.get(record.zone) }));
+    expect(source).toEqual(before);
+    expect(() => remapAnimationRooms(document, source, new Map())).toThrow(/no generated room mapping/);
+  });
   it.each(Array.from({ length: 16 }, (_, i) => i + 1))('reassembles level %i animation tables exactly and rebases section addresses', level => {
     const document = openLevel(`Level ${level}`, originalFiles(level)), { start, tables } = importedAnimationTables(document);
     const built = buildAnimationTables(tables, start, pointer => pointer), reader = new BinaryReader(document.files.graphics, 'original');

@@ -10,8 +10,7 @@ const square = (id: number, x: number, z: number): RoomOutline => ({ id: String(
 function visible(rooms: RoomOutline[]) { const geometry = roomGeometry(rooms); return portalVisibility(geometry.points, geometry.rooms).visible; }
 
 describe('exact portal sightline feasibility', () => {
-  it('rebuilds all original maps including concave zones, within clip limits and with original wall links', () => {
-    for (let level = 1; level <= 16; level++) {
+  it.each(Array.from({ length: 16 }, (_, i) => i + 1))('rebuilds original level %i including concave zones, within clip limits and with original wall links', level => {
       const document = openLevel(`Level ${level}`, originalFiles(level)), geometry = visibilityCells(document);
       const result = portalVisibility(geometry.points, geometry.rooms, geometry.owners);
       expect(result.visible.size).toBe(document.zones.length);
@@ -33,7 +32,6 @@ describe('exact portal sightline feasibility', () => {
         expect(result.previous[point], `Level ${level}, previous wall at point ${point}`).toBe(original.i16(document.connectTableOffset + point * 4));
         expect(result.next[point], `Level ${level}, next wall at point ${point}`).toBe(original.i16(document.connectTableOffset + point * 4 + 2));
       }
-    }
   });
   it('keeps both openings around an occluder in the common legacy clip window', () => {
     const rooms: RoomOutline[] = [
