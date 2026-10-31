@@ -7,6 +7,7 @@ import type { LevelDocument } from './level';
 export interface SourceRoom {
   readonly id: string;
   readonly recordZone: number;
+  readonly originZone: number | null;
   readonly vertices: readonly Position[];
 }
 export interface RoomSource { readonly rooms: readonly SourceRoom[]; readonly nextId: number }
@@ -14,8 +15,8 @@ export interface RoomChange { readonly label: string; readonly before: RoomSourc
 export interface RoomHistory { readonly source: RoomSource; readonly past: readonly RoomChange[]; readonly future: readonly RoomChange[] }
 export interface RoomDraft { readonly base: RoomSource; readonly roomId: string | null; readonly recordZone: number; readonly vertices: readonly Position[] }
 
-function frozenRoom(id: string, recordZone: number, vertices: readonly Position[]): SourceRoom {
-  return Object.freeze({ id, recordZone, vertices: Object.freeze(normaliseRoomOutline(vertices).map(point => Object.freeze(point))) });
+function frozenRoom(id: string, recordZone: number, vertices: readonly Position[], originZone: number | null): SourceRoom {
+  return Object.freeze({ id, recordZone, originZone, vertices: Object.freeze(normaliseRoomOutline(vertices).map(point => Object.freeze(point))) });
 }
 function source(rooms: readonly SourceRoom[], nextId: number): RoomSource {
   return Object.freeze({ rooms: Object.freeze([...rooms]), nextId });
@@ -23,7 +24,7 @@ function source(rooms: readonly SourceRoom[], nextId: number): RoomSource {
 
 export function importRoomSource(document: LevelDocument): RoomSource {
   return source(document.zones.map(zone => frozenRoom(`room-${zone.id}`, zone.id,
-    zone.boundaryIds.map(id => { const line = document.lines[id]!; return { x: line.x, z: line.z }; }))), document.zones.length);
+    zone.boundaryIds.map(id => { const line = document.lines[id]!; return { x: line.x, z: line.z }; }), zone.id)), document.zones.length);
 }
 
 /** Drafts are separate from committed source: Escape/tool changes simply drop
@@ -51,7 +52,7 @@ export function commitRoomDraft(current: RoomSource, draft: RoomDraft): RoomChan
   const existing = draft.roomId === null ? undefined : current.rooms.find(room => room.id === draft.roomId);
   if (draft.roomId !== null && !existing) throw new Error('That room no longer exists.');
   const id = existing?.id ?? `room-${current.nextId}`;
-  const room = frozenRoom(id, draft.recordZone, draft.vertices);
+  const room = frozenRoom(id, draft.recordZone, draft.vertices, existing?.originZone ?? null);
   // Enforce the actual convex-cell corner contract before accepting a command.
   // Concavity and winding remain editor responsibilities, not user settings.
   convexParts(room.vertices);

@@ -164,3 +164,16 @@ fixtures can establish current-format support independently.
   references retain known surface/mechanism data without inventing defaults.
   Dependency checks, inter-room topology validation and geometry compilation
   remain necessary before exposing those commands in the application.
+- `roomTopology.ts` adds the source-to-runtime topology stage. It distinguishes
+  a room's original zone from its surface-record template, decomposes concave
+  outlines, joins partial shared walls, preserves imported closed boundaries,
+  retains existing point indices, and returns stable-source-to-runtime-cell
+  mappings. It checks the current 256-zone/2,048-point/ten-edge limits and
+  reciprocal portals before returning output. All sixteen imports match the
+  separate visibility importer cell-for-cell; new concave rooms, partial joins,
+  direction independence and deletion/portal closing have scenario coverage.
+  The complete suite now has 144 passing tests. This stage does not emit game
+  files yet: surface generation, graphics-pointer relocation, collision-line
+  normals and object/mechanism/teleporter remapping remain required. Source
+  topology is not enabled in the deployed application until those stages and
+  the canvas/project integration are verified in the actual engine.
