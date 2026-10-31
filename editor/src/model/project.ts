@@ -1,4 +1,5 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
+import { assertPlayableGraphics } from './renderLimits';
 import { exportLevel, openLevel, type LevelDocument, type LevelFiles } from './level';
 import { decodeLevelSetupDetails, encodeLevelSetup } from './levelSetup';
 import { roomSourceSnapshot, restoreRoomSource, sourceMatchesLevel } from './roomSource';
@@ -33,6 +34,7 @@ export function encodeProject(document: LevelDocument): Uint8Array {
 }
 
 export function encodeGameLevel(document: LevelDocument): Uint8Array {
+  assertPlayableGraphics(document);
   if (!sourceMatchesLevel(document)) throw new Error('This editor version cannot yet compile the changed room outlines or source gameplay edits through Export level. Save project preserves all editable source; game export has been stopped to avoid exporting stale geometry or gameplay.');
   const files = exportLevel(document);
   const folder = `levels/level_${String.fromCharCode(97 + document.playtestSlot)}/`;

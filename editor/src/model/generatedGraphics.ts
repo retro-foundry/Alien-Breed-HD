@@ -5,6 +5,7 @@ import type { GraphicsStreamInput } from './graphicsBuild';
 import type { LevelDocument } from './level';
 import { BinaryWriter } from './writer';
 import { relocateRecordPointer } from './graphicsRelocation';
+import { assertGraphicsRecordBudget } from './renderLimits';
 
 export interface GeneratedGraphicsRoom extends GraphicsStreamInput { id: number; dataOffset: number }
 export interface GeneratedGraphicsTarget { room: number; upper: boolean; index: number }
@@ -34,6 +35,7 @@ export function buildGeneratedGraphics(document: LevelDocument, rooms: readonly 
     for (const [upper, records] of [[false, room.lower], [true, room.upper]] as const) {
       if (records === undefined) continue;
       checkedInteger(records.length, 0, 4095, 'Generated graphics record count');
+      assertGraphicsRecordBudget(room.id, upper, records.length);
       output.patchLong(table + room.id * 8 + (upper ? 4 : 0), output.offset); output.word(room.id);
       records.forEach((item, index) => {
         const generated = readGraphicRecord(new BinaryReader(item.bytes, 'generated graphics record'), 0, 2048);

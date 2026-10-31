@@ -54,7 +54,8 @@ it('passes wall, lift, water and switch attachment context to the explicit copy 
     bytes: document.files.graphics.slice(record.offset, record.offset + record.size) }));
   // Repeat the complete source record set in two generated rooms so every
   // live attachment requires a deliberate choice, including interior switch pointers.
-  const rooms = [0, 1].map(id => ({ id, dataOffset: 100 + id * 48, lower: items }));
+  const middle = Math.ceil(items.length / 2);
+  const rooms = [0, 1].map(id => ({ id, dataOffset: 100 + id * 48, lower: items.slice(0, middle), upper: items.slice(middle) }));
   const animations = { ...tables,
     doors: tables.doors!.map(record => ({ ...record, zone: 0 })),
     lifts: tables.lifts!.map(record => ({ ...record, zone: 1 })),

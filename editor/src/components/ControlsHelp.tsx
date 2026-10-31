@@ -2,6 +2,8 @@ export const previewKeys = [['← / →', 'Turn the inspection camera'], ['↑ /
 // Verified against src/input.c and player.c; inspection keys are hosted in runtime/frame.html.
 export const playKeys = [['W / S', 'Move forward / backward'], ['A / D', 'Strafe left / right'], ['Mouse', 'Aim after clicking the game view'], ['Left click / Ctrl', 'Fire'], ['Space / right click', 'Use doors and switches'], ['C', 'Crouch'], ['Shift', 'Change run / walk speed'], ['1–6 / mouse wheel', 'Choose an available weapon'], ['Esc', 'Release the mouse / open the game menu'], ['Stop button', 'Return to editing']] as const;
 
+import { zoneGraphicsRecordLimit } from '../model/renderLimits';
+
 function Keys({ rows }: { rows: readonly (readonly [string, string])[] }) {
   return <div className="shortcut-list">{rows.map(([key, action]) => <div key={key}><span>{action}</span><kbd>{key}</kbd></div>)}</div>;
 }
@@ -19,5 +21,6 @@ export function ControlsHelp() {
     <h3>Room outlines</h3><p>Select a zone as the settings template, then choose Draw room. Click corners in either direction; Enter or clicking the first corner commits the whole outline. Backspace removes the last corner. Escape, Cancel room or changing tools discards unfinished work. Select a room to drag its highlighted corners or open Edit room corners in the inspector. Shared corners move together; crossing and overlapping outlines are rejected. Delete room is undoable. Outlines are saved in project copies, but full game geometry compilation is still in progress.</p>
     <h3>Playtesting</h3><p>Choose the target game slot and Level exit in Project. Original slot exit retains the game's built-in completion zone; choose a zone for an authored exit, or No exit to test freely. Choose Build & play, then click the game view to capture the mouse. The first click captures it; subsequent clicks fire. Use Stop to return to editing.</p><Keys rows={playKeys} />
     <h3>Keeping your work</h3><p>Workspace changes are saved in this browser. Save project downloads a portable .ab3d backup, including the target game slot. Choose that slot in Project or the 3D toolbar; it is independent of the project name. Export level puts the game files in the matching levels/level_… directory with installation instructions. Keep project copies to transfer your work or recover it if browser storage is cleared.</p>
+    <h3>Engine capacity</h3><p>The current game supports {zoneGraphicsRecordLimit} graphics commands per room and floor. Walls, surfaces and draw controls share this budget. Preview and game export stop with a room-specific error if a stream exceeds it; Save project still preserves your work. This is the current port's limit, not an original Amiga compatibility profile.</p>
   </>;
 }

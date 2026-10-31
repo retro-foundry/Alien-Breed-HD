@@ -55,6 +55,10 @@ unrestricted geometry authoring. Broader coverage is still needed
 before claiming the complete original editor workflow.
 Undo keeps the full action chain and has a 250-action
 undo/redo regression.
+The current port's per-room/storey graphics command budget is now shared with
+the native renderer and enforced for preview/build/game export, while editable
+oversized files remain saveable. This covers one concrete R12 resource limit;
+the broader capability model and original-engine export profile remain open.
 
 The actual game engine is now embedded beside the map, with zone visits,
 lighting-edit reloads and isolated playtests. All 16 maps load and draw in both

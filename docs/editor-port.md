@@ -1015,3 +1015,30 @@ fixtures can establish current-format support independently.
   pass, followed by two reverse-direction redraw reruns and 26 surrounding
   controls, tool cancellation, source persistence and build/export scenarios.
   The full editor scope and deployment remain unfinished.
+
+- Playable output now enforces the current renderer's 500-command traversal
+  bound per runtime room/storey. The previous structural stream parser/writer
+  accepted 4,095 records while renderer.c's seven passes stopped after 500,
+  allowing a valid-looking export whose tail was never drawn. Native draw and
+  inspection passes now use `renderer_limits.h`, whose enum includes the numeric
+  literal in `renderer_graphics_limit.json`; the editor imports that same JSON
+  value directly in browser and Node tests. No duplicate limit table or generated
+  copy is maintained, and the existing native bound itself is unchanged.
+  Source stream assembly reports the stable editor room identity; generated
+  graphics and unchanged-file preview/export paths enforce the same budget.
+  The structural importer/project writer still preserves oversized files so
+  they can be saved and repaired. Errors identify room, lower/upper floor,
+  actual count and supported count; Help explains that draw commands share the
+  budget. This is explicitly a port safety bound, not a claimed original Amiga
+  format limit or completion of the strict original-engine export profile.
+  Model scenarios accept exactly 500 lower/upper records, reject 501 through
+  all playable paths (including retries and complete source assembly), and
+  round-trip oversized project files unchanged. The native boundary fixture
+  prepends real no-payload Backdrop commands before the original draws; four
+  actual-engine camera hashes still match the shipped map at 500, proving the
+  final draws execute. Browser checks reject over-budget inspection/play/export
+  and retain a downloadable editable backup. Windows and WebAssembly builds,
+  production editor build and all 637 model checks pass. Twelve rebuilt-runtime
+  Chromium/Firefox scenarios pass, including all sixteen original maps, budget
+  boundary/rejection, source export/play and imported-room redraw. Remaining
+  editor requirements and deployment are still unfinished.

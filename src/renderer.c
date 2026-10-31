@@ -28,6 +28,7 @@
  */
 
 #include "renderer.h"
+#include "renderer_limits.h"
 #include "renderer_fixed.h"
 #ifdef AB3D_DOS
 #include "platform_dos.h"
@@ -13734,7 +13735,7 @@ static int renderer_build_viewer_split_floor_occluder(const GameState *state,
 
     {
         const uint8_t *ptr = gfx_data + 2;
-        int max_iter = 500;
+        int max_iter = AB3D_ZONE_GRAPHICS_RECORD_LIMIT;
 
         while (max_iter-- > 0) {
             int16_t entry_type = rd16(ptr);
@@ -13996,7 +13997,7 @@ static int zone_stream_has_matching_roof_polygon(const uint8_t *gfx_data,
     if (floor_sides <= 0 || floor_sides > 100) return 0;
 
     const uint8_t *scan = gfx_data + 2; /* skip gfx zone id word */
-    int scan_iter = 500;
+    int scan_iter = AB3D_ZONE_GRAPHICS_RECORD_LIMIT;
     while (scan_iter-- > 0) {
         int16_t t = rd16(scan);
         scan += 2;
@@ -14037,7 +14038,7 @@ static AB3D_ATTR_UNUSED int zone_stream_has_explicit_roof_polygon(const uint8_t 
     if (!gfx_data) return 0;
 
     const uint8_t *scan = gfx_data + 2; /* skip gfx zone id word */
-    int scan_iter = 500;
+    int scan_iter = AB3D_ZONE_GRAPHICS_RECORD_LIMIT;
     while (scan_iter-- > 0) {
         int16_t t = rd16(scan);
         scan += 2;
@@ -14100,7 +14101,7 @@ static int zone_stream_has_entry_type(const uint8_t *gfx_data, int16_t want_type
     }
 
     const uint8_t *scan = gfx_data + 2;
-    int scan_iter = 500;
+    int scan_iter = AB3D_ZONE_GRAPHICS_RECORD_LIMIT;
     int found = 0;
     while (scan_iter-- > 0) {
         int16_t t = rd16(scan);
@@ -14262,7 +14263,7 @@ static void renderer_build_zone_stream_backdrop_sky_cache(int use_upper,
     const uint8_t *roof_stream_secondary = use_upper ? NULL : upper_stream_gfx_data;
 
     const uint8_t *scan = floor_stream_gfx_data + 2; /* skip gfx zone id word */
-    int scan_iter = 500;
+    int scan_iter = AB3D_ZONE_GRAPHICS_RECORD_LIMIT;
     while (scan_iter-- > 0) {
         int16_t t = rd16(scan);
         scan += 2;
@@ -14367,7 +14368,7 @@ void renderer_build_level_sky_cache(const LevelState *level)
             int stream_has_backdrop_marker = 0;
             {
                 const uint8_t *scan = gfx_data + 2;
-                int scan_iter = 500;
+                int scan_iter = AB3D_ZONE_GRAPHICS_RECORD_LIMIT;
                 while (scan_iter-- > 0) {
                     int16_t t = rd16(scan);
                     scan += 2;
@@ -14570,7 +14571,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
 
     /* Amiga: draw walls and arcs in stream order (no deferral). */
 
-    int max_iter = 500; /* Safety limit */
+    int max_iter = AB3D_ZONE_GRAPHICS_RECORD_LIMIT;
     int stream_entry_index = 0;
 
         while (max_iter-- > 0) {

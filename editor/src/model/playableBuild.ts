@@ -3,11 +3,12 @@ import { roomAppearanceBuildOptions } from './roomAppearance';
 import { sourceMatchesLevel } from './roomSource';
 import { buildSourceLevel } from './sourceBuild';
 import type { RoomTopology } from './roomTopology';
+import { assertPlayableGraphics } from './renderLimits';
 
 export interface PlayableLevel { source: LevelDocument; document: LevelDocument; topology?: RoomTopology }
 
 export function buildPlayableLevel(source: LevelDocument, resolvedExit: number): PlayableLevel {
-  if (sourceMatchesLevel(source)) return { source, document: source };
+  if (sourceMatchesLevel(source)) { assertPlayableGraphics(source); return { source, document: source }; }
   const built = buildSourceLevel(source, { resolvedExit, ...roomAppearanceBuildOptions(source) });
   return { source, document: built.document, topology: built.topology };
 }
@@ -36,7 +37,7 @@ export function preparePlayableLevel(source: LevelDocument): Promise<PlayableLev
   const cached = artifacts.get(source);
   if (cached) return cached;
   const promise = (async () => {
-    if (sourceMatchesLevel(source)) return { source, document: source };
+    if (sourceMatchesLevel(source)) return buildPlayableLevel(source, -1);
     // Yield so controls can show the build state before the synchronous compiler.
     await new Promise(resolve => setTimeout(resolve, 0));
     return buildPlayableLevel(source, source.exitZone ?? await defaultExit(source.playtestSlot));

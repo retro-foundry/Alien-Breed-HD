@@ -107,6 +107,14 @@ projects without the newer fields retain their earlier format. Incomplete
 projects can be saved/recovered before all build dependencies are assigned.
 Appearance and geometry edits use the same undo/history model.
 
+Preview and game export enforce the current port's graphics-command budget per
+room and floor. Walls, surfaces and draw controls share that budget; Help shows
+the value used by the engine. An oversized file can still be opened and saved
+as an editable project, but building/playing it stops with the affected room,
+floor, command count and limit. This prevents the engine silently omitting the
+end of a draw stream. It does not implement the separate original-Amiga export
+profile, which remains part of the unfinished editor work.
+
 Room-source snapshots also retain each imported wall's identity when corners
 move, including shared-wall splits. New saves use room-source version 2; older
 version 1 saves still open. If an older save already moved a wall, its material

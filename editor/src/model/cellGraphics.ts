@@ -8,6 +8,7 @@ import type { RoomTopology } from './roomTopology';
 import { buildCellPolygons } from './surfaceGeometry';
 import { buildCellWallGeometry, type NewRoomWallMaterials, type ClosingWallMaterials } from './wallGeometry';
 import { buildDrawTopology } from './drawTopology';
+import { assertGraphicsRecordBudget } from './renderLimits';
 
 export interface NewRoomGraphics {
   walls: NewRoomWallMaterials;
@@ -90,6 +91,7 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
           result.push({ sourceOffset: record.offset, bytes });
         }
       }
+      assertGraphicsRecordBudget(room.id, upper, result.length);
       return result;
     };
     const lower = layer(template.lower, false);
