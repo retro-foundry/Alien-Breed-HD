@@ -3,6 +3,7 @@ import { zoneContainsPoint, type LevelDocument, type Zone } from '../model/level
 import { Icon } from './Icon';
 import { pointInRoomOutline, normaliseRoomOutline } from '../model/geometry';
 import { importRoomSource, type RoomDraft, type SourceRoom } from '../model/roomSource';
+import { editableStarts } from '../model/sourceStarts';
 
 export type Selection = { kind: 'zone' | 'object' | 'start' | 'point'; id: number } | null;
 export interface MapView { x: number; z: number; scale: number }
@@ -186,7 +187,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       context.strokeStyle = '#151a20'; context.lineWidth = 1.5; context.beginPath(); context.arc(pixel.x, pixel.y, selected ? 5 : 3.5, 0, Math.PI * 2); context.fill(); context.stroke();
       if (selected) { context.strokeStyle = '#d1f5a5'; context.beginPath(); context.arc(pixel.x, pixel.y, 9, 0, Math.PI * 2); context.stroke(); }
     }
-    for (const start of document.starts) {
+    for (const start of editableStarts(document)) {
       const moving = ghost?.selection.kind === 'start' && ghost.selection.id === start.player;
       const pixel = screen(moving ? ghost.x : start.x, moving ? ghost.z : start.z);
       context.fillStyle = start.player === 1 ? '#b2de7a' : '#9ec7f0'; context.strokeStyle = '#161b21'; context.lineWidth = 2;
@@ -207,7 +208,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
   }, [document, selection, view, size, grid, showObjects, layer, ghost, screen, world, sourceView, roomDraft, selectedRoom, cornerGhost]);
 
   function hit(x: number, y: number): Selection {
-    for (const start of document.starts) { const pixel = screen(start.x, start.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 13) return { kind: 'start', id: start.player }; }
+    for (const start of editableStarts(document)) { const pixel = screen(start.x, start.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 13) return { kind: 'start', id: start.player }; }
     if (showObjects) for (const object of document.objects.toReversed()) {
       if (object.zone < 0 || (layer === 'upper') !== object.upper) continue;
       const pixel = screen(object.x, object.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 9) return { kind: 'object', id: object.id };

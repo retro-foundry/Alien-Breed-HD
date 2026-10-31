@@ -26,6 +26,10 @@ Opening local files does not upload them anywhere.
   and search the map contents.
 - Edit static/animated zone light, teleport destinations, door/lift rules and
   conditions, existing object positions/heights/health, and player starts.
+- Place player starts in edited or newly drawn rooms using the Starts inspector
+  or by dragging their map markers. These source starts survive undo, project
+  saves and workspace recovery. Building changed source through the regular
+  preview/export buttons is still pending; project saves preserve the edits.
 - Undo/redo binary edits, download portable project copies, export a game
   triplet ZIP, and recover the previous workspace through browser storage.
 - Open a simultaneous 2D/3D view, visit selected zones, inspect lighting with

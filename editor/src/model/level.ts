@@ -7,6 +7,7 @@ export type { Graphic } from './graphics';
 import { importRoomSource, type RoomSource } from './roomSource';
 import { validateAnimationReferences } from './animationBuild';
 import { validateDrawGroups } from './levelSetup';
+import type { SourceStart } from './sourceStarts';
 
 export interface Point { id: number; x: number; z: number; offset: number }
 export interface FloorLine {
@@ -40,6 +41,7 @@ export interface Switch {
 export interface Start { player: 1 | 2; x: number; z: number; zone: number }
 export interface LevelFiles { data: Uint8Array; graphics: Uint8Array; clips: Uint8Array }
 export interface LevelDocument {
+  sourceStarts?: readonly SourceStart[];
   drawGroups?: readonly number[];
   name: string;
   playtestSlot: number;

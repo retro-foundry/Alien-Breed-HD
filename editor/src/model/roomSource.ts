@@ -59,7 +59,7 @@ export function roomSourceSnapshot(current: RoomSource) {
 }
 
 export function roomSourceMatchesLevel(document: LevelDocument): boolean {
-  return JSON.stringify(document.roomSource.rooms) === JSON.stringify(importRoomSource(document).rooms);
+  return !document.sourceStarts?.length && JSON.stringify(document.roomSource.rooms) === JSON.stringify(importRoomSource(document).rooms);
 }
 
 /** Restore committed editable geometry, never a partially drawn gesture or

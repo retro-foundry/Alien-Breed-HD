@@ -40,6 +40,19 @@ export function buildRoomDataReferences(document: LevelDocument, source: RoomSou
     reader.require(object.offset, 64);
     view.setInt16(object.offset + 12, checkedInteger(references.objects.get(object.id)!, -32768, topology.cells.length - 1, 'Object room'));
   }
+  for (const start of document.sourceStarts ?? []) {
+    const offset = start.player === 1 ? 0 : 6;
+    const cell = references.starts.find(item => item.player === start.player)!.cell!;
+    view.setInt16(offset, start.x); view.setInt16(offset + 2, start.z);
+    // Match commands.setStart and the native multiplayer avatar contract:
+    // header LONG +46/+50 -> object CID -> shared 16.16 object point table.
+    const avatar = reader.i32(start.player === 1 ? 46 : 50);
+    reader.require(avatar, 64);
+    const point = document.objectPointsOffset + reader.i16(avatar) * 8;
+    reader.require(point, 8);
+    view.setInt16(avatar + 12, cell); view.setInt16(avatar + 26, cell);
+    view.setInt32(point, start.x * 65536); view.setInt32(point + 4, start.z * 65536);
+  }
   const headers = new Map<number, Uint8Array>();
   for (const cell of topology.cells) {
     const template = document.zones.find(zone => zone.id === cell.recordZone);

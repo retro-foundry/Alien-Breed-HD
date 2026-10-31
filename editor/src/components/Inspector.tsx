@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { objectName, type LevelDocument } from '../model/level';
-import { moveObject, numberPatch, removeObject, setMechanismRules, setStart, setTeleport, setZoneProperty, type EditCommand } from '../model/commands';
+import { moveObject, numberPatch, removeObject, setMechanismRules, setStart, setSourceStart, setTeleport, setZoneProperty, type EditCommand } from '../model/commands';
+import { editableStarts } from '../model/sourceStarts';
+import { roomSourceMatchesLevel } from '../model/roomSource';
 import type { Selection } from './MapCanvas';
 import { Icon } from './Icon';
 import type { SourceRoom } from '../model/roomSource';
@@ -18,12 +20,27 @@ function PositionForm({ x, z, zone, onApply }: { x: number; z: number; zone: num
 
 function InfoRow({ label, value }: { label: string; value: string | number }) { return <div className="info-row"><span>{label}</span><span>{value}</span></div>; }
 
+function SourceStartForm({ document, player, edit }: { document: LevelDocument; player: 1 | 2; edit: (command: EditCommand | (() => EditCommand)) => void }) {
+  const start = editableStarts(document).find(start => start.player === player)!;
+  const room = start.room ?? document.roomSource.rooms.find(room => room.originZone === start.zone)?.id ?? '';
+  const [draft, setDraft] = useState({ x: start.x, z: start.z, room });
+  useEffect(() => setDraft({ x: start.x, z: start.z, room }), [start.x, start.z, room, player]);
+  return <form className="position-form" onSubmit={event => { event.preventDefault(); edit(() => setSourceStart(document, player, draft.room, draft.x, draft.z)); }}>
+    <label className="number-field"><span>Room</span><select aria-label="Player start room" title="Choose the editable room containing this start. Coordinates must be inside its outline. Apply position or press Enter to save." value={draft.room} onChange={event => setDraft({ ...draft, room: event.target.value })}>
+      {!document.roomSource.rooms.some(item => item.id === draft.room) && <option value={draft.room}>Choose an existing room</option>}
+      {document.roomSource.rooms.map(item => <option key={item.id} value={item.id}>{item.originZone === null ? `New room ${item.id.replace(/^room-/, '')}` : `Zone ${item.originZone}`}</option>)}
+    </select></label>
+    <div className="field-grid">{(['x', 'z'] as const).map(axis => <label className="number-field" key={axis}><span>{axis.toUpperCase()}</span><input required type="number" min={-32768} max={32767} step={1} aria-label={`Position ${axis.toUpperCase()}`} title={`${axis.toUpperCase()} coordinate inside the selected room. Apply position or press Enter to save.`} value={draft[axis]} onChange={event => setDraft({ ...draft, [axis]: Number(event.target.value) })} /></label>)}</div>
+    <button type="submit" className="small-button" title="Validate the room and coordinates, then save this player start. Undo restores its previous position." disabled={draft.x === start.x && draft.z === start.z && draft.room === room}>Apply position</button>
+  </form>;
+}
+
 export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner, onRoomDelete }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
   sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomDelete: () => void }) {
   if (!selection && !sourceRoom) return <aside className="inspector"><div className="panel-title">INSPECTOR</div><div className="empty-inspector"><Icon name="select" size={32} /><h2>Select something</h2><p>Click a zone, object or player start to inspect it.</p><p className="muted">Drag objects and starts to reposition them. Hold Alt to ignore the grid.</p></div></aside>;
   const zone = selection?.kind === 'zone' ? document.zones.find(zone => zone.id === selection.id) : undefined;
   const object = selection?.kind === 'object' ? document.objects.find(object => object.id === selection.id) : undefined;
-  const start = selection?.kind === 'start' ? document.starts.find(start => start.player === selection.id) : undefined;
+  const start = selection?.kind === 'start' ? editableStarts(document).find(start => start.player === selection.id) : undefined;
   const point = selection?.kind === 'point' ? document.points[selection.id] : undefined;
   const mechanisms = zone ? document.mechanisms.filter(mechanism => mechanism.zone === zone.id || mechanism.zone === zone.fileId) : [];
   const title = zone ? `Zone ${zone.id}` : object ? objectName(object.type) : start ? `Player ${start.player} start` : point ? `Point ${point.id}` : sourceRoom ? `Room ${sourceRoom.id.replace(/^room-/, '')}` : 'Selection';
@@ -74,7 +91,9 @@ export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner,
         </section>
         <section className="property-section"><button className="danger-button" title="Remove this object. Undo restores it (Ctrl / Command + Z)." onClick={() => edit(() => removeObject(document, object.id))}>Delete object</button></section>
       </>}
-      {start && <section className="property-section"><h3>Position</h3><PositionForm x={start.x} z={start.z} zone={start.zone} onApply={(x, z, zone) => edit(() => setStart(document, start.player, x, z, zone))} /><p className="field-note">Drag the triangle on the map to place this start. The point must stay inside its zone.</p></section>}
+      {start && <section className="property-section"><h3>Position</h3>{!roomSourceMatchesLevel(document)
+        ? <SourceStartForm document={document} player={start.player} edit={edit} />
+        : <PositionForm x={start.x} z={start.z} zone={start.zone} onApply={(x, z, zone) => edit(() => setStart(document, start.player, x, z, zone))} />}<p className="field-note">Drag the triangle on the map to place this start. The point must stay inside its room.</p></section>}
       {point && <section className="property-section"><h3>Coordinates</h3><InfoRow label="X" value={point.x} /><InfoRow label="Z" value={point.z} /></section>}
     </div>
   </aside>;

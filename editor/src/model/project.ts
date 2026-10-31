@@ -2,19 +2,22 @@ import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { exportLevel, openLevel, type LevelDocument, type LevelFiles } from './level';
 import { decodeLevelSetupDetails, encodeLevelSetup } from './levelSetup';
 import { roomSourceSnapshot, restoreRoomSource, roomSourceMatchesLevel } from './roomSource';
+import { restoreSourceStarts, type SourceStart } from './sourceStarts';
 
 const MAX_ARCHIVE = 64 * 1024 * 1024;
 const MAX_FILE = 16 * 1024 * 1024;
 const LEVEL_NAMES = ['twolev.bin', 'twolev.graph.bin', 'twolev.clips', 'twolev.cfg'];
 const MANIFEST = 'alien-breed-project.json';
 const ROOM_SOURCE = 'room-source.json';
-export interface ProjectCandidate { name: string; folder: string; files: LevelFiles; playtestSlot: number; exitZone: number | null; roomSourceSnapshot?: unknown; drawGroups?: readonly number[] }
+const PLAYER_STARTS = 'player-starts.json';
+export interface ProjectCandidate { name: string; folder: string; files: LevelFiles; playtestSlot: number; exitZone: number | null; roomSourceSnapshot?: unknown; drawGroups?: readonly number[]; sourceStarts?: readonly SourceStart[] }
 
 export function encodeProject(document: LevelDocument): Uint8Array {
   const files = exportLevel(document);
   return zipSync({
-    [MANIFEST]: strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: 4, name: document.name, playtestSlot: document.playtestSlot, exitZone: document.exitZone })),
+    [MANIFEST]: strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: document.sourceStarts ? 5 : 4, name: document.name, playtestSlot: document.playtestSlot, exitZone: document.exitZone })),
     [ROOM_SOURCE]: strToU8(JSON.stringify(roomSourceSnapshot(document.roomSource))),
+    ...(document.sourceStarts ? { [PLAYER_STARTS]: strToU8(JSON.stringify(restoreSourceStarts(document.sourceStarts))) } : {}),
     'level/twolev.bin': files.data, 'level/twolev.graph.bin': files.graphics, 'level/twolev.clips': files.clips,
     ...(document.drawGroups ? { 'level/twolev.cfg': encodeLevelSetup(document.exitZone, document.drawGroups) } : {}),
   }, { level: 6 });
@@ -34,13 +37,14 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
   let projectSlot: number | undefined;
   let projectExit: number | null | undefined;
   let sourceSnapshot: unknown;
+  let sourceStarts: readonly SourceStart[] | undefined;
   const manifest = entries[MANIFEST];
   if (manifest) {
     if (manifest.length > 16384) throw new Error('The project manifest is too large.');
     let metadata: unknown;
     try { metadata = JSON.parse(strFromU8(manifest)); }
     catch { throw new Error('The project manifest is not valid JSON.'); }
-    if (!metadata || typeof metadata !== 'object' || !('format' in metadata) || metadata.format !== 'alien-breed-level-project' || !('version' in metadata) || typeof metadata.version !== 'number' || ![1, 2, 3, 4].includes(metadata.version))
+    if (!metadata || typeof metadata !== 'object' || !('format' in metadata) || metadata.format !== 'alien-breed-level-project' || !('version' in metadata) || typeof metadata.version !== 'number' || ![1, 2, 3, 4, 5].includes(metadata.version))
       throw new Error('This project format is not supported by this editor version.');
     if (metadata.version >= 2) {
       if (!('playtestSlot' in metadata) || typeof metadata.playtestSlot !== 'number' || !Number.isInteger(metadata.playtestSlot) || metadata.playtestSlot < 0 || metadata.playtestSlot > 15)
@@ -52,12 +56,20 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
         throw new Error('The project has an invalid exit zone.');
       projectExit = metadata.exitZone as number | null;
     }
-    if (metadata.version === 4) {
+    if (metadata.version >= 4) {
       const roomBytes = entries[ROOM_SOURCE];
       if (!roomBytes || roomBytes.length > MAX_FILE) throw new Error('The editable room source is missing or too large.');
       try { sourceSnapshot = JSON.parse(strFromU8(roomBytes)); }
       catch { throw new Error('The editable room source is not valid JSON.'); }
     } else if (entries[ROOM_SOURCE]) throw new Error('Editable room source requires project format version 4.');
+    if (metadata.version === 5) {
+      const startBytes = entries[PLAYER_STARTS];
+      if (!startBytes || startBytes.length > 4096) throw new Error('The editable player starts are missing or too large.');
+      let value: unknown;
+      try { value = JSON.parse(strFromU8(startBytes)); }
+      catch { throw new Error('The editable player starts are not valid JSON.'); }
+      sourceStarts = restoreSourceStarts(value);
+    } else if (entries[PLAYER_STARTS]) throw new Error('Editable player starts require project format version 5.');
     if ('name' in metadata && typeof metadata.name === 'string') projectName = metadata.name.slice(0, 200);
   }
   const groups = new Map<string, Record<string, Uint8Array>>();
@@ -82,10 +94,12 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
     if (projectExit !== undefined && setupExit !== undefined && projectExit !== setupExit) throw new Error('The project manifest and level setup disagree about the exit zone.');
     result.push({ name: projectName ?? (letter ? `Level ${letter.toLowerCase().charCodeAt(0) - 96}` : title), folder, files: { data, graphics, clips },
       playtestSlot: projectSlot ?? (letter ? letter.toLowerCase().charCodeAt(0) - 97 : 0), exitZone: projectExit !== undefined ? projectExit : setupExit ?? null,
-      ...(setup?.drawGroups ? { drawGroups: setup.drawGroups } : {}), ...(sourceSnapshot === undefined ? {} : { roomSourceSnapshot: sourceSnapshot }) });
+      ...(setup?.drawGroups ? { drawGroups: setup.drawGroups } : {}), ...(sourceSnapshot === undefined ? {} : { roomSourceSnapshot: sourceSnapshot }),
+      ...(sourceStarts === undefined ? {} : { sourceStarts }) });
   }
   if (result.length === 0) throw new Error('No game level was found. Open an .ab3d project, a level ZIP, or select all three twolev files together.');
   if (entries[ROOM_SOURCE] && (!manifest || result.length !== 1)) throw new Error('Editable room source must belong to one saved project.');
+  if (entries[PLAYER_STARTS] && (!manifest || result.length !== 1)) throw new Error('Editable player starts must belong to one saved project.');
   return result.sort((a, b) => a.folder.localeCompare(b.folder, undefined, { numeric: true }));
 }
 
@@ -96,7 +110,7 @@ export function openArchive(bytes: Uint8Array, name: string): ProjectCandidate[]
   try {
     entries = unzipSync(bytes, { filter(file) {
       const base = file.name.replaceAll('\\', '/').split('/').at(-1)?.toLowerCase() ?? '';
-      if (!LEVEL_NAMES.includes(base) && file.name !== MANIFEST && file.name !== ROOM_SOURCE) return false;
+      if (!LEVEL_NAMES.includes(base) && file.name !== MANIFEST && file.name !== ROOM_SOURCE && file.name !== PLAYER_STARTS) return false;
       if (file.originalSize > MAX_FILE || (extracted += file.originalSize) > MAX_ARCHIVE)
         throw new Error('The archive contains too much unpacked level data.');
       return true;
@@ -116,7 +130,8 @@ export function decodeProject(bytes: Uint8Array): LevelDocument {
 
 export function openProjectCandidate(project: ProjectCandidate): LevelDocument {
   const document = openLevel(project.name, project.files, project.playtestSlot, project.exitZone, project.drawGroups);
-  return project.roomSourceSnapshot === undefined ? document : { ...document, roomSource: restoreRoomSource(document, project.roomSourceSnapshot) };
+  return { ...document, ...(project.roomSourceSnapshot === undefined ? {} : { roomSource: restoreRoomSource(document, project.roomSourceSnapshot) }),
+    ...(project.sourceStarts === undefined ? {} : { sourceStarts: restoreSourceStarts(project.sourceStarts) }) };
 }
 
 export async function readFiles(files: File[]): Promise<ProjectCandidate[]> {

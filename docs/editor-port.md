@@ -752,3 +752,27 @@ fixtures can establish current-format support independently.
   The source build remains outside the normal UI
   workflow until stable source gameplay references, portal spans, controller
   grouping and other outstanding authoring requirements are completed.
+
+- Authored player starts now reference stable editable room IDs rather than
+  generated convex cells. The Starts inspector offers room names and whole-unit
+  coordinates for source edits; map drawing/hit-testing and navigator focus use
+  the authored location. Dragging locates the editable room, including newly
+  drawn rooms. Original unchanged-map start edits retain their binary workflow.
+  Source start commands participate in atomic undo/redo, stale-edit checks and
+  saved-change tracking. Project format 5 stores `player-starts.json` alongside
+  the original binary baseline and room source; versions 1–4 remain readable,
+  and saves without source starts remain version 4. Invalid schemas and missing
+  files are rejected. A deleted/reshaped start room remains recoverable as source
+  but blocks compilation with an actionable dependency error.
+  Source compilation locates each start's containing convex cell and patches
+  both header coordinates/room and its multiplayer avatar's room, graphics room
+  and 16.16 object-point coordinates, following `commands.setStart` and header
+  offsets +46/+50. Opaque import bytes remain unchanged in the source project.
+  Both player starts, split-room lookup, save/recovery and protected avatar edits
+  have direct tests; native browser spawn tests exercise a newly drawn room.
+  Validation: production build and all 601 model tests pass; the four authored
+  start checks pass in Chromium/Firefox, along with the 20 existing browser
+  checks for editing, project persistence, recovery and rejected imports.
+  Existing-object and teleport destination source authoring, portal wall spans,
+  and the normal source build/export integration remain unfinished. No finished
+  editor deployment has been made.

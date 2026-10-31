@@ -1,9 +1,10 @@
 import { BinaryReader, checkedInteger } from './binary';
 import { parseLevel, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './level';
 import type { RoomChange, RoomSource } from './roomSource';
+import { placeSourceStart, type SourceStart } from './sourceStarts';
 
 export interface BytePatch { file: keyof LevelFiles; offset: number; before: Uint8Array; after: Uint8Array }
-export interface EditCommand { label: string; patches: BytePatch[]; playtestSlot?: { before: number; after: number }; exitZone?: { before: number | null; after: number | null }; roomSource?: { before: RoomSource; after: RoomSource } }
+export interface EditCommand { label: string; patches: BytePatch[]; playtestSlot?: { before: number; after: number }; exitZone?: { before: number | null; after: number | null }; roomSource?: { before: RoomSource; after: RoomSource }; sourceStarts?: { before: readonly SourceStart[] | undefined; after: readonly SourceStart[] | undefined } }
 export interface History { document: LevelDocument; past: EditCommand[]; future: EditCommand[] }
 
 export function numberPatch(document: LevelDocument, file: keyof LevelFiles, offset: number, value: number, size: 1 | 2 | 4, signed = true): BytePatch {
@@ -22,6 +23,12 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
   let playtestSlot = document.playtestSlot;
   let exitZone = document.exitZone;
   let roomSource = document.roomSource;
+  let sourceStarts = document.sourceStarts;
+  if (command.sourceStarts) {
+    const { before, after } = command.sourceStarts;
+    if (sourceStarts !== (reverse ? after : before)) throw new Error('The player starts changed before this edit could be applied. No changes were saved.');
+    sourceStarts = reverse ? before : after;
+  }
   if (command.roomSource) {
     const { before, after } = command.roomSource;
     if (roomSource !== (reverse ? after : before)) throw new Error('The room source changed before this edit could be applied. No changes were saved.');
@@ -48,11 +55,12 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
       throw new Error('The document changed before this edit could be applied. No changes were saved.');
     files[patch.file].set(after, patch.offset);
   }
-  return parseLevel(document.name, files, document.encoded, document.original, playtestSlot, exitZone, roomSource, document.drawGroups);
+  const result = parseLevel(document.name, files, document.encoded, document.original, playtestSlot, exitZone, roomSource, document.drawGroups);
+  return sourceStarts === undefined ? result : { ...result, sourceStarts };
 }
 
 export function execute(history: History, command: EditCommand): History {
-  if (command.patches.every(patch => sameBytes(patch.before, patch.after)) && (!command.playtestSlot || command.playtestSlot.before === command.playtestSlot.after) && (!command.exitZone || command.exitZone.before === command.exitZone.after) && (!command.roomSource || command.roomSource.before === command.roomSource.after)) return history;
+  if (command.patches.every(patch => sameBytes(patch.before, patch.after)) && (!command.playtestSlot || command.playtestSlot.before === command.playtestSlot.after) && (!command.exitZone || command.exitZone.before === command.exitZone.after) && (!command.roomSource || command.roomSource.before === command.roomSource.after) && (!command.sourceStarts || command.sourceStarts.before === command.sourceStarts.after)) return history;
   const document = applyCommand(history.document, command);
   return { document, past: [...history.past, command], future: [] };
 }
@@ -81,6 +89,12 @@ export function setExitZone(document: LevelDocument, zone: number | null): EditC
 
 export function editRoomSource(change: RoomChange): EditCommand {
   return { label: change.label, patches: [], roomSource: { before: change.before, after: change.after } };
+}
+
+export function setSourceStart(document: LevelDocument, player: 1 | 2, room: string, x: number, z: number): EditCommand {
+  return { label: `Move player ${player} start`, patches: [], sourceStarts: {
+    before: document.sourceStarts, after: placeSourceStart(document, player, room, x, z),
+  } };
 }
 
 export type ZoneProperty = 'brightness' | 'upperBrightness' | 'floorSound' | 'upperFloorSound';
@@ -113,6 +127,7 @@ export function setTeleport(document: LevelDocument, zoneId: number, destination
 export function moveObject(document: LevelDocument, objectId: number, x: number, z: number, zoneId: number): EditCommand {
   const object = document.objects.find(object => object.id === objectId);
   if (!object) throw new Error('That object no longer exists.');
+  assertNotAuthoredAvatar(document, object.offset);
   const zone = document.zones.find(zone => zone.id === zoneId);
   if (!zone || !zoneContainsPoint(document, zone, x, z)) throw new Error('Place the object inside its selected zone.');
   return { label: `Move object ${objectId}`, patches: [
@@ -126,12 +141,24 @@ export function moveObject(document: LevelDocument, objectId: number, x: number,
 export function removeObject(document: LevelDocument, objectId: number): EditCommand {
   const object = document.objects.find(object => object.id === objectId);
   if (!object) throw new Error('That object no longer exists.');
+  assertNotAuthoredAvatar(document, object.offset);
   return { label: `Delete object ${objectId}`, patches: [
     numberPatch(document, 'data', object.offset + 12, -1, 2), numberPatch(document, 'data', object.offset + 26, -1, 2),
   ] };
 }
 
+function assertNotAuthoredAvatar(document: LevelDocument, offset: number): void {
+  const reader = new BinaryReader(document.files.data, 'player avatar');
+  if (document.sourceStarts?.some(start => reader.i32(start.player === 1 ? 46 : 50) === offset))
+    throw new Error('This avatar follows an authored player start. Select the player in Starts to move it.');
+}
+
 export function setStart(document: LevelDocument, player: 1 | 2, x: number, z: number, zoneId: number): EditCommand {
+  if (document.sourceStarts?.some(start => start.player === player)) {
+    const room = document.roomSource.rooms.find(room => room.originZone === zoneId);
+    if (!room) throw new Error('Choose an existing editable room for the player start.');
+    return setSourceStart(document, player, room.id, x, z);
+  }
   const zone = document.zones.find(zone => zone.id === zoneId);
   if (!zone || !zoneContainsPoint(document, zone, x, z)) throw new Error('Place the player start inside its selected zone.');
   const offset = player === 1 ? 0 : 6;

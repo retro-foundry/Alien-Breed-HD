@@ -2,6 +2,8 @@ import { normaliseRoomOutline, type Position } from './geometry';
 import type { LevelDocument } from './level';
 import type { RoomSource } from './roomSource';
 import { compileRoomTopology, type CompiledRoomCell, type RoomTopology } from './roomTopology';
+import { BinaryReader } from './binary';
+import { restoreSourceStarts } from './sourceStarts';
 
 export interface ReferenceDiagnostic { severity: 'error' | 'warning'; subject: string; message: string }
 export interface RoomReferencePlan {
@@ -56,9 +58,21 @@ export function planRoomReferences(document: LevelDocument, source: RoomSource, 
     error(subject, `Its position (${point.x}, ${point.z}) is outside the remaining geometry of room ${origin}. Move it inside before building.`);
     return null;
   };
-  const starts = document.starts.map(start => ({ player: start.player, cell: locate(start.zone, start, `Player ${start.player} start`) }));
-  const objects = new Map(document.objects.map(object => [object.id, object.zone < 0 ? object.zone
-    : locate(object.zone, object, `Object ${object.id}`, true)]));
+  const authoredStarts = restoreSourceStarts(document.sourceStarts ?? []);
+  const starts = document.starts.map(start => {
+    const authored = authoredStarts.find(item => item.player === start.player);
+    if (!authored) return { player: start.player, cell: locate(start.zone, start, `Player ${start.player} start`) };
+    const cells = topology.cells.filter(cell => cell.sourceId === authored.room);
+    const cell = cells.filter(cell => cellContainsPoint(topology, cell, authored)).toSorted((a, b) => a.id - b.id)[0];
+    if (!cell) error(`Player ${start.player} start`, cells.length
+      ? `Its position (${authored.x}, ${authored.z}) is outside editable room ${authored.room}. Move it inside before building.`
+      : `Its editable room ${authored.room} was deleted. Choose another room before building.`);
+    return { player: start.player, cell: cell?.id ?? null };
+  });
+  const reader = new BinaryReader(document.files.data, 'source avatar references');
+  const avatarStarts = new Map(authoredStarts.map(start => [reader.i32(start.player === 1 ? 46 : 50), starts.find(item => item.player === start.player)!.cell]));
+  const objects = new Map(document.objects.map(object => [object.id, avatarStarts.has(object.offset) ? avatarStarts.get(object.offset)!
+    : object.zone < 0 ? object.zone : locate(object.zone, object, `Object ${object.id}`, true)]));
   const teleports = new Map<number, number | null>();
   for (const room of source.rooms) if (room.originZone !== null) {
     const template = document.zones.find(zone => zone.id === room.recordZone)!;
