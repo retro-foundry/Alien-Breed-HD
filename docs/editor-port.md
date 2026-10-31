@@ -177,3 +177,15 @@ fixtures can establish current-format support independently.
   normals and object/mechanism/teleporter remapping remain required. Source
   topology is not enabled in the deployed application until those stages and
   the canvas/project integration are verified in the actual engine.
+- `collisionBuild.ts` now generates primary collision records and adjoining
+  solid-corner lists from compiled cells. Its formulas come from `LEVELSAVE`
+  (`amiga/archive/amos/leveld.asc` 979–1102) and the actual displacement-byte
+  consumer in `src/movement.c:get_floorline_shift_offsets`. All 11,190 shipped
+  collision records rebuild byte-for-byte, including signed displacement
+  components and zero initial touch flags; all 2,496 secondary corner-wall
+  lists rebuild independently from primary geometry. Lengths and displacement
+  components truncate towards zero, rather than round. Coordinate/span/length
+  overflow and missing points/destinations reject before output is returned.
+  The suite now has 162 passing tests. Complete-file assembly, surface records,
+  pointer relocation and dependency remapping are still pending; this is not
+  evidence that newly drawn rooms are playable yet.
