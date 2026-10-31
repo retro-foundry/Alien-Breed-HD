@@ -42,6 +42,7 @@ export interface Start { player: 1 | 2; x: number; z: number; zone: number }
 export interface LevelFiles { data: Uint8Array; graphics: Uint8Array; clips: Uint8Array }
 export interface LevelDocument {
   name: string;
+  playtestSlot: number;
   files: LevelFiles;
   encoded: LevelFiles;
   original: LevelFiles;
@@ -137,7 +138,8 @@ function mechanismTable(reader: BinaryReader, offset: number, kind: 'door' | 'li
   throw new LevelFormatError(`${kind} table has no 999 terminator`, reader.name, offset);
 }
 
-export function parseLevel(name: string, files: LevelFiles, encoded: LevelFiles = files, original: LevelFiles = files): LevelDocument {
+export function parseLevel(name: string, files: LevelFiles, encoded: LevelFiles = files, original: LevelFiles = files, playtestSlot = 0): LevelDocument {
+  if (!Number.isInteger(playtestSlot) || playtestSlot < 0 || playtestSlot > 15) throw new Error('Choose a game level slot from 1 to 16.');
   const data = new BinaryReader(files.data, 'twolev.bin');
   const graphics = new BinaryReader(files.graphics, 'twolev.graph.bin');
   data.require(0, 54); graphics.require(0, 16);
@@ -249,14 +251,14 @@ export function parseLevel(name: string, files: LevelFiles, encoded: LevelFiles 
     connectTableOffset += (words.length + 1) * 2;
   }
   clips.require(connectTableOffset, 2);
-  return { name, files, encoded, original, points, lines, zones, objects, mechanisms, switches, starts, controlPoints,
+  return { name, playtestSlot, files, encoded, original, points, lines, zones, objects, mechanisms, switches, starts, controlPoints,
     pointBrightnessOffset: pointOffset + pointCount * 4, objectPointsOffset, connectTableOffset };
 }
 
-export function openLevel(name: string, encoded: LevelFiles): LevelDocument {
+export function openLevel(name: string, encoded: LevelFiles, playtestSlot = 0): LevelDocument {
   const files = { data: unpackSb(encoded.data, 'twolev.bin'), graphics: unpackSb(encoded.graphics, 'twolev.graph.bin'),
     clips: unpackSb(encoded.clips, 'twolev.clips') };
-  return parseLevel(name, files, encoded);
+  return parseLevel(name, files, encoded, files, playtestSlot);
 }
 
 export function zoneContainsPoint(document: LevelDocument, zone: Zone, x: number, z: number): boolean {

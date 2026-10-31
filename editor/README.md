@@ -31,6 +31,12 @@ Opening local files does not upload them anywhere.
 - Open a simultaneous 2D/3D view, visit selected zones, inspect lighting with
   the actual game renderer, and build/play the current map in a chosen slot.
   Playtests use separate browser storage from the normal game.
+- Choose the target game slot in Project or the 3D toolbar. The choice supports
+  undo/redo and is saved in project copies and browser recovery; changing views
+  or the project name does not change it. Game ZIPs contain the matching
+  `levels/level_a/` through `levels/level_p/` directory and installation notes.
+  Extract those ZIPs into the game's data directory. Older v1 project backups
+  did not store a slot and open at slot 1; select the intended slot before use.
 - Reject incomplete/corrupt input and invalid moves without replacing the
   document being edited. Imports are transactional and stale asynchronous
   loads cannot overwrite newer work.

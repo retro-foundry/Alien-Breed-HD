@@ -5,31 +5,39 @@ const MAX_ARCHIVE = 64 * 1024 * 1024;
 const MAX_FILE = 16 * 1024 * 1024;
 const LEVEL_NAMES = ['twolev.bin', 'twolev.graph.bin', 'twolev.clips'];
 const MANIFEST = 'alien-breed-project.json';
-export interface ProjectCandidate { name: string; folder: string; files: LevelFiles }
+export interface ProjectCandidate { name: string; folder: string; files: LevelFiles; playtestSlot: number }
 
 export function encodeProject(document: LevelDocument): Uint8Array {
   const files = exportLevel(document);
   return zipSync({
-    [MANIFEST]: strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: 1, name: document.name })),
+    [MANIFEST]: strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: 2, name: document.name, playtestSlot: document.playtestSlot })),
     'level/twolev.bin': files.data, 'level/twolev.graph.bin': files.graphics, 'level/twolev.clips': files.clips,
   }, { level: 6 });
 }
 
 export function encodeGameLevel(document: LevelDocument): Uint8Array {
   const files = exportLevel(document);
-  return zipSync({ 'twolev.bin': files.data, 'twolev.graph.bin': files.graphics, 'twolev.clips': files.clips }, { level: 6 });
+  const folder = `levels/level_${String.fromCharCode(97 + document.playtestSlot)}/`;
+  return zipSync({ [`${folder}twolev.bin`]: files.data, [`${folder}twolev.graph.bin`]: files.graphics, [`${folder}twolev.clips`]: files.clips,
+    'INSTALL.txt': strToU8(`Alien Breed level slot ${document.playtestSlot + 1}\n\nExtract this ZIP into the game's data directory. It replaces ${folder}\nKeep a copy of the original level before replacing it.\n`) }, { level: 6 });
 }
 
 function candidates(entries: Record<string, Uint8Array>, title: string): ProjectCandidate[] {
   let projectName: string | undefined;
+  let projectSlot: number | undefined;
   const manifest = entries[MANIFEST];
   if (manifest) {
     if (manifest.length > 16384) throw new Error('The project manifest is too large.');
     let metadata: unknown;
     try { metadata = JSON.parse(strFromU8(manifest)); }
     catch { throw new Error('The project manifest is not valid JSON.'); }
-    if (!metadata || typeof metadata !== 'object' || !('format' in metadata) || metadata.format !== 'alien-breed-level-project' || !('version' in metadata) || metadata.version !== 1)
+    if (!metadata || typeof metadata !== 'object' || !('format' in metadata) || metadata.format !== 'alien-breed-level-project' || !('version' in metadata) || (metadata.version !== 1 && metadata.version !== 2))
       throw new Error('This project format is not supported by this editor version.');
+    if (metadata.version === 2) {
+      if (!('playtestSlot' in metadata) || typeof metadata.playtestSlot !== 'number' || !Number.isInteger(metadata.playtestSlot) || metadata.playtestSlot < 0 || metadata.playtestSlot > 15)
+        throw new Error('The project has an invalid game level slot. Choose a slot from 1 to 16.');
+      projectSlot = metadata.playtestSlot;
+    }
     if ('name' in metadata && typeof metadata.name === 'string') projectName = metadata.name.slice(0, 200);
   }
   const groups = new Map<string, Record<string, Uint8Array>>();
@@ -50,7 +58,8 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
     const data = files['twolev.bin'], graphics = files['twolev.graph.bin'], clips = files['twolev.clips'];
     if (!data || !graphics || !clips) throw new Error(`The level in ${folder || 'this selection'} needs all three files: twolev.bin, twolev.graph.bin and twolev.clips.`);
     const letter = /level_([a-p])\/$/i.exec(folder)?.[1];
-    result.push({ name: projectName ?? (letter ? `Level ${letter.toLowerCase().charCodeAt(0) - 96}` : title), folder, files: { data, graphics, clips } });
+    result.push({ name: projectName ?? (letter ? `Level ${letter.toLowerCase().charCodeAt(0) - 96}` : title), folder, files: { data, graphics, clips },
+      playtestSlot: projectSlot ?? (letter ? letter.toLowerCase().charCodeAt(0) - 97 : 0) });
   }
   if (result.length === 0) throw new Error('No game level was found. Open an .ab3d project, a level ZIP, or select all three twolev files together.');
   return result.sort((a, b) => a.folder.localeCompare(b.folder, undefined, { numeric: true }));
@@ -78,7 +87,7 @@ export function decodeProject(bytes: Uint8Array): LevelDocument {
   const projects = openArchive(bytes, 'Recovered project');
   if (projects.length !== 1) throw new Error('A saved project must contain exactly one level.');
   const project = projects[0]!;
-  return openLevel(project.name, project.files);
+  return openLevel(project.name, project.files, project.playtestSlot);
 }
 
 export async function readFiles(files: File[]): Promise<ProjectCandidate[]> {

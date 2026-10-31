@@ -253,3 +253,18 @@ fixtures can establish current-format support independently.
   including the original level 3 start. All 32 original starts and 52 teleport
   destinations pass containment; the browser regression moves that level 3
   start and undoes it. Actual game movement/collision code is unchanged.
+- The target game slot is now project metadata rather than filename-derived
+  preview state. Project format v2 stores it; v1 backups migrate to explicit
+  slot 1 because they contain no saved slot. Imports from actual game level
+  directories retain that directory's slot. Slot edits participate in the same
+  undo/redo and autosave/dirty protection as binary edits, and the Project
+  panel makes the setting available without loading the 3D engine. Exported
+  game ZIPs use the chosen `levels/level_a/`–`levels/level_p/` directory and
+  include installation instructions. The unit suite has 240 tests. Exit-zone
+  configuration, source-room archive persistence and the full geometry build
+  remain required; saving a slot does not establish those features.
+  Chrome/Firefox checks cover slot undo/redo, project download/reopen, recovery,
+  2D/3D view changes, actual engine slot selection and matching export paths.
+  A slot-only edit with unavailable storage keeps the dirty marker/unload
+  protection after a cancelled backup and cannot be discarded by opening a
+  different map. All 28 targeted browser checks pass alongside the unit suite.

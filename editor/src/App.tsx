@@ -1,7 +1,7 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { openLevel, objectName, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './model/level';
-import { execute, redo, undo, moveObject, setStart, type EditCommand, type History } from './model/commands';
+import { execute, redo, undo, moveObject, setStart, setPlaytestSlot, type EditCommand, type History } from './model/commands';
 import { decodeProject, encodeGameLevel, encodeProject, readFiles, type ProjectCandidate } from './model/project';
 import { listWorkspaces, saveWorkspace, type SavedWorkspace } from './persistence';
 import { MapCanvas, type Selection } from './components/MapCanvas';
@@ -11,7 +11,10 @@ import { EnginePreview } from './components/EnginePreview';
 import { ControlTooltips } from './components/ControlTooltips';
 import { ControlsHelp } from './components/ControlsHelp';
 
-interface Workspace { id: string; history: History; saved: LevelFiles }
+interface Workspace { id: string; history: History; saved: LevelFiles; savedSlot: number }
+function workspaceDirty(workspace: Workspace): boolean {
+  return workspace.history.document.playtestSlot !== workspace.savedSlot || (['data', 'graphics', 'clips'] as const).some(file => !sameBytes(workspace.history.document.files[file], workspace.saved[file]));
+}
 class CanvasBoundary extends Component<{ children: ReactNode; onExport: () => void }, { error: string | null }> {
   state: { error: string | null } = { error: null };
   static getDerivedStateFromError(error: Error) { return { error: error.message }; }
@@ -34,11 +37,11 @@ async function originalLevel(number: number, signal?: AbortSignal): Promise<Leve
   };
   const [data, graphics, clips] = await Promise.all(['twolev.bin', 'twolev.graph.bin', 'twolev.clips'].map(load));
   if (!data || !graphics || !clips) throw new Error('The reference level is incomplete.');
-  return openLevel(`Level ${number}`, { data, graphics, clips });
+  return openLevel(`Level ${number}`, { data, graphics, clips }, number - 1);
 }
 
 function makeWorkspace(document: LevelDocument, id: string = crypto.randomUUID()): Workspace {
-  return { id, history: { document, past: [], future: [] }, saved: document.files };
+  return { id, history: { document, past: [], future: [] }, saved: document.files, savedSlot: document.playtestSlot };
 }
 
 export function App() {
@@ -70,7 +73,7 @@ export function App() {
     window.document.addEventListener('keydown', trap);
     return () => { window.document.removeEventListener('keydown', trap); if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
   }, [help, showRecents, choices.length]);
-  const dirty = useMemo(() => !!workspace && (['data', 'graphics', 'clips'] as const).some(file => !sameBytes(workspace.history.document.files[file], workspace.saved[file])), [workspace]);
+  const dirty = useMemo(() => !!workspace && workspaceDirty(workspace), [workspace]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -100,7 +103,7 @@ export function App() {
       saveWorkspace(current.id, current.history.document).then(() => { if (!cancelled) {
         setAutosave('Workspace saved');
         setWorkspace(latest => latest?.id === current.id && latest.history.document === current.history.document
-          ? { ...latest, saved: current.history.document.files } : latest);
+          ? { ...latest, saved: current.history.document.files, savedSlot: current.history.document.playtestSlot } : latest);
       } })
         .catch(error => { if (!cancelled) { setAutosave('Autosave unavailable'); setError(error instanceof Error ? error.message : String(error)); } });
     }, 600);
@@ -163,7 +166,7 @@ export function App() {
 
   async function openDocument(next: LevelDocument, id?: string, request = ++generation.current) {
     const current = workspaceRef.current;
-    if (current && (['data', 'graphics', 'clips'] as const).some(file => !sameBytes(current.history.document.files[file], current.saved[file])))
+    if (current && workspaceDirty(current))
       await saveWorkspace(current.id, current.history.document);
     if (request !== generation.current) return;
     setWorkspace(makeWorkspace(next, id)); setSelection(null); setFocusZone(undefined); setSearch(''); setChoices([]); setShowRecents(false); setStatus(`Opened ${next.name}`);
@@ -183,7 +186,7 @@ export function App() {
     try {
       const candidates = await readFiles(files);
       if (request !== generation.current) return;
-      if (candidates.length === 1 && candidates[0]) await openDocument(openLevel(candidates[0].name, candidates[0].files), undefined, request);
+      if (candidates.length === 1 && candidates[0]) await openDocument(openLevel(candidates[0].name, candidates[0].files, candidates[0].playtestSlot), undefined, request);
       else setChoices(candidates);
     } catch (error) { if (request === generation.current) fail(error); }
     finally { if (request === generation.current) setBusy(''); }
@@ -213,6 +216,7 @@ export function App() {
     {error && <div className="error-banner" role="alert"><Icon name="alert" /><span>{error}</span><button className="icon-button" aria-label="Dismiss error" title="Close this message. Your current document stays open." onClick={() => setError('')}><Icon name="close" size={16} /></button></div>}
     <div className="workspace">
       <aside className="navigator"><div className="panel-title">PROJECT <span className="eyebrow">LOCAL</span></div><div className="project-picker"><Icon name="layers" /><div><strong>{document?.name ?? 'Opening…'}</strong><span>{document?.zones.length ?? 0} zones · {activeObjects} objects</span></div></div>
+        <label className="reference-picker"><span>Target game slot</span><select aria-label="Target game slot" title="Saved with this project. Build & play uses this game slot; Export level writes its matching level directory. Undo restores the previous slot." disabled={!document} value={document?.playtestSlot ?? 0} onChange={event => { if (document) edit(() => setPlaytestSlot(document, Number(event.target.value))); }}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>Level slot {i + 1}</option>)}</select></label>
         <label className="reference-picker"><span>Original levels</span><select aria-label="Original level" title="Open one of the sixteen shipped maps. Your current edits are saved in this browser first." value={/^Level (\d+)$/.exec(document?.name ?? '')?.[1] ?? ''} disabled={!!busy} onChange={event => { if (event.target.value) void loadOriginal(Number(event.target.value)); }}><option value="">Choose a reference level</option>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i + 1}>Level {String(i + 1).padStart(2, '0')}</option>)}</select></label>
         <div className="navigator-tabs" role="tablist" aria-label="Map contents">{(['zones', 'objects', 'starts'] as const).map(value => <button key={value} role="tab" title={value === 'starts' ? 'Find and select player starting positions.' : value === 'zones' ? 'Find and select rooms by zone number.' : 'Find enemies, pickups and scenery by name.'} aria-selected={tab === value} className={tab === value ? 'active' : ''} onClick={() => { setTab(value); setSearch(''); }}>{value === 'starts' ? 'Starts' : value[0]?.toUpperCase() + value.slice(1)}</button>)}</div>
         <label className="search-box"><Icon name="search" size={15} /><input ref={searchInput} aria-label="Search map contents" title="Find a zone number or object name. Press / from the map to focus search." value={search} onChange={event => setSearch(event.target.value)} placeholder={tab === 'zones' ? 'Find a zone…' : 'Find an object…'} /><kbd>/</kbd></label>
@@ -232,7 +236,7 @@ export function App() {
         <div className="view-tabs" role="group" aria-label="Viewport layout"><button className="project-toggle" aria-label="Toggle project navigator" title="Show or hide the level picker and map contents. Shortcut / opens search." aria-expanded={navigatorOpen} onClick={() => setNavigatorOpen(open => !open)}><Icon name="layers" size={14} />Project</button>{(['map', 'split', '3d'] as const).map(mode => <button key={mode} aria-pressed={view === mode} className={view === mode ? 'active' : ''} title={mode === 'map' ? 'Edit and inspect the overhead map.' : mode === 'split' ? 'Show the map and actual game renderer together.' : 'Inspect the level in the actual game renderer.'} onClick={() => setView(mode)}>{mode === 'map' ? '2D map' : mode === 'split' ? 'Split view' : '3D view'}</button>)}</div>
         {document ? <CanvasBoundary key={workspace?.id} onExport={save}><div className={`viewports viewports-${view}`}>
           {view !== '3d' && <MapCanvas document={document} selection={selection} onSelect={setSelection} onMove={move} tool={tool} layer={layer} grid={grid} showObjects={showObjects} onCursor={(x, z) => setCursor({ x, z })} fitKey={fitKey} focusZone={focusZone} />}
-          {view !== 'map' && <EnginePreview key={workspace?.id} document={document} selection={selection} layer={layer} onSelectZone={id => setSelection({ kind: 'zone', id })} />}
+          {view !== 'map' && <EnginePreview key={workspace?.id} document={document} selection={selection} layer={layer} onSelectZone={id => setSelection({ kind: 'zone', id })} onSlotChange={slot => edit(() => setPlaytestSlot(document, slot))} />}
         </div></CanvasBoundary> : <div className="canvas-error"><Icon name="layers" size={36} /><h2>Open a level to begin</h2><p>Drop a project, level ZIP or the three twolev files here.</p><button className="primary-button" onClick={() => fileInput.current?.click()}>Open files</button></div>}
         {busy && <div className="busy-overlay" role="status"><span className="spinner" />{busy}</div>}
       </main>
@@ -242,7 +246,7 @@ export function App() {
     {(help || showRecents || choices.length > 0) && <div className="modal-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) { setHelp(false); setShowRecents(false); setChoices([]); } }}><section className="modal" role="dialog" aria-modal="true" aria-label={help ? 'Editor help' : choices.length ? 'Choose a level' : 'Recent workspaces'}><button className="modal-close icon-button" aria-label="Close dialog" title="Close this panel. Shortcut: Esc." onClick={() => { setHelp(false); setShowRecents(false); setChoices([]); }}><Icon name="close" /></button>
       {help && <ControlsHelp />}
       {showRecents && <><span className="eyebrow">SAVED IN THIS BROWSER</span><h2>Recent workspaces</h2>{recents.length === 0 && <p>No workspaces have been saved yet.</p>}{recents.map(recent => <button className="recent-entry" key={recent.id} onClick={() => { try { void openDocument(decodeProject(recent.bytes), recent.id).catch(fail); } catch (error) { fail(error); } }}><Icon name="layers" /><span><strong>{recent.name}</strong><small>{new Date(recent.updatedAt).toLocaleString()}</small></span><Icon name="chevron" size={15} /></button>)}</>}
-      {choices.length > 0 && <><span className="eyebrow">{choices.length} LEVELS FOUND</span><h2>Choose a level to open</h2>{choices.map(choice => <button className="recent-entry" key={choice.folder} onClick={() => { try { void openDocument(openLevel(choice.name, choice.files)).catch(fail); } catch (error) { fail(error); } }}><Icon name="layers" /><span><strong>{choice.name}</strong><small>{choice.folder}</small></span><Icon name="chevron" size={15} /></button>)}</>}
+      {choices.length > 0 && <><span className="eyebrow">{choices.length} LEVELS FOUND</span><h2>Choose a level to open</h2>{choices.map(choice => <button className="recent-entry" key={choice.folder} onClick={() => { try { void openDocument(openLevel(choice.name, choice.files, choice.playtestSlot)).catch(fail); } catch (error) { fail(error); } }}><Icon name="layers" /><span><strong>{choice.name}</strong><small>{choice.folder}</small></span><Icon name="chevron" size={15} /></button>)}</>}
     </section></div>}
   </div>;
 }

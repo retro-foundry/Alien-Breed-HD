@@ -2,7 +2,7 @@ import { BinaryReader, checkedInteger } from './binary';
 import { parseLevel, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './level';
 
 export interface BytePatch { file: keyof LevelFiles; offset: number; before: Uint8Array; after: Uint8Array }
-export interface EditCommand { label: string; patches: BytePatch[] }
+export interface EditCommand { label: string; patches: BytePatch[]; playtestSlot?: { before: number; after: number } }
 export interface History { document: LevelDocument; past: EditCommand[]; future: EditCommand[] }
 
 export function numberPatch(document: LevelDocument, file: keyof LevelFiles, offset: number, value: number, size: 1 | 2 | 4, signed = true): BytePatch {
@@ -18,6 +18,12 @@ export function numberPatch(document: LevelDocument, file: keyof LevelFiles, off
 }
 
 export function applyCommand(document: LevelDocument, command: EditCommand, reverse = false): LevelDocument {
+  let playtestSlot = document.playtestSlot;
+  if (command.playtestSlot) {
+    const { before, after } = command.playtestSlot;
+    if (playtestSlot !== (reverse ? after : before)) throw new Error('The project slot changed before this edit could be applied. No changes were saved.');
+    playtestSlot = checkedInteger(reverse ? before : after, 0, 15, 'Game level slot');
+  }
   const files = { ...document.files };
   const changed = new Set<keyof LevelFiles>();
   for (const patch of command.patches) {
@@ -29,11 +35,11 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
       throw new Error('The document changed before this edit could be applied. No changes were saved.');
     files[patch.file].set(after, patch.offset);
   }
-  return parseLevel(document.name, files, document.encoded, document.original);
+  return parseLevel(document.name, files, document.encoded, document.original, playtestSlot);
 }
 
 export function execute(history: History, command: EditCommand): History {
-  if (command.patches.every(patch => sameBytes(patch.before, patch.after))) return history;
+  if (command.patches.every(patch => sameBytes(patch.before, patch.after)) && (!command.playtestSlot || command.playtestSlot.before === command.playtestSlot.after)) return history;
   const document = applyCommand(history.document, command);
   return { document, past: [...history.past, command], future: [] };
 }
@@ -48,6 +54,11 @@ export function redo(history: History): History {
   const command = history.future.at(-1);
   if (!command) return history;
   return { document: applyCommand(history.document, command), past: [...history.past, command], future: history.future.slice(0, -1) };
+}
+
+export function setPlaytestSlot(document: LevelDocument, slot: number): EditCommand {
+  checkedInteger(slot, 0, 15, 'Game level slot');
+  return { label: `Use game level slot ${slot + 1}`, patches: [], playtestSlot: { before: document.playtestSlot, after: slot } };
 }
 
 export type ZoneProperty = 'brightness' | 'upperBrightness' | 'floorSound' | 'upperFloorSound';

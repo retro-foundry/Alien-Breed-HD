@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
-import { openArchive } from '../../src/model/project';
+import { openArchive, decodeProject } from '../../src/model/project';
 import { openLevel } from '../../src/model/level';
 import oracles from '../fixtures/original-levels.json' with { type: 'json' };
 
@@ -139,6 +139,40 @@ test('a valid level 3 spawn edit is not rejected by neighbouring corner-wall fen
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(page.getByRole('spinbutton', { name: 'Position X' })).toHaveValue('-624');
+});
+
+test('the project target slot survives undo, saves, recovery and reopening the 3D view', async ({ page }, testInfo) => {
+  test.setTimeout(90000);
+  page.on('dialog', dialog => void dialog.accept());
+  await page.goto('/');
+  await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  const target = page.getByRole('combobox', { name: 'Target game slot', exact: true });
+  await target.selectOption('8');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(target).toHaveValue('0');
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await expect(target).toHaveValue('8');
+  const saved = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const path = testInfo.outputPath('slot-nine.ab3d'); await (await saved).saveAs(path);
+  expect(decodeProject(new Uint8Array(await readFile(path))).playtestSlot).toBe(8);
+  const exported = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export level', exact: true }).click();
+  const exportPath = testInfo.outputPath('slot-nine-game.zip'); await (await exported).saveAs(exportPath);
+  expect(openArchive(new Uint8Array(await readFile(exportPath)), 'game.zip')[0]!.folder).toBe('levels/level_i/');
+  await page.getByRole('combobox', { name: 'Original level' }).selectOption('2');
+  await expect(target).toHaveValue('1');
+  await page.locator('input[type=file]').setInputFiles(path);
+  await expect(target).toHaveValue('8');
+  await expect(page.getByText('Workspace saved', { exact: true })).toBeVisible();
+  await page.reload(); await expect(target).toHaveValue('8');
+  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  const preview = page.getByRole('region', { name: '3D game engine preview' });
+  await expect(preview).toHaveAttribute('data-level-slot', '8', { timeout: 60000 });
+  await page.getByRole('button', { name: '2D map', exact: true }).click();
+  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await expect(preview).toHaveAttribute('data-level-slot', '8', { timeout: 60000 });
+  await expect(preview.getByRole('combobox', { name: 'Playtest level slot' })).toHaveValue('8');
 });
 
 test('all sixteen shipped maps render through the real browser interface', async ({ page }) => {

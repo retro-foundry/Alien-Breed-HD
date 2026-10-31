@@ -5,14 +5,14 @@ import { Icon } from './Icon';
 import { previewKeys, playKeys } from './ControlsHelp';
 
 interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number }
-interface Props { document: LevelDocument; selection: Selection; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void }
+interface Props { document: LevelDocument; selection: Selection; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSlotChange: (slot: number) => void }
 
-export function EnginePreview({ document, selection, layer, onSelectZone }: Props) {
+export function EnginePreview({ document, selection, layer, onSelectZone, onSlotChange }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false), [loaded, setLoaded] = useState(false);
   const [playing, setPlaying] = useState(false), [starting, setStarting] = useState(false);
   const [error, setError] = useState(''), [notice, setNotice] = useState('Loading the game engine…');
-  const [slot, setSlot] = useState(() => Math.max(0, Math.min(15, Number(/^Level (\d+)$/.exec(document.name)?.[1] ?? 1) - 1)));
+  const slot = document.playtestSlot;
   const [revision, setRevision] = useState(0);
   const [nonblack, setNonblack] = useState(0);
   const [actualSlot, setActualSlot] = useState(-1);
@@ -77,7 +77,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone }: Prop
   function stop() { send('play', { playing: false }); setPlaying(false); setStarting(false); pendingPlay.current = false; }
   return <section className="engine-preview" aria-label="3D game engine preview" data-revision={revision} data-rendered-pixels={nonblack} data-level-slot={actualSlot}>
     <div className="engine-toolbar"><span className="eyebrow">3D VIEW</span><span className="engine-status" role="status">{playing ? 'Playtest running' : notice}</span>
-      <label className="engine-slot">Slot <select aria-label="Playtest level slot" title="Choose which game level slot to use for this playtest. This controls the game's level-specific setup." value={slot} disabled={playing || starting} onChange={event => setSlot(Number(event.target.value))}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>{i + 1}</option>)}</select></label>
+      <label className="engine-slot">Slot <select aria-label="Playtest level slot" title="Choose the project's game level slot. Saved with your project and undoable; this controls the game's level-specific setup." value={slot} disabled={playing || starting} onChange={event => onSlotChange(Number(event.target.value))}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>{i + 1}</option>)}</select></label>
       <button title={playing ? 'Stop playing and return to inspection. Your editable map is kept.' : 'Load the latest map into the game and start from player one. Click the game view to capture the mouse.'} disabled={!ready || starting} className={playing ? '' : 'primary-button'} onClick={() => { if (playing) stop(); else load(true); }}>{playing ? 'Stop' : starting ? 'Starting…' : 'Build & play'}</button>
     </div>
     <div className="engine-stage"><iframe ref={frame} title="Alien Breed game engine" src={`${import.meta.env.BASE_URL}runtime/frame.html`} allow="autoplay; fullscreen" onError={() => setError('The game preview could not be loaded. Your map is still available. Reload the preview to try again.')} />
