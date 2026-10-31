@@ -3,6 +3,7 @@ import { openLevel } from '../../src/model/level';
 import { buildVisibilityFiles } from '../../src/model/visibilityBuild';
 import { buildGraphicsStreams } from '../../src/model/graphicsBuild';
 import { buildDataTables, importedDataTables } from '../../src/model/dataBuild';
+import { buildZoneRecords } from '../../src/model/zoneBuild';
 import { encodeProject } from '../../src/model/project';
 import { originalFiles } from '../helpers';
 
@@ -41,7 +42,12 @@ test('rebuilt visibility and relocated graphics load in the real engine and pres
       points: [...tables.points, { x: 20000, z: 20000, lowerBrightness: 0, upperBrightness: 0 }] }));
     const visibility = openLevel(`${original.name} visibility`, buildVisibilityFiles(expanded));
     const graphics = buildGraphicsStreams(visibility, visibility.zones.map(zone => zone.id).toReversed(), visibility.zones.length + 2);
-    const rebuilt = openLevel(`${original.name} rebuilt`, { ...visibility.files, graphics });
+    const rooms = buildZoneRecords(visibility.files.data.subarray(0, Math.min(...visibility.zones.map(zone => zone.exitListOffset))),
+      visibility.zones.map(zone => ({ id: zone.id, header: visibility.files.data.slice(zone.offset, zone.offset + 48),
+        boundaries: zone.boundaryIds, cornerWalls: zone.wallIds, visibility: zone.visibility, rotationPoints: zone.rotationPointIds })).toReversed());
+    const graphView = new DataView(graphics.buffer);
+    rooms.offsets.forEach((offset, id) => graphView.setInt32(16 + id * 4, offset));
+    const rebuilt = openLevel(`${original.name} rebuilt`, { ...visibility.files, data: rooms.data, graphics });
     await page.locator('input[type=file]').setInputFiles({ name: `rebuilt-${level}.ab3d`, mimeType: 'application/zip', buffer: Buffer.from(encodeProject(rebuilt)) });
     await expect(page.locator('.project-picker strong')).toHaveText(rebuilt.name);
     await preview.getByRole('combobox', { name: 'Playtest level slot' }).selectOption({ value: String(level - 1) });

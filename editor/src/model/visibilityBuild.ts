@@ -4,6 +4,7 @@ import { BinaryWriter } from './writer';
 import { visibilityCells } from './visibilityImport';
 import { portalVisibility } from './portalVisibility';
 import { runtimeOrderingMask, type OrderingRoom } from './visibilityGeometry';
+import { buildZoneRecords, type ZoneRecordInput } from './zoneBuild';
 
 /** Rebuild derived visibility, clipping and rotation lists from imported source
  * geometry. Every original zone block is accounted for before replacement.
@@ -34,23 +35,16 @@ export function buildVisibilityFiles(document: LevelDocument): LevelFiles {
   } satisfies OrderingRoom]));
   const pointLinks = (document.files.clips.length - document.connectTableOffset) / 4;
   checkedInteger(pointLinks, 0, document.points.length, 'Solid-wall point link count');
-  const data = new BinaryWriter(), clips = new BinaryWriter();
-  data.write(document.files.data.subarray(0, prefixEnd));
+  const records: ZoneRecordInput[] = [], clips = new BinaryWriter();
   for (const zone of document.zones) {
-    const boundary = data.offset;
-    zone.boundaryIds.forEach(id => data.word(id)); data.word(-1);
-    zone.wallIds.forEach(id => data.word(id)); data.word(-2);
-    const start = data.offset;
-    data.write(sourceData.bytes.subarray(zone.offset, zone.offset + 48));
-    graphicView.setInt32(16 + zone.id * 4, start);
-    data.patchWord(start + 32, checkedInteger(boundary - start, -32768, 32767, 'Boundary list offset'));
     const visible = compiled.visible.get(zone.id)!, oldOrder = new Map(zone.visibility.map((entry, i) => [entry.zone, i]));
     const rank = (id: number) => id === zone.id ? -1 : oldOrder.get(id) ?? zone.visibility.length + id;
     const targets = [...visible].sort((a, b) => rank(a) - rank(b));
     const rotate = new Set<number>();
+    const visibility: ZoneRecordInput['visibility'][number][] = [];
     for (const target of targets) {
-      data.word(target); data.word(target === zone.id ? -1 : 0);
-      data.long(runtimeOrderingMask(ordering.get(zone.id)!, ordering.get(target)!, visible));
+      visibility.push({ zone: target, clip: target === zone.id ? -1 : 0,
+        mask: runtimeOrderingMask(ordering.get(zone.id)!, ordering.get(target)!, visible) });
       const targetZone = document.zones.find(zone => zone.id === target)!;
       for (const graphic of [...targetZone.lower, ...targetZone.upper]) for (const point of graphic.points) rotate.add(point);
       if (target !== zone.id) {
@@ -62,13 +56,14 @@ export function buildVisibilityFiles(document: LevelDocument): LevelFiles {
         clips.word(-2);
       }
     }
-    data.long(-1);
-    data.patchWord(start + 34, checkedInteger(data.offset - start, -32768, 32767, 'Rotation list offset'));
-    [...rotate].sort((a, b) => a - b).forEach(id => data.word(id)); data.word(-1);
+    records.push({ id: zone.id, header: sourceData.bytes.slice(zone.offset, zone.offset + 48), boundaries: zone.boundaryIds,
+      cornerWalls: zone.wallIds, visibility, rotationPoints: [...rotate].sort((a, b) => a - b) });
   }
+  const data = buildZoneRecords(document.files.data.subarray(0, prefixEnd), records);
+  data.offsets.forEach((offset, id) => graphicView.setInt32(16 + id * 4, offset));
   checkedInteger(clips.offset / 2, 0, 32767, 'Total clip word count');
   for (let id = 0; id < pointLinks; id++) { clips.word(compiled.previous[id]!); clips.word(compiled.next[id]!); }
   // Door/lift +8 pointers address LEVELGRAPHICS (Anims.s), which is unchanged
   // apart from ZoneAdds. They must never be relocated as level-data pointers.
-  return { data: data.finish(), graphics, clips: clips.finish() };
+  return { data: data.data, graphics, clips: clips.finish() };
 }

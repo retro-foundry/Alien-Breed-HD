@@ -101,7 +101,7 @@ fixtures can establish current-format support independently.
   A cancelled backup download with unavailable recovery storage retains the
   dirty marker and unload protection. Only a completed IndexedDB save clears
   that marker; requesting a download cannot claim that a file was saved.
-- 265 unit/format/scenario tests currently pass. The portal compiler handles all
+- 283 unit/format/scenario tests currently pass. The portal compiler handles all
   16 maps, derives legacy-safe common clip bounds for alternate routes, and
   supplies exact sightline witnesses. All sixteen maps now pass deterministic
   binary assembly, content retention and matching original/rebuilt engine
@@ -303,3 +303,18 @@ fixtures can establish current-format support independently.
   tools and the complete source compiler remain required. The suite has 265
   passing unit checks and 22 targeted Chromium/Firefox browser checks, including
   backup, recovery and corrupt-source rejection without losing the open source.
+- `zoneBuild.ts` assembles room records from explicit headers, primary/corner
+  collision lists, visibility entries and rotation points. It owns both zone
+  counts and all signed header-relative list offsets, and returns the new
+  ZoneAdds addresses. Visibility rebuilding now uses this shared writer rather
+  than an import-specific emitter. All 2,496 original room records reconstruct
+  byte-for-byte; tests also reverse their physical order and reparse the
+  relocated headers, and assemble an additional header with updated count and
+  graphics tables. References are checked against the actual point/collision
+  tables, with self-visibility, identity, size and uniqueness validation.
+  The suite now has 283 passing unit checks. An extra header is assembly
+  evidence only: generated surfaces/dependency rewriting and the complete
+  source compiler are still required before exposing room creation.
+  Chromium and Firefox both preserve all sixteen original spawn-frame
+  checksums after combining data-table expansion, visibility rebuilding,
+  reversed room blocks and reversed/relocated graphics streams.
