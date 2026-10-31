@@ -1,7 +1,7 @@
 /** Compiler integration fixture: explicit new geometry with materials selected
  * from original records, not a replacement renderer or a full-source compiler. */
 import { BinaryReader } from '../src/model/binary';
-import { buildDataTables, importedDataTables } from '../src/model/dataBuild';
+import { buildDataPrefix, importedDataTables } from '../src/model/dataBuild';
 import { buildGraphicsStreams } from '../src/model/graphicsBuild';
 import { buildZoneRecords } from '../src/model/zoneBuild';
 import { polygonForCell, encodePolygonSurface, encodeWallSurface } from '../src/model/surfaces';
@@ -22,12 +22,11 @@ export function buildAuthoredRoom(original: LevelDocument): LevelDocument {
   const sample = source.points[floor.points[0]!]!;
   const input = { points: [...source.points, ...vertices.map(point => ({ ...point, lowerBrightness: sample.lowerBrightness, upperBrightness: sample.upperBrightness }))],
     collision: [...source.collision, ...vertices.map((start, index) => ({ start, end: vertices[(index + 1) % vertices.length]!, neighbour: -1 }))] };
-  const tables = buildDataTables(original, input), displacement = tables.data.length - original.files.data.length;
-  const prefixEnd = Math.min(...original.zones.map(zone => zone.exitListOffset)) + displacement;
+  const prefix = buildDataPrefix(original, input, id + 1);
   const roomSource = commitRoomDraft(original.roomSource,
     setDraftCorners(beginRoomDraft(original, original.roomSource, template.id), vertices)).after;
   const topology = compileRoomTopology(original, roomSource);
-  const remapped = buildRoomDataReferences(original, roomSource, topology, tables.data.subarray(0, prefixEnd));
+  const remapped = buildRoomDataReferences(original, roomSource, topology, prefix);
   const records = original.zones.map(zone => ({ id: zone.id, header: remapped.headers.get(zone.id)!,
     boundaries: zone.boundaryIds, cornerWalls: zone.wallIds, visibility: zone.visibility, rotationPoints: zone.rotationPointIds }));
   const rooms = buildZoneRecords(remapped.data, [...records, { id,

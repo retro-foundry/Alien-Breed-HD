@@ -377,3 +377,17 @@ fixtures can establish current-format support independently.
   picking and gameplay start still pass in Chromium and Firefox. The build and
   all 337 unit checks pass. Full source compilation and UI integration remain
   required; changed outlines are still guarded from stale exports/playtests.
+- The data-table writer now separates a complete-build prefix from the
+  retained-original-room relocation path. `buildDataPrefix` accepts regenerated
+  point/brightness and collision tables and the target room count, writes the
+  last-zone header and count trailer correctly, and preserves actual control,
+  object, shot-pool and avatar records. This removes the original collision
+  count restriction for complete geometry assembly. It is not independently a
+  playable file: fresh room records, graphics and reference maps are required.
+  The original-room path retains its table-shrinking guards. All sixteen
+  original prefixes reconstruct exactly, and a reduced-table case checks
+  retained prefix bytes, relocated collision offsets and rejected invalid
+  room/point counts or neighbours. The generated-room fixture now assembles its
+  prefix directly with the new room count. Build and 338 unit checks pass.
+  Both browser engines pass the generated-room scenario and all sixteen
+  original spawn-view comparisons through the combined rebuild (four tests).
