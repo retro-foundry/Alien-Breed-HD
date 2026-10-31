@@ -10,14 +10,39 @@ export interface SourceRoom {
   readonly recordZone: number;
   readonly originZone: number | null;
   readonly vertices: readonly Position[];
+  readonly wallSources: readonly (number | null)[];
 }
 export interface RoomSource { readonly rooms: readonly SourceRoom[]; readonly nextId: number }
 export interface RoomChange { readonly label: string; readonly before: RoomSource; readonly after: RoomSource }
 export interface RoomHistory { readonly source: RoomSource; readonly past: readonly RoomChange[]; readonly future: readonly RoomChange[] }
 export interface RoomDraft { readonly base: RoomSource; readonly roomId: string | null; readonly recordZone: number; readonly vertices: readonly Position[] }
 
-function frozenRoom(id: string, recordZone: number, vertices: readonly Position[], originZone: number | null): SourceRoom {
-  return Object.freeze({ id, recordZone, originZone, vertices: Object.freeze(normaliseRoomOutline(vertices).map(point => Object.freeze(point))) });
+const samePoint = (a: Position, b: Position) => a.x === b.x && a.z === b.z;
+const onSegment = (point: Position, a: Position, b: Position) => (point.x - a.x) * (b.z - a.z) === (point.z - a.z) * (b.x - a.x)
+  && point.x >= Math.min(a.x, b.x) && point.x <= Math.max(a.x, b.x) && point.z >= Math.min(a.z, b.z) && point.z <= Math.max(a.z, b.z);
+
+/** A split boundary retains the material/closure identity of its source wall.
+ * Internal decomposition edges and genuinely new walls have no such identity. */
+export function sourceWallForEdge(room: SourceRoom, start: Position, end: Position): number | null {
+  const index = room.vertices.findIndex((a, i) => onSegment(start, a, room.vertices[(i + 1) % room.vertices.length]!)
+    && onSegment(end, a, room.vertices[(i + 1) % room.vertices.length]!));
+  return index < 0 ? null : room.wallSources[index]!;
+}
+
+function frozenRoom(id: string, recordZone: number, vertices: readonly Position[], originZone: number | null,
+  wallSources: readonly (number | null)[] = vertices.map(() => null)): SourceRoom {
+  if (wallSources.length !== vertices.length) throw new Error(`Room ${id} has an incomplete wall-source list.`);
+  const outline = normaliseRoomOutline(vertices);
+  const walls = outline.map((a, i) => {
+    const b = outline[(i + 1) % outline.length]!;
+    const index = vertices.findIndex((start, j) => {
+      const end = vertices[(j + 1) % vertices.length]!;
+      return (samePoint(a, start) && samePoint(b, end)) || (samePoint(a, end) && samePoint(b, start));
+    });
+    if (index < 0) throw new Error(`Room ${id} lost a wall identity while normalizing its outline.`);
+    return wallSources[index]!;
+  });
+  return Object.freeze({ id, recordZone, originZone, vertices: Object.freeze(outline.map(point => Object.freeze(point))), wallSources: Object.freeze(walls) });
 }
 function source(rooms: readonly SourceRoom[], nextId: number): RoomSource {
   return Object.freeze({ rooms: Object.freeze([...rooms]), nextId });
@@ -26,11 +51,11 @@ function source(rooms: readonly SourceRoom[], nextId: number): RoomSource {
 type RoomRecords = Pick<LevelDocument, 'zones' | 'lines'>;
 export function importRoomSource(document: RoomRecords): RoomSource {
   return source(document.zones.map(zone => frozenRoom(`room-${zone.id}`, zone.id,
-    zone.boundaryIds.map(id => { const line = document.lines[id]!; return { x: line.x, z: line.z }; }), zone.id)), Math.max(-1, ...document.zones.map(zone => zone.id)) + 1);
+    zone.boundaryIds.map(id => { const line = document.lines[id]!; return { x: line.x, z: line.z }; }), zone.id, zone.boundaryIds)), Math.max(-1, ...document.zones.map(zone => zone.id)) + 1);
 }
 
 export function roomSourceSnapshot(current: RoomSource) {
-  return { format: 'alien-breed-room-source', version: 1, nextId: current.nextId, rooms: current.rooms };
+  return { format: 'alien-breed-room-source', version: 2, nextId: current.nextId, rooms: current.rooms };
 }
 
 export function roomSourceMatchesLevel(document: LevelDocument): boolean {
@@ -42,7 +67,7 @@ export function roomSourceMatchesLevel(document: LevelDocument): boolean {
  * dependency baseline; missing templates cannot be silently substituted. */
 export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSource {
   if (!value || typeof value !== 'object' || !('format' in value) || value.format !== 'alien-breed-room-source'
-    || !('version' in value) || value.version !== 1 || !('rooms' in value) || !Array.isArray(value.rooms)
+    || !('version' in value) || ![1, 2].includes(value.version as number) || !('rooms' in value) || !Array.isArray(value.rooms)
     || !('nextId' in value) || typeof value.nextId !== 'number') throw new Error('Unsupported or damaged room source.');
   if (Object.keys(value).some(key => !['format', 'version', 'rooms', 'nextId'].includes(key))) throw new Error('Room source contains unsupported fields; it has not been replaced or discarded.');
   const nextId = checkedInteger(value.nextId, 0, Number.MAX_SAFE_INTEGER - 1, 'Next room identity');
@@ -51,7 +76,7 @@ export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSo
     if (!item || typeof item !== 'object' || !('id' in item) || typeof item.id !== 'string' || !item.id || item.id.length > 128 || ids.has(item.id))
       throw new Error('Room source contains an invalid or duplicate room identity.');
     ids.add(item.id);
-    if (Object.keys(item).some(key => !['id', 'recordZone', 'originZone', 'vertices'].includes(key))) throw new Error(`Room ${item.id} contains unsupported source fields.`);
+    if (Object.keys(item).some(key => !['id', 'recordZone', 'originZone', 'vertices', ...(value.version === 2 ? ['wallSources'] : [])].includes(key))) throw new Error(`Room ${item.id} contains unsupported source fields.`);
     const numericId = /^room-(0|[1-9]\d*)$/.exec(item.id)?.[1];
     if (numericId !== undefined && Number(numericId) >= nextId) throw new Error('The next room identity would reuse an existing room.');
     if (!('recordZone' in item) || typeof item.recordZone !== 'number' || !records.has(item.recordZone)) throw new Error(`Room ${item.id} has a missing surface record.`);
@@ -66,7 +91,29 @@ export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSo
       if (Object.keys(point).some(key => key !== 'x' && key !== 'z')) throw new Error(`Room ${item.id} contains unsupported corner fields.`);
       return { x: point.x, z: point.z };
     });
-    return frozenRoom(item.id, item.recordZone, vertices, origin);
+    const template = document.zones.find(zone => zone.id === item.recordZone)!;
+    let walls: (number | null)[];
+    if (value.version === 2) {
+      if (!('wallSources' in item) || !Array.isArray(item.wallSources) || item.wallSources.length !== vertices.length)
+        throw new Error(`Room ${item.id} has an incomplete wall-source list.`);
+      walls = item.wallSources.map((line: unknown) => {
+        if (line !== null && (typeof line !== 'number' || !Number.isInteger(line) || !template.boundaryIds.includes(line)))
+          throw new Error(`Room ${item.id} refers to a wall outside its settings template.`);
+        return line as number | null;
+      });
+    } else {
+      // Older saves have no edge identity. Recover only exact geometric
+      // evidence; never guess which material belonged to an already moved edge.
+      walls = vertices.map((start, i) => {
+        if (origin === null) return null;
+        const end = vertices[(i + 1) % vertices.length]!;
+        return template.boundaryIds.find(id => {
+          const line = document.lines[id]!, a = { x: line.x, z: line.z }, b = { x: line.x + line.dx, z: line.z + line.dz };
+          return onSegment(start, a, b) && onSegment(end, a, b);
+        }) ?? null;
+      });
+    }
+    return frozenRoom(item.id, item.recordZone, vertices, origin, walls);
   });
   return source(rooms, nextId);
 }
@@ -97,7 +144,8 @@ export function commitRoomDraft(current: RoomSource, draft: RoomDraft): RoomChan
   if (!existing) checkedInteger(current.nextId, 0, Number.MAX_SAFE_INTEGER - 2, 'Next room identity');
   if (draft.roomId !== null && !existing) throw new Error('That room no longer exists.');
   const id = existing?.id ?? `room-${current.nextId}`;
-  const room = frozenRoom(id, draft.recordZone, draft.vertices, existing?.originZone ?? null);
+  const walls = draft.vertices.map((start, i) => existing ? sourceWallForEdge(existing, start, draft.vertices[(i + 1) % draft.vertices.length]!) : null);
+  const room = frozenRoom(id, draft.recordZone, draft.vertices, existing?.originZone ?? null, walls);
   if (existing && existing.recordZone === room.recordZone && existing.vertices.length === room.vertices.length
     && existing.vertices.every((point, i) => point.x === room.vertices[i]!.x && point.z === room.vertices[i]!.z))
     return Object.freeze({ label: 'Edit room outline', before: current, after: current });
@@ -124,8 +172,12 @@ export function moveSourceCorner(current: RoomSource, roomId: string, index: num
     for (const edge of edges) if (affected.has(edge.room) && edge.neighbour !== null && (same(edge.start) || same(edge.end))) affected.add(edge.neighbour);
     if (count === affected.size) break;
   }
-  const rooms = current.rooms.map(room => affected.has(room.id) ? frozenRoom(room.id, room.recordZone,
-    edges.filter(edge => edge.room === room.id).map(edge => same(edge.start) ? point : edge.start), room.originZone) : room);
+  const rooms = current.rooms.map(room => {
+    if (!affected.has(room.id)) return room;
+    const boundary = edges.filter(edge => edge.room === room.id);
+    return frozenRoom(room.id, room.recordZone, boundary.map(edge => same(edge.start) ? point : edge.start), room.originZone,
+      boundary.map(edge => sourceWallForEdge(room, edge.start, edge.end)));
+  });
   validateRoomInteriors(rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
   return Object.freeze({ label: 'Move shared room corner', before: current, after: source(rooms, current.nextId) });
 }

@@ -67,6 +67,11 @@ still in progress: importing changed outlines preserves them for save/recovery
 and reports that game export/3D preview cannot yet compile them. It never
 silently exports the old geometry in their place.
 
+Room-source snapshots also retain each imported wall's identity when corners
+move, including shared-wall splits. New saves use room-source version 2; older
+version 1 saves still open. If an older save already moved a wall, its material
+association is recovered only where the saved geometry proves the match.
+
 Room geometry accepts either drawing direction. The shared geometry module
 normalises winding, pairs opposite shared edges, splits partially
 shared walls and decomposes concave outlines. These contracts are tested

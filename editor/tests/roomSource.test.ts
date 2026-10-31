@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { openLevel } from '../src/model/level';
 import { originalFiles } from './helpers';
-import { beginRoomDraft, commitRoomDraft, executeRoomChange, importRoomSource, redoRoomChange, removeSourceRooms, setDraftCorners, undoRoomChange, moveSourceCorner, type RoomHistory } from '../src/model/roomSource';
+import { beginRoomDraft, commitRoomDraft, executeRoomChange, importRoomSource, redoRoomChange, removeSourceRooms, setDraftCorners, undoRoomChange, moveSourceCorner, sourceWallForEdge, roomSourceSnapshot, restoreRoomSource, type RoomHistory } from '../src/model/roomSource';
 
 const outline = [{ x: 0, z: 0 }, { x: 128, z: 0 }, { x: 128, z: 128 }, { x: 0, z: 128 }];
 const document = openLevel('Level 1', originalFiles(1));
@@ -11,13 +11,21 @@ describe('editable room source and transactional gestures', () => {
   it('moves both sides of a shared T-junction atomically and keeps their portal paired', () => {
     const empty = removeSourceRooms(initial(), initial().rooms.map(room => room.id)).after;
     const first = commitRoomDraft(empty, setDraftCorners(beginRoomDraft(document, empty, 0), outline)).after;
-    const second = commitRoomDraft(first, setDraftCorners(beginRoomDraft(document, first, 0),
+    const joined = commitRoomDraft(first, setDraftCorners(beginRoomDraft(document, first, 0),
       [{ x: 128, z: 32 }, { x: 256, z: 32 }, { x: 256, z: 96 }, { x: 128, z: 96 }])).after;
+    const snapshot = roomSourceSnapshot(joined), materialWalls = document.zones[0]!.boundaryIds;
+    const second = restoreRoomSource(document, { ...snapshot, rooms: snapshot.rooms.map(room => ({ ...room,
+      wallSources: room.vertices.map((_, i) => materialWalls[i % materialWalls.length]!) })) });
     const room = second.rooms[1]!, index = room.vertices.findIndex(point => point.x === 128 && point.z === 32);
     const changed = moveSourceCorner(second, room.id, index, { x: 136, z: 32 });
     expect(changed.after.rooms.every(room => room.vertices.some(point => point.x === 136 && point.z === 32))).toBe(true);
     expect(second.rooms[0]!.vertices).toHaveLength(4);
     expect(changed.after.rooms[0]!.vertices.length).toBeGreaterThan(4);
+    const larger = changed.after.rooms[0]!;
+    larger.vertices.forEach((point, i) => {
+      const end = larger.vertices[(i + 1) % larger.vertices.length]!;
+      if ((point.x === 136 && point.z === 32) || (end.x === 136 && end.z === 32)) expect(larger.wallSources[i]).toBe(second.rooms[0]!.wallSources[2]);
+    });
     const history = executeRoomChange({ source: second, past: [], future: [] }, changed);
     expect(undoRoomChange(history).source).toBe(second);
   });
@@ -30,8 +38,27 @@ describe('editable room source and transactional gestures', () => {
         const zone = document.zones.find(zone => zone.id === room.recordZone)!;
         expect(room.vertices).toHaveLength(zone.boundaryIds.length);
         expect(Object.isFrozen(room.vertices)).toBe(true);
+        expect(Object.isFrozen(room.wallSources)).toBe(true);
+        room.vertices.forEach((point, i) => {
+          const line = document.lines[room.wallSources[i]!]!;
+          expect({ x: line.x, z: line.z }).toEqual(point);
+          expect({ x: line.x + line.dx, z: line.z + line.dz }).toEqual(room.vertices[(i + 1) % room.vertices.length]);
+        });
       }
     }
+  });
+  it('keeps imported wall identities through a moved corner and automatic first-corner rotation', () => {
+    const imported = initial(), room = imported.rooms.find(room => room.vertices.length === 4)!;
+    const current = removeSourceRooms(imported, imported.rooms.filter(other => other.id !== room.id).map(other => other.id)).after;
+    const original = room.vertices[0]!, moved = { x: original.x + 1, z: original.z + 1 };
+    const change = moveSourceCorner(current, room.id, 0, moved), edited = change.after.rooms[0]!;
+    expect(new Set(edited.wallSources)).toEqual(new Set(room.wallSources));
+    expect(edited.vertices[0]).not.toEqual(moved);
+    const transform = (point: typeof original) => point.x === original.x && point.z === original.z ? moved : point;
+    room.vertices.forEach((point, i) => {
+      expect(sourceWallForEdge(edited, transform(point), transform(room.vertices[(i + 1) % room.vertices.length]!))).toBe(room.wallSources[i]);
+    });
+    expect(undoRoomChange(executeRoomChange({ source: current, past: [], future: [] }, change)).source).toBe(current);
   });
   it('keeps partial and abandoned gestures out of source and history', () => {
     const source = initial(), history: RoomHistory = { source, past: [], future: [] };

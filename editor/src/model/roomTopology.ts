@@ -1,6 +1,6 @@
 import { buildRoomEdges, convexParts, type Position } from './geometry';
-import type { FloorLine, LevelDocument } from './level';
-import type { RoomSource, SourceRoom } from './roomSource';
+import type { LevelDocument } from './level';
+import { sourceWallForEdge, type RoomSource, type SourceRoom } from './roomSource';
 import type { VisibilityRoom } from './visibilityGeometry';
 
 export interface CompiledRoomCell extends VisibilityRoom {
@@ -14,12 +14,6 @@ export interface RoomTopology {
   points: Position[];
   cells: CompiledRoomCell[];
   sourceCells: Map<string, number[]>;
-}
-
-function contains(point: Position, line: FloorLine): boolean {
-  return (point.x - line.x) * line.dz === (point.z - line.z) * line.dx
-    && point.x >= Math.min(line.x, line.x + line.dx) && point.x <= Math.max(line.x, line.x + line.dx)
-    && point.z >= Math.min(line.z, line.z + line.dz) && point.z <= Math.max(line.z, line.z + line.dz);
 }
 
 /** Compile source outlines into the current engine's convex portal cells.
@@ -37,6 +31,8 @@ export function compileRoomTopology(document: LevelDocument, source: RoomSource)
     if (ids.has(room.id)) throw new Error('Each source room must have a unique identity.');
     ids.add(room.id);
     if (!records.has(room.recordZone)) throw new Error(`Room ${room.id} refers to missing surface record ${room.recordZone}.`);
+    if (room.wallSources.length !== room.vertices.length || room.wallSources.some(line => line !== null && !records.get(room.recordZone)!.boundaryIds.includes(line)))
+      throw new Error(`Room ${room.id} has invalid wall-source references. Restore or reassign its wall materials before building.`);
     if (room.originZone !== null) {
       if (!records.has(room.originZone) || origins.has(room.originZone)) throw new Error(`Room ${room.id} has an invalid or duplicate original zone reference.`);
       origins.add(room.originZone);
@@ -60,8 +56,7 @@ export function compileRoomTopology(document: LevelDocument, source: RoomSource)
   const cells = pieces.map(({ room }, id): CompiledRoomCell => {
     const boundary = edges.filter(edge => edge.room === String(id));
     if (boundary.length > 10) throw new Error(`Room ${room.id} has more than ten wall segments after joining its neighbours. Divide this outline before building.`);
-    const original = room.originZone === null ? undefined : records.get(room.originZone);
-    const sourceLines = boundary.map(edge => original?.boundaryIds.find(line => contains(edge.start, document.lines[line]!) && contains(edge.end, document.lines[line]!)) ?? null);
+    const sourceLines = boundary.map(edge => sourceWallForEdge(room, edge.start, edge.end));
     const neighbours = boundary.map((edge, index) => {
       if (edge.neighbour === null) return -1;
       const destination = Number(edge.neighbour), other = pieces[destination]!.room;

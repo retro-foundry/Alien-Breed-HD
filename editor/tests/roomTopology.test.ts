@@ -1,12 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import { openLevel } from '../src/model/level';
 import { originalFiles } from './helpers';
-import { importRoomSource, beginRoomDraft, commitRoomDraft, setDraftCorners, removeSourceRooms } from '../src/model/roomSource';
+import { importRoomSource, beginRoomDraft, commitRoomDraft, setDraftCorners, removeSourceRooms, moveSourceCorner } from '../src/model/roomSource';
 import { compileRoomTopology } from '../src/model/roomTopology';
 import { visibilityCells } from '../src/model/visibilityImport';
 import { signedArea } from '../src/model/geometry';
 
 describe('source room topology compilation', () => {
+  it('does not open an imported solid shared wall when its endpoint moves', () => {
+    const original = openLevel('Level 1', originalFiles(1)), imported = importRoomSource(original);
+    const edges = imported.rooms.flatMap(room => room.vertices.map((start, i) => ({ room, start, end: room.vertices[(i + 1) % room.vertices.length]!, line: room.wallSources[i]! })));
+    const pair = edges.flatMap(edge => original.lines[edge.line]!.connect < 0 ? [] : edges.filter(other => other.room.id !== edge.room.id
+      && original.lines[other.line]!.connect >= 0 && edge.start.x === other.end.x && edge.start.z === other.end.z
+      && edge.end.x === other.start.x && edge.end.z === other.start.z).map(other => [edge, other] as const))[0]!;
+    expect(pair).toBeDefined();
+    const [a, b] = pair;
+    // Import real adjoining room geometry with the documented solid-line flag
+    // on both sides; closure is authored data, not inferred from adjacency.
+    const bytes = original.files.data.slice(), view = new DataView(bytes.buffer);
+    for (const edge of pair) view.setInt16(original.lines[edge.line]!.offset + 8, -1);
+    const document = openLevel('closed shared boundary', { ...original.files, data: bytes }), source = importRoomSource(document);
+    const retained = removeSourceRooms(source, source.rooms.filter(room => room.id !== a.room.id && room.id !== b.room.id).map(room => room.id)).after;
+    const moved = moveSourceCorner(retained, a.room.id, a.room.vertices.findIndex(point => point.x === a.start.x && point.z === a.start.z),
+      { x: a.start.x + 1, z: a.start.z + 1 }).after;
+    const topology = compileRoomTopology(document, moved);
+    expect(topology.cells.flatMap(cell => cell.sourceLines)).toContain(a.line);
+    expect(topology.cells.flatMap(cell => cell.sourceLines)).toContain(b.line);
+    for (const cell of topology.cells) for (const neighbour of cell.neighbours) if (neighbour >= 0)
+      expect(topology.cells[neighbour]!.sourceId).toBe(cell.sourceId);
+  });
   it.each(Array.from({ length: 16 }, (_, i) => i + 1))('retains level %i portal cells and point identities', level => {
     const document = openLevel(`Level ${level}`, originalFiles(level));
     const topology = compileRoomTopology(document, importRoomSource(document)), original = visibilityCells(document);

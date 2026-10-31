@@ -412,3 +412,23 @@ fixtures can establish current-format support independently.
   generated-room scenario and all sixteen combined-rebuild spawn comparisons
   (four browser tests). Full source surface/mechanism compilation and UI
   integration remain required before enabling edited-room exports/playtests.
+- Editable source now retains one original boundary-wall identity per directed
+  edge (`wallSources`). Automatic winding/start-corner normalization, corner
+  moves and shared T-junction splits carry those identities with the geometry.
+  Convex-cell compilation consumes them instead of trying to rediscover a
+  moved wall at its old coordinates; internal decomposition edges remain
+  unassigned. This is required to retain per-wall materials and authored
+  closed-boundary flags during surface compilation.
+  Room-source snapshots are now version 2 inside the existing v4 project
+  container. Version 1 snapshots migrate exact geometric wall matches on
+  imported rooms; already moved/unknown edges remain unassigned rather than
+  receiving guessed materials. New-room edges also remain unassigned. Unknown,
+  incomplete and out-of-template references reject without replacing source.
+  All sixteen original source imports and legacy migrations retain their wall
+  identities. Tests cover a moved corner that changes the canonical first
+  corner, history, moved-wall project round trips and retained solid closure
+  across a moved shared boundary. The build and 344 unit checks pass. Surface
+  generation, material authoring and full source compiler integration remain
+  required; edited-room gameplay/export guards remain in place.
+  All 46 Chromium/Firefox scenarios pass, including the new imported-wall edit,
+  downloaded-project and browser-recovery check and all original engine views.

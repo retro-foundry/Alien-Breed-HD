@@ -81,6 +81,25 @@ test('room corners edit atomically, drag cancellation leaves source unchanged, a
   const restored = await backup(page, testInfo.outputPath('restored.ab3d')); expect(restored.roomSource).toEqual(edited.roomSource);
 });
 
+test('imported wall identities follow corner edits through downloads and browser recovery', async ({ page }, testInfo) => {
+  page.on('dialog', dialog => void dialog.accept());
+  const original = openLevel('Wall source recovery', originalFiles(1)), room = original.roomSource.rooms.find(room => room.vertices.length === 4)!;
+  const isolated = { ...original, roomSource: removeSourceRooms(original.roomSource, original.roomSource.rooms.filter(other => other.id !== room.id).map(other => other.id)).after };
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.locator('input[type=file]').setInputFiles({ name: 'wall-sources.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(isolated)) });
+  await expect(page.locator('.project-picker strong')).toHaveText('Wall source recovery');
+  await page.getByRole('button', { name: new RegExp(`^Zone ${String(room.recordZone).padStart(3, '0')}`) }).click();
+  await page.locator('.inspector summary').filter({ hasText: 'Edit room corners' }).click();
+  const x = page.getByRole('spinbutton', { name: 'Corner 1 X', exact: true });
+  await x.fill(String(room.vertices[0]!.x - 1)); await x.press('Enter');
+  const edited = await backup(page, testInfo.outputPath('wall-corner-edit.ab3d'));
+  expect(edited.roomSource.rooms[0]!.vertices).not.toEqual(room.vertices);
+  expect(edited.roomSource.rooms[0]!.wallSources).toEqual(room.wallSources);
+  await expect(page.getByText('Workspace saved', { exact: true })).toBeVisible();
+  await page.reload(); await expect(page.locator('.project-picker strong')).toHaveText('Wall source recovery');
+  expect((await backup(page, testInfo.outputPath('recovered-wall-corner.ab3d'))).roomSource).toEqual(edited.roomSource);
+});
+
 test('crossing outlines fail without committing a partial room', async ({ page }, testInfo) => {
   const draw = await prepare(page); await draw.click();
   const box = (await page.locator('canvas[aria-label="Level map"]').boundingBox())!;
