@@ -412,3 +412,31 @@ the blue key in a collectible zone.
 
 The complete feedback suite, Windows Release build and single-threaded
 Emscripten Release build pass.
+
+## Waterline flash during head bob
+
+Water used the fractional camera height to choose its visible side, then
+discarded that fraction during edge projection and texture-distance setup.
+Together with a whole-unit near clip, this collapsed the surface to a thin
+strip as the eye approached it. A separate bottom-half tint switched on
+within one world unit of the surface, producing a sudden cyan flash.
+
+The water raster now keeps fractional height through projection and UV
+distance, clips at one fractional Z unit, and retains wide screen coordinates
+until edge bounds are stored. At exact eye height, a water polygon containing
+the camera draws its limiting below-horizon view. Remote coplanar polygons
+remain invisible. This replaces the skipped surface and substitute half-screen
+mask in `amiga/AB3DI.s` `itsafloordraw`; the surface still uses the original
+`texturedwater` animation, refraction and brighten assets. Both software and
+GL presentation omit that extra half-screen mask. Actual submersion retains
+the full-view underwater tint, and the exact-surface audio state is retained.
+Player bob, collision, authored water heights and save layouts are unchanged.
+
+`tests/feedback_water.c` rasterizes original water polygons from levels 1, 14
+and 15 over 3,600 combinations of fractional eye height, pitch, view angle,
+resolution and vertical projection scale. It checks foreground coverage on
+both sides, continuity into exact eye height, remote coplanar rejection,
+full underwater tint, and identical
+output for whole-view and column-sliced rendering. The old renderer fails with
+a missing span at 1/256 unit above water. The complete feedback suite passes;
+Windows and Emscripten Release builds and browser waterline captures also pass.

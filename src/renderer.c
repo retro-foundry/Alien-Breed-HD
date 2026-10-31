@@ -2625,7 +2625,7 @@ static int renderer_dispatch_threaded_underwater_tint(int8_t fill_screen_water)
     RendererThreadPool *pool = &g_renderer_thread_pool;
     g_prof_last_tint_workers = 0;
     if (!pool->initialized || pool->worker_count <= 0 || pool->cpu_count <= 1) return 0;
-    if (fill_screen_water == 0) return 0;
+    if (fill_screen_water <= 0) return 0;
 
     RendererState *r = &g_renderer;
     if (!r->rgb_buffer || !r->cw_buffer) return 0;
@@ -3805,7 +3805,7 @@ static void renderer_log_world_zone_draw(uint32_t frame_idx,
 
 /* Project rotated X/Z to current render pixel-space X, matching wall path math.
  * vz is in 24.8 fixed-point (ROT_Z_FRAC_BITS fractional bits). */
-static inline int project_x_to_pixels(int32_t vx, int32_t vz)
+static inline int64_t project_x_to_pixels_wide(int32_t vx, int32_t vz)
 {
     if (vz <= 0) return (vx >= 0) ? g_renderer.width : -g_renderer.width;
     int center_x = g_renderer.view_center_x;
@@ -3814,7 +3814,12 @@ static inline int project_x_to_pixels(int32_t vx, int32_t vz)
     if (center_x < 0 || center_x >= w)
         center_x = (w * 47) / 96;
     int proj_x = renderer_proj_x_scale_px();
-    return (int)(((int64_t)vx * (int64_t)proj_x << ROT_Z_FRAC_BITS) / (int64_t)vz) + center_x;
+    return ((int64_t)vx * (int64_t)proj_x * (1 << ROT_Z_FRAC_BITS)) / vz + center_x;
+}
+
+static inline int project_x_to_pixels(int32_t vx, int32_t vz)
+{
+    return (int)project_x_to_pixels_wide(vx, vz);
 }
 
 /* Project world Y to current render pixel-space Y using nearest-pixel rounding.
@@ -3826,6 +3831,33 @@ static inline int project_y_to_pixels_round(int32_t vy, int32_t vz, int32_t proj
     int64_t num = ((int64_t)vy * (int64_t)proj_y_scale * (int64_t)RENDER_SCALE) << ROT_Z_FRAC_BITS;
     int64_t q = (num >= 0) ? ((num + den / 2) / den) : ((num - den / 2) / den);
     return (int)q + center_y;
+}
+
+/* Water can pass through the interpolated eye height. Keep its fractional Y
+ * through projection instead of rounding a whole half-screen to the horizon. */
+static inline int project_water_y_to_pixels(int32_t vy, int32_t vz, int32_t proj_y_scale, int center_y)
+{
+    int64_t den = (int64_t)vz * (1 << WORLD_Y_FRAC_BITS);
+    int64_t num = (int64_t)vy * proj_y_scale * RENDER_SCALE * (1 << ROT_Z_FRAC_BITS);
+    return (int)((num >= 0 ? num + den / 2 : num - den / 2) / den) + center_y;
+}
+
+static int renderer_water_contains_eye(const LevelState *level, const int16_t *points, int count)
+{
+    int inside = 0;
+    for (int i = 0, j = count - 1; i < count; j = i++) {
+        int a = points[i], b = points[j];
+        if (a < 0 || a >= MAX_POINTS || b < 0 || b >= MAX_POINTS) return 0;
+        int32_t ax = rd16(level->points + a * 4) - g_renderer.xoff;
+        int32_t az = rd16(level->points + a * 4 + 2) - g_renderer.zoff;
+        int32_t bx = rd16(level->points + b * 4) - g_renderer.xoff;
+        int32_t bz = rd16(level->points + b * 4 + 2) - g_renderer.zoff;
+        if ((az > 0) != (bz > 0)) {
+            int64_t cross = (int64_t)ax * bz - (int64_t)bx * az;
+            if (cross != 0 && ((cross > 0) == (bz > az))) inside ^= 1;
+        }
+    }
+    return inside;
 }
 
 static inline int renderer_view_center_y(void)
@@ -4138,7 +4170,7 @@ static inline int renderer_fp16_y_ceil_px(int64_t y_fp)
 
 /* Floor/ceiling edge tables are int16_t; clamp projected X before storing so
  * near-plane projection spikes cannot wrap and corrupt span bounds. */
-static inline int16_t renderer_clamp_edge_x_i16(int x)
+static inline int16_t renderer_clamp_edge_x_i16(int64_t x)
 {
     if (x < INT16_MIN) return INT16_MIN;
     if (x > INT16_MAX) return INT16_MAX;
@@ -14846,8 +14878,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 int32_t rel_water = draw_h_world - y_off;
                 if (rel_water < 0) {
                     ctx->fill_screen_water = 0x0F; /* strong underwater tint */
-                } else if (rel_water <= (1 << WORLD_Y_FRAC_BITS) && ctx->fill_screen_water == 0) {
-                    ctx->fill_screen_water = (int8_t)-1; /* weaker near-surface tint */
+                } else if (rel_water == 0 && ctx->fill_screen_water == 0) {
+                    ctx->fill_screen_water = (int8_t)-1; /* at surface (also used by audio) */
                 }
             }
 
@@ -14861,6 +14893,13 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 floor_y_dist = ((int32_t)ypos - (int32_t)r->flooryoff);
             }
 
+            /* AB3DI itsafloordraw skips a coplanar surface and substitutes a
+             * bottom-half fillscrnwater mask. Draw its above-water limit instead:
+             * water beneath the eye still covers rays below the horizon.
+             * Only the polygon containing the eye can cover that half-screen. */
+            int water_at_eye = entry_type == 7 && rel_h == 0 &&
+                renderer_water_contains_eye(level, pt_indices, sides);
+            if (water_at_eye) floor_y_dist = 1;
             if (floor_y_dist == 0) {
                 /* At eye level - skip */
                 continue;
@@ -14931,16 +14970,24 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
             }
             if (y_min_clamp < top_clip_for_poly) y_min_clamp = top_clip_for_poly;
             if (y_max_clamp > ctx->bot_clip) y_max_clamp = ctx->bot_clip;
+            if (y_min_clamp > y_max_clamp) continue;
 
             /* Walk each polygon edge and rasterize into edge tables (floor and ceiling/roof).
              * Near-plane clip edges so vertices behind the camera get proper
              * screen X values (otherwise on_screen[].screen_x is garbage and
              * the edge table doesn't reach the screen sides). */
-            /* Water needs a tighter near clip than floor/roof so a surface just
-             * above the camera can still project up to the top rows.
-             * Z values are 24.8 fixed-point. */
-            const int32_t FLOOR_NEAR = ROT_Z_FROM_INT(1);
-            for (int s = 0; s < sides; s++) {
+            /* One fractional Z unit for water: a whole-world-unit near plane
+             * cuts away the foreground as the eye approaches the surface. */
+            const int32_t FLOOR_NEAR = entry_type == 7 ? 1 : ROT_Z_FROM_INT(1);
+            if (water_at_eye) {
+                poly_top = y_min_clamp;
+                poly_bot = y_max_clamp;
+                for (int row = poly_top; row <= poly_bot; row++) {
+                    left_edge[row] = ctx->left_clip;
+                    right_edge_tab[row] = ctx->right_clip - 1;
+                }
+            }
+            for (int s = 0; !water_at_eye && s < sides; s++) {
                 int i1 = pt_indices[s];
                 int i2 = pt_indices[(s + 1) % sides];
                 if (i1 < 0 || i1 >= MAX_POINTS || i2 < 0 || i2 >= MAX_POINTS) continue;
@@ -14993,13 +15040,17 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     ez2 = FLOOR_NEAR;
                 }
                 /* Project X from clipped (ex,ez) so values are consistent and safe (no division by zero or negative z). */
-                int sx1 = project_x_to_pixels(ex1, ez1);
-                int sx2 = project_x_to_pixels(ex2, ez2);
+                int64_t sx1 = project_x_to_pixels_wide(ex1, ez1);
+                int64_t sx2 = project_x_to_pixels_wide(ex2, ez2);
 
                 /* Project Y: same rule so X and Y stay consistent (no jump when z crosses FLOOR_NEAR). */
                 int32_t rel_h_8 = rel_h >> WORLD_Y_FRAC_BITS;
-                int sy1_raw = project_y_to_pixels_round(rel_h_8, ez1, r->proj_y_scale, center);
-                int sy2_raw = project_y_to_pixels_round(rel_h_8, ez2, r->proj_y_scale, center);
+                int sy1_raw = entry_type == 7
+                    ? project_water_y_to_pixels(rel_h, ez1, r->proj_y_scale, center)
+                    : project_y_to_pixels_round(rel_h_8, ez1, r->proj_y_scale, center);
+                int sy2_raw = entry_type == 7
+                    ? project_water_y_to_pixels(rel_h, ez2, r->proj_y_scale, center)
+                    : project_y_to_pixels_round(rel_h_8, ez2, r->proj_y_scale, center);
 
                 if (build_floor_col_bounds) {
                     renderer_floor_column_bounds_add_edge(col_top_tab,
@@ -15008,9 +15059,9 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                           ctx->right_clip - 1,
                                                           y_min_clamp,
                                                           y_max_clamp,
-                                                          sx1,
+                                                          (int)sx1,
                                                           sy1_raw,
-                                                          sx2,
+                                                          (int)sx2,
                                                           sy2_raw,
                                                           &col_x_min,
                                                           &col_x_max);
@@ -15031,8 +15082,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     /* Truly horizontal edge in world space */
                     int row = sy1;
                     if (row >= y_min_clamp && row <= y_max_clamp) {
-                        int lo = sx1 < sx2 ? sx1 : sx2;
-                        int hi = sx1 > sx2 ? sx1 : sx2;
+                        int64_t lo = sx1 < sx2 ? sx1 : sx2;
+                        int64_t hi = sx1 > sx2 ? sx1 : sx2;
                         int32_t lo_b = (sx1 <= sx2) ? eb1 : eb2;
                         int32_t hi_b = (sx1 <= sx2) ? eb2 : eb1;
                         if (lo < left_edge[row]) {
@@ -15056,8 +15107,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 if (row_end > y_max_clamp) row_end = y_max_clamp;
 
                 /* Use fixed-point for better precision */
-                int64_t x_fp = (int64_t)sx1 << 16;
-                int64_t dx_fp = ((int64_t)(sx2 - sx1) << 16) / dy_raw;
+                int64_t x_fp = sx1 * 65536;
+                int64_t dx_fp = ((sx2 - sx1) * 65536) / dy_raw;
                 int64_t b_fp = (int64_t)eb1 << 16;
                 int64_t db_fp = ((int64_t)(eb2 - eb1) << 16) / dy_raw;
                 
@@ -15066,8 +15117,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     x_fp += dx_fp * (row_start - sy1_raw);
                     b_fp += db_fp * (row_start - sy1_raw);
                 } else {
-                    x_fp = (int64_t)sx2 << 16;
-                    dx_fp = ((int64_t)(sx1 - sx2) << 16) / (-dy_raw);
+                    x_fp = sx2 * 65536;
+                    dx_fp = ((sx1 - sx2) * 65536) / (-dy_raw);
                     x_fp += dx_fp * (row_start - sy2_raw);
                     b_fp = (int64_t)eb2 << 16;
                     db_fp = ((int64_t)(eb1 - eb2) << 16) / (-dy_raw);
@@ -15077,8 +15128,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 for (int row = row_start; row <= row_end; row++) {
                     if (row < 0 || row >= h) { x_fp += dx_fp; b_fp += db_fp; continue; }
                     int32_t edge_bright = (int32_t)(b_fp >> 16);
-                    int left_x = renderer_fp16_x_floor_px(x_fp);
-                    int right_x = renderer_fp16_x_ceil_px(x_fp);
+                    int64_t left_x = x_fp >> 16;
+                    int64_t right_x = x_fp <= 0 ? left_x : (x_fp + 65535) >> 16;
                     if (left_x < left_edge[row]) {
                         left_edge[row] = renderer_clamp_edge_x_i16(left_x);
                         if (use_gour_floor) left_bright_tab[row] = (int16_t)edge_bright;
@@ -15091,6 +15142,30 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     if (row > poly_bot) poly_bot = row;
                     x_fp += dx_fp;
                     b_fp += db_fp;
+                }
+            }
+
+            /* The numerical near plane must not cut holes in water between
+             * the eye and that plane. With a wide vertical FOV even one
+             * fractional Z unit can project inside the screen. Those closer
+             * rays are covered when the eye is inside the water footprint. */
+            if (entry_type == 7 && !water_at_eye) {
+                int64_t near_y = center + (int64_t)rel_h * r->proj_y_scale * RENDER_SCALE;
+                int first = y_min_clamp, last = y_max_clamp;
+                if (rel_h > 0) {
+                    if (near_y >= last) first = last + 1;
+                    else if (near_y >= first) first = (int)near_y + 1;
+                } else {
+                    if (near_y <= first) last = first - 1;
+                    else if (near_y <= last) last = (int)near_y - 1;
+                }
+                if (first <= last && renderer_water_contains_eye(level, pt_indices, sides)) {
+                    for (int row = first; row <= last; row++) {
+                        left_edge[row] = ctx->left_clip;
+                        right_edge_tab[row] = ctx->right_clip - 1;
+                    }
+                    if (first < poly_top) poly_top = first;
+                    if (last > poly_bot) poly_bot = last;
                 }
             }
 
@@ -15196,6 +15271,14 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
              * across this polygon, including spans split by foreground clipping. */
             FloorDrawCommon span_common;
             renderer_floor_prepare_common(&span_common, r, rel_h, scaleval);
+            if (entry_type == 7) {
+                /* Same distance scale as pastfloorbright, retaining fractional
+                 * height on both sides of the waterline. */
+                int64_t water_height = rel_h;
+                if (water_height < 0) water_height = -water_height;
+                span_common.dist_num_abs = (uint64_t)(water_height * 2 *
+                    r->proj_y_scale * RENDER_SCALE / (1 << WORLD_Y_FRAC_BITS));
+            }
 
             /* Fill between edges for each row (floor and ceiling/roof). Clamp to zone clip. */
             int row_start = poly_top;
@@ -15975,7 +16058,7 @@ static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
                                                   const uint32_t *src_rgb, const RendererPixel *src_cw,
                                                   uint32_t *dst_rgb, RendererPixel *dst_cw)
 {
-    if (fill_screen_water == 0) return;
+    if (fill_screen_water <= 0) return;
     if (!src_cw || !dst_cw || (g_renderer_rgb_raster_expand && (!src_rgb || !dst_rgb))) return;
 
     const int w = g_renderer.width;
@@ -15994,12 +16077,9 @@ static void renderer_apply_underwater_tint_slice(int8_t fill_screen_water,
     if (y1 > h) y1 = h;
     if (y0 >= y1) return;
 
-    /* AB3DI fillscrnwater post-pass:
-     * AND #$00FF on copper color words. Strong applies to whole view (4*20 lines),
-     * weak applies to bottom half only (2*20 lines). */
-    const int strong = (fill_screen_water > 0);
-    int tint_start = strong ? 0 : (h / 2);
-    if (y0 < tint_start) y0 = tint_start;
+    /* AB3DI fillscrnwater: AND #$00FF on underwater copper color words.
+     * At eye height the surface itself is now drawn; the original substitute
+     * bottom-half mask would add a second tint for just one bob frame. */
 
     for (int y = y0; y < y1; y++) {
         size_t row = (size_t)y * (size_t)w;
@@ -16316,7 +16396,7 @@ static void renderer_draw_display_impl(GameState *state)
 #endif
         if (!used_threaded_tint) {
             renderer_apply_underwater_tint(tint_water);
-            tint_workers = (tint_water != 0) ? 1 : 0;
+            tint_workers = (tint_water > 0) ? 1 : 0;
         } else {
 #ifndef AB3D_NO_THREADS
             tint_workers = (g_prof_last_tint_workers > 0) ? g_prof_last_tint_workers : 0;

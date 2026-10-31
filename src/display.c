@@ -1173,20 +1173,14 @@ static void display_gl_gun_quad(int frame_slot, const SDL_Rect *dst)
 }
 
 /* Apply the Amiga underwater tint (AND #$00FF = zero red channel) as a GL
- * multiply quad.  fill_screen_water > 0 → full viewport; < 0 → bottom half. */
+ * multiply quad. The at-surface case is already covered by the water raster. */
 static void display_gl_multiply_tint_rect(int8_t fill_screen_water)
 {
     if (!g_gl_hud_ok || g_gl_overlay_win_w < 1) return;
-    if (fill_screen_water == 0) return;
+    if (fill_screen_water <= 0) return;
 
     /* Compute rect in window pixels over the present dst letterbox */
     SDL_Rect r = g_present_dst_rect;
-    if (fill_screen_water < 0) {
-        /* Weak tint: bottom half only */
-        int half = r.h / 2;
-        r.y += half;
-        r.h -= half;
-    }
     if (r.w < 1 || r.h < 1) return;
 
 #if SDL_VERSION_ATLEAST(2, 0, 14)

@@ -305,9 +305,9 @@ typedef struct {
     /* Palette (legacy, used as fallback) */
     uint32_t palette[256];
 
-    /* Saved per-frame water tint value for the GL post-pass.
+    /* Saved per-frame water state for presentation and audio.
      * Set by renderer_draw_display; read by display.c after the frame completes.
-     * 0 = no tint, >0 = full-screen, <0 = bottom-half only. */
+     * 0 = above water, >0 = submerged/full tint, <0 = exactly at the surface. */
     int8_t last_fill_screen_water;
 } RendererState;
 
