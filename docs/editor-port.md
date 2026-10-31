@@ -153,3 +153,14 @@ fixtures can establish current-format support independently.
   current fixed-byte command history cannot directly own a variable-size
   geometry/PVS replacement. Complete that source-model transition before
   wiring topology editing or automatic rebuilding into the app.
+- `roomSource.ts` now provides the room portion of that transition: immutable
+  stable identities, explicit original-record references, isolated drawing
+  drafts, atomic create/outline-edit/multi-delete commands and unlimited source
+  undo/redo. Drafts validate whole-coordinate limits and complete outlines;
+  stale drafts/commands fail without changing source. All 2,496 original
+  outlines import, and gesture-direction/cancel/stale-edit/history scenarios
+  pass. This module is not yet wired into the canvas, project archives or full
+  compiler; it does not claim that new rooms are playable yet. Original record
+  references retain known surface/mechanism data without inventing defaults.
+  Dependency checks, inter-room topology validation and geometry compilation
+  remain necessary before exposing those commands in the application.

@@ -4,8 +4,7 @@ import { openLevel } from '../src/model/level';
 import { originalFiles } from './helpers';
 
 describe('visibility binary assembly', () => {
-  it('builds all sixteen real maps deterministically while retaining game content', () => {
-    for (let level = 1; level <= 16; level++) {
+  it.each(Array.from({ length: 16 }, (_, i) => i + 1))('builds level %i deterministically while retaining game content', level => {
       const original = openLevel(`Level ${level}`, originalFiles(level));
       const files = buildVisibilityFiles(original), rebuilt = openLevel(original.name, files);
       expect(rebuilt.points).toEqual(original.points);
@@ -23,6 +22,5 @@ describe('visibility binary assembly', () => {
         expect(changed.water).toBe(zone.water); expect(changed.teleport).toEqual(zone.teleport);
       }
       expect(buildVisibilityFiles(rebuilt), `Level ${level} build must not accumulate old data`).toEqual(files);
-    }
   });
 });
