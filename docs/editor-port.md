@@ -44,7 +44,7 @@ Each item needs implementation and direct verification before completion.
 | Open all original levels | Parse all 16 actual level triplets; labelled 2D geometry and object checks | All 16 pass model and browser checks |
 | Open/save AMOS projects | `.dat`, `.obj`, `.links` field contracts and round trips from original save/load routines | Checked reader/writer and constructed blank-source contracts pass; real authored-file, UI and compiler integration pending |
 | Lossless game data import/export | Exact unchanged round trips, including unknown records and visibility data | All 16 exact triplet round trips pass |
-| Geometry creation and editing | Points, sectors, shared portals, split/delete/join operations, upper/lower rooms; playable exports | Pending |
+| Geometry creation and editing | Points, sectors, shared portals, split/delete/join operations, upper/lower rooms; playable exports | Source outlines and supported new rooms build/play/export; new portal spans, broader topology operations and controller groups pending |
 | Automatic geometry orientation | Either drawing/import direction produces the same valid geometry; shared portals paired automatically; no user-facing winding setting | Normalisation, partial-wall pairing and concave partition tests pass; canvas/compiler integration pending |
 | Materials and lighting | Wall/floor/roof textures, alignment/scaling, vertex/zone light and animations; rendered comparisons | Pending |
 | Objects and starts | Add/move/delete real object types, player starts, exit zone; engine playback | Pending |
@@ -52,11 +52,18 @@ Each item needs implementation and direct verification before completion.
 | Control paths and visibility | Control points, links, zone assignments and ordering; original algorithm contracts and engine scenarios | All ordering masks/wall links rebuild; exact PVS/clips assemble for all 16 maps and preserve tested engine spawn views; broader scenarios, UI integration and control-path authoring pending |
 | Modern editing workflow | Selection, drag, zoom/pan, snapping, numeric inspector, undo/redo, shortcuts and contextual help | Working for supported record edits; geometry tools pending |
 | Reliable documents | Portable project files, autosave/recovery, clear dirty state, safe async loading, actionable import/export errors | Browser round trips, recovery and stale-load rejection pass; broader failure corpus pending |
-| Actual game playtest | Exported map runs in the existing game engine; no substitute renderer presented as engine proof | All 16 original maps draw in the actual engine in Chromium/Firefox; record edits reload, chosen slot and isolated playtest pass; authored geometry scenarios pending |
+| Actual game playtest | Exported map runs in the existing game engine; no substitute renderer presented as engine proof | All 16 originals draw; normal source build/export, renumbered room visits/picking, authored starts/objects/teleports pass in Chromium/Firefox; broader geometry/gameplay scenarios pending |
 | Robustness and accessibility | Malformed/truncated file corpus, bounded allocations, invalid topology checks, keyboard and responsive-layout runs | Pending |
 | Delivery | Build/test instructions, CI artifact, usage guide, verified deployment when requested | Pending |
 
 ## Implementation order
+
+Current integration: `playableBuild.ts` is the shared preview/export entry point.
+Supported source edits compile automatically, with explicit appearance choices
+for new rooms; generated artifacts never replace editable source in saves.
+Historical checkpoint notes below that retain the old blanket source-build guard
+are superseded by this integration. Unsupported portal/controller/surface cases
+still fail explicitly, and the remaining requirements are not complete.
 
 1. Establish checked binary readers and a source-backed document model. Keep
    original bytes so unsupported fields cannot disappear on save. Build
@@ -358,8 +365,9 @@ fixtures can establish current-format support independently.
   sixteen original-map spawn-view comparisons through the combined writers.
   This fixture is compiler-stage evidence, not the complete source compiler:
   arbitrary drawn/edited/deleted rooms still cannot build or export gameplay.
-  Keep that UI guard and defer the finished-editor deployment until the source
-  compiler and remaining requirements are ready. The requested deployment
+  At that checkpoint the UI guard remained in place; the later source-build
+  integration supersedes it. Defer the finished-editor deployment until the
+  remaining requirements are ready. The requested deployment
   destination is `../retro-foundry.github.io/abhd-ed`.
 - The source reference planner now supplies per-cell teleport destinations,
   including inherited teleports on newly drawn rooms. It validates the actual
@@ -863,3 +871,38 @@ fixtures can establish current-format support independently.
   spawn/object/teleport, persistence and source-guard browser regressions. The
   new commit still needs its own remote CI result; the earlier failure was
   investigated rather than treated as a completed cross-platform check.
+
+- Normal Preview, Build & Play and Export level now share the immutable source
+  artifact service in `playableBuild.ts`. Original unchanged maps retain exact
+  imported files; edited source compiles through the full geometry/graphics/
+  lighting/animation/reference/visibility pipeline. New rooms have explicit
+  inspector wall-style and template-lighting selections. The selected source
+  wall retains texture, phase and sampling, with its perimeter span taken from
+  the room template's actual floor/ceiling. Insertion remains at the selected
+  record's ordered draw-stream location. These settings are undoable, recoverable
+  and stored in project format 8 (`room-appearances.json`); older source projects
+  remain readable and can assign missing appearances before building.
+  Asset preparation packages the real `src/game_data.c` ENDZONES array as game
+  configuration, avoiding an independent default-exit table. The compiler maps
+  that source exit to generated rooms for both preview and export. Compiled
+  viewport visits and picks map runtime cells back to original/editor room IDs.
+  Async builds reject stale results after source/project/revision changes;
+  opening a newer project while export waits cannot download old source files.
+  Engine errors/stops/picks now carry revision identity too, and late responses
+  cannot invalidate a newer load. Newer successful loads clear old iframe errors.
+  Native UI tests author two rooms with reversed source ordering, select their
+  appearance, export through the real button, inspect/pick generated rooms,
+  start gameplay and teleport to the saved destination. Saving afterward proves
+  original binary files and editable source/gameplay were retained. Missing
+  appearance still blocks preview/export with actionable feedback; new portal
+  wall openings, moving-volume controller groups and all other incomplete
+  requirements remain outstanding. Production build and all 620 model checks
+  pass; 66 surrounding Chromium/Firefox scenarios pass, followed by focused
+  stale-engine-error, build/export cancellation and integrated source-play
+  reruns. An earlier Ubuntu CI drag failure was traced to the test assuming
+  that anchored wheel zoom left a marker at canvas centre. Integer wheel-event
+  rounding on Linux moved the world centre. The test now derives the rendered
+  marker position from the current transform and deliberately uses integer
+  wheel coordinates, retaining the exact expected 16-unit drag result. Its
+  Chromium/Firefox reruns pass locally; fresh remote CI is still required.
+  Deployment remains deferred.

@@ -6,6 +6,7 @@ import { sourceMatchesLevel } from '../model/roomSource';
 import { editableObjects, objectIsActive, objectPlayer } from '../model/sourceObjects';
 import { RoomPositionForm } from './RoomPositionForm';
 import { TeleportInspector } from './TeleportInspector';
+import { RoomAppearanceInspector } from './RoomAppearanceInspector';
 import type { Selection } from './MapCanvas';
 import { Icon } from './Icon';
 import type { SourceRoom } from '../model/roomSource';
@@ -45,6 +46,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner,
     <div className="inspector-heading"><span className="selection-symbol"><Icon name={zone || sourceRoom ? 'layers' : start ? 'pin' : 'object'} size={24} /></span><div><h2>{title}</h2><span className="muted">{zone ? `${zone.boundaryIds.length} edges · ${zone.upper.length > 0 ? 'two floors' : 'single floor'}` : object ? `Object ${object.id} · ${object.room === null ? 'Deleted' : object.room ? `Room ${object.room.replace(/^room-/, '')}` : `Zone ${object.zone}`}` : sourceRoom ? 'Editable room outline' : 'Level spawn point'}</span></div></div>
     <div className="inspector-scroll">
       {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onDelete={onRoomDelete} />}
+      {sourceRoom?.originZone === null && <RoomAppearanceInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && (!zone || !sourceMatchesLevel(document)) && <TeleportInspector document={document} room={sourceRoom} edit={edit} onShowDestination={onShowDestination} />}
       {zone && <>
         <section className="property-section"><h3>Geometry</h3><InfoRow label="Floor height" value={zone.floor} /><InfoRow label="Ceiling height" value={zone.ceiling} /><InfoRow label="Clearance" value={zone.floor - zone.ceiling} />

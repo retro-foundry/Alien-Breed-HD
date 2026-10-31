@@ -4,9 +4,16 @@ import type { RoomChange, RoomSource } from './roomSource';
 import { placeSourceStart, type SourceStart } from './sourceStarts';
 import { placeSourceObject, type SourceObject } from './sourceObjects';
 import { placeSourceTeleport, type SourceTeleport } from './sourceTeleports';
+import { setRoomAppearance, type RoomAppearance } from './roomAppearance';
 
 export interface BytePatch { file: keyof LevelFiles; offset: number; before: Uint8Array; after: Uint8Array }
-export interface EditCommand { label: string; patches: BytePatch[]; playtestSlot?: { before: number; after: number }; exitZone?: { before: number | null; after: number | null }; roomSource?: { before: RoomSource; after: RoomSource }; sourceStarts?: { before: readonly SourceStart[] | undefined; after: readonly SourceStart[] | undefined }; sourceObjects?: { before: readonly SourceObject[] | undefined; after: readonly SourceObject[] | undefined }; sourceTeleports?: { before: readonly SourceTeleport[] | undefined; after: readonly SourceTeleport[] | undefined } }
+interface Change<T> { before: T; after: T }
+export interface EditCommand {
+  label: string; patches: BytePatch[];
+  playtestSlot?: Change<number>; exitZone?: Change<number | null>; roomSource?: Change<RoomSource>;
+  sourceStarts?: Change<readonly SourceStart[] | undefined>; sourceObjects?: Change<readonly SourceObject[] | undefined>;
+  sourceTeleports?: Change<readonly SourceTeleport[] | undefined>; roomAppearances?: Change<readonly RoomAppearance[] | undefined>;
+}
 export interface History { document: LevelDocument; past: EditCommand[]; future: EditCommand[] }
 
 export function numberPatch(document: LevelDocument, file: keyof LevelFiles, offset: number, value: number, size: 1 | 2 | 4, signed = true): BytePatch {
@@ -28,6 +35,12 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
   let sourceStarts = document.sourceStarts;
   let sourceObjects = document.sourceObjects;
   let sourceTeleports = document.sourceTeleports;
+  let roomAppearances = document.roomAppearances;
+  if (command.roomAppearances) {
+    const { before, after } = command.roomAppearances;
+    if (roomAppearances !== (reverse ? after : before)) throw new Error('The room appearance changed before this edit could be applied. No changes were saved.');
+    roomAppearances = reverse ? before : after;
+  }
   if (command.sourceTeleports) {
     const { before, after } = command.sourceTeleports;
     if (sourceTeleports !== (reverse ? after : before)) throw new Error('The teleporter links changed before this edit could be applied. No changes were saved.');
@@ -71,11 +84,12 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
   }
   const result = parseLevel(document.name, files, document.encoded, document.original, playtestSlot, exitZone, roomSource, document.drawGroups);
   return { ...result, ...(sourceStarts === undefined ? {} : { sourceStarts }), ...(sourceObjects === undefined ? {} : { sourceObjects }),
-    ...(sourceTeleports === undefined ? {} : { sourceTeleports }) };
+    ...(sourceTeleports === undefined ? {} : { sourceTeleports }), ...(roomAppearances === undefined ? {} : { roomAppearances }) };
 }
 
 export function execute(history: History, command: EditCommand): History {
-  if (command.patches.every(patch => sameBytes(patch.before, patch.after)) && (!command.playtestSlot || command.playtestSlot.before === command.playtestSlot.after) && (!command.exitZone || command.exitZone.before === command.exitZone.after) && (!command.roomSource || command.roomSource.before === command.roomSource.after) && (!command.sourceStarts || command.sourceStarts.before === command.sourceStarts.after) && (!command.sourceObjects || command.sourceObjects.before === command.sourceObjects.after) && (!command.sourceTeleports || command.sourceTeleports.before === command.sourceTeleports.after)) return history;
+  const changes = [command.playtestSlot, command.exitZone, command.roomSource, command.sourceStarts, command.sourceObjects, command.sourceTeleports, command.roomAppearances];
+  if (command.patches.every(patch => sameBytes(patch.before, patch.after)) && changes.every(change => !change || change.before === change.after)) return history;
   const document = applyCommand(history.document, command);
   return { document, past: [...history.past, command], future: [] };
 }
@@ -121,6 +135,12 @@ export function setSourceObject(document: LevelDocument, id: number, room: strin
 export function setSourceTeleport(document: LevelDocument, room: string, destination: string | null, x: number, z: number): EditCommand {
   return { label: `Change room ${room.replace(/^room-/, '')} teleporter`, patches: [], sourceTeleports: {
     before: document.sourceTeleports, after: placeSourceTeleport(document, room, destination, x, z),
+  } };
+}
+
+export function editRoomAppearance(document: LevelDocument, appearance: RoomAppearance): EditCommand {
+  return { label: 'Change room appearance', patches: [], roomAppearances: {
+    before: document.roomAppearances, after: setRoomAppearance(document, appearance),
   } };
 }
 

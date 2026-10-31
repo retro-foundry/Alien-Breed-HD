@@ -10,6 +10,7 @@ import { validateDrawGroups } from './levelSetup';
 import type { SourceStart } from './sourceStarts';
 import type { SourceObject } from './sourceObjects';
 import type { SourceTeleport } from './sourceTeleports';
+import type { RoomAppearance } from './roomAppearance';
 
 export interface Point { id: number; x: number; z: number; offset: number }
 export interface FloorLine {
@@ -46,6 +47,7 @@ export interface LevelDocument {
   sourceStarts?: readonly SourceStart[];
   sourceObjects?: readonly SourceObject[];
   sourceTeleports?: readonly SourceTeleport[];
+  roomAppearances?: readonly RoomAppearance[];
   drawGroups?: readonly number[];
   name: string;
   playtestSlot: number;

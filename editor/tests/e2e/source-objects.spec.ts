@@ -38,13 +38,18 @@ test('objects move into authored rooms, drag, delete, undo and recover through t
   const canvas = page.locator('canvas[aria-label="Level map"]');
   await expect(canvas).toHaveAttribute('data-world-x', '20128');
   const box = (await canvas.boundingBox())!;
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  // Integer wheel coordinates exercise the rounding used by Linux browsers.
+  // At overview zoom, a fractional-pixel anchor can move the world centre.
+  await page.mouse.move(Math.floor(box.x + box.width / 2), Math.floor(box.y + box.height / 2));
   await page.mouse.wheel(0, -6000);
   await expect(canvas).toHaveAttribute('data-world-scale', '8');
-  const scale = Number(await canvas.getAttribute('data-world-scale'));
   await page.getByRole('combobox', { name: 'Grid spacing' }).selectOption('0');
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.down(); await page.mouse.move(box.x + box.width / 2 + 16 * scale, box.y + box.height / 2, { steps: 5 }); await page.mouse.up();
+  const currentBox = (await canvas.boundingBox())!;
+  const view = await canvas.evaluate(node => ({ x: Number(node.dataset.worldX), z: Number(node.dataset.worldZ), scale: Number(node.dataset.worldScale) }));
+  const marker = { x: currentBox.x + currentBox.width / 2 + (20128 - view.x) * view.scale,
+    y: currentBox.y + currentBox.height / 2 - (20128 - view.z) * view.scale };
+  await page.mouse.move(marker.x, marker.y);
+  await page.mouse.down(); await page.mouse.move(marker.x + 16 * view.scale, marker.y, { steps: 5 }); await page.mouse.up();
   await expect(page.getByRole('spinbutton', { name: 'Position X' })).toHaveValue('20144');
   await page.getByRole('button', { name: 'Delete object', exact: true }).click();
   await expect(row).toHaveCount(0);

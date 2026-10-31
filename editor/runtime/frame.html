@@ -19,14 +19,14 @@
   const canvas = document.getElementById('canvas'), message = document.getElementById('message');
   let engine, loaded = false, playing = false, currentRevision = -1;
   const send = (type, detail = {}) => parent.postMessage({source:'ab3d-engine', type, ...detail}, location.origin);
-  const fail = error => { message.textContent = 'Engine preview: ' + String(error); send('error', {message:String(error)}); };
+  const fail = (error, revision = currentRevision) => { message.textContent = 'Engine preview: ' + String(error); send('error', {message:String(error), revision}); };
   createEditorEngine({
     canvas, locateFile: name => new URL(name, location.href).href,
     print: () => {}, printErr: text => console.error('[engine]', text),
     onAbort: reason => fail(reason),
     editorEvent(kind, zone, value) {
       if (kind === 1) send('loaded', {revision:currentRevision, zone, zones:value, nonblack:engine._editor_nonblack_pixels(), slot:engine._editor_current_slot(), exitZone:engine._editor_current_exit_zone()});
-      if (kind === 2) { playing = false; document.exitPointerLock?.(); send('stopped', {zone, completed:!!value}); }
+      if (kind === 2) { playing = false; document.exitPointerLock?.(); send('stopped', {zone, completed:!!value, revision:currentRevision}); }
     }
   }).then(module => { engine = module; message.textContent = ''; send('ready'); }).catch(fail);
   window.addEventListener('message', event => {
@@ -38,6 +38,8 @@
         canvas.title = request.text;
       }
       if (request.type === 'load') {
+        if (!Number.isSafeInteger(request.revision) || request.revision < 0) throw new Error('Invalid level revision.');
+        if (request.revision < currentRevision) return;
         if (!Number.isInteger(request.slot) || request.slot < 0 || request.slot > 15) throw new Error('Invalid level slot.');
         if (!(request.setup instanceof Uint8Array) || request.setup.length < 8 || request.setup.length > 522) throw new Error('Invalid level setup size.');
         const setup = new DataView(request.setup.buffer, request.setup.byteOffset, request.setup.byteLength);
@@ -61,6 +63,7 @@
         }
         engine.FS.writeFile(folder + 'twolev.cfg', request.setup);
         playing = false; currentRevision = request.revision;
+        message.textContent = '';
         if (!engine._editor_load_level(request.slot)) throw new Error('The engine could not load this map.');
         loaded = true;
       }
@@ -83,10 +86,10 @@
         engine._editor_play(playing ? 1 : 0);
         if (playing) canvas.focus(); else document.exitPointerLock?.();
       }
-    } catch(error) { fail(error); }
+    } catch(error) { fail(error, request.type === 'load' ? request.revision : currentRevision); }
   });
   canvas.addEventListener('click', () => {
-    if (loaded && !playing) send('pick', {zone:engine._editor_pick()});
+    if (loaded && !playing) send('pick', {zone:engine._editor_pick(), revision:currentRevision});
   });
   canvas.addEventListener('keydown', event => {
     if (playing || !loaded) return;

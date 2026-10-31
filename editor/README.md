@@ -28,8 +28,8 @@ Opening local files does not upload them anywhere.
   conditions, existing object positions/heights/health, and player starts.
 - Place player starts in edited or newly drawn rooms using the Starts inspector
   or by dragging their map markers. These source starts survive undo, project
-  saves and workspace recovery. Building changed source through the regular
-  preview/export buttons is still pending; project saves preserve the edits.
+  saves and workspace recovery. Preview, Build & play and Export level compile
+  the authored source without replacing it with generated runtime cells.
 - Move existing enemies, pickups and scenery into edited/new rooms using the
   Object room selector or map dragging. Deletion is undoable, decimal coordinates
   are accepted, and project copies/recovery retain the authored positions.
@@ -64,18 +64,26 @@ corners and T joins move together; crossing and overlapping outlines reject
 atomically. Delete room supports undo. Templates remain available after
 deleting all outlines.
 
-Material authoring, source AMOS project adapters, the complete geometry
-compiler, control-path authoring and full 3D surface picking are still being
-implemented. The application is not yet a complete replacement for the
-original editor. Changed outlines save/recover as source; game export and 3D
-preview stop rather than use stale runtime geometry.
+For a new room, choose its Lower wall style and Corner lighting in the inspector
+and click Apply appearance (also choose an upper wall style for two-floor
+templates). Styles come from the selected room template, retaining texture,
+alignment and sampling; perimeter walls span that room's floor and ceiling.
+Then open 3D view or Split view to inspect it, Build & play to start from player
+one, or Export level to download the same compiled result. Source room visits
+and viewport picking follow compiler numbering automatically. Save project
+always keeps the editable outlines, appearance and gameplay links.
 
-Project format v4 also preserves committed room outlines separately from the
-binary baseline, including concave and unfinished source projects. Room-source
-edits use the shared undo/history model. Full compiler integration is
-still in progress: importing changed outlines preserves them for save/recovery
-and reports that game export/3D preview cannot yet compile them. It never
-silently exports the old geometry in their place.
+The application is not yet a complete replacement for the original editor.
+Broader material/asset authoring, source AMOS project adapters, new portal wall
+openings, split mechanism/controller groups, control paths and full 3D surface
+picking are still being implemented. Unsupported builds produce an actionable
+error and preserve source; they never export stale geometry in its place.
+
+Project format v8 adds explicit new-room appearance alongside the editable
+room/gameplay source and original binary baseline. Formats v1–v7 remain readable;
+projects without the newer fields retain their earlier format. Incomplete
+projects can be saved/recovered before all build dependencies are assigned.
+Appearance and geometry edits use the same undo/history model.
 
 Room-source snapshots also retain each imported wall's identity when corners
 move, including shared-wall splits. New saves use room-source version 2; older
@@ -85,8 +93,7 @@ association is recovered only where the saved geometry proves the match.
 Room geometry accepts either drawing direction. The shared geometry module
 normalises winding, pairs opposite shared edges, splits partially
 shared walls and decomposes concave outlines. These contracts are tested
-against the orientation in all 2,496 original room outlines; full compiler
-integration remains part of the geometry work. There is no user-facing
+against the orientation in all 2,496 original room outlines. There is no user-facing
 clockwise/anticlockwise setting.
 
 ## Build and verification

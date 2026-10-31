@@ -64,7 +64,7 @@ export function roomSourceMatchesLevel(document: LevelDocument): boolean {
 
 /** All editable source must match before using the imported runtime files. */
 export function sourceMatchesLevel(document: LevelDocument): boolean {
-  return !document.sourceStarts?.length && !document.sourceObjects?.length && !document.sourceTeleports?.length && roomSourceMatchesLevel(document);
+  return !document.sourceStarts?.length && !document.sourceObjects?.length && !document.sourceTeleports?.length && !document.roomAppearances?.length && roomSourceMatchesLevel(document);
 }
 
 /** Restore committed editable geometry, never a partially drawn gesture or

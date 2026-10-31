@@ -14,10 +14,11 @@ import { Icon } from './components/Icon';
 import { EnginePreview } from './components/EnginePreview';
 import { ControlTooltips } from './components/ControlTooltips';
 import { ControlsHelp } from './components/ControlsHelp';
+import { preparePlayableLevel } from './model/playableBuild';
 
-interface Workspace { id: string; history: History; saved: LevelFiles; savedSlot: number; savedExit: number | null; savedRoomSource: LevelDocument['roomSource']; savedSourceStarts: LevelDocument['sourceStarts']; savedSourceObjects: LevelDocument['sourceObjects']; savedSourceTeleports: LevelDocument['sourceTeleports'] }
+interface Workspace { id: string; history: History; saved: LevelFiles; savedSlot: number; savedExit: number | null; savedRoomSource: LevelDocument['roomSource']; savedSourceStarts: LevelDocument['sourceStarts']; savedSourceObjects: LevelDocument['sourceObjects']; savedSourceTeleports: LevelDocument['sourceTeleports']; savedAppearances: LevelDocument['roomAppearances'] }
 function workspaceDirty(workspace: Workspace): boolean {
-  return workspace.history.document.sourceTeleports !== workspace.savedSourceTeleports || workspace.history.document.sourceObjects !== workspace.savedSourceObjects || workspace.history.document.sourceStarts !== workspace.savedSourceStarts || workspace.history.document.roomSource !== workspace.savedRoomSource || workspace.history.document.playtestSlot !== workspace.savedSlot || workspace.history.document.exitZone !== workspace.savedExit || (['data', 'graphics', 'clips'] as const).some(file => !sameBytes(workspace.history.document.files[file], workspace.saved[file]));
+  return workspace.history.document.roomAppearances !== workspace.savedAppearances || workspace.history.document.sourceTeleports !== workspace.savedSourceTeleports || workspace.history.document.sourceObjects !== workspace.savedSourceObjects || workspace.history.document.sourceStarts !== workspace.savedSourceStarts || workspace.history.document.roomSource !== workspace.savedRoomSource || workspace.history.document.playtestSlot !== workspace.savedSlot || workspace.history.document.exitZone !== workspace.savedExit || (['data', 'graphics', 'clips'] as const).some(file => !sameBytes(workspace.history.document.files[file], workspace.saved[file]));
 }
 class CanvasBoundary extends Component<{ children: ReactNode; onExport: () => void }, { error: string | null }> {
   state: { error: string | null } = { error: null };
@@ -45,7 +46,7 @@ async function originalLevel(number: number, signal?: AbortSignal): Promise<Leve
 }
 
 function makeWorkspace(document: LevelDocument, id: string = crypto.randomUUID()): Workspace {
-  return { id, history: { document, past: [], future: [] }, saved: document.files, savedSlot: document.playtestSlot, savedExit: document.exitZone, savedRoomSource: document.roomSource, savedSourceStarts: document.sourceStarts, savedSourceObjects: document.sourceObjects, savedSourceTeleports: document.sourceTeleports };
+  return { id, history: { document, past: [], future: [] }, saved: document.files, savedSlot: document.playtestSlot, savedExit: document.exitZone, savedRoomSource: document.roomSource, savedSourceStarts: document.sourceStarts, savedSourceObjects: document.sourceObjects, savedSourceTeleports: document.sourceTeleports, savedAppearances: document.roomAppearances };
 }
 
 export function App() {
@@ -121,7 +122,7 @@ export function App() {
       saveWorkspace(current.id, current.history.document).then(() => { if (!cancelled) {
         setAutosave('Workspace saved');
         setWorkspace(latest => latest?.id === current.id && latest.history.document === current.history.document
-          ? { ...latest, saved: current.history.document.files, savedSlot: current.history.document.playtestSlot, savedExit: current.history.document.exitZone, savedRoomSource: current.history.document.roomSource, savedSourceStarts: current.history.document.sourceStarts, savedSourceObjects: current.history.document.sourceObjects, savedSourceTeleports: current.history.document.sourceTeleports } : latest);
+          ? { ...latest, saved: current.history.document.files, savedSlot: current.history.document.playtestSlot, savedExit: current.history.document.exitZone, savedRoomSource: current.history.document.roomSource, savedSourceStarts: current.history.document.sourceStarts, savedSourceObjects: current.history.document.sourceObjects, savedSourceTeleports: current.history.document.sourceTeleports, savedAppearances: current.history.document.roomAppearances } : latest);
       } })
         .catch(error => { if (!cancelled) { setAutosave('Autosave unavailable'); setError(error instanceof Error ? error.message : String(error)); } });
     }, 600);
@@ -246,6 +247,19 @@ export function App() {
     finally { if (request === generation.current) setBusy(''); }
   }
 
+  async function exportGame() {
+    const source = workspaceRef.current?.history.document, request = generation.current;
+    if (!source) return;
+    setBusy('Building game level…');
+    try {
+      const artifact = await preparePlayableLevel(source);
+      if (workspaceRef.current?.history.document !== source) { setStatus('The level changed during the build. Export again to use the latest edits.'); return; }
+      download(encodeGameLevel(artifact.document), `${source.name.replace(/[^\w -]/g, '').trim() || 'level'}-game.zip`);
+      setStatus('Game level ZIP downloaded');
+    } catch (error) { if (workspaceRef.current?.history.document === source) fail(error); }
+    finally { if (generation.current === request) setBusy(''); }
+  }
+
   const move = (selected: Exclude<Selection, null>, x: number, z: number) => {
     if (!document) return;
     try {
@@ -277,11 +291,11 @@ export function App() {
     <ControlTooltips />
     <header className="app-header"><a className="brand" href="." aria-label="Alien Breed editor home"><span className="brand-mark">AB</span><span>ALIEN BREED<span className="brand-sub">LEVEL EDITOR</span></span></a><span className="header-divider" />
       <div className="document-title">{dirty && <span className="dirty-dot" title="Changes waiting to be saved in this browser" />}{document?.name ?? 'Workspace'}<span className="document-type">PROJECT</span></div>
-      <div className="header-actions"><button onClick={() => fileInput.current?.click()} title="Open an .ab3d project, a level ZIP or the three twolev files together. Ctrl / Command + O."><Icon name="open" />Open</button><button onClick={save} disabled={!document} title="Download a portable project backup. Recovery is saved separately in this browser. Ctrl / Command + S."><Icon name="save" />Save project</button><button className="export-button" title="Download the three game-level files in a ZIP for the game." disabled={!document} onClick={() => { if (document) try { download(encodeGameLevel(document), `${document.name.replace(/[^\w -]/g, '').trim() || 'level'}-game.zip`); setStatus('Game level ZIP downloaded'); } catch (error) { fail(error); } }}><Icon name="export" />Export level</button><button className="icon-button" aria-label="Help and shortcuts" title="Show map, 3D inspection and playtest controls. Shortcut: ?" onClick={() => setHelp(true)}><Icon name="help" /></button></div>
+      <div className="header-actions"><button onClick={() => fileInput.current?.click()} title="Open an .ab3d project, a level ZIP or the three twolev files together. Ctrl / Command + O."><Icon name="open" />Open</button><button onClick={save} disabled={!document} title="Download a portable project backup. Recovery is saved separately in this browser. Ctrl / Command + S."><Icon name="save" />Save project</button><button className="export-button" title="Build the latest source and download game-level files for the selected slot. Your editable project is kept." disabled={!document || !!busy} onClick={() => void exportGame()}><Icon name="export" />Export level</button><button className="icon-button" aria-label="Help and shortcuts" title="Show map, 3D inspection and playtest controls. Shortcut: ?" onClick={() => setHelp(true)}><Icon name="help" /></button></div>
       <input ref={fileInput} type="file" hidden multiple aria-label="Open level files" accept=".ab3d,.zip,.bin,.clips,.cfg" onChange={event => { const files = [...(event.target.files ?? [])]; if (files.length) void importFiles(files); event.target.value = ''; }} />
     </header>
     {error && <div className="error-banner" role="alert"><Icon name="alert" /><span>{error}</span><button className="icon-button" aria-label="Dismiss error" title="Close this message. Your current document stays open." onClick={() => setError('')}><Icon name="close" size={16} /></button></div>}
-    {unbuiltRooms && <div className="error-banner" role="status"><Icon name="layers" /><span>This project has room outlines that this version cannot compile yet. Save project keeps them; game export and 3D preview are unavailable.</span></div>}
+    {unbuiltRooms && <div className="error-banner" role="status"><Icon name="layers" /><span>This project has editable source changes. Preview and Export level rebuild game files; Save project preserves the editable rooms and links.</span></div>}
     <div className="workspace">
       <aside className="navigator"><div className="panel-title">PROJECT <span className="eyebrow">LOCAL</span></div><div className="project-picker"><Icon name="layers" /><div><strong>{document?.name ?? 'Opening…'}</strong><span>{document?.roomSource.rooms.length ?? 0} rooms · {activeObjects} objects</span></div></div>
         <label className="reference-picker"><span>Target game slot</span><select aria-label="Target game slot" title="Saved with this project. Build & play uses this game slot; Export level writes its matching level directory. Undo restores the previous slot." disabled={!document} value={document?.playtestSlot ?? 0} onChange={event => { if (document) edit(() => setPlaytestSlot(document, Number(event.target.value))); }}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>Level slot {i + 1}</option>)}</select></label>
@@ -319,7 +333,7 @@ export function App() {
         <div className="view-tabs" role="group" aria-label="Viewport layout"><button className="project-toggle" aria-label="Toggle project navigator" title="Show or hide the level picker and map contents. Shortcut / opens search." aria-expanded={navigatorOpen} onClick={() => setNavigatorOpen(open => !open)}><Icon name="layers" size={14} />Project</button>{(['map', 'split', '3d'] as const).map(mode => <button key={mode} aria-pressed={view === mode} className={view === mode ? 'active' : ''} title={mode === 'map' ? 'Edit and inspect the overhead map.' : mode === 'split' ? 'Show the map and actual game renderer together.' : 'Inspect the level in the actual game renderer.'} onClick={() => setView(mode)}>{mode === 'map' ? '2D map' : mode === 'split' ? 'Split view' : '3D view'}</button>)}</div>
         {document ? <CanvasBoundary key={workspace?.id} onExport={save}><div className={`viewports viewports-${view}`}>
           {view !== '3d' && <MapCanvas document={document} selection={selection} onSelect={select} onMove={move} tool={tool} layer={layer} grid={grid} showObjects={showObjects} onCursor={(x, z) => setCursor({ x, z })} fitKey={fitKey} focusZone={focusZone} roomDraft={roomDraft} selectedRoom={selectedRoom} onRoomSelect={selectRoom} onRoomPoint={addRoomPoint} onRoomFinish={finishRoom} onRoomCornerMove={moveRoomCorner} focusRoom={focusRoom} />}
-          {view !== 'map' && <EnginePreview key={workspace?.id} document={document} selection={selection} layer={layer} onSelectZone={id => select({ kind: 'zone', id })} onSlotChange={slot => edit(() => setPlaytestSlot(document, slot))} />}
+          {view !== 'map' && <EnginePreview key={workspace?.id} document={document} selection={selection} sourceRoomId={selectedRoom?.id} layer={layer} onSelectRoom={selectRoom} onSelectZone={id => select({ kind: 'zone', id })} onSlotChange={slot => edit(() => setPlaytestSlot(document, slot))} />}
         </div></CanvasBoundary> : <div className="canvas-error"><Icon name="layers" size={36} /><h2>Open a level to begin</h2><p>Drop a project, level ZIP or the three twolev files here.</p><button className="primary-button" onClick={() => fileInput.current?.click()}>Open files</button></div>}
         {busy && <div className="busy-overlay" role="status"><span className="spinner" />{busy}</div>}
       </main>

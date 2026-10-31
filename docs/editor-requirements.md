@@ -41,9 +41,13 @@ coordinate editing, shared T-junction moves, deletion, cancellation, overlap
 validation and source saves are now wired into the React canvas/inspector.
 An atomic source-build API now assembles complete runtime tables and validates
 all sixteen original maps, including decomposed-room draw identities. Connecting
-it to normal source editing, new gameplay-reference authoring, controller groups
-and new portal openings remains required before drawn geometry can use the
-normal Build & Play/export workflow. Undo keeps the full action chain and has a 250-action
+it to normal source editing is now implemented for supported geometry, authored
+starts/objects/teleports and explicit new-room appearance. Preview and export
+share the validated artifact, retain editable source, and map generated room
+IDs back to editor selections. Controller groups and new portal openings remain
+required for unrestricted geometry authoring. Broader coverage is still needed
+before claiming the complete original editor workflow.
+Undo keeps the full action chain and has a 250-action
 undo/redo regression.
 
 The actual game engine is now embedded beside the map, with zone visits,
@@ -54,9 +58,10 @@ Original assembly geometry helpers have 330 emulated parity fixtures, and all
 processes all 16 maps, including concave imports, emits common clip bounds and
 reproduces original solid-wall links. Generated-file and engine comparisons
 now cover deterministic assembly and unchanged engine spawn views in both
-browsers. Source history and project archives are integrated. Broader scenes,
-arbitrary authored-geometry scenarios and UI compiler integration are still
-required before enabling automatic rebuilt visibility in normal exports.
+browsers. Source history and project archives are integrated. Source build
+integration now includes rebuilt visibility in normal supported-geometry
+preview/export. Broader occlusion/gameplay scenes and unrestricted authored
+geometry still need verification.
 
 The remaining compiler/authoring integration, topology/diagnostic tools, PVS
 inspection, heights/stairs, asset pipeline, multiselect/clipboard, full 3D

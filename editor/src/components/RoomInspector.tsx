@@ -12,7 +12,7 @@ export function RoomInspector({ room, onCorner, onDelete }: {
         <NumberField label={`Corner ${index + 1} Z`} displayLabel="Z" value={point.z} help="Move this corner vertically on the overhead map. The editor handles room orientation." onCommit={value => onCorner(index, 'z', value)} />
       </div></div>)}
     </details>
-    <p className="field-note">The outline applies to both floors and is saved as editable source. Game geometry compilation is still in progress.</p>
+    <p className="field-note">The outline applies to both floors. Preview and Export level rebuild the game files; Save project keeps the editable source.</p>
     <button className="danger-button" title="Delete this room outline as one undoable edit. Objects and links are retained and will need reassignment before building." onClick={onDelete}>Delete room</button>
   </section>;
 }

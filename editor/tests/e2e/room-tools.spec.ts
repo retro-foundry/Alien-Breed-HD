@@ -48,7 +48,7 @@ test('drawing cancels on Escape and tool changes; either direction commits one u
   await draw.click(); await clickCorners(page, true); await page.keyboard.press('Enter');
   const reversed = await backup(page, testInfo.outputPath('reverse.ab3d'));
   expect(reversed.roomSource).toEqual(first.roomSource);
-  await expect(page.getByText(/This project has room outlines/)).toBeVisible();
+  await expect(page.getByText(/This project has editable source changes/)).toBeVisible();
   await page.getByRole('combobox', { name: 'Original level' }).selectOption('2');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 2');
   const next = openLevel('Level 2', originalFiles(2));

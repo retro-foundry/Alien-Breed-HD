@@ -108,3 +108,34 @@ test('a rejected play load remains actionable and engine reload can start a fres
   await expect(preview.getByRole('alert')).toHaveCount(0);
   await preview.getByRole('button', { name: 'Stop', exact: true }).click();
 });
+
+test('a delayed engine error from an older load cannot invalidate a newer preview', async ({ page }) => {
+  await page.addInitScript(() => {
+    if (window !== window.top) return;
+    const released = new WeakSet<Event>();
+    window.addEventListener('message', event => {
+      const host = window as Window & { releaseOldEngineError?: () => void };
+      if (released.has(event) || host.releaseOldEngineError || event.data?.source !== 'ab3d-engine' || event.data.type !== 'error') return;
+      event.stopImmediatePropagation();
+      const reply = new MessageEvent('message', { data: event.data, origin: event.origin, source: event.source });
+      released.add(reply); host.releaseOldEngineError = () => window.dispatchEvent(reply);
+    }, true);
+  });
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  const preview = page.getByRole('region', { name: '3D game engine preview' });
+  await expect(preview.getByRole('status')).toHaveText('138 zones loaded · Game engine', { timeout: 60000 });
+  const revision = Number(await preview.getAttribute('data-revision'));
+  await page.evaluate(revision => {
+    document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!.contentWindow!
+      .postMessage({ source: 'ab3d-editor', type: 'load', slot: 16, revision }, location.origin);
+  }, revision);
+  await page.waitForFunction(() => typeof (window as Window & { releaseOldEngineError?: () => void }).releaseOldEngineError === 'function');
+  await page.getByRole('combobox', { name: 'Target game slot' }).selectOption('8');
+  await expect(preview).toHaveAttribute('data-level-slot', '8');
+  await expect(preview.getByRole('status')).toHaveText('138 zones loaded · Game engine');
+  await page.evaluate(() => (window as Window & { releaseOldEngineError?: () => void }).releaseOldEngineError!());
+  await expect(preview.getByRole('alert')).toHaveCount(0);
+  await expect(preview).toHaveAttribute('data-level-slot', '8');
+  await expect(page.frameLocator('iframe[title="Alien Breed game engine"]').locator('#message')).toHaveText('');
+});

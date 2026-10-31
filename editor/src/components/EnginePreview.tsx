@@ -4,13 +4,13 @@ import { type Selection } from './MapCanvas';
 import { Icon } from './Icon';
 import { previewKeys, playKeys } from './ControlsHelp';
 import { encodeLevelSetup } from '../model/levelSetup';
-import { sourceMatchesLevel } from '../model/roomSource';
 import { validateAnimationReferences } from '../model/animationBuild';
+import { preparePlayableLevel, type PlayableLevel } from '../model/playableBuild';
 
 interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number }
-interface Props { document: LevelDocument; selection: Selection; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSlotChange: (slot: number) => void }
+interface Props { document: LevelDocument; selection: Selection; sourceRoomId?: string; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSelectRoom: (room: string) => void; onSlotChange: (slot: number) => void }
 
-export function EnginePreview({ document, selection, layer, onSelectZone, onSlotChange }: Props) {
+export function EnginePreview({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSlotChange }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false), [loaded, setLoaded] = useState(false);
   const [playing, setPlaying] = useState(false), [starting, setStarting] = useState(false);
@@ -24,22 +24,35 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
   const revisionRef = useRef(0), pendingPlay = useRef(false);
   const reloadTimer = useRef<number | undefined>(undefined);
   const failedDocument = useRef<LevelDocument | undefined>(undefined);
-  const current = useRef({ document, selection, layer, onSelectZone });
-  current.current = { document, selection, layer, onSelectZone };
+  const artifact = useRef<PlayableLevel | undefined>(undefined), previousDocument = useRef(document), readyRef = useRef(ready);
+  readyRef.current = ready;
+  const current = useRef({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom });
+  current.current = { document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom };
   const send = (type: string, detail: object = {}) => frame.current?.contentWindow?.postMessage({ source: 'ab3d-editor', type, ...detail }, location.origin);
   function stopInvalidPreview(message: string, notice: string) {
     failedDocument.current = current.current.document;
     send('play', { playing: false }); pendingPlay.current = false; setPlaying(false); setStarting(false); setLoaded(false);
     setNotice(notice); setError(message);
+    setActualSlot(-1); setActualExit(undefined); setSpawnZone(undefined); setNonblack(0);
   }
-  function stopUnbuiltPreview() {
-    stopInvalidPreview('This editor version cannot yet compile the changed room outlines. Save project keeps all editable geometry; the preview has stopped to avoid showing stale game files.', 'Room geometry needs compilation');
-  }
-
   function positionCamera() {
-    const { document, selection, layer } = current.current;
+    const { document: source, selection, sourceRoomId, layer } = current.current;
+    const built = artifact.current;
+    if (!built || built.source !== source) return;
+    const document = built.document;
     const object = selection?.kind === 'object' ? document.objects.find(object => object.id === selection.id) : undefined;
     const start = selection?.kind === 'start' ? document.starts.find(start => start.player === selection.id) : undefined;
+    if (built.topology && !object && !start) {
+      const room = sourceRoomId ?? (selection?.kind === 'zone' ? source.roomSource.rooms.find(room => room.originZone === selection.id)?.id : undefined);
+      const cell = built.topology.cells.find(cell => cell.sourceId === room);
+      if (!cell) return;
+      const points = cell.vertices.map(id => built.topology!.points[id]!);
+      send('camera', { camera: { zone: cell.id,
+        x: Math.round(points.reduce((sum, point) => sum + point.x, 0) / points.length),
+        z: Math.round(points.reduce((sum, point) => sum + point.z, 0) / points.length),
+        upper: layer === 'upper' && document.zones.find(zone => zone.id === cell.id)!.upper.length > 0 ? 1 : 0, angle: 0 } });
+      return;
+    }
     const zoneId = selection?.kind === 'zone' ? selection.id : object?.zone ?? start?.zone;
     const zone = document.zones.find(zone => zone.id === zoneId);
     if (!zone) return;
@@ -50,7 +63,7 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
     send('camera', { camera: { zone: zone.id, x, z, upper: layer === 'upper' && zone.upper.length > 0 ? 1 : 0, angle: 0 } });
   }
 
-  function load(play = false) {
+  async function load(play = false) {
     if (!ready || (!play && (pendingPlay.current || failedDocument.current === current.current.document))) return;
     if (play) failedDocument.current = undefined;
     // An explicit play request supersedes the debounced inspection load.
@@ -59,23 +72,29 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
     if (play && reloadTimer.current !== undefined) {
       window.clearTimeout(reloadTimer.current); reloadTimer.current = undefined;
     }
-    if (!sourceMatchesLevel(current.current.document)) {
-      stopUnbuiltPreview(); return;
-    }
-    try { validateAnimationReferences(current.current.document); }
-    catch (error) { stopInvalidPreview(error instanceof Error ? error.message : String(error), 'Animation links need repair'); return; }
+    const source = current.current.document;
     pendingPlay.current = play;
-    setStarting(play); setLoaded(false); setError(''); setNotice('Loading current level…');
+    setStarting(play); setLoaded(false); setError(''); setNotice('Building current level…');
     const next = ++revisionRef.current; setRevision(next);
-    send('load', { slot, revision: next, files: current.current.document.files, setup: encodeLevelSetup(current.current.document.exitZone, current.current.document.drawGroups) });
+    try {
+      const built = await preparePlayableLevel(source);
+      if (source !== current.current.document || next !== revisionRef.current || !readyRef.current || !frame.current) return;
+      validateAnimationReferences(built.document); artifact.current = built;
+      setNotice('Loading current level…');
+      send('load', { slot: source.playtestSlot, revision: next, files: built.document.files, setup: encodeLevelSetup(built.document.exitZone, built.document.drawGroups) });
+    } catch (error) {
+      if (source === current.current.document && next === revisionRef.current && frame.current)
+        stopInvalidPreview(error instanceof Error ? error.message : String(error), 'Build needs attention');
+    }
   }
 
   useEffect(() => {
     const receive = (event: MessageEvent<EngineMessage>) => {
       if (event.origin !== location.origin || event.source !== frame.current?.contentWindow || event.data?.source !== 'ab3d-engine') return;
       const message = event.data;
+      if (message.revision !== undefined && message.revision >= 0 && message.revision !== revisionRef.current) return;
       if (message.type === 'ready') { setReady(true); setError(''); }
-      if (message.type === 'loaded' && message.revision === revisionRef.current) {
+      if (message.type === 'loaded' && message.revision === revisionRef.current && artifact.current?.source === current.current.document) {
         setNonblack(message.nonblack ?? 0);
         setActualSlot(message.slot ?? -1);
         setActualExit(message.exitZone);
@@ -89,7 +108,17 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
         setError(message.message ?? 'The engine preview stopped.'); setStarting(false); setPlaying(false); setLoaded(false);
       }
       if (message.type === 'stopped') { setPlaying(false); setStarting(false); setNotice('Playtest ended. Build and play again to restart.'); }
-      if (message.type === 'pick' && message.zone !== undefined && message.zone >= 0) current.current.onSelectZone(message.zone);
+      if (message.type === 'pick' && message.zone !== undefined && message.zone >= 0) {
+        const built = artifact.current;
+        if (!built || built.source !== current.current.document) return;
+        if (!built.topology) current.current.onSelectZone(message.zone);
+        else {
+          const id = built.topology.cells.find(cell => cell.id === message.zone)?.sourceId;
+          const room = built.source.roomSource.rooms.find(room => room.id === id);
+          if (room?.originZone !== null && room?.originZone !== undefined) current.current.onSelectZone(room.originZone);
+          else if (room) current.current.onSelectRoom(room.id);
+        }
+      }
     };
     window.addEventListener('message', receive);
     return () => window.removeEventListener('message', receive);
@@ -97,23 +126,25 @@ export function EnginePreview({ document, selection, layer, onSelectZone, onSlot
 
   useEffect(() => {
     if (!ready || playing || starting) return;
-    const timer = window.setTimeout(() => { reloadTimer.current = undefined; load(); }, 180);
+    const timer = window.setTimeout(() => { reloadTimer.current = undefined; void load(); }, 180);
     reloadTimer.current = timer;
     return () => { window.clearTimeout(timer); if (reloadTimer.current === timer) reloadTimer.current = undefined; };
   }, [ready, document, slot, playing, starting]);
   useEffect(() => {
-    if (ready && !sourceMatchesLevel(document)) {
-      stopUnbuiltPreview();
-    }
-  }, [ready, document.roomSource]);
+    if (previousDocument.current === document) return;
+    previousDocument.current = document; ++revisionRef.current; pendingPlay.current = false; artifact.current = undefined;
+    send('play', { playing: false }); setPlaying(false); setStarting(false); setLoaded(false);
+    setActualSlot(-1); setActualExit(undefined); setSpawnZone(undefined); setNonblack(0);
+  }, [document]);
 
-  useEffect(() => { if (loaded && !playing) positionCamera(); }, [selection, layer, loaded]);
+  useEffect(() => { if (loaded && !playing) positionCamera(); }, [selection, sourceRoomId, layer, loaded]);
   useEffect(() => {
     if (ready) send('instructions', { text: (playing ? playKeys : previewKeys).map(([key, action]) => `${key}: ${action}`).join(' · ') });
   }, [ready, playing]);
 
   function stop() { send('play', { playing: false }); setPlaying(false); setStarting(false); pendingPlay.current = false; }
   function reloadEngine() {
+    ++revisionRef.current; artifact.current = undefined;
     pendingPlay.current = false; failedDocument.current = undefined;
     setPlaying(false); setStarting(false); setReady(false); setLoaded(false); setError(''); setNotice('Loading the game engine…');
     frame.current?.contentWindow?.location.reload();
