@@ -38,9 +38,17 @@ def main():
                       "src/movement.c", "src/visibility.c", "src/sb_decompress.c", "src/logging.c"],
          ["-sUSE_SDL=2", "-sNODERAWFS=1"]),
         ("stairs", ["src/math_tables.c", "src/game_data.c", "src/level.c",
-                    "src/movement.c", "src/visibility.c", "src/objects.c", "src/audio_spatial.c",
+                    "src/movement.c", "src/visibility.c", "src/objects.c", "src/ai.c", "src/audio_spatial.c",
                     "src/sb_decompress.c", "src/logging.c"],
          ["-sUSE_SDL=2", "-sNODERAWFS=1"]),
+        ("doors", ["src/game_data.c", "src/level.c", "src/sb_decompress.c", "src/logging.c"],
+         ["-sUSE_SDL=2", "-sNODERAWFS=1", "-sALLOW_MEMORY_GROWTH=1"]),
+        ("robot", ["src/math_tables.c", "src/game_data.c", "src/level.c", "src/movement.c",
+                   "src/visibility.c", "src/ai.c", "src/audio_spatial.c", "src/sb_decompress.c",
+                   "src/logging.c"], ["-sUSE_SDL=2", "-sNODERAWFS=1"]),
+        ("corpses", ["src/math_tables.c", "src/game_data.c", "src/level.c", "src/movement.c",
+                     "src/visibility.c", "src/ai.c", "src/audio_spatial.c", "src/sb_decompress.c",
+                     "src/logging.c"], ["-sUSE_SDL=2", "-sNODERAWFS=1"]),
     ):
         target = output / f"{name}.js"
         subprocess.run(compiler + [f"tests/feedback_{name}.c"] + sources +

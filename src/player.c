@@ -1617,9 +1617,11 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
         ctx.objroom = state->level.data + plr->roompt;
     }
 
-    /* 4b. Teleport check (uses integer ctx) */
+    /* AB3DI.s PLR1/2_Control uses an 18-bit arrival mask. The generic
+     * ObjectMove.s CheckTeleport mask has 19 bits and additionally treats
+     * tough marines (type 18) as blockers. Keep these caller rules separate. */
     if (plr->zone >= 0) {
-        if (check_teleport(&ctx, &state->level, plr->zone)) {
+        if (check_teleport(&ctx, &state->level, plr->zone, 0x3FFFFu)) {
             /* Teleport destination is in integer coords; sync to 16.16. */
             plr->xoff = (int32_t)ctx.newx << 16;
             plr->zoff = (int32_t)ctx.newz << 16;

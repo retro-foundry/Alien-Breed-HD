@@ -1656,7 +1656,8 @@ void head_towards_angle(MoveContext* ctx, int16_t* facing,
 /* -----------------------------------------------------------------------
  * check_teleport - Zone teleporter check
  * ----------------------------------------------------------------------- */
-bool check_teleport(MoveContext* ctx, LevelState* level, int16_t zone_id)
+bool check_teleport(MoveContext* ctx, LevelState* level, int16_t zone_id,
+                    uint32_t destination_collision_flags)
 {
     if (!level->data || !level->zone_adds) return false;
     int zone_slots = level_zone_slot_count(level);
@@ -1690,7 +1691,7 @@ bool check_teleport(MoveContext* ctx, LevelState* level, int16_t zone_id)
 
             {
                 uint32_t old_flags = ctx->collide_flags;
-                ctx->collide_flags = 0x7FFFF;
+                ctx->collide_flags = destination_collision_flags;
                 collision_check(ctx, level);
                 ctx->collide_flags = old_flags;
             }

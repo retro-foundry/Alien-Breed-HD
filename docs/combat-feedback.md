@@ -49,9 +49,10 @@ the sound strengths. Simultaneous sources of the same sample retain the
 loudest contribution without restarting the burst. The active local player
 determines the listener, including the slave player in multiplayer.
 
-The level 8 walker was checked against the authored `level_h` geometry and
-`Robot.s` movement dimensions. It can cross all four starting-room exits;
-its movement and size were left unchanged because no blocked gap was identified.
+The initial level 8 walker check covered straight movement through the
+authored `level_h` exits. The subsequent report exposed differences in
+wandering, targeting, turn thresholds and attack recovery; see the level 8
+robot section below. Its original collision dimensions remain in use.
 
 A follow-up to the level 15 worm report found that targeting used the previous
 tick's position/aim. `AB3DI.s` refreshes `CalcPLR1InLine` / `CalcPLR2InLine`
@@ -244,3 +245,155 @@ height minus 80 and `ItsABullet`'s collision-height checks are retained.
 
 The full `tools/check_feedback.py` suite, Windows Release build and
 single-threaded Emscripten Release build pass.
+
+## Door texture alignment across all levels
+
+Updating a door used its legacy texture-byte base directly as the newer
+wall record's tile/row words. This discarded the horizontal tile offset
+on 25 door faces. Scrolling relative to the closed position also discarded
+the authored vertical offset on doors whose closed height was not zero.
+For example, level 6's zone 120/123 faces changed from tile 2, row 32 to
+tile 0, row 0; level 12's zone 72 faces lost their row 80 offset.
+
+The shared door routine now decodes the legacy base into the separate
+tile/row fields read by `amiga/WallRoutine3.ChipMem.s` `itsawalldraw`, then
+applies `amiga/Anims.s` `DoorRoutine`'s absolute `-(curr>>2)&255` scroll.
+The original door lists use 4096 bytes per tile, including faces with a
+different wall `VALSHIFT`. Existing wall scaling, door motion, authored
+level data and full-save layouts remain unchanged.
+
+`tests/feedback_doors.c` loads all 16 original maps and compares every door
+face against its authored initial texture origin throughout opening and
+closing. The old code failed on level 1's zone 22 before any movement.
+All 123 doors / 245 faces now pass 8,085 texture samples, including 25
+nonzero horizontal tile offsets and 151 faces at nonzero height. The test
+also checks wall heights, untouched graphics fields and unchanged legacy
+door-list bytes. The full feedback suite, Windows Release build and
+single-threaded Emscripten Release build pass.
+
+## Level 8 robot movement, attacks and death
+
+The follow-up report is addressed in the shared robot handler, using
+`amiga/Robot.s` `ItsARobot`, `.waitandsee`, `.nonewdir`,
+`ROBAttack_Player`, `MUSTPLR1/2` and `amiga/ObjectMove.s` `HeadTowardsAng`:
+
+- Wandering now retains `CurrCPt` and turns toward it gradually, including
+  stopping forward movement when facing away. The shared wander helper's
+  immediate random-facing replacement did not reproduce this behavior.
+- The attack turn comparison now scales the sine-table threshold to the
+  long cross product. Previously even a player almost directly ahead
+  caused a full turn, repeatedly overshooting the aim direction.
+- Pursuit reads resolved `PLR*_xoff/zoff` instead of the `p_*` inputs from
+  before player collision. A stale target could send the robot toward a
+  different wall or away from the player it was shooting at.
+- `ObjTimer` expiry can resume pursuit during `ThirdTimer` recovery, as in
+  `.waitandsee`. Wall contact retains the original `ObjTimer=-1` signal.
+  The original shot bursts, random recovery values, turning increments,
+  speed, 300-unit attack range, 160-unit extent and step limits are retained.
+- Damage is applied after movement, and a pain hit suppresses firing on
+  that tick. The death blast uses the original 120 while prowling or 400
+  while attacking, replacing the port's fixed 40. The blue key still drops.
+  `Robot.s` calls `ComputeBlast` on death; it does not fire a grenade volley.
+
+`tests/feedback_robot.c` reproduces the old aim oscillation and stale-position
+targeting failures. It checks both targets, gradual prowl turns, recovery
+interruption, single/batched shot timing, actual projectiles, pain suppression,
+death blast damage and the blue key. The original `level_h` data supplies
+eight routes from the authored spawn to adjoining rooms and four centered
+crossings through the outer enclosure's 192-unit exits, with the original
+collision size. Diagonal contact with a door jamb may still restart wandering;
+these checks do not assert that every approach angle must pass unobstructed.
+
+The complete `tools/check_feedback.py` suite, Windows Release build and
+single-threaded Emscripten Release build pass with these changes.
+
+An original-game emulator replay remains pending. For that comparison,
+capture `ItsARobot` entry/exit around a narrow exit during recovery: the
+64-byte object, its `ObjectPoints` slot, `TempFrames`, `CurrCPt`, `Facing`,
+`ObjTimer`, `ThirdTimer`, `FourthTimer`, `SinRet/CosRet`, `canshootgun`,
+`objroom` and `oldx/oldz/newx/newz`, plus projectile-pool changes when firing.
+Replay those state windows in the native fixture; also capture a lethal
+hit in each prowl/attack branch to compare `ComputeBlast` input and key output.
+
+## Level 9 teleporter arrival collision mask
+
+A follow-up report described intermittent failed teleports on level 9,
+possibly after enemies used a pad. The authored `level_i` data has four
+teleporters (35->36, 42->85, 90->109 and 134->82) and four tough marines.
+The reported incident has no replay, but a matching port-specific refusal
+is reproducible on the actual pad records.
+
+`amiga/AB3DI.s` `PLR1_Control` / `PLR2_Control` uses the 18-bit
+`%111111111111111111` (`0x3FFFF`) arrival collision mask. The separate
+`amiga/ObjectMove.s` `CheckTeleport` routine used by enemies uses 19 bits
+(`0x7FFFF`). The shared C helper hard-coded the latter mask for players
+as well. Bit 18 adds tough marines as arrival blockers, although the
+original player routine ignores that type. Thus an enemy reaching the
+arrival point could prevent a player teleport that the original permits.
+
+`check_teleport` now takes the caller's arrival collision mask explicitly:
+players pass `0x3FFFF`; enemies retain `0x7FFFF`. It restores the ordinary
+walking collision mask afterward. This restores the original player rule
+throughout the game without modifying any map or teleporter records.
+The earlier failed-attempt rollback remains: a blocked attempt preserves
+walking X/Z and height, and a later tick retries normally. Ordinary aliens
+still block occupied arrivals until they move away or die; enemy activity
+does not permanently disable a pad. No alternate landing spot or telefrag
+behavior is added.
+
+`tests/feedback_teleport.c` now checks all four pads on levels 9 and 15:
+480 cases across both players, standing/crouching, stationary/moving
+attempts, clear arrivals, live/dead aliens, tough marines and shotgun
+marines. Repeated blocked attempts recover after a living alien moves
+away or dies. Enemy probes retain the wider mask, restore their caller's
+mask, use the same pad and leave its six-byte teleport record intact.
+The old code fails on level 9 pad 35 with a tough marine at destination 36.
+All 480 cases, the complete feedback suite, Windows Release build and
+single-threaded Emscripten Release build pass after the correction.
+
+An original-game replay is still pending. Capture `PLR1_Control` /
+`PLR2_Control` immediately before and after their arrival `Collision`
+call, including `CollideFlags`, `hitwall`, `newx/newz/newy`, the tough
+marine's object/point records and the source/destination room pointers.
+Compare this with the native fixture before and after that enemy uses
+the source pad.
+
+## Silent corpse gibbing from explosions
+
+By request, every retained enemy corpse can now be destroyed by an explosion
+without replaying its pain or death sound. This deliberately extends the
+original behavior, while reusing `amiga/Anims.s` `ComputeBlast` reach/visibility
+and the existing `ExplodeIntoBits` debris effect.
+
+The floater report reproduced before the fix: blasting its resting frame 20
+corpse produced two sounds, including pain sample 8. Soft-dead floaters keep
+their live enemy type, so queued blast damage re-entered the living death
+handler. Other corpses use `OBJ_NBR_DEAD` and were skipped by blast targeting.
+Their raw byte 19 stores the original enemy type rather than pending damage.
+
+The shared blast path now recognizes both corpse formats. A reached corpse
+spawns debris immediately, clears its burning/pending explosion state and
+is removed. It bypasses living damage/death code and never queues damage
+into the corpse's original-type tag. Copying that type into the debris
+source preserves the existing per-type gib effect, including floaters.
+Queued damage on dead floaters also bypasses pain/death processing; ordinary
+non-explosive damage is discarded. Corpse blasts cannot repeat death blasts
+or loot drops, or regenerate debris from an already removed body.
+
+Animated alien, worm, rifle/shotgun/tough marine and small-red/claws corpses
+are covered, along with falling and settled floaters. The existing corpse
+metadata check protects decorative billboard and vector props. Living
+damage/pain, blue-key drops, explosion audio and debris impact sounds retain
+their existing behavior. No state or full-save layouts change.
+
+`tests/feedback_corpses.c` covers the reported floater sound and 429
+corpse-animation/blast-strength cases across all seven retained corpse
+types, including dormant/burning bodies and repeat explosions. Further
+checks cover zero/out-of-range blasts, props, keys, living pain, stale
+queued damage and a full debris pool. Actual rocket floor impacts, grenade
+fuses and barrel detonations remove corpses with only the weapon's explosion
+sound. The robot death regression also checks that its own blast leaves
+the blue key in a collectible zone.
+
+The complete feedback suite, Windows Release build and single-threaded
+Emscripten Release build pass.

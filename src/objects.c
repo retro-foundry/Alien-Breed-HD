@@ -156,6 +156,9 @@ static void enemy_apply_step_limits(const GameObject *obj,
 static int obj_type_to_enemy_index(int8_t obj_type);
 static int object_floor_render_offset_units(const GameObject *obj, int8_t obj_type);
 static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameState *state);
+static int enemy_corpse_original_type(const GameObject *obj);
+static void enemy_gib_corpse(GameObject *obj, GameState *state, int original_type,
+                             int32_t blast_damage);
 static bool enemy_tick_burning(GameObject *obj, GameState *state, int obj_index,
                                const EnemyParams *params);
 
@@ -592,7 +595,7 @@ static bool enemy_try_zone_teleport(GameObject *obj, GameState *state, MoveConte
     if (zone_for_teleport < 0) return false;
 
     /* Players already run teleports in player_control; enemies need this explicit pass. */
-    return check_teleport(ctx, &state->level, (int16_t)zone_for_teleport);
+    return check_teleport(ctx, &state->level, (int16_t)zone_for_teleport, 0x7FFFFu);
 }
 
 /* -----------------------------------------------------------------------
@@ -690,6 +693,7 @@ static int32_t enemy_track_target_with_turn(GameObject *obj, const EnemyParams *
 static int32_t robot_track_target(GameObject *obj, const EnemyParams *params,
                                   GameState *state, int player_num,
                                   bool *out_can_shootgun);
+static void robot_wander(GameObject *obj, const EnemyParams *params, GameState *state);
 static int32_t marine_track_target(GameObject *obj, const EnemyParams *params,
                                    GameState *state, int player_num,
                                    bool apply_translation);
@@ -1324,10 +1328,23 @@ static void enemy_convert_to_blue_key(GameObject *obj, GameState *state)
 /* -----------------------------------------------------------------------
  * Enemy common: check damage and handle death
  *
- * Returns: true if enemy is dead (caller should return early)
+ * Returns true when damage removed the object or started its death state.
  * ----------------------------------------------------------------------- */
-static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameState *state)
+static bool enemy_check_damage_with_robot_blast(GameObject *obj, const EnemyParams *params,
+                                                GameState *state, int16_t robot_blast_damage)
 {
+    int obj_idx = enemy_index_from_object_ptr(state, obj);
+    int corpse_type = enemy_corpse_original_type(obj);
+    if (corpse_type >= 0) {
+        /* Dead floaters retain their enemy type. Never replay living pain or
+         * death logic; queued blast damage uses the same silent corpse path. */
+        if (obj_idx >= 0 && explosion_damage_flag[obj_idx]) {
+            enemy_gib_corpse(obj, state, corpse_type, (uint8_t)obj->raw[19]);
+            return true;
+        }
+        if (obj->obj.number != OBJ_NBR_DEAD) obj->raw[19] = 0;
+        return false;
+    }
     int8_t raw_damage = (int8_t)obj->raw[19];
     if (raw_damage == 0) return false;
 
@@ -1335,10 +1352,6 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
     int8_t damage_b = raw_damage;
     int32_t damage = (int32_t)damage_b;
 
-    int obj_idx = -1;
-    if (state->level.object_data) {
-        obj_idx = (int)(((uint8_t*)obj - state->level.object_data) / OBJECT_SIZE);
-    }
     bool explosion_damage = false;
     if (obj_idx >= 0 && obj_idx < MAX_OBJECTS) {
         explosion_damage = explosion_damage_flag[obj_idx];
@@ -1415,7 +1428,7 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
             int16_t bx = 0, bz = 0;
             get_object_pos(&state->level, (int)OBJ_CID(obj), &bx, &bz);
             compute_blast(state, bx, bz, ((int32_t)obj_w(obj->raw + 4)) << 7,
-                          40, OBJ_ZONE(obj), obj->obj.in_top);
+                          robot_blast_damage, OBJ_ZONE(obj), obj->obj.in_top);
             explosion_spawn(state, bx, bz, OBJ_ZONE(obj), obj->obj.in_top,
                             ((int32_t)obj_w(obj->raw + 4)) << 7,
                             120, 100);
@@ -1496,6 +1509,11 @@ static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameS
         enemy_apply_death_outcome(obj, params, instant_kill);
         return true;
     }
+}
+
+static bool enemy_check_damage(GameObject *obj, const EnemyParams *params, GameState *state)
+{
+    return enemy_check_damage_with_robot_blast(obj, params, state, 120);
 }
 
 static int16_t enemy_min_player_separation_for_type(int8_t obj_type)
@@ -1861,6 +1879,48 @@ static bool dead_object_is_runtime_corpse(const GameObject *obj)
     if (expected_frame < 0) return false;
 
     return OBJ_DEADH(obj) == expected_frame;
+}
+
+/* Both dead-state formats remain blast targets: animated OBJ_NBR_DEAD
+ * records store their original type in raw[19], while soft-dead floaters
+ * retain their enemy type and have zero lives. Decorative props are not
+ * corpses, even when they use the same negative object number. */
+static int enemy_corpse_original_type(const GameObject *obj)
+{
+    if (!obj || OBJ_ZONE(obj) < 0) return -1;
+    if (obj->obj.number == OBJ_NBR_DEAD) {
+        if ((uint8_t)obj->raw[6] == (uint8_t)OBJ_3D_SPRITE ||
+            !dead_object_is_runtime_corpse(obj)) return -1;
+        return obj->obj.type_data[1];
+    }
+    /* Other enemy types finish dying by converting to OBJ_NBR_DEAD, a
+     * pickup, or a removed object. Zero lives alone can also mean an enemy
+     * is still inside its first death handler (not yet a corpse). */
+    if (obj->obj.number == OBJ_NBR_FLYING_NASTY && NASTY_LIVES(*obj) <= 0)
+        return obj->obj.number;
+    return -1;
+}
+
+/* Requested behavior beyond the original death handlers: a blasted corpse
+ * produces only the existing Anims.s ExplodeIntoBits debris, without pain,
+ * death audio, loot or a repeated death blast. Copy before reusing raw[19],
+ * which is the original-type tag on animated corpses, not a damage byte. */
+static void enemy_gib_corpse(GameObject *obj, GameState *state, int original_type,
+                             int32_t blast_damage)
+{
+    GameObject corpse = *obj;
+    corpse.obj.number = (int8_t)original_type;
+    const EnemyParams *params = &enemy_params[obj_type_to_enemy_index(corpse.obj.number)];
+    int16_t gib_level = enemy_gib_level_from_damage(&corpse, params, blast_damage);
+    explode_into_bits(&corpse, state, true, gib_level);
+    int index = enemy_index_from_object_ptr(state, obj);
+    if (index >= 0) {
+        explosion_damage_flag[index] = 0;
+        enemy_clear_burning(state, index);
+    }
+    NASTY_LIVES(*obj) = 0;
+    obj->raw[19] = 0;
+    OBJ_SET_ZONE(obj, -1);
 }
 
 /* -----------------------------------------------------------------------
@@ -2744,7 +2804,6 @@ void object_handle_robot(GameObject *obj, GameState *state)
     enemy_decay_worry_full_byte(obj);
 
     const EnemyParams *params = &enemy_params[1];
-    if (enemy_check_damage(obj, params, state)) return;
     if (NASTY_LIVES(*obj) <= 0) return;
 
     /* Robot.s parity:
@@ -2770,7 +2829,6 @@ void object_handle_robot(GameObject *obj, GameState *state)
         robot_frame = (int16_t)(d0 >> 1);
     }
 
-    enemy_update_can_see(obj, state);
     int can_see = obj->obj.can_see & 0x03;
     int16_t third_timer = OBJ_TD_W(obj, ENEMY_THIRD_TIMER_OFF);
     bool attacking = false;
@@ -2779,18 +2837,50 @@ void object_handle_robot(GameObject *obj, GameState *state)
     int target_player = 0;
     bool burning = enemy_is_burning_object(state, obj);
 
-    if (!burning && can_see && third_timer <= 0) {
+    if (!burning && !(can_see && third_timer <= 0)) {
+        /* Robot.s .waitandsee: ObjTimer expiry can resume pursuit even
+         * during ThirdTimer recovery; a wall hit sets ObjTimer to -1. */
+        if (can_see) {
+            third_timer = (int16_t)(third_timer - state->temp_frames);
+            if (third_timer < 0) third_timer = 0;
+        } else {
+            third_timer = (int16_t)(20 + ((rand() >> 4) & 63));
+        }
+        OBJ_SET_TD_W(obj, ENEMY_THIRD_TIMER_OFF, third_timer);
+        OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, 30);
+        if (can_see && (int16_t)(NASTY_TIMER(*obj) - state->temp_frames) <= 0) {
+            NASTY_SET_TIMER(*obj, (int16_t)(NASTY_TIMER(*obj) - state->temp_frames));
+            attacking = true;
+        }
+    } else if (!burning) {
+        attacking = true;
+    }
+    if (attacking) {
         target_player = marine_pick_target_player(obj, state);
         attacking = (target_player != 0);
     }
 
     if (attacking) {
         (void)robot_track_target(obj, params, state, target_player, &can_shootgun);
+    } else if (burning) {
+        OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, 30);
+        enemy_burn_wander(obj, params, state);
+    } else {
+        robot_wander(obj, params, state);
+    }
+
+    /* Robot.s applies damage after movement. A pain hit skips firing this
+     * tick; the death blast is 400 while attacking, 120 while prowling. */
+    bool hurt_this_tick = ((int8_t)obj->raw[19] >> 4) != 0;
+    if (enemy_check_damage_with_robot_blast(obj, params, state, attacking ? 400 : 120))
+        return;
+
+    if (attacking) {
 
         int16_t fourth_timer = OBJ_TD_W(obj, ENEMY_FOURTH_TIMER_OFF);
         fourth_timer -= state->temp_frames;
 
-        if (fourth_timer < 20) {
+        if (fourth_timer < 20 && !hurt_this_tick) {
             /* Robot.s gates shooting with canshootgun (must be facing target enough). */
             if (can_shootgun) {
                 fourth_timer = 50;
@@ -2817,14 +2907,12 @@ void object_handle_robot(GameObject *obj, GameState *state)
             }
         }
         OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, fourth_timer);
-    } else if (burning) {
-        OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, 30);
-        enemy_burn_wander(obj, params, state);
-    } else {
-        (void)enemy_tick_third_timer(obj, state, can_see, 20, 63);
-        OBJ_SET_TD_W(obj, ENEMY_FOURTH_TIMER_OFF, 30);
-        enemy_wander_with_timer(obj, params, state, 100, 63);
     }
+
+    /* Original prowl latches sightings; attack refreshes both visibility
+     * bits after movement, before converting the vector model's facing. */
+    enemy_update_can_see(obj, state);
+    if (!attacking) obj->obj.can_see |= (uint8_t)can_see;
 
     /* Robot.s updates objVectBright from zone brightness each tick:
      * d0 = zone bright (upper/lower); sub.w #5,d0; move.w d0,2(a0). */
@@ -2953,34 +3041,42 @@ static int marine_pick_target_player(GameObject *obj, GameState *state)
     return (d1 <= d2) ? 1 : 2;
 }
 
-static int32_t robot_track_target(GameObject *obj, const EnemyParams *params,
-                                  GameState *state, int player_num,
-                                  bool *out_can_shootgun)
+/* Robot.s uses a sine-table turn deadband and a 60-degree forward cone.
+ * Runtime sine values have half the Amiga bigsine amplitude; SinRet/CosRet
+ * retain HeadTowardsAng's 32768 scale, so both long comparisons halve too. */
+static bool robot_turn_towards_direction(GameObject *obj, int32_t sin_ret,
+                                         int32_t cos_ret, int16_t turn_speed,
+                                         int16_t forward_speed)
 {
-    PlayerState *plr = (player_num == 1) ? &state->plr1 : &state->plr2;
+    int16_t facing = NASTY_FACING(*obj);
+    int64_t cross = (int64_t)sin_lookup(facing) * cos_ret -
+                    (int64_t)cos_lookup(facing) * sin_ret;
+    int64_t threshold = (int64_t)sin_lookup(120) * 32768;
+    int64_t forward = (int64_t)sin_lookup(facing) * sin_ret +
+                      (int64_t)cos_lookup(facing) * cos_ret;
+    int16_t turn = 0;
+    if (cross >= threshold) turn = (int16_t)-turn_speed;
+    else if (cross <= -threshold) turn = turn_speed;
+    bool aligned = forward > 0x10000000;
+    NASTY_SET_MAXSPD(*obj, aligned ? forward_speed : 0);
+    if (!aligned) {
+        turn = (int16_t)(turn * 2);
+        if (!turn) turn = (int16_t)(turn_speed * 2);
+    }
+    NASTY_SET_FACING(*obj, (int16_t)((facing + turn) & ANGLE_MASK));
+    return aligned;
+}
+
+/* The Robot.s prowl and attack branches share one MoveObject call, their
+ * 160-unit extent, 20*256 step limits and wallflags #$200. */
+static void robot_move(GameObject *obj, const EnemyParams *params,
+                        GameState *state, const PlayerState *target, int32_t dist)
+{
     int16_t obj_x = 0, obj_z = 0;
     get_object_pos(&state->level, (int)OBJ_CID(obj), &obj_x, &obj_z);
-
-    int32_t target_x = (int32_t)plr->p_xoff;
-    int32_t target_z = (int32_t)plr->p_zoff;
-    int32_t dx = target_x - obj_x;
-    int32_t dz = target_z - obj_z;
-    int32_t dist = calc_dist_euclidean(dx, dz);
-    int16_t facing = NASTY_FACING(*obj);
-    int16_t base_turn = (player_num == 2) ? 120 : 240;
-    bool can_shootgun = false;
-
-    if (dist <= 0) {
-        can_shootgun = true;
-    } else {
-        int64_t fwd = (int64_t)dx * (int64_t)sin_lookup(facing) +
-                      (int64_t)dz * (int64_t)cos_lookup(facing);
-        can_shootgun = (fwd > (int64_t)dist * 8192);
-    }
-
     {
         int16_t speed = NASTY_MAXSPD(*obj);
-        if (speed <= 0) speed = 10;
+        if (speed < 0) speed = 0;
 
         MoveContext ctx;
         move_context_init(&ctx);
@@ -3013,13 +3109,19 @@ static int32_t robot_track_target(GameObject *obj, const EnemyParams *params,
 
         if (!enemy_try_zone_teleport(obj, state, &ctx)) {
             int32_t move_dist = (int32_t)speed * (int32_t)state->temp_frames;
-            int32_t toward_dist = dist - 300; /* Robot.s attack standoff range. */
+            int32_t toward_dist = target ? dist - 300 : move_dist; /* Robot.s attack standoff range. */
             if (toward_dist < 0) toward_dist = 0;
             if (move_dist > toward_dist) move_dist = toward_dist;
 
             if (move_dist > 0) {
-                enemy_motion_step_towards_point(obj, state, &ctx,
-                                                target_x, target_z, move_dist);
+                if (target) {
+                    enemy_motion_step_towards_point(obj, state, &ctx,
+                                                    (int16_t)(target->xoff >> 16),
+                                                    (int16_t)(target->zoff >> 16), move_dist);
+                } else {
+                    int16_t move_facing = (int16_t)((NASTY_FACING(*obj) + ANGLE_180) & ANGLE_MASK);
+                    enemy_motion_step_in_facing(obj, state, &ctx, move_facing, move_dist);
+                }
             } else {
                 ctx.newx = ctx.oldx;
                 ctx.newz = ctx.oldz;
@@ -3029,37 +3131,47 @@ static int32_t robot_track_target(GameObject *obj, const EnemyParams *params,
         }
 
         enemy_commit_move_context(obj, state, &ctx);
+        if (!target && ctx.hitwall) NASTY_SET_TIMER(*obj, -1);
     }
+}
 
-    {
-        int16_t turn_delta = 0;
-        if (dist > 0) {
-            int32_t denom = dist + 1;
-            int32_t sin_ret = (int32_t)(((int64_t)dx << 15) / denom);
-            int32_t cos_ret = (int32_t)(((int64_t)dz << 15) / denom);
-            int64_t cross = (int64_t)sin_lookup(facing) * (int64_t)cos_ret -
-                            (int64_t)cos_lookup(facing) * (int64_t)sin_ret;
-            int32_t turn_thresh = sin_lookup(120);
-            if (turn_thresh < 0) turn_thresh = -turn_thresh;
-            turn_thresh >>= 1;
-
-            if (cross > turn_thresh) {
-                turn_delta = (int16_t)(-base_turn);
-            } else if (cross < -turn_thresh) {
-                turn_delta = base_turn;
-            }
-        }
-
-        if (!can_shootgun) {
-            turn_delta = (int16_t)(turn_delta * 2);
-            if (turn_delta == 0) turn_delta = (int16_t)(base_turn * 2);
-        }
-
-        facing = (int16_t)((facing + turn_delta) & ANGLE_MASK);
-        NASTY_SET_FACING(*obj, facing);
+static void robot_wander(GameObject *obj, const EnemyParams *params, GameState *state)
+{
+    int16_t timer = (int16_t)(NASTY_TIMER(*obj) - state->temp_frames);
+    if (timer <= 0) {
+        obj_sw(obj->raw + 28, (int16_t)(rand() & ANGLE_EVEN_MASK)); /* CurrCPt */
+        timer = (int16_t)(100 + (rand() & 63));
     }
+    NASTY_SET_TIMER(*obj, timer);
+    int16_t desired = obj_w(obj->raw + 28);
+    (void)robot_turn_towards_direction(obj, (int32_t)sin_lookup(desired) * 2,
+                                      (int32_t)cos_lookup(desired) * 2, 120, 10);
+    robot_move(obj, params, state, NULL, 0);
+}
 
-    if (out_can_shootgun) *out_can_shootgun = can_shootgun;
+static int32_t robot_track_target(GameObject *obj, const EnemyParams *params,
+                                  GameState *state, int player_num,
+                                  bool *out_can_shootgun)
+{
+    PlayerState *plr = player_num == 1 ? &state->plr1 : &state->plr2;
+    int16_t obj_x = 0, obj_z = 0;
+    get_object_pos(&state->level, (int)OBJ_CID(obj), &obj_x, &obj_z);
+    /* Robot.s MUSTPLR1/2 reads resolved PLR*_xoff/zoff, as FireAtPlayer
+     * does, rather than the p_* simulation inputs from before collision. */
+    int32_t dx = (int16_t)(plr->xoff >> 16) - obj_x;
+    int32_t dz = (int16_t)(plr->zoff >> 16) - obj_z;
+    int32_t dist = calc_dist_euclidean(dx, dz);
+    robot_move(obj, params, state, plr, dist);
+    bool aligned;
+    if (dist > 0) {
+        int32_t sin_ret = (int32_t)((int64_t)dx * 32768 / (dist + 1));
+        int32_t cos_ret = (int32_t)((int64_t)dz * 32768 / (dist + 1));
+        aligned = robot_turn_towards_direction(obj, sin_ret, cos_ret,
+                                               player_num == 2 ? 120 : 240, 4);
+    } else {
+        aligned = true;
+    }
+    if (out_can_shootgun) *out_can_shootgun = aligned;
     return dist;
 }
 
@@ -4899,19 +5011,33 @@ static bool player_at_lift_zone(GameState *state, int16_t lift_zone_id, int16_t 
     return false;
 }
 
+/* Door wall lists retain the legacy texture-byte base: each 16-column tile
+ * occupies 4096 bytes. WallRoutine3.ChipMem.s itsawalldraw instead reads a
+ * tile number and a separate row offset from wall_rec+10/+12. Decode the
+ * base before applying Anims.s DoorRoutine's -(curr>>2)&255 absolute scroll.
+ * This also keeps the wall-list bytes compatible with existing full saves. */
+static uint32_t door_wall_texture_words(uint32_t legacy_base, int32_t door_pos)
+{
+    uint32_t tile = legacy_base >> 12;
+    uint32_t base_yoff = legacy_base & 0x0FFFu;
+    uint32_t scroll = (uint32_t)(-(door_pos >> 8)) & 0x00FFu;
+    return (tile << 16) | (uint16_t)(base_yoff + scroll);
+}
+
 /* -----------------------------------------------------------------------
  * Door routine
  *
  * Translated from Anims.s DoorRoutine (line ~642-796).
  *
- * Door data format (per door, 16 bytes in DoorData array):
+ * Normalized door data format (22 bytes per entry):
  *   0: zone index (word)
  *   2: door type (word) - 0=player+space, 1=condition, 2=condition2, etc.
- *   4: door position (long) - current Y (*256), 10: top (open), 14: bot (closed). 22 bytes per entry.
+ *   4: door position (long) - current Y (*256)
  *   8: door velocity (word) - current speed
- *  10: door max (word) - maximum opening height
- *  12: timer (word) - close delay
- *  14: flags (word) - for type 0: 0 = player-only (space at door); else condition mask (switch bit)
+ *  10: open position (long)
+ *  14: closed position (long)
+ *  18: timer (word)
+ *  20: condition mask (word)
  * ----------------------------------------------------------------------- */
 void door_routine(GameState *state)
 {
@@ -5043,18 +5169,8 @@ void door_routine(GameState *state)
                 if (gfx_off >= 0) {
                     uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
                     wbe32(wall_rec + 24, door_pos);   /* Amiga: move.l d3,24(a1) = door height for this wall */
-                    /* Amiga DoorRoutine:
-                     *   d0 = -(curr >> 2) & 255  => with curr stored as door_pos/64, this is -(door_pos>>8).
-                     *   a2 = gfx_base + d0 ; move.l a2,10(a1)  (writes fromtile+totalyoff together). */
-                    /* Align scroll relative to this door's closed position.
-                     * Doors whose closed Y is not 0 need this per-door phase offset. */
-                    int16_t door_phase = (int16_t)(door_pos >> 8);
-                    int16_t door_closed_phase = (int16_t)(door_bot >> 8);
-                    int16_t rel_phase = (int16_t)(door_phase - door_closed_phase);
-                    uint32_t tex_scroll = (uint32_t)((-(int16_t)rel_phase) & 0x00FF);
-                    uint32_t tex_ptr = (uint32_t)((int32_t)gfx_base + (int32_t)tex_scroll); /* Amiga: adda.w d0,a2 */
-
-                    wbe32(wall_rec + 10, (int32_t)tex_ptr);  /* Amiga: move.l a2,10(a1) */
+                    uint32_t texture = door_wall_texture_words((uint32_t)gfx_base, door_pos);
+                    wbe32(wall_rec + 10, (int32_t)texture);
                 }
             }
             if (!triggered && (plr1_door_press_near || plr2_door_press_near))
@@ -5939,7 +6055,7 @@ static void compute_blast_apply_target(GameState *state,
         if (target_player_num == 1) state->hitcol = 0xF00;
         else state->hitcol2 = 0xF00;
         audio_play_sample(19, amiga_noisevol_to_pc(PLAYER_PAIN_NOISEVOL));
-    } else if (target_obj) {
+    } else if (target_obj && enemy_corpse_original_type(target_obj) < 0) {
         if (damage > 0) {
             target_obj->raw[19] = damage_accumulate_u8(target_obj->raw[19], damage);
             if (target_obj_index >= 0 && target_obj_index < MAX_OBJECTS) {
@@ -5973,6 +6089,9 @@ static void compute_blast_apply_target(GameState *state,
     if (target_obj) {
         NASTY_SET_IMPACTX(target_obj, impact_x_clamped);
         NASTY_SET_IMPACTZ(target_obj, impact_z_clamped);
+        int corpse_type = enemy_corpse_original_type(target_obj);
+        if (corpse_type >= 0 && damage > 0)
+            enemy_gib_corpse(target_obj, state, corpse_type, damage);
     }
 }
 
@@ -6014,7 +6133,8 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         GameObject *obj = get_object(&state->level, obj_index);
         if (!obj || OBJ_CID(obj) < 0) break;
         if (OBJ_ZONE(obj) < 0) continue;
-        if (!compute_blast_can_hit_obj_type(obj->obj.number)) continue;
+        int corpse_type = enemy_corpse_original_type(obj);
+        if (corpse_type < 0 && !compute_blast_can_hit_obj_type(obj->obj.number)) continue;
 
         if (obj == plr1_obj) plr1_in_list = true;
         if (obj == plr2_obj) plr2_in_list = true;
@@ -6024,8 +6144,9 @@ void compute_blast(GameState *state, int32_t x, int32_t z, int32_t y,
         int16_t target_y = obj_w(obj->raw + 4);
 
         int16_t target_radius = 40;
-        if (obj->obj.number >= 0 && obj->obj.number < 21)
-            target_radius = col_box_table[(int)obj->obj.number].width;
+        int target_type = corpse_type >= 0 ? corpse_type : obj->obj.number;
+        if (target_type >= 0 && target_type < 21)
+            target_radius = col_box_table[target_type].width;
         if (obj->obj.number == OBJ_NBR_HUGE_RED_THING) {
             /* BigRedThing.s ComputeBlast falloff uses center-point distance.
              * Edge-radius splash makes the level-15 boss die much faster than Amiga. */
