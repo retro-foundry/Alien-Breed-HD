@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { importedAnimationTables } from '../src/model/animationBuild';
 import { BinaryReader } from '../src/model/binary';
-import { buildGeneratedGraphics } from '../src/model/generatedGraphics';
+import { buildGeneratedGraphics, compileGeneratedGraphics } from '../src/model/generatedGraphics';
 import { importedGraphicsStreams } from '../src/model/graphicsBuild';
 import { openLevel } from '../src/model/level';
 import { originalFiles } from './helpers';
@@ -86,4 +86,34 @@ it('enforces generated table capacity and rejects missing live attachments', () 
   const door = importedAnimationTables(document).tables.doors![0]!;
   expect(() => buildGeneratedGraphics(document, rooms, { ...animations, doors: [{ ...door, zone: 0, walls: [] }] })).toThrow(/no generated record/);
   expect(() => buildGeneratedGraphics(document, [{ id: 0, dataOffset: -1, lower: [] }], animations)).toThrow(/data offset/);
+});
+
+
+it.each(['door', 'lift'] as const)('binds a newly authored %s plane and wall by exact compiled identity without imported offsets', kind => {
+  const document = openLevel('generated controller', originalFiles(1)), { tables } = importedAnimationTables(document);
+  const records = document.zones.flatMap(zone => [...zone.lower, ...zone.upper]);
+  const plane = records.find(record => record.type === (kind === 'door' ? 2 : 1))!, wall = records.find(record => record.type === 0)!;
+  const item = (record: typeof plane) => ({ bytes: document.files.graphics.slice(record.offset, record.offset + record.size) });
+  const rooms = [0, 1].map(id => ({ id, dataOffset: 100 + id * 48, lower: [item(plane), item(wall), item(wall)] }));
+  const template = (kind === 'door' ? tables.doors : tables.lifts)![0]!;
+  const controller = { ...template, zone: 0, graphic: 0, target: { room: 0, upper: false, index: 0 },
+    walls: [{ line: 0, graphic: 0, base: 1234, target: { room: 1, upper: false, index: 2 } }] };
+  const animations = { doors: kind === 'door' ? [controller] : null, lifts: kind === 'lift' ? [controller] : null,
+    water: kind === 'lift' ? tables.water.map(group => ({ ...group, entries: [] })) : [], switches: null, trailing: new Uint8Array() };
+  const before = structuredClone(animations), built = compileGeneratedGraphics(document, rooms, animations), reader = new BinaryReader(built.bytes, 'new controller');
+  const offset = reader.i32(kind === 'door' ? 0 : 4);
+  const planeTarget = built.records.find(record => record.room === 0 && record.index === 0)!.offset;
+  const wallTarget = built.records.find(record => record.room === 1 && record.index === 2)!.offset;
+  expect(reader.i32(offset + 8)).toBe(planeTarget); expect(reader.i32(offset + 20)).toBe(wallTarget);
+  expect(reader.i32(offset + 24)).toBe(1234); expect(reader.i16(offset + 18)).toBe(0);
+  expect(reader.i16(planeTarget)).toBe(plane.type); expect(reader.i16(wallTarget)).toBe(0);
+  expect(built.records.every(record => record.sourceOffset === undefined)).toBe(true);
+  expect(animations).toEqual(before);
+  for (const target of [{ room: 2, upper: false, index: 0 }, { room: 0, upper: true, index: 0 }, { room: 0, upper: false, index: 99 },
+    { room: 0, upper: false, index: 1 }, { room: 1, upper: false, index: 0 }]) {
+    const invalid = { ...animations, [kind === 'door' ? 'doors' : 'lifts']: [{ ...controller, target }] };
+    expect(() => compileGeneratedGraphics(document, rooms, invalid)).toThrow(/animation target|controlled lower room/);
+  }
+  expect(() => compileGeneratedGraphics(document, rooms, { ...animations, [kind === 'door' ? 'doors' : 'lifts']: [{ ...controller,
+    walls: [{ ...controller.walls[0]!, target: { room: 1, upper: false, index: 0 } }] }] })).toThrow(/incompatible graphics opcode/);
 });

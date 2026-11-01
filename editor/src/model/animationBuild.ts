@@ -3,8 +3,11 @@ import type { LevelDocument } from './level';
 import { BinaryWriter } from './writer';
 import { resolveAnimationRoom } from './animationRooms';
 
-export interface AnimationWall { line: number; graphic: number; base: number }
-export interface MovingRoomAnimation { header: Uint8Array; zone: number; graphic: number; walls: readonly AnimationWall[] }
+/** Compiler-owned record identity for newly authored graphics with no imported
+ * byte offset. Never store this generated identity in editable project source. */
+export interface AnimationGraphicTarget { readonly room: number; readonly upper: boolean; readonly index: number }
+export interface AnimationWall { line: number; graphic: number; base: number; target?: AnimationGraphicTarget }
+export interface MovingRoomAnimation { header: Uint8Array; zone: number; graphic: number; walls: readonly AnimationWall[]; target?: AnimationGraphicTarget }
 export interface WaterAnimation { header: Uint8Array; entries: readonly { zone: number; graphic: number }[] }
 export interface SwitchAnimation { bytes: Uint8Array; zone: number; point: number; graphic: number }
 export interface AnimationTables {
@@ -119,7 +122,7 @@ export function validateAnimationReferences(document: LevelDocument): void {
   }));
 }
 
-export interface AnimationTargetContext { kind: 'door' | 'lift' | 'moving-wall' | 'water' | 'switch'; zone: number; line?: number }
+export interface AnimationTargetContext { kind: 'door' | 'lift' | 'moving-wall' | 'water' | 'switch'; zone: number; line?: number; target?: AnimationGraphicTarget }
 
 export function buildAnimationTables(tables: AnimationTables, base: number, resolveGraphic: (source: number, context: AnimationTargetContext) => number):
   { bytes: Uint8Array; doors: number; lifts: number; switches: number } {
@@ -136,10 +139,10 @@ export function buildAnimationTables(tables: AnimationTables, base: number, reso
       checkedInteger(record.walls.length, 0, 64, 'Moving wall count');
       const header = output.offset; output.write(record.header);
       output.patchWord(header + 12, checkedInteger(record.zone, 0, 255, 'Controlled room'));
-      output.patchLong(header + 8, pointer(record.graphic, { kind, zone: record.zone }));
+      output.patchLong(header + 8, pointer(record.graphic, { kind, zone: record.zone, ...(record.target ? { target: record.target } : {}) }));
       for (const wall of record.walls) {
         output.word(checkedInteger(wall.line, 0, 32767, 'Animated collision line'));
-        output.long(pointer(wall.graphic, { kind: 'moving-wall', zone: record.zone, line: wall.line })); output.long(checkedInteger(wall.base, -2147483648, 2147483647, 'Animated wall texture phase'));
+        output.long(pointer(wall.graphic, { kind: 'moving-wall', zone: record.zone, line: wall.line, ...(wall.target ? { target: wall.target } : {}) })); output.long(checkedInteger(wall.base, -2147483648, 2147483647, 'Animated wall texture phase'));
       }
       output.word(-1);
     }

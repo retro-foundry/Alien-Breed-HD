@@ -2189,3 +2189,35 @@ fixtures can establish current-format support independently.
   and Apply action. The worktree is clean after the release checkpoint. This
   is current-level template replacement, not completion of the full object
   library or independent AMOS door/lift authoring.
+
+
+- Independent door/lift authoring: the generated-graphics compiler now accepts
+  exact controller plane/wall targets by compiled room, lower/upper stream and
+  record index. New moving graphics no longer need an imported source byte
+  offset or a copied native room. This is a compiler-stage identity only; it is
+  deliberately not a generated offset stored in editable source. Existing
+  imported animation relocation remains byte-identical.
+
+  The controller writer forwards these explicit targets to generated assembly,
+  which resolves and validates the actual opcode and controlled lower plane.
+  Missing, wrong-room, wrong-stream and wrong-opcode targets reject before any
+  file is emitted. Tests use newly generated records without source offsets,
+  including two indistinguishable wall copies to prove exact selection. Native
+  headers, collision line identities and legacy wall texture bases stay intact.
+  All 854 model tests pass with two workers, including the original 16-map exact
+  assembly checks. Sixteen Chromium/Firefox native range/motion checks also
+  pass, covering edited destinations, collision, wall geometry and independent
+  copied-controller movement. This is not yet a published Make door/Make lift
+  workflow.
+
+  Next integration: create source-owned controller settings independently of
+  copied-controller templates, generate moving lintel/riser bands over the full
+  travel range (including zero-height resting bands), bind both sides of portal
+  collision boundaries, preserve them through save/Undo/copy/geometry changes,
+  then expose creation/removal and native motion/collision/playtest acceptance.
+  AMOS `DEFDOOR` / `DEFLIFT` assign groups to rooms and wall edges independently;
+  current native `DoorRoutine` changes the lower roof and wall bottoms, while
+  `LiftRoutine` changes the lower floor and wall tops. Those relationships, not
+  a room-name/type flag, are the required authoring contract. The older AMOS
+  settings/header variant must not be confused with the current 18-byte native
+  header followed by 10-byte wall records.

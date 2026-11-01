@@ -37,6 +37,8 @@ export function compileGeneratedGraphics(document: LevelDocument, rooms: readonl
   output.reserve(16 + rooms.length * 12); output.patchLong(12, table);
   const targets: { key: GeneratedGraphicsTarget; start: number; original: Graphic; generated: Graphic }[] = [];
   const records: GeneratedGraphicIdentity[] = [];
+  const directTargets = new Map<string, { start: number; record: Graphic }>();
+  const targetKey = (target: GeneratedGraphicsTarget) => `${target.room}:${target.upper}:${target.index}`;
   for (const room of rooms) {
     output.patchLong(16 + room.id * 4, checkedInteger(room.dataOffset, 0, 16 * 1024 * 1024 - 1, 'Generated zone data offset'));
     for (const [upper, stream] of [[false, room.lower], [true, room.upper]] as const) {
@@ -52,6 +54,7 @@ export function compileGeneratedGraphics(document: LevelDocument, rooms: readonl
           if (!original || original.type !== generated.type) throw new Error('A generated graphics identity must name a source record with the same opcode.');
           targets.push({ key: { room: room.id, upper, index }, start: output.offset, original, generated });
         }
+        directTargets.set(targetKey({ room: room.id, upper, index }), { start: output.offset, record: generated });
         records.push(Object.freeze({ room: room.id, upper, index, offset: output.offset,
           ...(item.sourceOffset === undefined ? {} : { sourceOffset: item.sourceOffset }),
           ...(item.boundaryIndex === undefined ? {} : { boundaryIndex: item.boundaryIndex }) }));
@@ -61,6 +64,21 @@ export function compileGeneratedGraphics(document: LevelDocument, rooms: readonl
     }
   }
   const resolve = (pointer: number, context: AnimationTargetContext): number => {
+    // Authored moving planes/bands have no source byte address. Resolve their
+    // exact compiled record independently of imported material provenance.
+    if (context.target) {
+      const identity = context.target;
+      checkedInteger(identity.room, 0, rooms.length - 1, 'Authored animation target room');
+      checkedInteger(identity.index, 0, 4094, 'Authored animation target record');
+      if (typeof identity.upper !== 'boolean') throw new Error('Authored animation targets need an explicit lower/upper stream.');
+      const target = directTargets.get(targetKey(identity));
+      if (!target) throw new Error('Authored animation target no longer exists in the generated graphics.');
+      const types = context.kind === 'moving-wall' ? [0, 5, 13] : context.kind === 'door' ? [2, 9, 11] : context.kind === 'lift' ? [1, 8, 10] : context.kind === 'water' ? [7] : [0, 13];
+      if (!types.includes(target.record.type)) throw new Error(`Authored ${context.kind} animation target has an incompatible graphics opcode.`);
+      if ((context.kind === 'door' || context.kind === 'lift') && (identity.room !== context.zone || identity.upper))
+        throw new Error('An authored door/lift plane must belong to its controlled lower room.');
+      return target.start + (context.kind === 'switch' ? 10 : 0);
+    }
     const candidates = targets.filter(target => pointer >= target.original.offset && pointer < target.original.offset + target.original.size);
     if (!candidates.length) throw new Error(`Animation graphics target ${pointer} has no generated record.`);
     let target = candidates[0]!;
