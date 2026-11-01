@@ -3,7 +3,7 @@ import { resolveAnimationRoom } from './animationRooms';
 import { nativeRoomTranslation } from './roomTranslation';
 import { mechanismDependencies } from './mechanismDependencies';
 import { BinaryReader, checkedInteger } from './binary';
-import { assertMechanismActivation } from './mechanismActivation';
+import { assertMechanismActivation, assertMechanismRange } from './mechanismActivation';
 import { importedAnimationTables } from './animationBuild';
 import type { RoomChange } from './roomSource';
 
@@ -63,6 +63,37 @@ export function restoreControllerCopies(value: unknown): readonly SourceControll
 
 export function compileControllerCopies(value: readonly SourceControllerCopy[]): readonly MovingControllerCopy[] {
   return value.map(copy => ({ ...copy, graphicsRooms: new Map(copy.graphicsRooms), collisionRooms: new Map(copy.collisionRooms), header: new Uint8Array(copy.header) }));
+}
+
+export function copiedMechanismSettings(copy: SourceControllerCopy) {
+  const reader = new BinaryReader(new Uint8Array(copy.header), 'copied controller settings');
+  return { kind: copy.kind, id: copy.id, bottom: reader.i16(0) / 4, top: reader.i16(2) / 4, current: reader.i16(4) / 4,
+    direction: reader.i16(6), conditions: reader.u16(14), openRule: reader.u8(16), closeRule: reader.u8(17) };
+}
+
+function editCopiedHeader(document: LevelDocument, room: string, kind: 'door' | 'lift', label: string,
+  update: (view: DataView, copy: SourceControllerCopy) => void): RoomChange {
+  const source = document.roomSource.controllerCopies ?? [], index = source.findIndex(copy => copy.room === room && copy.kind === kind);
+  if (index < 0) throw new Error('That copied door or lift no longer exists.');
+  const copies = [...compileControllerCopies(source)], copy = copies[index]!;
+  const header = copy.header!;
+  update(new DataView(header.buffer, header.byteOffset, header.byteLength), source[index]!);
+  return { ...setRoomControllerCopies(document, copies), label };
+}
+
+export function setCopiedMechanismRange(document: LevelDocument, room: string, kind: 'door' | 'lift', top: number, bottom: number): RoomChange {
+  return editCopiedHeader(document, room, kind, `Change copied ${kind} range`, (view, copy) => {
+    assertMechanismRange(copiedMechanismSettings(copy), top, bottom);
+    view.setInt16(0, bottom * 4); view.setInt16(2, top * 4);
+  });
+}
+
+export function setCopiedMechanismRules(document: LevelDocument, room: string, kind: 'door' | 'lift', conditions: number, openRule: number, closeRule: number): RoomChange {
+  return editCopiedHeader(document, room, kind, `Change copied ${kind} rules`, view => {
+    view.setUint16(14, checkedInteger(conditions, 0, 65535, 'Key and switch requirements'));
+    view.setUint8(16, checkedInteger(openRule, 0, kind === 'door' ? 5 : 3, 'Opening rule'));
+    view.setUint8(17, checkedInteger(closeRule, 0, kind === 'door' ? 1 : 3, 'Closing rule'));
+  });
 }
 
 export function setRoomControllerCopies(document: LevelDocument, copies: readonly MovingControllerCopy[]): RoomChange {

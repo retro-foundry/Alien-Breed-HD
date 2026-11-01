@@ -17,6 +17,8 @@ import { roomSettings } from '../model/roomHeights';
 import { NumberField } from './NumberField';
 import { MechanismRangeInspector } from './MechanismRangeInspector';
 import { MechanismAttachments } from './MechanismAttachments';
+import { MechanismRulesInspector } from './MechanismRulesInspector';
+import { CopiedMechanismInspector } from './CopiedMechanismInspector';
 import { mechanismsForRoom } from '../model/mechanismDependencies';
 import { objectTemplates } from '../model/objectAuthoring';
 import { keyColour, keyColours, setKeyColour, ammunitionChoices, ammunitionType, setAmmunitionType, weaponPickupChoices, weaponPickupType, setWeaponPickupType } from '../model/objectSettings';
@@ -58,6 +60,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
       {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onRedraw={onRoomRedraw} onDelete={onRoomDelete} />}
       {sourceRoom && <RoomAppearanceInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && <RoomHeightInspector document={document} room={sourceRoom} edit={edit} />}
+      {sourceRoom && <CopiedMechanismInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && (!zone || sourceRoom.properties) && <RoomPropertiesInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && (!zone || !sourceMatchesLevel(document)) && <TeleportInspector document={document} room={sourceRoom} edit={edit} onShowDestination={onShowDestination} />}
       {zone && <>
@@ -83,13 +86,8 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
         {mechanisms.map(mechanism => <section className="property-section" key={`${mechanism.kind}-${mechanism.id}`}><h3>{mechanism.kind === 'door' ? 'Door' : 'Lift'} {mechanism.id}</h3>
           <InfoRow label="Closed / bottom" value={mechanism.bottom} /><InfoRow label="Open / top" value={mechanism.top} />
           <MechanismRangeInspector document={document} mechanism={mechanism} edit={edit} />
-          <label className="select-field"><span>Opens when</span><select aria-label={`${mechanism.kind} ${mechanism.id} opening rule`} title="Choose what starts opening or raising this mechanism. All selected key and switch requirements must also be met." value={mechanism.openRule} onChange={event => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, mechanism.conditions, Number(event.target.value), mechanism.closeRule))}>
-            {(mechanism.kind === 'door' ? ['Player uses it', 'Player touches it', 'Bullet hits it', 'Enemy touches it', 'Timer expires', 'Never'] : ['Player uses it', 'Player touches it', 'Timer expires', 'Never']).map((label, value) => <option key={value} value={value}>{label}</option>)}
-          </select></label>
-          <label className="select-field"><span>Closes when</span><select aria-label={`${mechanism.kind} ${mechanism.id} closing rule`} title="Choose what starts closing or lowering this mechanism." value={mechanism.closeRule} onChange={event => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, mechanism.conditions, mechanism.openRule, Number(event.target.value)))}>
-            {(mechanism.kind === 'door' ? ['Timer expires', 'Never'] : ['Player uses it', 'Player touches it', 'Timer expires', 'Never']).map((label, value) => <option key={value} value={value}>{label}</option>)}
-          </select></label>
-          <h4>Requires all selected</h4><div className="condition-grid">{Array.from({ length: 12 }, (_, bit) => <label className="check-field" key={bit}><input type="checkbox" title="This requirement must be met along with every other checked key or switch." checked={(mechanism.conditions & (1 << bit)) !== 0} onChange={event => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, event.target.checked ? mechanism.conditions | (1 << bit) : mechanism.conditions & ~(1 << bit), mechanism.openRule, mechanism.closeRule))} />{bit < 4 ? `Key ${bit + 1}` : `Switch ${bit - 3}`}</label>)}</div>
+          <MechanismRulesInspector mechanism={mechanism} prefix={`${mechanism.kind} ${mechanism.id}`}
+            change={(conditions, openRule, closeRule) => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, conditions, openRule, closeRule))} />
           <MechanismAttachments document={document} mechanism={mechanism} onShowRoom={onShowDestination} />
         </section>)}
         <section className="property-section"><h3>Visibility</h3><InfoRow label="Visible zones" value={zone.visibleZones.length} /><InfoRow label="Lower graphics" value={zone.lower.length} /><InfoRow label="Upper graphics" value={zone.upper.length} /></section>

@@ -1772,3 +1772,16 @@ fixtures can establish current-format support independently.
   iframe to detach before checking the replacement engine's authored state.
   Room-copy UI, ordinary copied-mechanism controls, switches and the remaining
   full-editor requirements are still open. Deployment remains pending readiness.
+
+  Copied door/lift settings now have inspector controls for ranges, native
+  opening/closing rules and shared level key/switch requirements. Range drafts
+  apply atomically, Escape/reset cancel drafts and Undo/Redo restore committed
+  source edits. Imported and copied controls share a range form, rule UI and
+  native range/activation validation. Copied changes preserve original bytes and
+  attachment mappings, and native playtests reach the edited destination with
+  synchronized planes/walls while the original stays still. The occupied-door
+  exception is preserved and a new gate that would strand an idle intermediate
+  door is rejected. Visible notes/tooltips explain controls and condition scope.
+  All 756 model tests, 26 Chromium/Firefox copied/original motion and controls
+  cases, and the production build pass; the copied-control layout was inspected.
+  Room-copy/creation UI, switches and broader motion authoring remain required.

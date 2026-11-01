@@ -216,3 +216,25 @@ checks the reset controller's authored range. Workspace replacement is confirmed
 by the old iframe detaching before querying the replacement engine, avoiding a
 stale-preview readiness race. Room-copy/ordinary mechanism authoring UI and the
 remaining relationship work are still required.
+
+## Copied motion settings inspector
+
+Copied door/lift rooms now expose their captured ranges, opening/closing rules
+and key/switch requirements in the inspector. Range edits validate both draft
+destinations and commit together; Escape cancels a field, Reset clears the draft,
+and Undo/Redo restores each committed source edit. Rule and requirement changes
+are immediate source edits. Tooltips and visible notes explain quarter units,
+height direction, fixed initial position, shared level conditions and playtesting.
+
+Imported and copied mechanisms share the range form, rule controls and native
+range/activation validator. Copied setters preserve the native pointer/attachment
+plan and original files; only the selected captured settings change. The native
+ungated occupied-door exception is retained, while adding a gate to a stationary
+intermediate door is rejected. Existing original-controller controls keep their
+labels and behavior.
+
+Browser checks exercise invalid drafts, cancellation, range Undo/Redo, rule/key
+Undo, source save and actual native movement to the edited destination while the
+original stays still. Both browsers pass those cases and adjacent imported
+mechanism cycles and keyboard/tooltip checks. Room copying/creation UI, switch
+allocation, broader motion authoring and remaining requirements are still open.
