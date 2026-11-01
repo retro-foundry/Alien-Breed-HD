@@ -184,9 +184,35 @@ groups, duplicate controllers and changed initial positions. Native geometry is
 synchronized on the first simulation update, as in the original routines; the
 browser test observes both that initialization and subsequent motion isolation.
 
-This compiler API is not yet persisted in editable source projects or exposed as
-a room-copy command. Source controller snapshots, ordinary authoring controls,
-switch allocation/internal condition remapping, grouped moving cells and broader
-transforms still require implementation before complete room clipboard authoring
-or R7 completion can be claimed. Normal builds keep rejecting moving copies that
-do not provide the explicit controller plan.
+Editable-source integration is recorded below. Ordinary authoring controls,
+the room-copy command, switch allocation/internal condition remapping, grouped
+moving cells and broader transforms still require implementation before complete
+room clipboard authoring or R7 completion can be claimed. Normal builds keep
+rejecting moving copies that do not provide the explicit controller plan.
+
+## Persisted copied-controller source
+
+Room-source version 5 stores controller plans alongside stable source room IDs.
+Settings bytes and attachment pairs are copied into frozen arrays, avoiding
+mutable Maps/typed arrays in history or saved source. Capturing a plan without
+an explicit header snapshots its current native settings; subsequent original
+range/rule changes do not alter the copy. Native graphics pointers and runtime
+zone fields are still rebuilt from validated attachment identities.
+
+`setRoomControllerCopies` produces one source/history change. Normal preview and
+game export compile the persisted plans automatically. Room creation, redraw,
+height/property changes and shared-boundary/group moves retain them. Deleting a
+controlled copied room removes its controller in the same source edit; Undo
+restores both. Removing a required attachment room still requires repair before
+building, while its editable source remains saveable. Structural corruption,
+duplicate attachment keys/controllers, invalid bytes/ranges/rules and unsupported
+source fields are rejected explicitly on restoration. Versions 1–4 remain readable.
+
+Model verification covers source save/reopen, independent settings after native
+template changes, normal export, immutable snapshots, group moves, deletion and
+whole-operation Undo/Redo. Browser verification imports actual editable v5 source,
+uses normal Build & play, saves after motion, reopens that downloaded project and
+checks the reset controller's authored range. Workspace replacement is confirmed
+by the old iframe detaching before querying the replacement engine, avoiding a
+stale-preview readiness race. Room-copy/ordinary mechanism authoring UI and the
+remaining relationship work are still required.

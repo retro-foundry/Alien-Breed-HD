@@ -1757,3 +1757,18 @@ fixtures can establish current-format support independently.
   builds pass. No runtime movement/timing code changed. Editable-source plan
   persistence, room-copy UI, switch allocation/remapping and broader grouped /
   transformed moving-volume authoring remain open before R7/R9 are complete.
+
+  Room-source v5 now persists immutable copied-controller settings and attachment
+  plans; versions 1–4 remain readable. `setRoomControllerCopies` captures native
+  settings in one source/history command, and normal preview/export consumes
+  those plans without an external compiler option. Geometry/property/height
+  edits retain plans; deleting a controlled room removes its plan with the same
+  Undo. Native template rule/range edits do not mutate captured copy settings.
+  Strict restoration rejects damaged/missing fields, duplicate keys/controllers
+  and invalid native bytes/ranges/rules while later geometry dependency problems
+  remain editable and produce build diagnostics. All 753 model tests and 12
+  Chromium/Firefox native-source save/reopen and adjacent room-group cases pass;
+  production builds pass. Browser reopen checks wait for the previous workspace
+  iframe to detach before checking the replacement engine's authored state.
+  Room-copy UI, ordinary copied-mechanism controls, switches and the remaining
+  full-editor requirements are still open. Deployment remains pending readiness.
