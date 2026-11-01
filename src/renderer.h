@@ -373,6 +373,8 @@ void renderer_get_pixel_pick(int x, int y, int16_t *out_zone_id, int *out_player
  * Returns 0 on allocation failure. Record offsets exclude objects/backdrop. */
 int renderer_set_graphic_picking(int enabled);
 int renderer_get_graphic_pick(int x, int y, int32_t *out_offset, int *out_upper);
+/* Invert the active native projection onto a horizontal world plane for editor placement. */
+int renderer_unproject_plane(int x, int y, int32_t plane_y, double *out_x, double *out_z);
 /* Object IDs share the optional provenance target; they never decode as graphics. */
 uint32_t renderer_encode_object_pick(int object_id);
 int renderer_get_object_pick(int x, int y);

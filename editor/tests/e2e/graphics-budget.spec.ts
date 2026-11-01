@@ -11,7 +11,7 @@ test('the final native graphics commands draw at the budget boundary, while over
   test.setTimeout(90000); page.on('dialog', dialog => void dialog.accept());
   const reference = openLevel('reference', originalFiles(1)), allowed = graphicsBudgetFixture(zoneGraphicsRecordLimit), overflow = graphicsBudgetFixture(zoneGraphicsRecordLimit + 1);
   const preview = page.getByRole('region', { name: '3D game engine preview' });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   const start = reference.starts[0]!, before = [];

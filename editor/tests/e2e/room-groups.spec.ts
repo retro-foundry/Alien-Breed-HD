@@ -8,7 +8,7 @@ import { createObject, objectTemplates } from '../../src/model/objectAuthoring';
 import { beginRoomDraft, commitRoomDraft, setDraftCorners } from '../../src/model/roomSource';
 
 test('imported room groups toggle conventionally and Escape clears only selection', async ({ page }) => {
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   const first = page.getByRole('button', { name: /^Zone 000(?:\s|$)/ }), second = page.getByRole('button', { name: /^Zone 001(?:\s|$)/ });
   await first.click(); await second.click({ modifiers: ['Shift'] });
   const group = page.getByRole('complementary', { name: 'Room group inspector' });
@@ -30,7 +30,7 @@ test('shared-boundary room moves protect a neighbouring start and compile a vali
     [{ x: 22000, z: 20000 }, { x: 22256, z: 20000 }, { x: 22256, z: 20256 }, { x: 22000, z: 20256 }]))));
   const third = document.roomSource.rooms.at(-1)!;
   document = applyCommand(document, editRoomAppearance(document, { ...document.roomAppearances!.find(item => item.room === fixture.from.id)!, room: third.id }));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'neighbour-move.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.to.id.replace(/^room-/, '')}(?:\\s|$)`) }).click();
@@ -58,7 +58,7 @@ test('room translation moves linked starts, objects and inbound teleport destina
   let document = applyCommand(fixture.document, object.command);
   const incoming = document.roomSource.rooms.find(room => room.originZone === 0)!;
   document = applyCommand(document, setSourceTeleport(document, incoming.id, fixture.from.id, 20128, 20128));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'move-rooms.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.from.id.replace(/^room-/, '')}(?:\\s|$)`) }).click();
@@ -88,7 +88,7 @@ test('room translation moves linked starts, objects and inbound teleport destina
 
 test('room groups frame, toggle on the map and delete as one source edit without discarding linked starts', async ({ page }, testInfo) => {
   const { document, from, to } = roomHeightFixture();
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'room-group.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   const first = page.getByRole('button', { name: new RegExp(`^Room ${from.id.replace(/^room-/, '')}(?:\\s|$)`) });

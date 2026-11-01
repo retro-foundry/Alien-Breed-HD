@@ -13,7 +13,7 @@ for (const kind of ['door', 'lift'] as const) test(`${kind} movement range valid
   const mechanism = document.mechanisms.find(item => item.kind === kind && item.top <= item.current && item.bottom >= item.current && item.top < item.bottom)!;
   const zone = resolveAnimationRoom(document, mechanism.zone, kind === 'lift')!;
   const field = mechanism.top < mechanism.current ? 'top' : 'bottom', value = field === 'top' ? mechanism.top + 0.25 : mechanism.bottom - 0.25;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'ranges.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(zone).padStart(3, '0')}(?:\\s|$)`) }).click();
@@ -63,7 +63,7 @@ for (const kind of ['door', 'lift'] as const) for (const cycle of [false, true])
   const document = Array.from({ length: 16 }, (_, index) => openLevel('Animated range', originalFiles(index + 1), index, -1)).find(document => document.mechanisms.some(eligible))!;
   const mechanism = document.mechanisms.find(eligible)!, zone = resolveAnimationRoom(document, mechanism.zone, kind === 'lift')!;
   const top = mechanism.top + 8.25;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'motion.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(zone).padStart(3, '0')}(?:\\s|$)`) }).click();

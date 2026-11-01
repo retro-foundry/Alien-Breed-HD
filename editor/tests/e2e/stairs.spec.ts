@@ -8,7 +8,7 @@ import { captureEngine, enginePlayerFeetFixed, enginePlayerState } from '../engi
 test('stair draft cancellation, one-step undo, source backup and native walking in both directions', async ({ page }, testInfo) => {
   test.setTimeout(90000); page.on('dialog', dialog => void dialog.accept());
   const fixture = stairFixture(), preview = page.getByRole('region', { name: '3D game engine preview' });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'stairs.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.approach.id.replace(/^room-/, '')}`) }).click();

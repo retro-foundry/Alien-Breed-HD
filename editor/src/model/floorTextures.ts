@@ -1,3 +1,4 @@
+import type { PolygonMaterialMode } from './surfaces';
 import { checkedInteger } from './binary';
 import catalog from './nativeFloor.json' with { type: 'json' };
 
@@ -30,12 +31,16 @@ export function floorTextureRgba(assets: FloorTextures, tile: number, shade: num
   return rgba;
 }
 
-let pending: Promise<FloorTextures> | undefined;
-export function loadFloorTextures(): Promise<FloorTextures> {
-  pending ??= Promise.all(['floortile', 'palette.bin'].map(async file => {
-    const response = await fetch(`${import.meta.env.BASE_URL}reference/floors/${file}`);
-    if (!response.ok) throw new Error(`Floor material ${file} could not be loaded. Check the editor assets and retry.`);
-    return new Uint8Array(await response.arrayBuffer());
-  })).then(([pixels, palette]) => readFloorTextures(pixels!, palette!)).catch(error => { pending = undefined; throw error; });
-  return pending;
+const pending = new Map<PolygonMaterialMode, Promise<FloorTextures>>();
+export function loadFloorTextures(mode: PolygonMaterialMode = 'normal'): Promise<FloorTextures> {
+  let request = pending.get(mode);
+  if (!request) {
+    request = Promise.all((mode === 'normal' ? ['floortile', 'palette.bin'] : [`${mode}-tile`, `${mode}-palette.bin`]).map(async file => {
+      const response = await fetch(`${import.meta.env.BASE_URL}reference/floors/${file}`);
+      if (!response.ok) throw new Error(`Floor material ${file} could not be loaded. Check the editor assets and retry.`);
+      return new Uint8Array(await response.arrayBuffer());
+    })).then(([pixels, palette]) => readFloorTextures(pixels!, palette!)).catch(error => { pending.delete(mode); throw error; });
+    pending.set(mode, request);
+  }
+  return request;
 }

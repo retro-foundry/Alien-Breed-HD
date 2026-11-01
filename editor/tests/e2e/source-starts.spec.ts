@@ -13,7 +13,7 @@ test('the editor places starts in authored rooms, undoes them and recovers their
   const change = commitRoomDraft(original.roomSource, setDraftCorners(beginRoomDraft(original, original.roomSource, 0),
     [{ x: 20000, z: 20000 }, { x: 20128, z: 20000 }, { x: 20128, z: 20128 }, { x: 20000, z: 20128 }]));
   const drawn = applyCommand(original, editRoomSource(change)), room = change.after.rooms.at(-1)!;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'drawn.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(drawn)) });
   await expect(page.locator('.project-picker strong')).toHaveText(drawn.name);
   await page.getByRole('tab', { name: 'Starts', exact: true }).click();
@@ -60,7 +60,7 @@ test('a saved authored start spawns the real game inside a newly drawn room', as
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('dialog', dialog => void dialog.accept());
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'compiled.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(built.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(built.document.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();

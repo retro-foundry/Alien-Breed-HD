@@ -12,7 +12,7 @@ test('new objects have independent native positions, atomic history and portable
   test.setTimeout(90000);
   const fixture = roomHeightFixture(), template = objectTemplates(fixture.document).find(object => object.type === 0)!;
   const id = fixture.document.objects.length;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'objects.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await framePlacementRoom(page, fixture.from.id);
@@ -53,7 +53,7 @@ test('a newly placed blue key is collected by native gameplay and grants only it
   test.setTimeout(90000);
   const fixture = roomHeightFixture();
   const id = fixture.document.objects.length;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'key.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await framePlacementRoom(page, fixture.from.id);
@@ -90,7 +90,7 @@ test('ammunition choices change native pickup artwork and grant the selected wea
   const proposal = createObject(fixture.document, { template: template.id, room: fixture.from.id, x: 20128, z: 20240,
     y: floorMatchedObjectHeight(fixture.document, template, fixture.from.id) });
   const document = applyCommand(fixture.document, proposal.command);
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'ammo.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('tab', { name: 'Objects', exact: true }).click();
@@ -123,7 +123,7 @@ test('weapon choices preserve floor placement and grant the correct native weapo
   const proposal = createObject(fixture.document, { template: template.id, room: fixture.from.id, x: 20128, z: 20240,
     y: floorMatchedObjectHeight(fixture.document, template, fixture.from.id) });
   const document = applyCommand(fixture.document, proposal.command);
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'weapon.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('tab', { name: 'Objects', exact: true }).click();

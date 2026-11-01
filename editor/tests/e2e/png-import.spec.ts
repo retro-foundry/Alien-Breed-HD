@@ -9,7 +9,7 @@ import { strFromU8, unzipSync } from 'fflate';
 test('PNG import fits, previews and cancels before one undoable native conversion; original image survives project recovery', async ({ page }, testInfo) => {
   test.setTimeout(120000); page.on('dialog', dialog => void dialog.accept());
   const fixture = wallOverrideFixture(), sourcePng = Buffer.from(fixtures.rgba4k, 'base64');
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').first().setInputFiles({ name: 'png-project.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   const selectRoom = () => page.getByRole('button', { name: new RegExp(`^Room ${fixture.from.id.replace(/^room-/, '')}`) }).click();

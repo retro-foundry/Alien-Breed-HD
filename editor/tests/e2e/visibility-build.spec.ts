@@ -13,7 +13,7 @@ test('rebuilt visibility and relocated graphics load in the real engine and pres
   page.on('dialog', dialog => void dialog.accept());
   const errors: string[] = [], comparisons: object[] = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   for (let level = 1; level <= 16; level++) {

@@ -13,7 +13,7 @@ test('clicked native pixels select authored rooms without moving the inspection 
   const fixture = stairFixture(), source = applyCommand(fixture.document, createStairFlight(fixture.document, fixture.flight).command);
   const built = buildPlayableLevel(source, -1);
   const camera = { zone: built.document.starts[0]!.zone, x: 20064, z: 20064, angle: 0, upper: 0 };
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'pick-stairs.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(source)) });
   await expect(page.locator('.project-picker strong')).toHaveText(source.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
@@ -56,7 +56,7 @@ test('clicked native pixels select authored rooms without moving the inspection 
 
 test('native ceiling and water pixels identify their actual graphics records', async ({ page }) => {
   const document = openLevel('Native surface inspection', originalFiles(1), 0, -1);
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' }).getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
   const canvas = page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas');
@@ -100,7 +100,7 @@ test('native upper-room picks resolve generated cell IDs after viewport resizing
   const corners = cell.vertices.map(id => topology.points[id]!);
   const camera = { zone: cell.id, x: Math.round(corners.reduce((sum, point) => sum + point.x, 0) / corners.length),
     z: Math.round(corners.reduce((sum, point) => sum + point.z, 0) / corners.length), angle: 0, upper: 1 };
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'pick-upper.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(source)) });
   await expect(page.locator('.project-picker strong')).toHaveText(source.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();

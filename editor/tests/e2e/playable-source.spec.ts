@@ -27,7 +27,7 @@ function fixture() {
 test('source appearance, export, viewport visits/picking and one-click play use the same compiled level', async ({ page }, testInfo) => {
   test.setTimeout(90000); page.on('dialog', dialog => void dialog.accept());
   const { original, document, from, to, object } = fixture();
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'source.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   for (const room of [from, to]) {
@@ -86,7 +86,7 @@ test('opening a newer project during an export build cannot download stale sourc
     const response = await route.fetch(); requested(); await gate; await route.fulfill({ response });
   });
   const downloads: string[] = []; page.on('download', item => downloads.push(item.suggestedFilename()));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'source.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(source)) });
   await expect(page.locator('.project-picker strong')).toHaveText(source.name);
   await page.getByRole('button', { name: 'Export level', exact: true }).click(); await started;

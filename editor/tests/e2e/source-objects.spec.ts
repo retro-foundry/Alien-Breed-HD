@@ -19,7 +19,7 @@ function fixture() {
 test('objects move into authored rooms, drag, delete, undo and recover through the browser', async ({ page }, testInfo) => {
   page.on('dialog', dialog => void dialog.accept());
   const { original, object, drawn, room } = fixture();
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'drawn.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(drawn)) });
   await expect(page.locator('.project-picker strong')).toHaveText(drawn.name);
   await page.getByRole('tab', { name: 'Objects', exact: true }).click();
@@ -85,7 +85,7 @@ test('a moved object renders in its authored room and disappears when deleted in
   const zone = present.topology.sourceCells.get(room.id)![0]!;
   expect(present.document.objects[object.id]!.zone).toBe(zone);
   expect(hidden.document.objects[object.id]!.zone).toBe(-1);
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   const frames: number[][] = [];

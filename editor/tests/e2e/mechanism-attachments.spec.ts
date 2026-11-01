@@ -8,7 +8,7 @@ for (const kind of ['door', 'lift'] as const) test(`${kind} attachments show nat
   const document = openLevel('Attachment inspection', originalFiles(1), 0, -1);
   const mechanism = document.mechanisms.find(item => item.kind === kind && item.walls.length)!;
   const dependencies = mechanismDependencies(document, kind, mechanism.id);
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'attachments.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(dependencies.room).padStart(3, '0')}(?:\\s|$)`) }).click();

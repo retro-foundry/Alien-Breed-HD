@@ -21,7 +21,7 @@ test(`${upper ? 'upper-floor ' : ''}${polygon ? 'polygon objects' : 'opaque spri
   const built = buildPlayableLevel(source, -1);
   const camera = { zone: built.topology!.cells.find(cell => cell.sourceId === fixture.from.id)!.id, x: 20128, z: 20032, upper: upper ? 1 : 0, angle: 0 };
   const points = Array.from({ length: 441 }, (_, index) => ({ x: (index % 21 + 1) / 22, y: (Math.floor(index / 21) + 1) / 22 }));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   const captures: Awaited<ReturnType<typeof enginePickDetails>>[] = [], hashes: number[] = [];
   for (const document of [baseline, source]) {
     await page.locator('input[type=file]').setInputFiles({ name: 'occlusion.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });

@@ -7,7 +7,7 @@ import { engineMechanismTrace, engineMechanismState, captureEngine } from '../en
 for (const kind of ['door', 'lift'] as const) test(`independently authored ${kind} cycles through native plane, wall and collision attachments`, async ({ page }, info) => {
   test.setTimeout(90000);
   const fixture = authoredMovingFixture(kind), document = fixture.built.document, mechanism = fixture.mechanism;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'authored-moving.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();

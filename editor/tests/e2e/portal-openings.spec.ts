@@ -8,7 +8,7 @@ import { captureEngine, enginePlayerState } from '../engineCapture';
 test('an authored doorway cuts a shipped solid wall and the player walks through it in the actual game', async ({ page }, testInfo) => {
   test.setTimeout(90000); page.on('dialog', dialog => void dialog.accept());
   const fixture = importedPortalFixture(), preview = page.getByRole('region', { name: '3D game engine preview' });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'closed-reference.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.baseline)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.baseline.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
@@ -49,7 +49,7 @@ test('an authored doorway cuts a shipped solid wall and the player walks through
 test('a replacement room reconnects an imported doorway and is reachable in the actual game', async ({ page }, testInfo) => {
   test.setTimeout(90000); page.on('dialog', dialog => void dialog.accept());
   const fixture = replacementPortalFixture(), preview = page.getByRole('region', { name: '3D game engine preview' });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'replacement-room.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
@@ -87,7 +87,7 @@ test('deleting an adjoining room closes its doorway with an undoable saved appea
   test.setTimeout(90000); page.on('dialog', dialog => void dialog.accept());
   const fixture = closedPortalFixture(), preview = page.getByRole('region', { name: '3D game engine preview' });
   const selectZone = (id: number) => page.getByRole('button', { name: new RegExp(`^Zone ${String(id).padStart(3, '0')}(?:\\s|$)`) }).click();
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'open-reference.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.baseline)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.baseline.name);
   await selectZone(fixture.removed.originZone!);

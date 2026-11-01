@@ -17,7 +17,7 @@ async function clickPoint(page: Page, point: { x: number; z: number }) {
 test('redrawing an imported room cancels safely, commits one stable outline, and builds new walls with selected lighting', async ({ page }, testInfo) => {
   test.setTimeout(90000); page.on('dialog', dialog => void dialog.accept());
   const fixture = redrawnRoomFixture(), zone = fixture.room.originZone!;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'redraw.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.baseline)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.baseline.name);
   const selectRoom = () => page.getByRole('button', { name: new RegExp(`^Zone ${String(zone).padStart(3, '0')}(?:\\s|$)`) }).click();

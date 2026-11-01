@@ -5,7 +5,7 @@ import { objectSelectionIds } from '../../src/model/objectGroups';
 
 test('select all follows search or displayed floor without hijacking text input or changing source', async ({ page }) => {
   const fixture = objectStoreyFixture(), searched = objectSelectionIds(fixture.document, 'Health'), upper = objectSelectionIds(fixture.document, '', true);
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'selection.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('tab', { name: 'Objects', exact: true }).click();

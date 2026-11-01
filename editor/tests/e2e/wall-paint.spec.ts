@@ -15,7 +15,7 @@ for (const upper of [false, true]) test(`3D ${upper ? 'upper' : 'lower'} wall pa
   const camera = { zone: cell.id, x: Math.round(copy.vertices.reduce((sum, p) => sum + p.x, 0) / copy.vertices.length),
     z: Math.round(copy.vertices.reduce((sum, p) => sum + p.z, 0) / copy.vertices.length), upper: upper ? 1 : 0, angle: 0 };
   const originalCamera = { ...camera, zone: built.topology!.cells.find(cell => cell.sourceId === original.id)!.id, x: camera.x - dx, z: camera.z - dz };
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'wall-paint.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${copy.id.replace(/^room-/, '')}`) }).click();

@@ -7,7 +7,7 @@ import { removeSourceRooms } from '../../src/model/roomSource';
 import { originalFiles } from '../helpers';
 
 async function prepare(page: Page) {
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: /^Zone 000/ }).click();
   await page.getByRole('button', { name: 'Frame map', exact: true }).click();
   await page.getByRole('combobox', { name: 'Grid spacing' }).selectOption('0');
@@ -85,7 +85,7 @@ test('imported wall identities follow corner edits through downloads and browser
   page.on('dialog', dialog => void dialog.accept());
   const original = openLevel('Wall source recovery', originalFiles(1)), room = original.roomSource.rooms.find(room => room.vertices.length === 4)!;
   const isolated = { ...original, roomSource: removeSourceRooms(original.roomSource, original.roomSource.rooms.filter(other => other.id !== room.id).map(other => other.id)).after };
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'wall-sources.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(isolated)) });
   await expect(page.locator('.project-picker strong')).toHaveText('Wall source recovery');
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(room.recordZone).padStart(3, '0')}`) }).click();
@@ -123,7 +123,7 @@ test('crossing outlines fail without committing a partial room', async ({ page }
 test('an empty saved source can create a new room using its retained settings templates', async ({ page }, testInfo) => {
   const original = openLevel('Empty rooms', originalFiles(1));
   const empty = { ...original, roomSource: removeSourceRooms(original.roomSource, original.roomSource.rooms.map(room => room.id)).after };
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'empty.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(empty)) });
   await expect(page.locator('.project-picker strong')).toHaveText('Empty rooms');
   await page.getByRole('combobox', { name: 'Grid spacing' }).selectOption('0');

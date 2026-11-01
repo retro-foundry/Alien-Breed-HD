@@ -34,12 +34,27 @@ without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
 
 ## Editing views
 
-**Editor view** has Top, Bottom, Front, Back, Left, Right, 3D orthographic and
-3D perspective projections, chosen beside the viewport tabs. **Engine view**
-is the actual game renderer and playtest. **Split view** keeps the chosen
-editing projection alongside the engine. The editable volumes represent room
-outlines, native heights and actor anchors; game-specific decorative surfaces
-and material appearance are inspected in Engine view.
+**Editor view** opens in textured **3D perspective**, using the actual game
+renderer with its lighting and shading. Click the viewport to select visible
+objects or surfaces. Use **WASD** to move, **right drag** to look, **Q/E** to
+move down/up and **Shift** to move faster. These controls move the inspection
+camera without running enemies or changing the saved player start. Controls
+are shown below the view and in its Controls menu.
+
+Choose Top, Bottom, Front, Back, Left, Right or 3D orthographic beside the
+viewport tabs for geometry handles. **Engine view** provides gameplay testing.
+**Split view** pairs a map or orthographic view with the engine. Opening with
+`?view=top` selects the 2D map; the other view IDs are also accepted. Without
+that query parameter, perspective is the default.
+
+In perspective, **Add object** opens the library: choose a type and click a
+visible floor to place it; repeat clicks place more, Escape cancels. Click a
+wall/floor/ceiling and choose **Paint this wall/surface** to change its material.
+Floor and ceiling painting supports normal, chunky bump and smooth bump banks,
+using the original assets and shading. Smooth bump has one native texture.
+Apply rebuilds the preview while preserving a valid editing camera position.
+
+The following geometry gestures apply to axis and orthographic views:
 
 - Click rooms, objects or starts to select them. The inspector, source document
   and history are shared by every view.
@@ -51,7 +66,7 @@ and material appearance are inspected in Engine view.
   3D direct drags keep height fixed. Y increases downwards. Starts stay floor-bound.
 - Each release is one Undo; Escape discards a drag. Tab/arrow keys nudge handles;
   Shift increases the increment. Grid snapping applies; Alt uses finer increments.
-- Wheel zooms at the pointer. Space/middle drag pans. Right drag orbits 3D views.
+- Wheel zooms at the pointer. Space/middle drag pans. Right drag orbits the orthographic view.
   F fits the level; Shift+F frames selection. Ceilings/Wireframe affect display.
 - Add/duplicate use click placement in editing views. Top retains room drawing
   and rectangle selection; choosing those tools switches to Top automatically.

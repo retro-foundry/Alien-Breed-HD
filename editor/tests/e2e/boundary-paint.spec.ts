@@ -16,7 +16,7 @@ for (const mode of ['authored lower', 'authored upper', 'repaired doorway'] as c
   const cell = built.topology!.cells.find(cell => cell.sourceId === room.id)!;
   const camera = { zone: cell.id, x: Math.round(room.vertices.reduce((sum, p) => sum + p.x, 0) / room.vertices.length),
     z: Math.round(room.vertices.reduce((sum, p) => sum + p.z, 0) / room.vertices.length), upper: upper ? 1 : 0, angle: 0 };
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'boundary.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();

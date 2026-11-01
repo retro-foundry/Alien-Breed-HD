@@ -16,7 +16,7 @@ test('a pasted room group activates its copied door through its copied switch wi
   const start = switchCopyPlayerFixture().document.sourceStarts!.find(start => start.player === 1)!;
   const document = applyCommand(pasted, setSourceStart(pasted, 1, copiedSwitch.room, start.x - 8000, start.z));
   const built = buildPlayableLevel(document, -1), copiedDoor = built.document.mechanisms.filter(item => item.kind === 'door').at(-1)!;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'room-clipboard.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();

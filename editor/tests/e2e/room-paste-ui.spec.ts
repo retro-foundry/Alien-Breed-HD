@@ -8,7 +8,7 @@ import { decodeProject, encodeProject } from '../../src/model/project';
 
 test('room clipboard placement validates, cancels, commits one edit and selects the pasted group', async ({ page }, testInfo) => {
   const { document, from, to } = roomHeightFixture();
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'room-ui.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   const row = (id: string) => page.getByRole('button', { name: new RegExp(`^Room ${id.replace(/^room-/, '')}(?:\\s|$)`) });
@@ -47,7 +47,7 @@ test('room clipboard placement validates, cancels, commits one edit and selects 
 test('copying a controlled room captures and lists its required adjoining rooms', async ({ page }) => {
   const fixture = movingControllerCopyFixture('door');
   const document = applyCommand(fixture.document, editRoomSource(setRoomControllerCopies(fixture.document, [fixture.copy])));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'room-dependencies.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.copy.room.replace(/^room-/, '')}(?:\\s|$)`) }).click();

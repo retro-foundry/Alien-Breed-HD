@@ -13,7 +13,7 @@ test('unsafe animation imports preserve the current map, recovery and live engin
   // The low-level parser is also used to inspect damaged files; openLevel is
   // the validated user import boundary and must reject this archive.
   const unsafe = parseLevel('Unsafe animation', { ...original.files, graphics });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toHaveText('138 zones loaded · Game engine', { timeout: 60000 });

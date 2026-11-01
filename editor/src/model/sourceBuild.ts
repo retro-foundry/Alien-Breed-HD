@@ -104,7 +104,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
   const rooms = buildZoneRecords(references.data, topology.cells.map((cell, index) => ({ id: cell.id,
     header: references.headers.get(cell.id)!, boundaries: collision.boundaries[index]!, cornerWalls: collision.cornerWalls[index]!,
     ...visibility.rooms.get(cell.id)! })));
-  const generated = compileGeneratedGraphics(document, topology.cells.map(cell => ({ id: cell.id, dataOffset: rooms.offsets[cell.id]!,
+  const generated = compileGeneratedGraphics(document, topology.cells.map(cell => ({ sourceId: cell.sourceId, id: cell.id, dataOffset: rooms.offsets[cell.id]!,
     ...graphics.streams.get(cell.id)! })), animations, attachments.selectTarget);
   const originalExit = document.exitZone ?? checkedInteger(options.resolvedExit, -1, document.zones.length - 1, 'Source exit room');
   let exitZone = originalExit;

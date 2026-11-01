@@ -4,7 +4,7 @@ test('slot-only changes retain unload protection and the open project when recov
   await page.addInitScript(() => {
     Object.defineProperty(indexedDB, 'open', { value: () => { throw new DOMException('Recovery storage is unavailable', 'QuotaExceededError'); } });
   });
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   const target = page.getByRole('combobox', { name: 'Target game slot', exact: true });
   await target.selectOption('8');

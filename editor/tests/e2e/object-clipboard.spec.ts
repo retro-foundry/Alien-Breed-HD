@@ -7,7 +7,7 @@ import { engineObjectState } from '../engineCapture';
 for (const count of [1, 2]) test(`copy/paste captures ${count} objects independently of deleted originals and undoes atomically`, async ({ page }, testInfo) => {
   const { document, ids } = objectStoreyFixture();
   const selected = ids.slice(0, count), firstNew = document.objects.length;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'clipboard.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('tab', { name: 'Objects', exact: true }).click();
@@ -38,7 +38,7 @@ for (const count of [1, 2]) test(`copy/paste captures ${count} objects independe
 
 test('paste placement validates the whole group, cancels without edits and commits a chosen map anchor once', async ({ page }, testInfo) => {
   const { document, ids } = objectStoreyFixture(), first = document.objects.length;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'paste-placement.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('tab', { name: 'Objects', exact: true }).click();

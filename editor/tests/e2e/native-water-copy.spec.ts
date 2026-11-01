@@ -15,7 +15,7 @@ test('native material copies retain shared water motion in both the polygon and 
   expect(new Set(entries.map(entry => entry.graphic)).size).toBe(entries.length);
   const header = new DataView(animation.header.buffer, animation.header.byteOffset, animation.header.byteLength);
   const top = header.getInt32(0) / 256, bottom = header.getInt32(4) / 256;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'water-copy.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();

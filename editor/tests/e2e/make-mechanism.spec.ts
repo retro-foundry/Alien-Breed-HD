@@ -10,7 +10,7 @@ for (const kind of ['door', 'lift'] as const) test(`make an editable ${kind}, ca
   test.setTimeout(90000);
   const fixture = authoredMovingFixture(kind);
   if (kind === 'door') fixture.document = applyCommand(fixture.document, setSourceStart(fixture.document, 1, fixture.neighbour.id, 20272, 20128));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'make.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.room.id.replace('room-', '')}(?:\\s|$)`) }).click();

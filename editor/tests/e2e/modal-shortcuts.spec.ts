@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 for (const panel of ['Editor help', 'Recent workspaces']) test(`${panel} contains shortcuts and Escape preserves the editing context`, async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: /^Zone 003/ }).click();
   const brightness = page.getByRole('spinbutton', { name: 'Brightness', exact: true });

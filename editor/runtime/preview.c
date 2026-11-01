@@ -1,3 +1,4 @@
+#include <math.h>
 /* Editor host for the unmodified game simulation and renderer. The normal
  * executable still enters through src/main.c; this host skips menus/intro text. */
 #include <emscripten.h>
@@ -5,6 +6,7 @@
 #include "../../src/main.c"
 #undef main
 #include "game_loop.h"
+#include "math_tables.h"
 #include "level.h"
 #include "renderer.h"
 #include "visibility.h"
@@ -66,7 +68,7 @@ EMSCRIPTEN_KEEPALIVE void editor_reload_wall_assets(void)
     io_load_walls();
 }
 
-EMSCRIPTEN_KEEPALIVE int editor_camera(int zone, int x, int z, int upper, int angle)
+static int preview_set_camera(int zone, int x, int z, int upper, int angle)
 {
     if (!preview_loaded || preview_playing) return 0;
     LevelState *level = &g_state.level;
@@ -93,8 +95,12 @@ EMSCRIPTEN_KEEPALIVE int editor_camera(int zone, int x, int z, int upper, int an
     p->p_xoff = x; p->p_zoff = z;
     p->points_to_rotate_ptr = p->s_points_to_rotate_ptr = p->roompt + obj_w(room + ZONE_OFF_PTS);
     p->list_of_graph_rooms = p->s_list_of_graph_rooms = p->roompt + ZONE_OFF_LIST_OF_GRAPH;
-    preview_draw();
     return 1;
+}
+EMSCRIPTEN_KEEPALIVE int editor_camera(int zone, int x, int z, int upper, int angle)
+{
+    if (!preview_set_camera(zone,x,z,upper,angle)) return 0;
+    preview_draw(); return 1;
 }
 
 EMSCRIPTEN_KEEPALIVE void editor_turn(int delta, int look)
@@ -107,6 +113,76 @@ EMSCRIPTEN_KEEPALIVE void editor_turn(int delta, int look)
     if (pitch > 100) pitch = 100;
     p->look_y = p->s_look_y = p->oldlook_y = pitch;
     preview_draw();
+}
+
+/* Editor-only camera flight. No game tick, actor AI or player movement routine
+ * runs here, and no saved start/level record is changed. */
+EMSCRIPTEN_KEEPALIVE double editor_camera_value(int field)
+{
+    const PlayerState *p = &g_state.plr1;
+    if (!preview_loaded) return NAN;
+    switch (field) {
+    case 0: return p->zone; case 1: return p->xoff / 65536.0; case 2: return p->zoff / 65536.0;
+    case 3: return p->yoff / 256.0; case 4: return p->angpos; case 5: return p->look_y; case 6: return p->stood_in_top != 0;
+    default: return NAN;
+    }
+}
+EMSCRIPTEN_KEEPALIVE int editor_restore_camera(int hint, double x, double z, double y, int upper, int angle, int look)
+{
+    if (!preview_loaded || preview_playing || !isfinite(x) || !isfinite(z) || !isfinite(y)
+        || x < -32768 || x > 32767 || z < -32768 || z > 32767) return 0;
+    const int zone = level_find_zone_for_point(&g_state.level, (int32_t)llround(x), (int32_t)llround(z), hint);
+    uint8_t *room = level_get_zone_data_ptr(&g_state.level, zone);
+    if (!room) return 0;
+    int32_t roof = obj_l(room + (upper ? ZONE_OFF_UPPER_ROOF : ZONE_OFF_ROOF));
+    int32_t floor = obj_l(room + (upper ? ZONE_OFF_UPPER_FLOOR : ZONE_OFF_FLOOR));
+    if (floor <= roof && upper) { upper = 0; roof = obj_l(room + ZONE_OFF_ROOF); floor = obj_l(room + ZONE_OFF_FLOOR); }
+    if (floor <= roof || !preview_set_camera(zone, (int)llround(x), (int)llround(z), upper, angle)) return 0;
+    PlayerState *p = &g_state.plr1;
+    const int32_t eye = (int32_t)fmax(roof, fmin(floor, y * 256.0));
+    p->xoff = p->s_xoff = p->oldxoff = (int32_t)llround(x * 65536.0);
+    p->zoff = p->s_zoff = p->oldzoff = (int32_t)llround(z * 65536.0);
+    p->yoff = p->s_yoff = p->oldyoff = p->p_yoff = eye;
+    p->look_y = p->s_look_y = p->oldlook_y = look < -100 ? -100 : look > 100 ? 100 : look;
+    preview_draw(); return 1;
+}
+EMSCRIPTEN_KEEPALIVE int editor_navigate(double forward, double right, double vertical, double seconds, int fast)
+{
+    if (!preview_loaded || preview_playing || !isfinite(seconds) || seconds <= 0 || seconds > .1
+        || !isfinite(forward) || !isfinite(right) || !isfinite(vertical)
+        || fabs(forward) > 1 || fabs(right) > 1 || fabs(vertical) > 1) return 0;
+    PlayerState *p = &g_state.plr1;
+    const double length = sqrt(forward * forward + right * right + vertical * vertical);
+    if (length == 0) return 0;
+    /* Camera speed is an editor control, independent of gameplay physics. */
+    const double step = 256.0 * (fast ? 4 : 1) * seconds / length;
+    const double sine = sin_lookup(p->angpos), cosine = cos_lookup(p->angpos), norm = hypot(sine, cosine);
+    if (norm < 1) return 0;
+    const double x = p->xoff / 65536.0 + (forward * sine + right * cosine) / norm * step;
+    const double z = p->zoff / 65536.0 + (forward * cosine - right * sine) / norm * step;
+    if (x < -32768 || x > 32767 || z < -32768 || z > 32767) return 0;
+    const int zone = level_find_zone_for_point(&g_state.level, (int32_t)llround(x), (int32_t)llround(z), p->zone);
+    uint8_t *room = level_get_zone_data_ptr(&g_state.level, zone);
+    if (!room) return 0;
+    const double y = p->yoff / 256.0 + vertical * step;
+    int upper = p->stood_in_top != 0;
+    const int32_t upper_roof = obj_l(room + ZONE_OFF_UPPER_ROOF), upper_floor = obj_l(room + ZONE_OFF_UPPER_FLOOR);
+    if (upper_floor > upper_roof && y * 256.0 >= upper_roof && y * 256.0 <= upper_floor) upper = 1;
+    else if (y * 256.0 >= obj_l(room + ZONE_OFF_ROOF) && y * 256.0 <= obj_l(room + ZONE_OFF_FLOOR)) upper = 0;
+    return editor_restore_camera(zone, x, z, y, upper, p->angpos, p->look_y);
+}
+EMSCRIPTEN_KEEPALIVE double editor_pick_floor(double x, double y, int field)
+{
+    int px, py, upper; int32_t graphic; double world_x, world_z;
+    if (!preview_loaded || preview_playing || !display_render_pixel(x, y, &px, &py)
+        || !renderer_get_graphic_pick(px, py, &graphic, &upper) || graphic < 0
+        || (size_t)graphic + 2 > g_state.level.graphics_byte_count) return NAN;
+    const int type = obj_w(g_state.level.graphics + graphic);
+    if (type != 1 && type != 7 && type != 8 && type != 10) return NAN;
+    int16_t zone = -1; renderer_get_pixel_pick(px, py, &zone, NULL);
+    uint8_t *room = level_get_zone_data_ptr(&g_state.level, zone);
+    if (!room || !renderer_unproject_plane(px, py, obj_l(room + (upper ? ZONE_OFF_UPPER_FLOOR : ZONE_OFF_FLOOR)), &world_x, &world_z)) return NAN;
+    return field == 0 ? world_x : field == 1 ? world_z : field == 2 ? upper : NAN;
 }
 
 EMSCRIPTEN_KEEPALIVE int editor_pick(void)

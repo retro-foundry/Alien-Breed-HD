@@ -9,7 +9,7 @@ import { enginePlayerFeetFixed } from '../engineCapture';
 
 test('headroom raises the ceiling with a fixed floor, cancels drafts, saves and reaches the actual engine', async ({ page }, testInfo) => {
   const fixture = roomHeightFixture(), before = roomSettings(fixture.document, fixture.from), size = before.floor - before.ceiling;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'headroom.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.from.id.replace(/^room-/, '')}`) }).click();
   const input = page.getByRole('spinbutton', { name: 'Room headroom', exact: true });
@@ -45,7 +45,7 @@ test('two-storey headroom is independent and shared ceiling/floor handles remain
   const base = roomHeightFixture(twoStoreyHeightTemplate()), initial = roomSettings(base.document, base.from);
   const document = applyCommand(base.document, editRoomSource(setRoomHeights(base.document, base.document.roomSource, base.from.id, { floor: initial.floor, ceiling: initial.upperFloor, upperFloor: initial.upperFloor, upperCeiling: initial.upperCeiling })));
   const fixture = { ...base, document, from: document.roomSource.rooms.find(r => r.id === base.from.id)! }, before = roomSettings(document, fixture.from);
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'upper-headroom.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.from.id.replace(/^room-/, '')}`) }).click();
   const upper = page.getByRole('spinbutton', { name: 'Upper room headroom', exact: true });

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test('tooltips explain actions on hover and keyboard focus; help works using the keyboard', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Pan tool', exact: true }).hover();
   await expect(page.getByRole('tooltip')).toContainText('hold Space');
@@ -27,7 +27,7 @@ test('tooltips explain actions on hover and keyboard focus; help works using the
 
 test('3D controls explain the current mode and tooltips stay inside a narrow viewport', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 760, height: 900 });
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Help and shortcuts' }).hover();
   const tooltip = page.getByRole('tooltip');
@@ -67,7 +67,7 @@ test('starting play before the initial preview loads survives delayed engine rep
       delayed.add(reply); setTimeout(() => window.dispatchEvent(reply), 600);
     }, true);
   });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toHaveText('Playtest running', { timeout: 60000 });
@@ -96,7 +96,7 @@ test('a rejected play load remains actionable and engine reload can start a fres
       }, true);
     }
   });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('alert')).toContainText('Invalid level slot', { timeout: 60000 });
@@ -121,7 +121,7 @@ test('a delayed engine error from an older load cannot invalidate a newer previe
       released.add(reply); host.releaseOldEngineError = () => window.dispatchEvent(reply);
     }, true);
   });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toHaveText('138 zones loaded · Game engine', { timeout: 60000 });

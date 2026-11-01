@@ -13,7 +13,7 @@ test('visibility inspection shows current compiled cells and exact native table 
   } : room) } };
   const built = buildPlayableLevel(fixture.document, -1);
   const expected = visibilityInspection(built, fixture.from.id, undefined);
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'visibility.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.from.id.replace(/^room-/, '')}`) }).click();
@@ -67,7 +67,7 @@ test('visibility inspection shows current compiled cells and exact native table 
 });
 
 test('scrolling a long visibility table leaves map zoom and centre unchanged', async ({ page }) => {
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: /^Zone 000(?:\s|$)/ }).click();
   const panel = page.getByRole('region', { name: 'Visibility inspection' });
   await panel.getByRole('button', { name: 'Visibility overlay', exact: true }).click();
@@ -86,7 +86,7 @@ test('failed source builds remove old visibility and undo restores a valid inspe
   const document = openLevel('Visibility failure recovery', originalFiles(1));
   const moving = document.mechanisms.find(item => item.kind === 'door')!, room = document.roomSource.rooms.find(room => room.originZone === moving.zone)!;
   const zone = document.zones[room.recordZone]!;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'door.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(zone.id).padStart(3, '0')}(?:\\s|$)`) }).click();

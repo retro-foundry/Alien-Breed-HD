@@ -23,7 +23,7 @@ for (const kind of ['door', 'lift'] as const) test(`painted copied ${kind} walls
     { room: input.copy.graphicsRooms.get(dependency.room)!, record: record.offset, upper: false }, style.offset)));
   const built = buildPlayableLevel(source, -1), copied = built.document.mechanisms.filter(item => item.kind === kind)[1]!;
   const zone = built.topology!.cells.find(cell => cell.sourceId === input.copy.room)!.id;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'painted-motion.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(source)) });
   await expect(page.locator('.project-picker strong')).toHaveText(source.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();

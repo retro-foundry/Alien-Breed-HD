@@ -15,7 +15,7 @@ test('group duplication copies a batch with independent positions, one undo and 
     document = applyCommand(document, proposal.command); ids.push(proposal.id);
   }
   const firstCopy = document.objects.length;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'group-copy.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('tab', { name: 'Objects', exact: true }).click();

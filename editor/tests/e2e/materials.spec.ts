@@ -11,7 +11,7 @@ test('native material thumbnails match C pixels, filter and shade without changi
   const fixture = roomHeightFixture(), choices = roomAppearanceChoices(fixture.document, fixture.from);
   const target = choices.lower.find(record => record.texture !== choices.lower[0]!.texture) ?? choices.lower[1]!;
   expect(target).toBeDefined(); const native = oracle.walls[target.texture!]!;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   const catalog = await (await page.request.get('reference/walls/catalog.json')).json();
   expect(catalog.walls.map((sheet: { id: number; name: string; width: number; rows: number }) => ({ id: sheet.id, name: sheet.name, width: sheet.width, height: sheet.rows })))
     .toEqual(oracle.walls.map(({ id, name, width, height }) => ({ id, name, width, height })));
@@ -65,7 +65,7 @@ test('native material thumbnails match C pixels, filter and shade without changi
 test('a missing material reports an actionable error, preserves source and retries the real asset', async ({ page }) => {
   let blocked = true;
   await page.route('**/reference/walls/*.wad', async route => { if (blocked) await route.fulfill({ status: 404, body: '' }); else await route.continue(); });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: /^Zone 000(?:\s|$)/ }).click();
   await page.getByText('Browse lower wall materials', { exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('could not be loaded');
@@ -77,7 +77,7 @@ test('a missing material reports an actionable error, preserves source and retri
 });
 
 test('stair material tiles select a draft without committing partial stairs', async ({ page }) => {
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Build stairs', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Create stairs', exact: true });
   await dialog.getByText('Browse stair lower wall materials', { exact: true }).click();

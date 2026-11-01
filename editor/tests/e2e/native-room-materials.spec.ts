@@ -10,7 +10,7 @@ test(`a fresh native-material room identity loads ${name} in the actual engine`,
   const built = buildPlayableLevel(document, -1), cell = built.topology!.cells.find(cell => cell.sourceId === copy.id)!;
   const centre = cell.vertices.reduce((sum, id) => ({ x: sum.x + built.topology!.points[id]!.x / cell.vertices.length,
     z: sum.z + built.topology!.points[id]!.z / cell.vertices.length }), { x: 0, z: 0 });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'native-material-copy.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();

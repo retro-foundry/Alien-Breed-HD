@@ -19,7 +19,7 @@ function fixture() {
 test('teleporter links can be authored, shown on the map, disabled, undone and recovered', async ({ page }, testInfo) => {
   page.on('dialog', dialog => void dialog.accept());
   const { original, document, from, to } = fixture();
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'drawn.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${from.id.replace(/^room-/, '')}`) }).click();
@@ -66,7 +66,7 @@ test('the actual game teleports from an authored room to its saved destination',
     newRoomGraphics: new Map([from, to].map(room => [room.id, { walls: { lower: [wall] }, wallInsertion: { lower: 0 } }])),
     newRoomLighting: new Map([from, to].map(room => [room.id, { kind: 'copy', source: 0 }])) });
   const fromId = built.topology.sourceCells.get(from.id)![0]!, toId = built.topology.sourceCells.get(to.id)![0]!;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'compiled.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(built.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(built.document.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
@@ -88,7 +88,7 @@ test('missing destination rooms are visible and repairable without losing the te
   const { document, from, to } = fixture();
   let broken = applyCommand(document, setSourceTeleport(document, from.id, to.id, 21064, 20064));
   broken = applyCommand(broken, editRoomSource(removeSourceRooms(broken.roomSource, [to.id])));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'broken-link.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(broken)) });
   await expect(page.locator('.project-picker strong')).toHaveText(broken.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${from.id.replace(/^room-/, '')}`) }).click();

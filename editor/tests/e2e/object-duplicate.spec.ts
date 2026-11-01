@@ -14,7 +14,7 @@ test('duplicate drafts copy authored coordinates and exact settings, cancel safe
   let document = applyCommand(fixture.document, proposal.command);
   document = applyCommand(document, { label: 'Fixture health', patches: [numberPatch(document, 'data', document.objects[proposal.id]!.offset + 18, 23, 1)] });
   const copyId = document.objects.length;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'duplicate.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.locator('canvas[aria-label="Level map"]').focus(); await page.keyboard.press('Control+d');

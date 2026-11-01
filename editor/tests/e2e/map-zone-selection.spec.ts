@@ -7,7 +7,7 @@ import { objectIsActive } from '../../src/model/sourceObjects';
 
 test('invisible start-marker margins do not capture clicks in neighbouring zones', async ({ page }) => {
   const document = openLevel('Level 1', originalFiles(1));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Show objects', exact: true }).click();
   const canvas = page.locator('canvas[aria-label="Level map"]'), bounds = (await canvas.boundingBox())!;
   const scale = Number(await canvas.getAttribute('data-world-scale')), x = Number(await canvas.getAttribute('data-world-x')), z = Number(await canvas.getAttribute('data-world-z'));
@@ -23,7 +23,7 @@ test('invisible start-marker margins do not capture clicks in neighbouring zones
 
 test('invisible marker margins do not select objects instead of the zone under the pointer', async ({ page }) => {
   const document = openLevel('Level 1', originalFiles(1));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   const canvas = page.locator('canvas[aria-label="Level map"]'), bounds = (await canvas.boundingBox())!;
   const scale = Number(await canvas.getAttribute('data-world-scale')), x = Number(await canvas.getAttribute('data-world-x')), z = Number(await canvas.getAttribute('data-world-z'));
   const objects = document.objects.filter(object => objectIsActive(object) && !object.upper);
@@ -43,7 +43,7 @@ test('invisible marker margins do not select objects instead of the zone under t
 
 test('a selected corner cannot capture a click in the neighbouring zone outside its visible handle', async ({ page }) => {
   const document = openLevel('Level 1', originalFiles(1));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Show objects', exact: true }).click();
   const canvas = page.locator('canvas[aria-label="Level map"]');
   const fitX = (Math.min(...document.points.map(p => p.x)) + Math.max(...document.points.map(p => p.x))) / 2;
@@ -79,7 +79,7 @@ test('a selected corner cannot capture a click in the neighbouring zone outside 
 
 test('clicking an authored room selects under the pointer without recentering the map', async ({ page }) => {
   const { document, from, to } = roomHeightFixture();
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'rooms.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${from.id.replace('room-', '')}\\b`) }).click();
@@ -99,7 +99,7 @@ test('clicking an authored room selects under the pointer without recentering th
 });
 
 test('secondary fences do not turn a Zone 1 click into Zone 0', async ({ page }) => {
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Show objects', exact: true }).click();
   await page.getByRole('button', { name: /^Zone 001/ }).click();
   const canvas = page.locator('canvas[aria-label="Level map"]'), bounds = (await canvas.boundingBox())!;

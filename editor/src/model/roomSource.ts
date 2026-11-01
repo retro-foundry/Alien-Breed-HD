@@ -74,11 +74,12 @@ export function importRoomSource(document: RoomRecords): RoomSource {
 }
 
 export function roomSourceSnapshot(current: RoomSource) {
+  const modes = current.rooms.some(room => room.polygonMaterials?.some(material => material.mode !== undefined));
   const moving = current.rooms.some(room => room.moving);
   const polygons = current.rooms.some(room => room.polygonMaterials?.length);
   const boundary = current.rooms.some(room => room.boundaryMaterials);
   const painted = moving || polygons || boundary || current.rooms.some(room => room.wallMaterials?.length);
-  return { format: 'alien-breed-room-source', version: moving ? 10 : polygons ? 9 : boundary ? 8 : painted ? 7 : current.switchCopies?.length ? 6 : current.controllerCopies?.length ? 5 : current.rooms.some(room => room.properties) ? 4 : current.rooms.some(room => room.heights) ? 3 : 2, nextId: current.nextId, rooms: current.rooms,
+  return { format: 'alien-breed-room-source', version: modes ? 11 : moving ? 10 : polygons ? 9 : boundary ? 8 : painted ? 7 : current.switchCopies?.length ? 6 : current.controllerCopies?.length ? 5 : current.rooms.some(room => room.properties) ? 4 : current.rooms.some(room => room.heights) ? 3 : 2, nextId: current.nextId, rooms: current.rooms,
     ...(painted || current.controllerCopies?.length || current.switchCopies?.length ? { controllerCopies: restoreControllerCopies(current.controllerCopies ?? []) } : {}),
     ...(painted || current.switchCopies?.length ? { switchCopies: restoreSwitchCopies(current.switchCopies ?? []) } : {}) };
 }
@@ -97,7 +98,7 @@ export function sourceMatchesLevel(document: LevelDocument): boolean {
  * dependency baseline; missing templates cannot be silently substituted. */
 export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSource {
   if (!value || typeof value !== 'object' || !('format' in value) || value.format !== 'alien-breed-room-source'
-    || !('version' in value) || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(value.version as number) || !('rooms' in value) || !Array.isArray(value.rooms)
+    || !('version' in value) || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(value.version as number) || !('rooms' in value) || !Array.isArray(value.rooms)
     || !('nextId' in value) || typeof value.nextId !== 'number') throw new Error('Unsupported or damaged room source.');
   if (Object.keys(value).some(key => !['format', 'version', 'rooms', 'nextId', ...((value.version as number) >= 5 ? ['controllerCopies'] : []), ...((value.version as number) >= 6 ? ['switchCopies'] : [])].includes(key))) throw new Error('Room source contains unsupported fields; it has not been replaced or discarded.');
   if ((value.version as number) >= 5 && !('controllerCopies' in value)) throw new Error('Room source is missing its copied controller records.');
@@ -147,6 +148,7 @@ export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSo
         }) ?? null;
       });
     }
+    if ((value.version as number) < 11 && 'polygonMaterials' in item && Array.isArray(item.polygonMaterials) && item.polygonMaterials.some((material: unknown) => material && typeof material === 'object' && 'mode' in material)) throw new Error('Material modes require room-source version 11.');
     return frozenRoom(item.id, item.recordZone, vertices, origin, walls, 'heights' in item ? restoreRoomHeights(item.heights, template) : undefined,
       'properties' in item ? restoreRoomProperties(item.properties) : undefined, { wallMaterials: 'wallMaterials' in item ? restoreWallMaterials(item.wallMaterials) : undefined, boundaryMaterials: 'boundaryMaterials' in item ? restoreBoundaryMaterials(item.boundaryMaterials, vertices.length) : undefined, polygonMaterials: 'polygonMaterials' in item ? restorePolygonMaterials(item.polygonMaterials) : undefined, moving: 'moving' in item ? restoreSourceMovingRoom(item.moving) : undefined });
   });

@@ -13,7 +13,7 @@ async function pickActor(page: Page) {
   const made = createObject(fixture.document, { template: template.id, room: fixture.from.id, x: 20128, z: 20180,
     y: floorMatchedObjectHeight(fixture.document, template, fixture.from.id, false), upper: false });
   const source = applyCommand(fixture.document, made.command), built = buildPlayableLevel(source, -1);
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'shortcut-actor.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(source)) });
   await expect(page.locator('.project-picker strong')).toHaveText(source.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
@@ -91,7 +91,7 @@ test('inspection dialogs, text fields, stale messages and playtests isolate edit
 
 test('a missing shortcut module gives a recoverable engine error without losing source', async ({ page }) => {
   await page.route('**/inspection-shortcuts.mjs', route => route.abort());
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('alert')).toContainText(/import|module|fetch|load/i, { timeout: 60000 });

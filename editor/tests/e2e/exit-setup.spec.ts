@@ -7,7 +7,7 @@ import { originalFiles } from '../helpers';
 test('saved and exported exits drive actual game completion and can be cleared', async ({ page }, testInfo) => {
   test.setTimeout(90000);
   page.on('dialog', dialog => void dialog.accept());
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   const spawn = openLevel('original', originalFiles(1)).starts[0]!.zone;
   const exit = page.getByRole('combobox', { name: 'Level exit', exact: true });

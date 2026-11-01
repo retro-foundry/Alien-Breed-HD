@@ -65,6 +65,11 @@ if (floorTile.length !== 65536 || !Number.isSafeInteger(paletteLevels) || floorP
 await writeFile(new URL('floortile', floorTarget), floorTile);
 await writeFile(new URL('palette.bin', floorTarget), floorPalette);
 await writeFile(new URL('src/model/nativeFloor.json', root), `${JSON.stringify({ format: 'alien-breed-floor-bank', version: 1, size: floorTile.length, paletteLevels })}\n`);
+for (const [name, tile, palette] of [['bump', 'BumpTile', 'BumpPalScaled'], ['smooth', 'SmoothBumpTile', 'SmoothBumpPalScaled']]) {
+  const pixels = await readFile(new URL(`../amiga/data/gfx/${tile}`, root)), colours = await readFile(new URL(`../amiga/data/pal/${palette}`, root));
+  if (pixels.length !== floorTile.length || colours.length !== floorPalette.length) throw new Error(`Native ${name} material resources do not match renderer dimensions.`);
+  await writeFile(new URL(`${name}-tile`, floorTarget), pixels); await writeFile(new URL(`${name}-palette.bin`, floorTarget), colours);
+}
 console.log('Prepared native floor-bank materials and original palettes.');
 const gameState = await readFile(new URL('../src/game_state.h', root), 'utf8');
 const objectLimits = {};

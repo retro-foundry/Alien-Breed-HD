@@ -8,7 +8,7 @@ import { moveRoomGroup } from '../../src/model/roomGroups';
 import { buildPlayableLevel } from '../../src/model/playableBuild';
 import { captureEngine, enginePlayerState } from '../engineCapture';
 async function open(page: Page, document: ReturnType<typeof roomHeightFixture>['document']) {
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'corners.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
 }

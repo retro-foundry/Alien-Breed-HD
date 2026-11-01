@@ -1,3 +1,4 @@
+import { polygonPlane } from './surfaces';
 import type { LevelDocument } from './level';
 
 export interface NativeSurfacePick { offset: number; upper: boolean; type: number }
@@ -13,8 +14,7 @@ export function resolveEngineSurface(document: LevelDocument, zoneId: number, pi
   const record = (pick.upper ? zone?.upper : zone?.lower)?.find(record => record.offset === pick.offset && record.type === pick.type);
   if (!record) return;
   const kind = record.type === 0 ? 'Wall' : record.type === 13 ? 'See-through wall' : record.type === 5 ? 'Curved wall'
-    : record.type === 2 ? 'Ceiling' : record.type === 7 ? 'Water' : record.type === 1 || record.type === 8 ? 'Floor'
-    : [9, 10, 11].includes(record.type) ? 'Bumpy floor' : undefined;
+    : record.type === 7 ? 'Water' : polygonPlane(record.type) === 'ceiling' ? 'Ceiling' : polygonPlane(record.type) === 'floor' ? 'Floor' : undefined;
   if (!kind) return;
   const height = record.type === 1 ? (pick.upper ? zone!.upperFloor : zone!.floor)
     : record.type === 2 ? (pick.upper ? zone!.upperCeiling : zone!.ceiling) : record.height;

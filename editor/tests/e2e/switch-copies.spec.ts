@@ -8,7 +8,7 @@ import { enginePlayerInventory, engineSwitchState } from '../engineCapture';
 test('using a copied native switch changes its own condition bit and wall without toggling the original', async ({ page }, testInfo) => {
   const { document, switchCopy: copy, source } = switchCopyPlayerFixture();
   const built = buildPlayableLevel(document, -1);
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'switch-copy.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();

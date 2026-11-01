@@ -7,7 +7,7 @@ import { captureEngine, enginePlayerFeetFixed } from '../engineCapture';
 test('graphical height gestures cancel cleanly, save committed source only, undo once and update native collision and rendering', async ({ page }, testInfo) => {
   test.setTimeout(90000); page.on('dialog', dialog => void dialog.accept());
   const fixture = roomHeightFixture(), start = fixture.original.zones[0]!.floor;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'height-handles.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.from.id.replace(/^room-/, '')}`) }).click();
@@ -56,7 +56,7 @@ test('graphical height gestures cancel cleanly, save committed source only, undo
 
 test('upper and lower handles support repeated keyboard edits, invalid relationships and Escape without losing selection', async ({ page }) => {
   const fixture = roomHeightFixture(twoStoreyHeightTemplate()), template = fixture.original.zones[fixture.from.recordZone]!;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'upper-handles.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.from.id.replace(/^room-/, '')}`) }).click();

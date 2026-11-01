@@ -8,7 +8,7 @@ import { buildPlayableLevel } from '../../src/model/playableBuild';
 import { encodeProject } from '../../src/model/project';
 import { engineMechanismState, engineMechanismTrace } from '../engineCapture';
 
-for (const kind of ['door', 'lift'] as const) test(`painted copied ${kind} floor-bank surfaces retain synchronized native motion independently`, async ({ page }) => {
+for (const mode of ['normal', 'bump', 'smooth'] as const) for (const kind of ['door', 'lift'] as const) test(`painted ${mode} copied ${kind} floor-bank surfaces retain synchronized native motion independently`, async ({ page }) => {
   test.setTimeout(60000);
   const input = movingControllerCopyFixture(kind);
   const base = applyCommand(input.document, editRoomSource(setRoomControllerCopies(input.document, [input.copy])));
@@ -19,10 +19,10 @@ for (const kind of ['door', 'lift'] as const) test(`painted copied ${kind} floor
   expect([1, 2]).toContain(record.type);
   const source = applyCommand(base, editRoomSource(setPolygonMaterial(base,
     { room: input.copy.graphicsRooms.get(dependency.room)!, record: record.offset, upper },
-    { texture: record.texture === 771 ? 0 : 771, scale: record.polygon!.scale })));
+    { texture: record.texture === 771 ? 0 : 771, scale: record.polygon!.scale, mode })));
   const built = buildPlayableLevel(source, -1), copied = built.document.mechanisms.filter(item => item.kind === kind)[1]!;
   const zone = built.topology!.cells.find(cell => cell.sourceId === input.copy.room)!.id;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'painted-motion.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(source)) });
   await expect(page.locator('.project-picker strong')).toHaveText(source.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();

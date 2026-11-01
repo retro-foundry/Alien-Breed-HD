@@ -19,7 +19,7 @@ test('new room lighting is independent source data, survives saves and changes n
   const { document, from, to } = roomHeightFixture(0, baseline);
   const built = buildPlayableLevel(document, -1), cell = built.topology!.cells.find(cell => cell.sourceId === from.id)!;
   const camera = { zone: cell.id, x: 20128, z: 20128, upper: 0, angle: 0, height: template.floor - 16 };
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'room-properties.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${from.id.replace(/^room-/, '')}(?:\\s|$)`) }).click();

@@ -7,7 +7,7 @@ import { captureEngine } from '../engineCapture';
 test('native material replacements survive save/export/recovery and restore the actual game texture through undo and redo', async ({ page }, testInfo) => {
   test.setTimeout(120000); page.on('dialog', dialog => void dialog.accept());
   const fixture = wallOverrideFixture(), preview = page.getByRole('region', { name: '3D game engine preview' });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').first().setInputFiles({ name: 'wall-assets.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   const selectRoom = () => page.getByRole('button', { name: new RegExp(`^Room ${fixture.from.id.replace(/^room-/, '')}`) }).click();

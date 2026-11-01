@@ -11,7 +11,7 @@ import { roomSettings } from '../../src/model/roomHeights';
 import { engineObjectState } from '../engineCapture';
 
 async function openFixture(page: Page, document: ReturnType<typeof roomHeightFixture>['document']) {
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'spatial.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
 }
@@ -31,7 +31,7 @@ test('all six axis directions and both editable 3D projections share selection a
   const fixture = roomHeightFixture(); await openFixture(page, fixture.document); await selectRoom(page, fixture.from.id);
   const selector = page.getByRole('combobox', { name: 'Editing view', exact: true });
   await expect(selector.locator('option')).toHaveCount(8);
-  for (const view of ['bottom', 'front', 'back', 'left', 'right', 'orthographic', 'perspective']) {
+  for (const view of ['bottom', 'front', 'back', 'left', 'right', 'orthographic']) {
     await selector.selectOption(view);
     await expect(page.locator('canvas[aria-label="Editing viewport"]')).toHaveAttribute('data-view', view);
     await expect(page.locator('.inspector-heading h2')).toContainText(`Room ${fixture.from.id.replace(/^room-/, '')}`);
@@ -44,7 +44,10 @@ test('all six axis directions and both editable 3D projections share selection a
   await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   await expect(canvas).toHaveCount(0); await expect(selector).toHaveCount(0);
   await page.getByRole('button', { name: 'Editor view', exact: true }).click();
-  await expect(selector).toHaveValue('perspective'); await expect(canvas).toBeVisible();
+  await expect(selector).toHaveValue('orthographic'); await expect(canvas).toBeVisible();
+  await selector.selectOption('perspective');
+  await expect(page.getByRole('region', { name: '3D editing view', exact: true })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
+  await expect(canvas).toHaveCount(0);
 });
 
 test('front height dragging previews without saving, cancels, commits once, and survives Undo and reopening', async ({ page }, testInfo) => {
@@ -78,11 +81,11 @@ test('front height dragging previews without saving, cancels, commits once, and 
   await selectRoom(page, fixture.from.id); await expect(page.getByRole('spinbutton', { name: 'Lower floor height', exact: true })).toHaveValue(String(value));
 });
 
-test('perspective picking selects the room under the pointer; object axis gestures edit real saved and native positions', async ({ page }, testInfo) => {
+test('orthographic picking selects the room under the pointer; object axis gestures edit real saved and native positions', async ({ page }, testInfo) => {
   const fixture = roomHeightFixture(), files = originalFiles(1), choice = originalObjectPalette([files.data], [files.graphics]).find(c => c.name === 'Barrel')!;
   const proposal = placePaletteObject(fixture.document, choice, fixture.from.id, 20160, 20192, false), document = applyCommand(fixture.document, proposal.command);
   await openFixture(page, document); await selectRoom(page, fixture.from.id);
-  await page.getByRole('combobox', { name: 'Editing view', exact: true }).selectOption('perspective');
+  await page.getByRole('combobox', { name: 'Editing view', exact: true }).selectOption('orthographic');
   await page.locator('canvas[aria-label="Editing viewport"]').focus(); await page.keyboard.press('Escape');
   const floor = roomSettings(document, fixture.from).floor, p = await project(page, { x: 20064, y: floor, z: 20128 });
   await page.mouse.click(p.x, p.y);
@@ -106,7 +109,7 @@ test('perspective picking selects the room under the pointer; object axis gestur
   expect(await engineObjectState(page, proposal.id)).toMatchObject({ x: marker.position.x, z: initial.z, yFixed: (initial.y - .5) * 256 });
 });
 
-test('orthographic upper-floor handles, source corners and perspective click placement save editable results', async ({ page }, testInfo) => {
+test('orthographic upper-floor handles, source corners and orthographic click placement save editable results', async ({ page }, testInfo) => {
   const fixture = roomHeightFixture(twoStoreyHeightTemplate()), baseline = roomSettings(fixture.document, fixture.from);
   await openFixture(page, fixture.document); await selectRoom(page, fixture.from.id);
   await page.getByRole('combobox', { name: 'Editing view', exact: true }).selectOption('orthographic');
@@ -117,7 +120,7 @@ test('orthographic upper-floor handles, source corners and perspective click pla
   await expect(page.getByRole('spinbutton', { name: 'Upper floor height', exact: true })).toHaveValue(String(baseline.upperFloor - .25));
   await page.getByRole('combobox', { name: 'Grid spacing' }).selectOption('8');
   await page.getByRole('button', { name: 'Move room corner 1', exact: true }).focus(); await page.keyboard.press('ArrowRight');
-  await page.getByRole('combobox', { name: 'Editing view', exact: true }).selectOption('perspective');
+  await page.getByRole('combobox', { name: 'Editing view', exact: true }).selectOption('orthographic');
   await page.getByRole('button', { name: 'Add object', exact: true }).click();
   await page.getByRole('dialog', { name: 'Choose object to place' }).getByRole('button', { name: 'Blue key', exact: true }).click();
   const p = await project(page, { x: 20128, y: baseline.upperFloor - .25, z: 20192 }); await page.mouse.click(p.x, p.y); await page.keyboard.press('Escape');

@@ -10,7 +10,7 @@ test('group height offsets and alignment preserve floor bindings and native half
   const fixture = objectStoreyFixture();
   const base = fixture.document.objects[fixture.ids[0]!]!.y;
   const document = applyCommand(fixture.document, { label: 'Height fixture', patches: fixture.ids.map((id, index) => numberPatch(fixture.document, 'data', fixture.document.objects[id]!.offset + 4, (base - index * 2.5) * 2, 2)) });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'group-heights.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('tab', { name: 'Objects', exact: true }).click();

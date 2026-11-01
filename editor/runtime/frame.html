@@ -19,6 +19,11 @@
   const canvas = document.getElementById('canvas'), message = document.getElementById('message');
   let engine, inspectionShortcut, loaded = false, playing = false, currentRevision = -1;
   let originalWalls;
+  const navigationKeys = new Set();
+  let looking = false, lastPointer, lookX = 0, lookY = 0;
+  const cameraState = () => ({ zone:engine._editor_camera_value(0), x:engine._editor_camera_value(1), z:engine._editor_camera_value(2), y:engine._editor_camera_value(3), angle:engine._editor_camera_value(4), look:engine._editor_camera_value(5), upper:!!engine._editor_camera_value(6) });
+  const clearNavigation = () => { navigationKeys.clear(); looking = false; lastPointer = undefined; lookX = lookY = 0; };
+  const cameraChanged = () => send('view-changed', { revision:currentRevision, camera:cameraState() });
   function applyWallAssets(files) {
     if (!Array.isArray(files)) throw new Error('Invalid wall asset payload.');
     if (!originalWalls) {
@@ -56,7 +61,7 @@
     const object = engine._editor_pick_object(x, y, 0);
     return {zone:engine._editor_pick_at(x, y), object:object < 0 ? null : {id:object,cid:engine._editor_pick_object(x, y, 1)}, pixel:engine._editor_pixel_at(x, y), surface:offset < 0 ? null : {
       offset, upper:!!engine._editor_pick_graphic(x, y, 1), type:engine._editor_pick_graphic(x, y, 2)
-    }, revision:currentRevision};
+    }, revision:currentRevision, world: (() => { const xWorld = engine._editor_pick_floor(x,y,0), zWorld = engine._editor_pick_floor(x,y,1); return Number.isFinite(xWorld) && Number.isFinite(zWorld) ? { x:xWorld, z:zWorld, upper:!!engine._editor_pick_floor(x,y,2) } : null; })()};
   }
   function mechanismState(kind, index) {
     if (!['door', 'lift'].includes(kind) || !Number.isInteger(index) || index < 0) throw new Error('Invalid mechanism inspection.');
@@ -89,6 +94,7 @@
         canvas.title = request.text;
       }
       if (request.type === 'load') {
+        clearNavigation();
         if (!Number.isSafeInteger(request.revision) || request.revision < 0) throw new Error('Invalid level revision.');
         if (request.revision < currentRevision) return;
         if (!Number.isInteger(request.slot) || request.slot < 0 || request.slot > 15) throw new Error('Invalid level slot.');
@@ -123,10 +129,17 @@
         const c = request.camera;
         if (!c || ![c.zone,c.x,c.z,c.upper,c.angle].every(Number.isInteger)) throw new Error('Invalid preview camera.');
         if (!engine._editor_camera(c.zone,c.x,c.z,c.upper,c.angle)) throw new Error('Place the preview camera inside the selected zone.');
-        send('view-changed', {revision:currentRevision});
+        cameraChanged();
       }
+      if (loaded && request.type === 'restore-camera') {
+        const c = request.camera;
+        if (!c || ![c.zone,c.x,c.z,c.y,c.angle,c.look].every(Number.isFinite)) throw new Error('Invalid editor camera restoration.');
+        if (!engine._editor_restore_camera(c.zone,c.x,c.z,c.y,c.upper ? 1 : 0,c.angle,c.look)) send('camera-invalid', {revision:currentRevision});
+        else cameraChanged();
+      }
+      if (loaded && request.type === 'camera-state') send('camera-state', {id:request.id, camera:cameraState()});
       if (loaded && request.type === 'turn') {
-        engine._editor_turn(request.delta|0, request.look|0); send('view-changed', {revision:currentRevision});
+        engine._editor_turn(request.delta|0, request.look|0); cameraChanged();
       }
       if (loaded && request.type === 'pick-at') {
         if (!Number.isFinite(request.x) || !Number.isFinite(request.y)) throw new Error('Invalid preview pick coordinates.');
@@ -138,7 +151,7 @@
         if (c.height !== undefined && (!Number.isInteger(c.height * 256) || c.height * 256 < -2147483648 || c.height * 256 > 2147483647)) throw new Error('Invalid inspection eye height.');
         const checksum = c.height === undefined ? engine._editor_capture(c.zone,c.x,c.z,c.upper,c.angle)
           : engine._editor_capture_height(c.zone,c.x,c.z,c.upper,c.angle,c.height * 256);
-        send('captured', {id:request.id, checksum:checksum >>> 0});
+        send('captured', {id:request.id, checksum:checksum >>> 0}); cameraChanged();
       }
       if (loaded && request.type === 'mechanism-state') {
         send('mechanism-state', {id:request.id, mechanism:mechanismState(request.kind, request.index)});
@@ -192,7 +205,7 @@
         send('object-state', {id:request.id, object:{id:object, cid:value(0), zone:value(1), type:value(2), x:value(3)/65536, z:value(4)/65536, yFixed:value(5), health:value(6)}});
       }
       if (loaded && request.type === 'play') {
-        playing = !!request.playing;
+        clearNavigation(); playing = !!request.playing;
         engine._editor_play(playing ? 1 : 0);
         if (playing) canvas.focus(); else document.exitPointerLock?.();
       }
@@ -200,7 +213,7 @@
   });
   canvas.addEventListener('click', event => {
     const rect = canvas.getBoundingClientRect();
-    if (loaded && !playing && rect.width > 0 && rect.height > 0) {
+    if (event.button === 0 && loaded && !playing && rect.width > 0 && rect.height > 0) {
       canvas.focus({preventScroll:true});
       send('pick', pickAt((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height));
     }
@@ -208,10 +221,38 @@
   canvas.addEventListener('keydown', event => {
     if (playing || !loaded) return;
     const shortcut = inspectionShortcut(event);
-    if (shortcut) { event.preventDefault(); send('shortcut', {shortcut, revision:currentRevision}); return; }
+    if (shortcut) { if (event.key === 'Escape') clearNavigation(); event.preventDefault(); send('shortcut', {shortcut, revision:currentRevision}); return; }
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && ['KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE','ShiftLeft','ShiftRight'].includes(event.code)) { event.preventDefault(); navigationKeys.add(event.code); return; }
     if (event.key === 'Enter') { event.preventDefault(); send('pick', pickAt(.5, .5)); return; }
     const controls = {ArrowLeft:[-128,0],ArrowRight:[128,0],ArrowUp:[0,-8],ArrowDown:[0,8]};
-    if (controls[event.key]) { event.preventDefault(); engine._editor_turn(...controls[event.key]); send('view-changed', {revision:currentRevision}); }
+    if (controls[event.key]) { event.preventDefault(); engine._editor_turn(...controls[event.key]); cameraChanged(); }
   });
+  canvas.addEventListener('keyup', event => navigationKeys.delete(event.code));
+  canvas.addEventListener('contextmenu', event => { if (!playing) event.preventDefault(); });
+  canvas.addEventListener('pointerdown', event => {
+    if (!loaded || playing || event.button !== 2) return;
+    event.preventDefault(); canvas.focus({preventScroll:true}); looking = true; lastPointer = { x:event.clientX, y:event.clientY }; canvas.setPointerCapture(event.pointerId);
+  });
+  canvas.addEventListener('pointermove', event => {
+    if (!looking || !lastPointer || playing) return;
+    lookX += (event.clientX-lastPointer.x)*8; lookY += (event.clientY-lastPointer.y)*.6; lastPointer = { x:event.clientX, y:event.clientY };
+  });
+  const stopLooking = () => { looking = false; lastPointer = undefined; };
+  canvas.addEventListener('pointerup', stopLooking); canvas.addEventListener('pointercancel', stopLooking); canvas.addEventListener('lostpointercapture', stopLooking);
+  canvas.addEventListener('blur', clearNavigation); window.addEventListener('blur', clearNavigation);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) clearNavigation(); });
+  let previousNavigationTime;
+  function navigate(time) {
+    const seconds = previousNavigationTime === undefined ? 0 : Math.min(.05, (time-previousNavigationTime)/1000); previousNavigationTime = time;
+    if (engine && loaded && !playing && document.activeElement === canvas) {
+      const key = name => navigationKeys.has(name) ? 1 : 0;
+      let changed = false;
+      if (seconds > 0 && navigationKeys.size) changed = !!engine._editor_navigate(key('KeyW')-key('KeyS'), key('KeyD')-key('KeyA'), key('KeyQ')-key('KeyE'), seconds, key('ShiftLeft') || key('ShiftRight'));
+      if (lookX || lookY) { engine._editor_turn(Math.round(lookX),Math.round(lookY)); lookX=lookY=0; changed = true; }
+      if (changed) cameraChanged();
+    }
+    requestAnimationFrame(navigate);
+  }
+  requestAnimationFrame(navigate);
 </script>
 </html>

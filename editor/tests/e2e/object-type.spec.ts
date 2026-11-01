@@ -13,7 +13,7 @@ test('a compact named Type selector changes class immediately with history, port
   const fixture = roomHeightFixture(), alien = objectTemplates(fixture.document).find(item => item.type === 0)!;
   const proposal = createObject(fixture.document, { template: alien.id, room: fixture.from.id, x: 20128, z: 20192, y: -7.5 });
   const document = applyCommand(fixture.document, proposal.command);
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'types.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('tab', { name: 'Objects', exact: true }).click();
@@ -56,7 +56,7 @@ test('a compact named Type selector changes class immediately with history, port
 
 test('a failed type library keeps the object editable and retries without changing its type', async ({ page }) => {
   await page.route('**/reference/level_p/twolev.bin', route => route.fulfill({ status: 503, body: 'Unavailable' }));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('tab', { name: 'Objects', exact: true }).click();
   await page.getByRole('button', { name: 'Barrel 16', exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Object type', exact: true })).toBeDisabled();

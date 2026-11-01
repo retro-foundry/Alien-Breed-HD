@@ -11,6 +11,21 @@ export interface WallSurface {
 }
 export const polygonTypes = [1, 2, 7, 8, 9, 10, 11] as const;
 export type PolygonType = typeof polygonTypes[number];
+// AB3DI.s polyloop maps 1/2 to normal, 8/9 to chunky bump and 10/11
+// to smooth bump; each pair keeps floor first and ceiling second.
+export type PolygonMaterialMode = 'normal' | 'bump' | 'smooth';
+export function polygonPlane(type: number): 'floor' | 'ceiling' | undefined {
+  return [1, 8, 10].includes(type) ? 'floor' : [2, 9, 11].includes(type) ? 'ceiling' : undefined;
+}
+export function polygonMaterialBank(type: number): PolygonMaterialMode {
+  if (!polygonPlane(type)) throw new Error('Choose a floor or ceiling material surface.');
+  return type <= 2 ? 'normal' : type <= 9 ? 'bump' : 'smooth';
+}
+export function polygonMaterialType(type: number, mode: PolygonMaterialMode): PolygonType {
+  const plane = polygonPlane(type);
+  if (!plane) throw new Error('Water and other draw commands cannot change material mode.');
+  return (mode === 'normal' ? plane === 'floor' ? 1 : 2 : mode === 'bump' ? plane === 'floor' ? 8 : 9 : plane === 'floor' ? 10 : 11);
+}
 export interface PolygonSurface {
   type: PolygonType;
   heightQuarter: number;

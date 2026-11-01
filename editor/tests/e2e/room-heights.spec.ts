@@ -14,7 +14,7 @@ test('room heights apply atomically, copy, undo and save independently of their 
     from: built.document.roomSource.rooms.find(room => room.originZone === built.topology!.cells.find(cell => cell.sourceId === authored.from.id)!.id)!,
     to: built.document.roomSource.rooms.find(room => room.originZone === built.topology!.cells.find(cell => cell.sourceId === authored.to.id)!.id)! };
   const preview = page.getByRole('region', { name: '3D game engine preview' });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'room-heights.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(fixture.from.originZone).padStart(3, '0')}(?:\\s|$)`) }).click();
@@ -68,7 +68,7 @@ test('an upper ceiling edit changes the actual upper-storey view without changin
   test.setTimeout(90000); page.on('dialog', dialog => void dialog.accept());
   const fixture = roomHeightFixture(twoStoreyHeightTemplate()), template = fixture.original.zones[fixture.from.recordZone]!;
   const preview = page.getByRole('region', { name: '3D game engine preview' });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'upper-heights.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.from.id.replace(/^room-/, '')}`) }).click();
@@ -91,7 +91,7 @@ test('an upper ceiling edit changes the actual upper-storey view without changin
 test('different authored heights generate a visible step and the native player walks up onto its floor', async ({ page }, testInfo) => {
   test.setTimeout(90000); page.on('dialog', dialog => void dialog.accept());
   const fixture = importedPortalFixture(), preview = page.getByRole('region', { name: '3D game engine preview' });
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'step-heights.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.added.id.replace(/^room-/, '')}`) }).click();

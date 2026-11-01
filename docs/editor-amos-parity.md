@@ -41,12 +41,12 @@ replace the AB3D I source as the format/behaviour authority.
 | 18 | Define Floor Height | Implemented: lower floor editing, stairs and native standing/crouched collision checks |
 | 19 | Lower Floor Point Brightness | Partial: as ID 10 |
 | 20 | Define Teleporter | Implemented source links/destinations and native teleport checks; retains explicit invalid-link diagnostics |
-| 21 | Define Roof Graphic | Partial: all 16 normal patterns and original repeat choices implemented; bump mode and no-roof/sky authoring remain required |
+| 21 | Define Roof Graphic | Partial: normal, chunky bump and smooth bump patterns/repeat implemented; no-roof/sky authoring remains required |
 | 22 | Define Wall Graphic | Partial: independent straight face/boundary paint; complete alignment/repeat, transparency, bands, curves and other original options remain required |
-| 23 | Define Floor Graphic | Partial: all 16 normal patterns and original repeat choices implemented; bump-mode assignment remains required |
-| 24 | UPPER Roof Graphic | Partial: independent upper normal patterns/repeat implemented; bump and sky remain required |
+| 23 | Define Floor Graphic | Implemented: normal, chunky bump and smooth bump patterns with original repeat choices |
+| 24 | UPPER Roof Graphic | Partial: independent upper normal, chunky bump and smooth bump patterns/repeat implemented; sky remains required |
 | 25 | UPPER Wall Graphic | Partial: same requirements as ID 22 on upper walls |
-| 26 | UPPER Floor Graphic | Partial: independent upper normal patterns/repeat implemented; bump remains required |
+| 26 | UPPER Floor Graphic | Implemented: independent upper normal, chunky bump and smooth bump patterns/repeat |
 | 27 | Water Height | Implemented: independent source height and native plane checks |
 | 28 | Add Control Point | Missing: editable independent navigation points |
 | 29 | Link Zone to Cpt | Missing: graphical lower-storey navigation assignment and validation |
@@ -65,8 +65,9 @@ replace the AB3D I source as the format/behaviour authority.
   5125/5153 assign per-zone patterns and repeat. `FGPUT` / `RGPUT` at 5219/5186
   select all 16 normal patterns, repeat shifts -5 through 2, bump mode and a
   seventeenth no-roof choice. The compiler writes tile offset
-  `(pattern / 4) * 256 + (pattern mod 4)`. Normal patterns and repeat are the
-  active implementation; bump and no-roof remain explicit gaps.
+  `(pattern / 4) * 256 + (pattern mod 4)`. Normal, chunky bump and smooth bump banks and repeat are implemented.
+  No-roof/sky authoring remains an explicit gap. Native opcodes 8/9 and 10/11
+  preserve the floor/ceiling role; the smooth bank uses one fixed texture.
 - `DEFDOOR` / `DEFLIFT` at 4659/4728 assign controller groups and copy settings.
   Existing controller copies do not replace independent group creation.
 - Control-point procedures and `CPTNEARTOZONE` / `CPTNEARTOUPPERZONE` retain

@@ -17,7 +17,7 @@ for (const upper of [false, true]) for (const type of [1, 2]) test(`paint a ${up
     z: Math.round(copy.vertices.reduce((sum, p) => sum + p.z, 0) / copy.vertices.length), upper: upper ? 1 : 0, angle: 0,
     height: type === 1 ? (upper ? zone.upperFloor : zone.floor) - 1 : (upper ? zone.upperCeiling : zone.ceiling) + 1 };
   const originalCamera = { ...camera, zone: built.topology!.cells.find(cell => cell.sourceId === original.id)!.id, x: camera.x - dx, z: camera.z - dz };
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'surface.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${copy.id.replace(/^room-/, '')}`) }).click();
@@ -58,8 +58,8 @@ for (const upper of [false, true]) for (const type of [1, 2]) test(`paint a ${up
   const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
   const file = testInfo.outputPath('painted-surface.ab3d'); await (await download).saveAs(file);
   const saved = decodeProject(new Uint8Array(await readFile(file))), rebuilt = buildPlayableLevel(saved, -1);
-  expect(saved.files).toEqual(document.files); expect(roomSourceSnapshot(saved.roomSource).version).toBe(9);
-  expect(saved.roomSource.rooms.find(room => room.id === copy.id)!.polygonMaterials).toEqual([{ record: target.record, upper, texture, scale: -5 }]);
+  expect(saved.files).toEqual(document.files); expect(roomSourceSnapshot(saved.roomSource).version).toBe(11);
+  expect(saved.roomSource.rooms.find(room => room.id === copy.id)!.polygonMaterials).toEqual([{ record: target.record, upper, texture, scale: -5, mode: 'normal' }]);
   const changed = after.filter((pick, index) => pick.pixel !== before[index]!.pixel);
   expect(changed.length).toBeGreaterThan(0);
   for (const pick of changed) expect(polygonMaterialTarget(rebuilt, pick.zone, pick.surface!)).toEqual(target);

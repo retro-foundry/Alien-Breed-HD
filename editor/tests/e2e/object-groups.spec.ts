@@ -16,7 +16,7 @@ test('multi-object selection moves, aligns, rejects partial changes and deletes 
     const proposal = createObject(document, { template, room: fixture.from.id, x: x!, z: z!, y: -8 });
     document = applyCommand(document, proposal.command); ids.push(proposal.id);
   }
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'group.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('tab', { name: 'Objects', exact: true }).click();
@@ -99,7 +99,7 @@ test('multi-object selection moves, aligns, rejects partial changes and deletes 
 test('upper-floor groups choose the compatible room at a shared lower-room edge', async ({ page }, testInfo) => {
   test.setTimeout(90000);
   const fixture = objectStoreyFixture();
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'storeys.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('button', { name: 'Upper', exact: true }).click();

@@ -18,7 +18,7 @@ for (const kind of ['door', 'lift'] as const) test(`convert an original room to 
   const points = neighbour.vertices.map(id => topology.points[id]!);
   const document = applyCommand(fixture.document, setSourceStart(fixture.document, 1, neighbour.sourceId,
     Math.round(points.reduce((sum, point) => sum + point.x, 0) / points.length), Math.round(points.reduce((sum, point) => sum + point.z, 0) / points.length)));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'convert.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(fixture.room.originZone).padStart(3, '0')}(?:\\s|$)`) }).click();
@@ -74,7 +74,7 @@ test('a room already owned by native movement links to its existing controller w
   const room = document.roomSource.rooms.find(room => { const owner = movingRoomOwnership(document, room); return owner?.room && owner.room !== room.id; })!;
   expect(room).toBeDefined(); const owner = movingRoomOwnership(document, room)!;
   const target = document.roomSource.rooms.find(room => room.id === owner.room)!;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(room.originZone).padStart(3, '0')}(?:\\s|$)`) }).click();
   await expect(page.getByRole('button', { name: 'Make door', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: `Go to existing ${owner.kind}`, exact: true }).click();

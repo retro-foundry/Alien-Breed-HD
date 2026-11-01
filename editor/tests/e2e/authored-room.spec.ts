@@ -8,7 +8,7 @@ test('a newly assembled room renders and starts actual gameplay with a remapped 
   test.setTimeout(90000);
   page.on('dialog', dialog => void dialog.accept());
   const original = openLevel('original', originalFiles(1)), compiled = buildAuthoredRoom(original), id = original.zones.length;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'generated-room.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(compiled)) });
   await expect(page.locator('.project-picker strong')).toHaveText('Generated room');
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();

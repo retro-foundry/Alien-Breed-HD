@@ -4,7 +4,7 @@ import { encodeProject } from '../../src/model/project';
 
 test('rectangle selection supports every direction, additive selection and cancellation without edits', async ({ page }, testInfo) => {
   const fixture = objectStoreyFixture();
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'box.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('button', { name: 'Upper', exact: true }).click();

@@ -6,7 +6,7 @@ import { enginePlayerInventory, engineSwitchState } from '../engineCapture';
 
 test('switch inspectors explain condition numbers and edit independent reset modes with native timer activity', async ({ page }, testInfo) => {
   const { document, switchCopy: copy, source } = switchCopyPlayerFixture();
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'switch-settings.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(source.zone).padStart(3, '0')}(?:\\s|$)`) }).click();

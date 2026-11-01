@@ -3858,6 +3858,23 @@ static inline int project_y_to_pixels_round(int32_t vy, int32_t vz, int32_t proj
     return (int)q + center_y;
 }
 
+/* Inverse of rotate_one_point and project_x/y_to_pixels, using the active
+ * renderer scales/centres rather than an editor approximation of its FOV. */
+int renderer_unproject_plane(int x, int y, int32_t plane_y, double *out_x, double *out_z)
+{
+    const RendererState *r = &g_renderer;
+    if (!out_x || !out_z || x < 0 || y < 0 || x >= r->width || y >= r->height || r->proj_y_scale <= 0) return 0;
+    const double row = (double)y - r->view_center_y;
+    if (fabs(row) < 0.5) return 0;
+    const double depth = (((double)plane_y - r->yoff) / WORLD_Y_SUBUNITS) * r->proj_y_scale * RENDER_SCALE / row;
+    const double side = ((double)x - r->view_center_x) / (64.0 * renderer_proj_x_scale_px());
+    const double determinant = (double)r->sinval * r->sinval + (double)r->cosval * r->cosval;
+    if (depth <= 0 || determinant < 1) return 0;
+    *out_x = r->xoff + depth * 16384.0 * (r->cosval * side + r->sinval) / determinant;
+    *out_z = r->zoff + depth * 16384.0 * (r->cosval - r->sinval * side) / determinant;
+    return isfinite(*out_x) && isfinite(*out_z) && *out_x >= -32768 && *out_x <= 32767 && *out_z >= -32768 && *out_z <= 32767;
+}
+
 /* Water can pass through the interpolated eye height. Keep its fractional Y
  * through projection instead of rounding a whole half-screen to the horizon. */
 static inline int project_water_y_to_pixels(int32_t vy, int32_t vz, int32_t proj_y_scale, int center_y)

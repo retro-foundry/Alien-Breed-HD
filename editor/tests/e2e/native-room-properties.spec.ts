@@ -16,7 +16,7 @@ for (const brightness of [17, 2 << 8]) test(`captured room properties with brigh
   const template = document.zones[fixture.from.recordZone]!;
   document = applyCommand(document, { label: 'Change template', patches: [numberPatch(document, 'data', template.offset + 22, 6, 2)] });
   const built = buildPlayableLevel(document, -1), cell = built.topology!.cells.find(cell => cell.sourceId === fixture.from.id)!;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'native-room-properties.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();

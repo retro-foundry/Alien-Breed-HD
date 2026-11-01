@@ -1,3 +1,4 @@
+import { polygonMaterialType } from './surfaces';
 import { BinaryReader, checkedInteger } from './binary';
 import { buildAnimationTables, type AnimationTables, type AnimationTargetContext } from './animationBuild';
 import { readGraphicRecord, type Graphic } from './graphics';
@@ -7,7 +8,7 @@ import { BinaryWriter } from './writer';
 import { relocateRecordPointer } from './graphicsRelocation';
 import { assertGraphicsRecordBudget } from './renderLimits';
 
-export interface GeneratedGraphicsRoom extends GraphicsStreamInput { id: number; dataOffset: number }
+export interface GeneratedGraphicsRoom extends GraphicsStreamInput { sourceId?: string; id: number; dataOffset: number }
 export interface GeneratedGraphicsTarget { room: number; upper: boolean; index: number }
 export interface GeneratedGraphicIdentity extends GeneratedGraphicsTarget { readonly offset: number; readonly sourceOffset?: number; readonly boundaryIndex?: number }
 export type SelectGraphicsTarget = (pointer: number, context: AnimationTargetContext,
@@ -51,7 +52,11 @@ export function compileGeneratedGraphics(document: LevelDocument, rooms: readonl
         if (generated.size !== item.bytes.length) throw new Error('A generated graphics record contains trailing or incomplete data.');
         if (item.sourceOffset !== undefined) {
           const original = source.get(item.sourceOffset);
-          if (!original || original.type !== generated.type) throw new Error('A generated graphics identity must name a source record with the same opcode.');
+          if (!original) throw new Error('A generated graphics identity must name an existing source record.');
+          if (original.type !== generated.type) {
+            const material = document.roomSource.rooms.find(source => source.id === room.sourceId)?.polygonMaterials?.find(material => material.record === item.sourceOffset && material.upper === upper);
+            if (!material?.mode || !original.polygon || !generated.polygon || polygonMaterialType(original.type, material.mode) !== generated.type) throw new Error('A generated graphics identity must retain its opcode or have an explicit same-plane material mode.');
+          }
           targets.push({ key: { room: room.id, upper, index }, start: output.offset, original, generated });
         }
         directTargets.set(targetKey({ room: room.id, upper, index }), { start: output.offset, record: generated });

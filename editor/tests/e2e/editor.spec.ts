@@ -9,7 +9,7 @@ test('a cancelled backup cannot mark edits saved when recovery storage is unavai
   await page.addInitScript(() => {
     Object.defineProperty(indexedDB, 'open', { value: () => { throw new DOMException('Recovery storage is unavailable', 'QuotaExceededError'); } });
   });
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: /^Zone 003/ }).click();
   const brightness = page.getByRole('spinbutton', { name: 'Brightness', exact: true });
@@ -29,7 +29,7 @@ test('a cancelled backup cannot mark edits saved when recovery storage is unavai
 
 test('saving a focused numeric field includes the latest edit', async ({ page }, testInfo) => {
   page.on('dialog', dialog => void dialog.accept());
-  await page.goto('/');
+  await page.goto('/?view=top');
   await page.getByRole('button', { name: /^Zone 003/ }).click();
   const brightness = page.getByRole('spinbutton', { name: 'Brightness', exact: true });
   await brightness.fill('42');
@@ -48,7 +48,7 @@ test('saving a focused numeric field includes the latest edit', async ({ page },
 
 test('the project navigator and search shortcut remain available in a narrow window', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 760, height: 900 });
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Toggle project navigator' }).click();
   await page.getByRole('combobox', { name: 'Original level' }).selectOption('7');
@@ -66,7 +66,7 @@ test('real maps, editing, undo, portable saves, recovery and rejected imports', 
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('dialog', dialog => void dialog.accept());
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await expect(page.locator('canvas[aria-label="Level map"]')).toBeVisible();
   await expect(page.locator('.status-size')).toHaveText('304 points · 138 zones');
@@ -114,7 +114,7 @@ test('real maps, editing, undo, portable saves, recovery and rejected imports', 
 test('an invalid player position reports an error without changing the map or crashing', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('tab', { name: 'Starts', exact: true }).click();
   await page.getByRole('button', { name: 'Player 1', exact: false }).click();
@@ -127,7 +127,7 @@ test('an invalid player position reports an error without changing the map or cr
 });
 
 test('a valid level 3 spawn edit is not rejected by neighbouring corner-wall fences', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('combobox', { name: 'Original level' }).selectOption({ value: '3' });
   await expect(page.locator('.project-picker strong')).toHaveText('Level 3');
@@ -144,7 +144,7 @@ test('a valid level 3 spawn edit is not rejected by neighbouring corner-wall fen
 test('the project target slot survives undo, saves, recovery and reopening the 3D view', async ({ page }, testInfo) => {
   test.setTimeout(90000);
   page.on('dialog', dialog => void dialog.accept());
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   const target = page.getByRole('combobox', { name: 'Target game slot', exact: true });
   await target.selectOption('8');
@@ -178,7 +178,7 @@ test('the project target slot survives undo, saves, recovery and reopening the 3
 test('all sixteen shipped maps render through the real browser interface', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   for (const oracle of oracles.levels) {
     await page.getByRole('combobox', { name: 'Original level' }).selectOption(String(oracle.level));
@@ -192,7 +192,7 @@ test('all sixteen shipped maps render through the real browser interface', async
 });
 
 test('an older pending reference load cannot overwrite a newer imported document', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   let complete: (() => void) | undefined;
   const gate = new Promise<void>(resolve => { complete = resolve; });

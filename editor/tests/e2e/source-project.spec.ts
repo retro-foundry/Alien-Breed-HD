@@ -13,7 +13,7 @@ test('incomplete room appearance survives saves/recovery and stops preview/expor
   const change = commitRoomDraft(original.roomSource, setDraftCorners(beginRoomDraft(original, original.roomSource, 0),
     [{ x: 20000, z: 20000 }, { x: 20128, z: 20000 }, { x: 20128, z: 20128 }, { x: 20000, z: 20128 }]));
   const edited = execute({ document: original, past: [], future: [] }, editRoomSource(change)).document;
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'authored.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(edited)) });
   await expect(page.locator('.project-picker strong')).toHaveText('Authored reactor');
   await expect(page.getByText(/This project has editable source changes/)).toBeVisible();

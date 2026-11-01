@@ -1,3 +1,4 @@
+import { polygonPlane } from './surfaces';
 import { normaliseRoomOutline, type Position } from './geometry';
 import type { Graphic, LevelDocument } from './level';
 import type { RoomTopology } from './roomTopology';
@@ -69,7 +70,7 @@ export function buildCellPolygons(document: LevelDocument, topology: RoomTopolog
     const layer = (records: readonly Graphic[], upper: boolean): GeneratedPolygon[] => records.filter(record => record.polygon).map(record => {
       const polygon = record.polygon!;
       const floor = upper ? 'upperFloor' : 'floor', roof = upper ? 'upperCeiling' : 'ceiling';
-      const field = polygon.type === 2 ? roof : polygon.type === 7 ? undefined : floor;
+      const field = polygonPlane(polygon.type) === 'ceiling' ? roof : polygonPlane(polygon.type) === 'floor' ? floor : undefined;
       // Only a plane coinciding with its authored room boundary is anchored.
       // Decorative offsets and water retain their explicit source heights.
       const height = field && polygon.heightQuarter / 4 === template[field] ? settings[field] : polygon.heightQuarter / 4;

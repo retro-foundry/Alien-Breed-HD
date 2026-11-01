@@ -6,7 +6,7 @@ test('the actual engine reloads edits, visits zones and playtests without touchi
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('dialog', dialog => void dialog.accept());
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.evaluate(() => {
     localStorage.setItem('ab3d1.autosave.v1.slot0.data', 'normal-game-save');
@@ -47,7 +47,7 @@ test('all sixteen untouched original maps load and draw in the actual game engin
   test.setTimeout(150000);
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto('/');
+  await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   for (let level = 1; level <= 16; level++) {

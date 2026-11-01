@@ -12,7 +12,7 @@ test('frame selection fits authored group positions and remains an explicit view
     document = applyCommand(document, proposal.command); ids.push(proposal.id);
   }
   document = applyCommand(document, setSourceObject(document, ids[0]!, fixture.from.id, 20140.5, 20128.75));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'framing.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('tab', { name: 'Objects', exact: true }).click();

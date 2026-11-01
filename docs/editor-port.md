@@ -2490,3 +2490,37 @@ corner edits and all 16 normal lower-floor patterns through Paint room textures.
 Site commit `b865ca5` serves JavaScript `index-B71ShpUG.js` and CSS
 `index-Bgk5Y1Rh.css`; Pages run `41319077670` succeeded. Five native resource
 hashes remain verified under `runtime/r-ad32e275c8d0e039/`.
+
+
+## Default textured FPS editor and native material banks
+
+Editor view now opens in 3D perspective using the actual game renderer, original
+textures and lighting. WASD moves the paused inspection camera, right drag looks,
+Q/E changes height and Shift increases camera speed. Controls are visible below
+the viewport and in Help. Axis and orthographic views retain geometry handles;
+Split opens a map alongside the renderer. `?view=top` and the other documented
+view IDs select an initial projection explicitly; otherwise perspective opens.
+Inspection navigation does not run actor AI or modify saved player starts.
+
+Native floor picking inverts the renderer's active projection and view rotation,
+including scaling and look position, to place palette objects on the clicked
+floor. Floor picks preserve the actual upper/lower storey. Escape cancels repeat
+placement. Valid camera position, angle and look survive source rebuilds and
+Undo; invalidated positions return inside the selected room with a notice.
+
+Floor and ceiling painting now includes normal, chunky bump and smooth bump
+material banks, with the original bytes/palettes. AMOS FGPUT/RGPUT and its
+compiler map normal floor/roof 1/2 to chunky bump 8/9. Original AB3DI.s polyloop
+and BumpLine also implement smooth 10/11 with one fixed texture; its pattern
+selector is therefore omitted. Explicit mode overrides use room-source version
+11 and reject older-version downgrades; legacy overrides remain readable.
+Same-plane opcode conversions require an explicit source override; geometry,
+brightness, record provenance and moving-controller attachments stay intact.
+Ceiling height anchoring and native labels now correctly classify opcodes 9/11.
+Sky/no-roof authoring and the remaining AMOS/R0-R12 requirements remain open.
+
+Verification so far: all 961 model tests pass, including twelve lower/upper
+floor/ceiling mode conversions, portable source/history and native-bank palette
+sampling. Six initial packaged Edge viewport scenarios passed, including default
+FPS navigation, native floor click placement and camera preservation on Undo.
+Final cross-browser publication evidence is recorded after deployment below.

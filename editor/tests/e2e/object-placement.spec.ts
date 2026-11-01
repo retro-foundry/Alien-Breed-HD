@@ -7,7 +7,7 @@ import { decodeProject, encodeProject } from '../../src/model/project';
 test('named palette searches, repeated clicks ignore existing markers, invalid placement stays atomic and Escape cancels', async ({ page }, testInfo) => {
   const fixture = roomHeightFixture(), count = fixture.document.objects.length;
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
-  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'click-placement.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await framePlacementRoom(page, fixture.from.id);
