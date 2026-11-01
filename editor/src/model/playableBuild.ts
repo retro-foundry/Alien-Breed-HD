@@ -10,7 +10,7 @@ export interface PlayableLevel { source: LevelDocument; document: LevelDocument;
 export function buildPlayableLevel(source: LevelDocument, resolvedExit: number): PlayableLevel {
   if (sourceMatchesLevel(source)) { assertPlayableGraphics(source); return { source, document: source }; }
   const built = buildSourceLevel(source, { resolvedExit, ...roomAppearanceBuildOptions(source) });
-  return { source, document: built.document, topology: built.topology };
+  return { source, document: { ...built.document, ...(source.wallOverrides ? { wallOverrides: source.wallOverrides } : {}) }, topology: built.topology };
 }
 
 export function parseGameExitZones(value: unknown): readonly number[] {

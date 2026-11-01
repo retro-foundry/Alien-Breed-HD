@@ -11,6 +11,7 @@ import type { SourceStart } from './sourceStarts';
 import type { SourceObject } from './sourceObjects';
 import type { SourceTeleport } from './sourceTeleports';
 import type { RoomAppearance } from './roomAppearance';
+import type { WallOverride } from './wallOverrides';
 
 export interface Point { id: number; x: number; z: number; offset: number }
 export interface FloorLine {
@@ -44,6 +45,7 @@ export interface Switch {
 export interface Start { player: 1 | 2; x: number; z: number; zone: number }
 export interface LevelFiles { data: Uint8Array; graphics: Uint8Array; clips: Uint8Array }
 export interface LevelDocument {
+  wallOverrides?: readonly WallOverride[];
   sourceStarts?: readonly SourceStart[];
   sourceObjects?: readonly SourceObject[];
   sourceTeleports?: readonly SourceTeleport[];

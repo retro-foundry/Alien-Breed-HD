@@ -3,6 +3,11 @@ import type { Graphic } from '../model/graphics';
 import { loadWallCatalog, loadWallTexture } from '../model/wallAssets';
 import { wallTextureRgba, type WallSheet, type WallTexture } from '../model/wallTextures';
 import './WallStyleBrowser.css';
+import type { WallOverride } from '../model/wallOverrides';
+import { NativeWallAssetEditor } from './NativeWallAssetEditor';
+
+interface BrowserProps { records: readonly Graphic[]; value: string; onChange: (value: string) => void; label: string;
+  overrides?: readonly WallOverride[]; baseline?: Uint8Array; onAssetChange?: (texture: number, bytes: Uint8Array | null) => void }
 
 function SheetImage({ sheet, texture, shade }: { sheet: WallSheet; texture: WallTexture; shade: number }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -19,22 +24,24 @@ function SheetImage({ sheet, texture, shade }: { sheet: WallSheet; texture: Wall
     aria-label={`${sheet.name} texture sheet, ${texture.width} by ${texture.height}, shade ${shade}`} />{error && <span role="alert">{error}</span>}</>;
 }
 
-function Browser({ records, value, onChange, label }: { records: readonly Graphic[]; value: string; onChange: (value: string) => void; label: string }) {
-  const [assets, setAssets] = useState<ReadonlyMap<number, { sheet: WallSheet; texture: WallTexture }>>();
+function Browser({ records, value, onChange, label, overrides, baseline, onAssetChange }: BrowserProps) {
+  const [loaded, setLoaded] = useState<{ ids: string; map: ReadonlyMap<number, { sheet: WallSheet; texture: WallTexture }> }>();
   const [error, setError] = useState(''), [retry, setRetry] = useState(0), [query, setQuery] = useState(''), [shade, setShade] = useState(16);
   const ids = [...new Set(records.map(record => record.texture))].sort((a, b) => a! - b!).join(',');
   useEffect(() => {
-    let active = true; setError(''); setAssets(undefined);
+    let active = true; setError('');
     void loadWallCatalog().then(async catalog => {
       const result = await Promise.all(ids.split(',').filter(Boolean).map(async id => {
         const sheet = catalog.find(sheet => sheet.id === Number(id));
         if (!sheet) throw new Error(`Wall material ${id} is not in the packaged native texture catalog.`);
-        return [sheet.id, { sheet, texture: await loadWallTexture(sheet) }] as const;
+        return [sheet.id, { sheet, texture: await loadWallTexture(sheet, overrides) }] as const;
       }));
-      if (active) setAssets(new Map(result));
+      if (active) setLoaded({ ids, map: new Map(result) });
     }).catch(error => { if (active) setError(error instanceof Error ? error.message : String(error)); });
     return () => { active = false; };
-  }, [ids, retry]);
+  }, [ids, retry, overrides]);
+  const assets = loaded?.ids === ids ? loaded.map : undefined;
+  const chosen = records.find(record => String(record.offset) === value), selected = chosen && assets?.get(chosen.texture!);
   return <div className="wall-browser">
     <p className="field-note">Whole texture sheets at the chosen preview shade. Each style keeps its authored alignment, sampling and transparency. Choose a tile, then apply the form.</p>
     <label className="select-field"><span>Find material or style</span><input aria-label={`${label} material search`} value={query} title="Filter this template's wall styles by material name, texture number or style number." onChange={event => setQuery(event.target.value)} /></label>
@@ -49,10 +56,12 @@ function Browser({ records, value, onChange, label }: { records: readonly Graphi
           </button>)}
       </div>}
     {assets && !records.some((record, index) => `${assets.get(record.texture!)!.sheet.name} ${record.texture} style ${index + 1}`.toLowerCase().includes(query.toLowerCase().trim())) && <p role="status">No matching wall styles.</p>}
+    {selected && baseline && onAssetChange && <NativeWallAssetEditor key={selected.sheet.id} sheet={selected.sheet} label={label}
+      baseline={baseline} overrides={overrides} onChange={onAssetChange} />}
   </div>;
 }
 
-export function WallStyleBrowser(props: { records: readonly Graphic[]; value: string; onChange: (value: string) => void; label: string }) {
+export function WallStyleBrowser(props: BrowserProps) {
   const [open, setOpen] = useState(false);
   return <details className="wall-style-browser" onToggle={event => setOpen(event.currentTarget.open)}>
     <summary title="Browse this template's wall styles using the original texture sheets and palettes. Enter or Space opens the browser.">Browse {props.label} materials</summary>

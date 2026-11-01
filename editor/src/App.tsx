@@ -17,9 +17,9 @@ import { ControlTooltips } from './components/ControlTooltips';
 import { ControlsHelp } from './components/ControlsHelp';
 import { preparePlayableLevel } from './model/playableBuild';
 
-interface Workspace { id: string; history: History; saved: LevelFiles; savedSlot: number; savedExit: number | null; savedRoomSource: LevelDocument['roomSource']; savedSourceStarts: LevelDocument['sourceStarts']; savedSourceObjects: LevelDocument['sourceObjects']; savedSourceTeleports: LevelDocument['sourceTeleports']; savedAppearances: LevelDocument['roomAppearances'] }
+interface Workspace { id: string; history: History; saved: LevelFiles; savedSlot: number; savedExit: number | null; savedRoomSource: LevelDocument['roomSource']; savedSourceStarts: LevelDocument['sourceStarts']; savedSourceObjects: LevelDocument['sourceObjects']; savedSourceTeleports: LevelDocument['sourceTeleports']; savedAppearances: LevelDocument['roomAppearances']; savedWallOverrides: LevelDocument['wallOverrides'] }
 function workspaceDirty(workspace: Workspace): boolean {
-  return workspace.history.document.roomAppearances !== workspace.savedAppearances || workspace.history.document.sourceTeleports !== workspace.savedSourceTeleports || workspace.history.document.sourceObjects !== workspace.savedSourceObjects || workspace.history.document.sourceStarts !== workspace.savedSourceStarts || workspace.history.document.roomSource !== workspace.savedRoomSource || workspace.history.document.playtestSlot !== workspace.savedSlot || workspace.history.document.exitZone !== workspace.savedExit || (['data', 'graphics', 'clips'] as const).some(file => !sameBytes(workspace.history.document.files[file], workspace.saved[file]));
+  return workspace.history.document.wallOverrides !== workspace.savedWallOverrides || workspace.history.document.roomAppearances !== workspace.savedAppearances || workspace.history.document.sourceTeleports !== workspace.savedSourceTeleports || workspace.history.document.sourceObjects !== workspace.savedSourceObjects || workspace.history.document.sourceStarts !== workspace.savedSourceStarts || workspace.history.document.roomSource !== workspace.savedRoomSource || workspace.history.document.playtestSlot !== workspace.savedSlot || workspace.history.document.exitZone !== workspace.savedExit || (['data', 'graphics', 'clips'] as const).some(file => !sameBytes(workspace.history.document.files[file], workspace.saved[file]));
 }
 class CanvasBoundary extends Component<{ children: ReactNode; onExport: () => void }, { error: string | null }> {
   state: { error: string | null } = { error: null };
@@ -47,7 +47,7 @@ async function originalLevel(number: number, signal?: AbortSignal): Promise<Leve
 }
 
 function makeWorkspace(document: LevelDocument, id: string = crypto.randomUUID()): Workspace {
-  return { id, history: { document, past: [], future: [] }, saved: document.files, savedSlot: document.playtestSlot, savedExit: document.exitZone, savedRoomSource: document.roomSource, savedSourceStarts: document.sourceStarts, savedSourceObjects: document.sourceObjects, savedSourceTeleports: document.sourceTeleports, savedAppearances: document.roomAppearances };
+  return { id, history: { document, past: [], future: [] }, saved: document.files, savedSlot: document.playtestSlot, savedExit: document.exitZone, savedRoomSource: document.roomSource, savedSourceStarts: document.sourceStarts, savedSourceObjects: document.sourceObjects, savedSourceTeleports: document.sourceTeleports, savedAppearances: document.roomAppearances, savedWallOverrides: document.wallOverrides };
 }
 
 export function App() {
@@ -125,7 +125,7 @@ export function App() {
       saveWorkspace(current.id, current.history.document).then(() => { if (!cancelled) {
         setAutosave('Workspace saved');
         setWorkspace(latest => latest?.id === current.id && latest.history.document === current.history.document
-          ? { ...latest, saved: current.history.document.files, savedSlot: current.history.document.playtestSlot, savedExit: current.history.document.exitZone, savedRoomSource: current.history.document.roomSource, savedSourceStarts: current.history.document.sourceStarts, savedSourceObjects: current.history.document.sourceObjects, savedSourceTeleports: current.history.document.sourceTeleports, savedAppearances: current.history.document.roomAppearances } : latest);
+          ? { ...latest, saved: current.history.document.files, savedSlot: current.history.document.playtestSlot, savedExit: current.history.document.exitZone, savedRoomSource: current.history.document.roomSource, savedSourceStarts: current.history.document.sourceStarts, savedSourceObjects: current.history.document.sourceObjects, savedSourceTeleports: current.history.document.sourceTeleports, savedAppearances: current.history.document.roomAppearances, savedWallOverrides: current.history.document.wallOverrides } : latest);
       } })
         .catch(error => { if (!cancelled) { setAutosave('Autosave unavailable'); setError(error instanceof Error ? error.message : String(error)); } });
     }, 600);

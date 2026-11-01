@@ -5,6 +5,7 @@ import { placeSourceStart, type SourceStart } from './sourceStarts';
 import { placeSourceObject, type SourceObject } from './sourceObjects';
 import { placeSourceTeleport, type SourceTeleport } from './sourceTeleports';
 import { setRoomAppearance, type RoomAppearance } from './roomAppearance';
+import { nativeWallSheets, restoreWallOverrides, type WallOverride } from './wallOverrides';
 
 export interface BytePatch { file: keyof LevelFiles; offset: number; before: Uint8Array; after: Uint8Array }
 interface Change<T> { before: T; after: T }
@@ -13,6 +14,7 @@ export interface EditCommand {
   playtestSlot?: Change<number>; exitZone?: Change<number | null>; roomSource?: Change<RoomSource>;
   sourceStarts?: Change<readonly SourceStart[] | undefined>; sourceObjects?: Change<readonly SourceObject[] | undefined>;
   sourceTeleports?: Change<readonly SourceTeleport[] | undefined>; roomAppearances?: Change<readonly RoomAppearance[] | undefined>;
+  wallOverrides?: Change<readonly WallOverride[] | undefined>;
 }
 export interface History { document: LevelDocument; past: EditCommand[]; future: EditCommand[] }
 
@@ -36,6 +38,12 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
   let sourceObjects = document.sourceObjects;
   let sourceTeleports = document.sourceTeleports;
   let roomAppearances = document.roomAppearances;
+  let wallOverrides = document.wallOverrides;
+  if (command.wallOverrides) {
+    const { before, after } = command.wallOverrides;
+    if (wallOverrides !== (reverse ? after : before)) throw new Error('The wall assets changed before this edit. No changes were saved.');
+    wallOverrides = reverse ? before : after;
+  }
   if (command.roomAppearances) {
     const { before, after } = command.roomAppearances;
     if (roomAppearances !== (reverse ? after : before)) throw new Error('The room appearance changed before this edit could be applied. No changes were saved.');
@@ -84,11 +92,12 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
   }
   const result = parseLevel(document.name, files, document.encoded, document.original, playtestSlot, exitZone, roomSource, document.drawGroups);
   return { ...result, ...(sourceStarts === undefined ? {} : { sourceStarts }), ...(sourceObjects === undefined ? {} : { sourceObjects }),
-    ...(sourceTeleports === undefined ? {} : { sourceTeleports }), ...(roomAppearances === undefined ? {} : { roomAppearances }) };
+    ...(sourceTeleports === undefined ? {} : { sourceTeleports }), ...(roomAppearances === undefined ? {} : { roomAppearances }),
+    ...(wallOverrides === undefined ? {} : { wallOverrides }) };
 }
 
 export function execute(history: History, command: EditCommand): History {
-  const changes = [command.playtestSlot, command.exitZone, command.roomSource, command.sourceStarts, command.sourceObjects, command.sourceTeleports, command.roomAppearances];
+  const changes = [command.playtestSlot, command.exitZone, command.roomSource, command.sourceStarts, command.sourceObjects, command.sourceTeleports, command.roomAppearances, command.wallOverrides];
   if (command.patches.every(patch => sameBytes(patch.before, patch.after)) && changes.every(change => !change || change.before === change.after)) return history;
   const document = applyCommand(history.document, command);
   return { document, past: [...history.past, command], future: [] };
@@ -98,6 +107,17 @@ export function undo(history: History): History {
   const command = history.past.at(-1);
   if (!command) return history;
   return { document: applyCommand(history.document, command, true), past: history.past.slice(0, -1), future: [...history.future, command] };
+}
+
+export function replaceWallAsset(document: LevelDocument, texture: number, bytes: Uint8Array | null): EditCommand {
+  if (!Number.isInteger(texture) || !nativeWallSheets[texture]) throw new Error('Choose an existing native wall material slot.');
+  const old = document.wallOverrides?.find(asset => asset.texture === texture);
+  if ((bytes === null && !old) || (bytes && old && sameBytes(bytes, old.bytes)))
+    return { label: 'Replace wall material', patches: [] };
+  const remaining = (document.wallOverrides ?? []).filter(asset => asset.texture !== texture);
+  const next = bytes ? [...remaining, { texture, bytes }] : remaining;
+  return { label: bytes ? 'Replace wall material' : 'Restore original wall material', patches: [],
+    wallOverrides: { before: document.wallOverrides, after: next.length ? restoreWallOverrides(next) : undefined } };
 }
 
 export function redo(history: History): History {

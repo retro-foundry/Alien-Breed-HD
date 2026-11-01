@@ -1,4 +1,5 @@
 import { parseWallCatalog, readWallTexture, type WallSheet, type WallTexture } from './wallTextures';
+import type { WallOverride } from './wallOverrides';
 
 let catalog: Promise<readonly WallSheet[]> | undefined;
 const textures = new Map<number, Promise<WallTexture>>();
@@ -9,7 +10,9 @@ export function loadWallCatalog(): Promise<readonly WallSheet[]> {
   }).catch(error => { catalog = undefined; throw error; });
   return catalog;
 }
-export function loadWallTexture(sheet: WallSheet): Promise<WallTexture> {
+export function loadWallTexture(sheet: WallSheet, overrides?: readonly WallOverride[]): Promise<WallTexture> {
+  const custom = overrides?.find(asset => asset.texture === sheet.id);
+  if (custom) return Promise.resolve(readWallTexture(custom.bytes, sheet));
   let pending = textures.get(sheet.id);
   if (!pending) {
     pending = fetch(`${import.meta.env.BASE_URL}reference/walls/${sheet.file}`).then(async response => {

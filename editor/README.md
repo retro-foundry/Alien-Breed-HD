@@ -20,6 +20,11 @@ Opening local files does not upload them anywhere.
 
 ## Current working workflows
 
+- Keep native wall-sheet replacements inside the project, with undo/redo,
+  workspace recovery, preview and game export. Advanced Native sheet tools in
+  the material browser import compatible raw/SB WADs and restore the original.
+  An imported sheet changes all walls using that shared material. Exported
+  installation notes identify shared wall files as well as the target level.
 - Browse lower/upper wall styles visually in the room and stair forms. Search
   by material/style and preview the original palette shades. Choosing a tile
   fills the form; Apply commits the authored style as one undoable edit.
@@ -214,7 +219,11 @@ The tool extracts the actual native dump/dimension/BMP functions and tables
 into a temporary harness; it does not replace them with an editor-side oracle.
 Model checks compare all 14 decompressed sheets and every middle-shade RGBA
 pixel. Browser checks compare packaged catalog dimensions and canvas pixels.
-PNG import/conversion and portable custom asset overrides remain in progress.
+Native wall overrides now use project format v9: original level files stay
+unchanged, while native material bytes and required source-file declarations
+travel with the project. Preview restoration and game ZIP re-import are tested.
+Original v1–v8 projects remain readable. PNG import/conversion, broader resource
+authoring and export profiles remain in progress.
 
 ## Shortcuts
 

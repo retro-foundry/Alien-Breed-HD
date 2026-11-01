@@ -46,4 +46,5 @@ for (const [id, entry] of entries.entries()) {
   walls.push({ id, name: entry[1], file, size, rows, width: pixels / (rows * 2) * 3 });
 }
 await writeFile(new URL('catalog.json', wallTarget), `${JSON.stringify({ format: 'alien-breed-wall-catalog', version: 1, walls }, null, 2)}\n`);
+await writeFile(new URL('src/model/nativeWalls.json', root), `${JSON.stringify({ format: 'alien-breed-wall-catalog', version: 1, walls }, null, 2)}\n`);
 console.log(`Prepared ${walls.length} native wall sheets and their runtime catalog.`);

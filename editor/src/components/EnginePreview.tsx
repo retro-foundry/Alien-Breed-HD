@@ -6,6 +6,7 @@ import { previewKeys, playKeys } from './ControlsHelp';
 import { encodeLevelSetup } from '../model/levelSetup';
 import { validateAnimationReferences } from '../model/animationBuild';
 import { preparePlayableLevel, type PlayableLevel } from '../model/playableBuild';
+import { wallOverrideFiles } from '../model/wallOverrides';
 
 interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number }
 interface Props { document: LevelDocument; selection: Selection; sourceRoomId?: string; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSelectRoom: (room: string) => void; onSlotChange: (slot: number) => void }
@@ -81,7 +82,8 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
       if (source !== current.current.document || next !== revisionRef.current || !readyRef.current || !frame.current) return;
       validateAnimationReferences(built.document); artifact.current = built;
       setNotice('Loading current level…');
-      send('load', { slot: source.playtestSlot, revision: next, files: built.document.files, setup: encodeLevelSetup(built.document.exitZone, built.document.drawGroups) });
+      send('load', { slot: source.playtestSlot, revision: next, files: built.document.files, setup: encodeLevelSetup(built.document.exitZone, built.document.drawGroups),
+        wallAssets: Object.entries(wallOverrideFiles(source.wallOverrides)).map(([path, bytes]) => ({ name: path.split('/').at(-1), bytes })) });
     } catch (error) {
       if (source === current.current.document && next === revisionRef.current && frame.current)
         stopInvalidPreview(error instanceof Error ? error.message : String(error), 'Build needs attention');

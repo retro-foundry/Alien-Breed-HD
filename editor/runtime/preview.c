@@ -56,6 +56,12 @@ EMSCRIPTEN_KEEPALIVE int editor_load_level(int slot)
     return 1;
 }
 
+EMSCRIPTEN_KEEPALIVE void editor_reload_wall_assets(void)
+{
+    preview_playing = 0;
+    io_load_walls();
+}
+
 EMSCRIPTEN_KEEPALIVE int editor_camera(int zone, int x, int z, int upper, int angle)
 {
     if (!preview_loaded || preview_playing) return 0;

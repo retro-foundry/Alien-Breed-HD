@@ -1150,3 +1150,37 @@ fixtures can establish current-format support independently.
   CI now also triggers on native wall assets and their oracle tool. This
   advances R8; global material assignment, PNG conversion/import, portable
   custom assets, remaining requirements and final deployment are still open.
+
+- Portable native wall overrides now connect project source, history, material
+  thumbnails, generated level artifacts, runtime preview and game export.
+  Native slots/filenames/dimensions are generated from `io.c` into the model
+  catalog as well as packaged assets. Override records cannot redefine those
+  paths or sizes. Imported raw/SB sheets decode before one stale-checked edit;
+  Restore original sheet and undo/redo update every wall using that material.
+  These advanced controls explain their immediate shared-sheet effect, separate
+  from the wall-style form's Apply action. Pending file reads are cancelled on
+  project, material-slot or asset changes. Original level binary files remain
+  the baseline.
+  Project format v9 declares required editable source files, optional draw
+  setup and wall slots, stores decoded WADs separately, rejects damaged/missing
+  resources and schema downgrades, and retains legacy v1–v8 loading. Game ZIPs
+  include native shared wall paths and installation notes explaining their
+  global effect; re-import restores them. Compiled artifacts retain overrides.
+  Workspace dirty tracking and completed autosaves include asset identities.
+  The iframe validates a complete replacement set before writing assets, keeps
+  immutable packaged originals, restores omitted overrides, and reloads native
+  wall buffers only when bytes change. `io_load_walls` now releases its previous
+  owned buffers before reloading; the editor bridge stops simulation during
+  asset replacement. The native pixel oracles were regenerated after this IO
+  ownership change; all pixel hashes remain unchanged.
+  Windows/WebAssembly/production builds and all 667 model tests pass. Twenty
+  Chromium/Firefox scenarios cover asset import/errors, save/export/re-import,
+  source-only preservation, repeated renderer restore/undo/redo, workspace
+  recovery, playtesting, switching to a project without overrides, materials,
+  controls and stairs. Browser/engine output was inspected. Four additional
+  Chromium/Firefox engine scenarios pass, including all sixteen original maps
+  and edit/playtest isolation from normal game saves. PNG conversion still needs its
+  original packing/palette authority checked against
+  `amiga/archive/amos/256wallchunk.amos`; this is a completed native asset path,
+  not completion of PNG authoring, other R8/R11 resources, the full goal or
+  deployment.

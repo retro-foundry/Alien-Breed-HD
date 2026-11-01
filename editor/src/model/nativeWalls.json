@@ -1,0 +1,118 @@
+{
+  "format": "alien-breed-wall-catalog",
+  "version": 1,
+  "walls": [
+    {
+      "id": 0,
+      "name": "GreenMechanic.wad",
+      "file": "0.wad",
+      "size": 18560,
+      "rows": 64,
+      "width": 387
+    },
+    {
+      "id": 1,
+      "name": "BlueGreyMetal.wad",
+      "file": "1.wad",
+      "size": 13056,
+      "rows": 64,
+      "width": 258
+    },
+    {
+      "id": 2,
+      "name": "TechnoDetail.wad",
+      "file": "2.wad",
+      "size": 13056,
+      "rows": 64,
+      "width": 258
+    },
+    {
+      "id": 3,
+      "name": "BlueStone.wad",
+      "file": "3.wad",
+      "size": 4864,
+      "rows": 64,
+      "width": 66
+    },
+    {
+      "id": 4,
+      "name": "RedAlert.wad",
+      "file": "4.wad",
+      "size": 7552,
+      "rows": 64,
+      "width": 129
+    },
+    {
+      "id": 5,
+      "name": "rock.wad",
+      "file": "5.wad",
+      "size": 10368,
+      "rows": 64,
+      "width": 195
+    },
+    {
+      "id": 6,
+      "name": "scummy.wad",
+      "file": "6.wad",
+      "size": 13056,
+      "rows": 64,
+      "width": 258
+    },
+    {
+      "id": 7,
+      "name": "stairfronts.wad",
+      "file": "7.wad",
+      "size": 2400,
+      "rows": 16,
+      "width": 33
+    },
+    {
+      "id": 8,
+      "name": "BIGDOOR.wad",
+      "file": "8.wad",
+      "size": 13056,
+      "rows": 128,
+      "width": 129
+    },
+    {
+      "id": 9,
+      "name": "RedRock.wad",
+      "file": "9.wad",
+      "size": 13056,
+      "rows": 64,
+      "width": 258
+    },
+    {
+      "id": 10,
+      "name": "dirt.wad",
+      "file": "10.wad",
+      "size": 24064,
+      "rows": 128,
+      "width": 258
+    },
+    {
+      "id": 11,
+      "name": "switches.wad",
+      "file": "11.wad",
+      "size": 3456,
+      "rows": 32,
+      "width": 66
+    },
+    {
+      "id": 12,
+      "name": "shinymetal.wad",
+      "file": "12.wad",
+      "size": 24064,
+      "rows": 128,
+      "width": 258
+    },
+    {
+      "id": 13,
+      "name": "bluemechanic.wad",
+      "file": "13.wad",
+      "size": 15744,
+      "rows": 64,
+      "width": 321
+    }
+  ]
+}

@@ -18,6 +18,38 @@
   'use strict';
   const canvas = document.getElementById('canvas'), message = document.getElementById('message');
   let engine, loaded = false, playing = false, currentRevision = -1;
+  let originalWalls;
+  function applyWallAssets(files) {
+    if (!Array.isArray(files)) throw new Error('Invalid wall asset payload.');
+    if (!originalWalls) {
+      originalWalls = new Map(engine.FS.readdir('/data/includes/walls').filter(name => /\.wad$/i.test(name)).map(name => {
+        const bytes = engine.FS.readFile('/data/includes/walls/' + name);
+        const size = bytes[0] === 61 && bytes[1] === 83 && bytes[2] === 66 && bytes[3] === 61
+          ? new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(4) : bytes.length;
+        return [name.toLowerCase(), { name, bytes: new Uint8Array(bytes), size }];
+      }));
+    }
+    if (files.length > originalWalls.size) throw new Error('Too many wall asset replacements.');
+    const replacements = new Map();
+    for (const file of files) {
+      if (!file || typeof file.name !== 'string') throw new Error('Invalid wall material name.');
+      const key = file.name.toLowerCase(), original = originalWalls.get(key);
+      if (!original || replacements.has(key) || !(file.bytes instanceof Uint8Array) || file.bytes.length !== original.size)
+        throw new Error('A wall material must match an existing native sheet and byte count.');
+      if (file.bytes[0] === 61 && file.bytes[1] === 83 && file.bytes[2] === 66 && file.bytes[3] === 61)
+        throw new Error('Wall replacements must contain decoded native bytes.');
+      replacements.set(key, file.bytes);
+    }
+    let changed = false;
+    for (const [key, original] of originalWalls) {
+      const bytes = replacements.get(key) ?? original.bytes, path = '/data/includes/walls/' + original.name;
+      const current = engine.FS.readFile(path);
+      if (current.length !== bytes.length || current.some((byte, index) => byte !== bytes[index])) {
+        engine.FS.writeFile(path, bytes); changed = true;
+      }
+    }
+    if (changed) engine._editor_reload_wall_assets();
+  }
   const send = (type, detail = {}) => parent.postMessage({source:'ab3d-engine', type, ...detail}, location.origin);
   const fail = (error, revision = currentRevision) => { message.textContent = 'Engine preview: ' + String(error); send('error', {message:String(error), revision}); };
   createEditorEngine({
@@ -62,6 +94,7 @@
           engine.FS.writeFile(folder + file, bytes);
         }
         engine.FS.writeFile(folder + 'twolev.cfg', request.setup);
+        applyWallAssets(request.wallAssets ?? []);
         playing = false; currentRevision = request.revision;
         message.textContent = '';
         if (!engine._editor_load_level(request.slot)) throw new Error('The engine could not load this map.');

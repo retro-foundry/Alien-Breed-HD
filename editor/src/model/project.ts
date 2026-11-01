@@ -7,6 +7,8 @@ import { restoreSourceStarts, type SourceStart } from './sourceStarts';
 import { restoreSourceObjects, validateSourceObjects, type SourceObject } from './sourceObjects';
 import { restoreSourceTeleports, type SourceTeleport } from './sourceTeleports';
 import { restoreRoomAppearances, validateRoomAppearances, type RoomAppearance } from './roomAppearance';
+import { nativeWallSheets, restoreWallOverrides, wallOverrideFiles, type WallOverride } from './wallOverrides';
+import { readWallTexture } from './wallTextures';
 
 const MAX_ARCHIVE = 64 * 1024 * 1024;
 const MAX_FILE = 16 * 1024 * 1024;
@@ -17,12 +19,18 @@ const PLAYER_STARTS = 'player-starts.json';
 const OBJECT_PLACEMENTS = 'object-placements.json';
 const TELEPORTER_LINKS = 'teleporter-links.json';
 const ROOM_APPEARANCES = 'room-appearances.json';
-export interface ProjectCandidate { name: string; folder: string; files: LevelFiles; playtestSlot: number; exitZone: number | null; roomSourceSnapshot?: unknown; drawGroups?: readonly number[]; sourceStarts?: readonly SourceStart[]; sourceObjects?: readonly SourceObject[]; sourceTeleports?: readonly SourceTeleport[]; roomAppearances?: readonly RoomAppearance[] }
+export interface ProjectCandidate { name: string; folder: string; files: LevelFiles; playtestSlot: number; exitZone: number | null; roomSourceSnapshot?: unknown; drawGroups?: readonly number[]; sourceStarts?: readonly SourceStart[]; sourceObjects?: readonly SourceObject[]; sourceTeleports?: readonly SourceTeleport[]; roomAppearances?: readonly RoomAppearance[]; wallOverrides?: readonly WallOverride[] }
 
 export function encodeProject(document: LevelDocument): Uint8Array {
   const files = exportLevel(document);
+  const walls = document.wallOverrides ? restoreWallOverrides(document.wallOverrides) : undefined;
   return zipSync({
-    [MANIFEST]: strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: document.roomAppearances ? 8 : document.sourceTeleports ? 7 : document.sourceObjects ? 6 : document.sourceStarts ? 5 : 4, name: document.name, playtestSlot: document.playtestSlot, exitZone: document.exitZone })),
+    [MANIFEST]: strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: walls ? 9 : document.roomAppearances ? 8 : document.sourceTeleports ? 7 : document.sourceObjects ? 6 : document.sourceStarts ? 5 : 4, name: document.name, playtestSlot: document.playtestSlot, exitZone: document.exitZone,
+      ...(walls ? { wallAssets: walls.map(asset => asset.texture), sourceFiles: [ROOM_SOURCE,
+        ...(document.sourceStarts ? [PLAYER_STARTS] : []), ...(document.sourceObjects ? [OBJECT_PLACEMENTS] : []),
+        ...(document.sourceTeleports ? [TELEPORTER_LINKS] : []), ...(document.roomAppearances ? [ROOM_APPEARANCES] : []),
+        ...(document.drawGroups ? ['level/twolev.cfg'] : [])] } : {}) })),
+    ...Object.fromEntries((walls ?? []).map(asset => [`assets/walls/${asset.texture}.wad`, asset.bytes])),
     [ROOM_SOURCE]: strToU8(JSON.stringify(roomSourceSnapshot(document.roomSource))),
     ...(document.sourceStarts ? { [PLAYER_STARTS]: strToU8(JSON.stringify(restoreSourceStarts(document.sourceStarts))) } : {}),
     ...(document.sourceObjects ? { [OBJECT_PLACEMENTS]: strToU8(JSON.stringify(validateSourceObjects(document, document.sourceObjects))) } : {}),
@@ -39,8 +47,9 @@ export function encodeGameLevel(document: LevelDocument): Uint8Array {
   const files = exportLevel(document);
   const folder = `levels/level_${String.fromCharCode(97 + document.playtestSlot)}/`;
   return zipSync({ [`${folder}twolev.bin`]: files.data, [`${folder}twolev.graph.bin`]: files.graphics, [`${folder}twolev.clips`]: files.clips,
+    ...wallOverrideFiles(document.wallOverrides),
     [`${folder}twolev.cfg`]: encodeLevelSetup(document.exitZone, document.drawGroups),
-    'INSTALL.txt': strToU8(`Alien Breed level slot ${document.playtestSlot + 1}\n\nExtract this ZIP into the game's data directory. It replaces ${folder}\nKeep a copy of the original level before replacing it.\n${document.exitZone === null ? '' : 'Custom exit setup requires the updated Alien Breed port; the original Amiga engine uses its built-in exit.\n'}`) }, { level: 6 });
+    'INSTALL.txt': strToU8(`Alien Breed level slot ${document.playtestSlot + 1}\n\nExtract this ZIP into the game's data directory. It replaces ${folder}\nKeep a copy of the original level before replacing it.\n${document.wallOverrides ? 'This export also replaces shared includes/walls materials. Back up those original files; these sheets affect every level using them.\n' : ''}${document.exitZone === null ? '' : 'Custom exit setup requires the updated Alien Breed port; the original Amiga engine uses its built-in exit.\n'}`) }, { level: 6 });
 }
 
 function candidates(entries: Record<string, Uint8Array>, title: string): ProjectCandidate[] {
@@ -52,14 +61,31 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
   let sourceObjects: readonly SourceObject[] | undefined;
   let sourceTeleports: readonly SourceTeleport[] | undefined;
   let roomAppearances: readonly RoomAppearance[] | undefined;
+  let wallOverrides: readonly WallOverride[] | undefined;
+  const wallFiles = Object.entries(entries).filter(([path]) => /^(assets\/walls\/|includes\/walls\/)/i.test(path.replaceAll('\\', '/')));
   const manifest = entries[MANIFEST];
   if (manifest) {
     if (manifest.length > 16384) throw new Error('The project manifest is too large.');
     let metadata: unknown;
     try { metadata = JSON.parse(strFromU8(manifest)); }
     catch { throw new Error('The project manifest is not valid JSON.'); }
-    if (!metadata || typeof metadata !== 'object' || !('format' in metadata) || metadata.format !== 'alien-breed-level-project' || !('version' in metadata) || typeof metadata.version !== 'number' || ![1, 2, 3, 4, 5, 6, 7, 8].includes(metadata.version))
+    if (!metadata || typeof metadata !== 'object' || !('format' in metadata) || metadata.format !== 'alien-breed-level-project' || !('version' in metadata) || typeof metadata.version !== 'number' || ![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(metadata.version))
       throw new Error('This project format is not supported by this editor version.');
+    if (metadata.version === 9) {
+      const sourceNames = [ROOM_SOURCE, PLAYER_STARTS, OBJECT_PLACEMENTS, TELEPORTER_LINKS, ROOM_APPEARANCES, 'level/twolev.cfg'];
+      if (!('sourceFiles' in metadata) || !Array.isArray(metadata.sourceFiles) || !metadata.sourceFiles.includes(ROOM_SOURCE)
+        || new Set(metadata.sourceFiles).size !== metadata.sourceFiles.length || metadata.sourceFiles.some(name => typeof name !== 'string' || !sourceNames.includes(name))
+        || sourceNames.some(name => Boolean(entries[name]) !== (metadata.sourceFiles as unknown[]).includes(name)))
+        throw new Error('The project editable source file list is missing or disagrees with its files.');
+      if (!('wallAssets' in metadata) || !Array.isArray(metadata.wallAssets) || !metadata.wallAssets.length || metadata.wallAssets.length !== wallFiles.length)
+        throw new Error('The project wall asset list is missing or disagrees with its files.');
+      wallOverrides = restoreWallOverrides(metadata.wallAssets.map((texture: unknown) => {
+        if (typeof texture !== 'number' || !Number.isInteger(texture) || !nativeWallSheets[texture]) throw new Error('Invalid project wall asset slot.');
+        const bytes = entries[`assets/walls/${texture}.wad`];
+        if (!bytes) throw new Error('A project wall asset file is missing.');
+        return { texture, bytes };
+      }));
+    } else if (wallFiles.length || 'wallAssets' in metadata) throw new Error('Wall assets require project format version 9.');
     if (metadata.version >= 2) {
       if (!('playtestSlot' in metadata) || typeof metadata.playtestSlot !== 'number' || !Number.isInteger(metadata.playtestSlot) || metadata.playtestSlot < 0 || metadata.playtestSlot > 15)
         throw new Error('The project has an invalid game level slot. Choose a slot from 1 to 16.');
@@ -100,7 +126,7 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
       catch { throw new Error('The editable teleporter links are not valid JSON.'); }
       sourceTeleports = restoreSourceTeleports(value);
     } else if (entries[TELEPORTER_LINKS]) throw new Error('Editable teleporter links require project format version 7.');
-    if (metadata.version === 8) {
+    if (metadata.version >= 8 && (metadata.version === 8 || entries[ROOM_APPEARANCES])) {
       const appearanceBytes = entries[ROOM_APPEARANCES];
       if (!appearanceBytes || appearanceBytes.length > 65536) throw new Error('The room appearances are missing or too large.');
       let value: unknown;
@@ -110,6 +136,12 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
     } else if (entries[ROOM_APPEARANCES]) throw new Error('Room appearances require project format version 8.');
     if ('name' in metadata && typeof metadata.name === 'string') projectName = metadata.name.slice(0, 200);
   }
+  if (!manifest && wallFiles.length) wallOverrides = restoreWallOverrides(wallFiles.map(([path, bytes]) => {
+    const name = path.replaceAll('\\', '/').toLowerCase();
+    const sheet = nativeWallSheets.find(sheet => `includes/walls/${sheet.name}`.toLowerCase() === name);
+    if (!sheet) throw new Error('The archive contains an unsupported wall asset path.');
+    return { texture: sheet.id, bytes: readWallTexture(bytes, sheet).bytes };
+  }));
   const groups = new Map<string, Record<string, Uint8Array>>();
   for (const [name, bytes] of Object.entries(entries)) {
     const path = name.replaceAll('\\', '/');
@@ -134,7 +166,8 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
       playtestSlot: projectSlot ?? (letter ? letter.toLowerCase().charCodeAt(0) - 97 : 0), exitZone: projectExit !== undefined ? projectExit : setupExit ?? null,
       ...(setup?.drawGroups ? { drawGroups: setup.drawGroups } : {}), ...(sourceSnapshot === undefined ? {} : { roomSourceSnapshot: sourceSnapshot }),
       ...(sourceStarts === undefined ? {} : { sourceStarts }), ...(sourceObjects === undefined ? {} : { sourceObjects }),
-      ...(sourceTeleports === undefined ? {} : { sourceTeleports }), ...(roomAppearances === undefined ? {} : { roomAppearances }) });
+      ...(sourceTeleports === undefined ? {} : { sourceTeleports }), ...(roomAppearances === undefined ? {} : { roomAppearances }),
+      ...(wallOverrides === undefined ? {} : { wallOverrides }) });
   }
   if (result.length === 0) throw new Error('No game level was found. Open an .ab3d project, a level ZIP, or select all three twolev files together.');
   if (entries[ROOM_SOURCE] && (!manifest || result.length !== 1)) throw new Error('Editable room source must belong to one saved project.');
@@ -152,7 +185,7 @@ export function openArchive(bytes: Uint8Array, name: string): ProjectCandidate[]
   try {
     entries = unzipSync(bytes, { filter(file) {
       const base = file.name.replaceAll('\\', '/').split('/').at(-1)?.toLowerCase() ?? '';
-      if (!LEVEL_NAMES.includes(base) && file.name !== MANIFEST && file.name !== ROOM_SOURCE && file.name !== PLAYER_STARTS && file.name !== OBJECT_PLACEMENTS && file.name !== TELEPORTER_LINKS && file.name !== ROOM_APPEARANCES) return false;
+      if (!LEVEL_NAMES.includes(base) && !/^(assets\/walls\/|includes\/walls\/)/i.test(file.name.replaceAll('\\', '/')) && file.name !== MANIFEST && file.name !== ROOM_SOURCE && file.name !== PLAYER_STARTS && file.name !== OBJECT_PLACEMENTS && file.name !== TELEPORTER_LINKS && file.name !== ROOM_APPEARANCES) return false;
       if (file.originalSize > MAX_FILE || (extracted += file.originalSize) > MAX_ARCHIVE)
         throw new Error('The archive contains too much unpacked level data.');
       return true;
@@ -176,7 +209,8 @@ export function openProjectCandidate(project: ProjectCandidate): LevelDocument {
     ...(project.sourceStarts === undefined ? {} : { sourceStarts: restoreSourceStarts(project.sourceStarts) }),
     ...(project.sourceObjects === undefined ? {} : { sourceObjects: validateSourceObjects(document, project.sourceObjects) }),
     ...(project.sourceTeleports === undefined ? {} : { sourceTeleports: restoreSourceTeleports(project.sourceTeleports) }) };
-  return project.roomAppearances === undefined ? restored : { ...restored, roomAppearances: validateRoomAppearances(restored, project.roomAppearances) };
+  return { ...restored, ...(project.roomAppearances === undefined ? {} : { roomAppearances: validateRoomAppearances(restored, project.roomAppearances) }),
+    ...(project.wallOverrides === undefined ? {} : { wallOverrides: restoreWallOverrides(project.wallOverrides) }) };
 }
 
 export async function readFiles(files: File[]): Promise<ProjectCandidate[]> {

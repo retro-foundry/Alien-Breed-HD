@@ -978,6 +978,7 @@ void io_load_walls(void)
     extern RendererState g_renderer;
 
     for (int i = 0; i < MAX_WALL_TILES; i++) {
+        free(g_wall_data[i]);
         g_wall_data[i] = NULL;
         g_wall_loaded_size[i] = 0;
         g_renderer.walltiles[i] = NULL;
