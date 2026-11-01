@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { captureEngine, enginePickDetails } from '../engineCapture';
+import { enginePickDetails } from '../engineCapture';
 
 async function camera(page: Page): Promise<{x:number;z:number;y:number;angle:number;look:number}> {
   return page.evaluate(() => new Promise((resolve, reject) => {
@@ -49,4 +49,11 @@ test('default opens textured FPS editing, moves and looks, places objects and pr
   await expect(preview.getByRole('status')).toContainText('zones loaded');
   expect(await camera(page)).toEqual(position);
   await page.screenshot({path:testInfo.outputPath('default-textured-fps.png')});
+  await preview.getByRole('button',{name:'Playtest',exact:true}).click();
+  const engine=page.getByRole('region',{name:'3D game engine preview',exact:true});
+  await engine.getByRole('button',{name:'Build & play',exact:true}).click();
+  await expect(engine.getByRole('status')).toHaveText('Playtest running');
+  await page.getByRole('button',{name:'Editor view',exact:true}).click();
+  await expect(preview.getByRole('status')).toContainText('zones loaded');
+  await expect(preview.getByRole('button',{name:'Playtest',exact:true})).toBeVisible();
 });

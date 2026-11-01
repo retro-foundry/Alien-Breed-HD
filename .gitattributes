@@ -3,3 +3,7 @@
 
 # Empty unified-diff context lines contain a required space.
 *.patch -whitespace
+
+# Runtime bridge bytes are compared with the Linux-built CI artifact.
+editor/runtime/frame.html text eol=lf
+editor/runtime/inspection-shortcuts.mjs text eol=lf

@@ -148,7 +148,7 @@ export function EnginePreview({ editorView = false, placement, onEngineView, doc
           const saved = editorCamera.current, built = artifact.current!, candidates = built.topology?.cells.filter(cell => cell.sourceId === saved.room);
           const cell = candidates?.find(cell => pointInRoomOutline(cell.vertices.map(id => built.topology!.points[id]!), saved.camera));
           send('restore-camera', { camera: { ...saved.camera, zone: cell?.id ?? saved.camera.zone } });
-        } else positionCamera();
+        } else { positionCamera(); if (current.current.editorView) send('camera-state'); }
       }
       if (message.type === 'error') {
         failedDocument.current = current.current.document; pendingPlay.current = false;
@@ -156,9 +156,9 @@ export function EnginePreview({ editorView = false, placement, onEngineView, doc
         setError(message.message ?? 'The engine preview stopped.'); setStarting(false); setPlaying(false); setLoaded(false);
       }
       if (message.type === 'stopped') { setPlaying(false); setStarting(false); setNotice('Playtest ended. Build and play again to restart.'); }
-      if (message.type === 'view-changed') {
+      if (message.type === 'view-changed' || message.type === 'camera-state') {
         const camera = message.camera, built = artifact.current, previous = editorCamera.current?.camera;
-        if (!camera || !previous || (['zone', 'x', 'z', 'y', 'angle', 'look', 'upper'] as const).some(key => camera[key] !== previous[key])) setPickedSurface(undefined);
+        if (message.type === 'view-changed' && (!camera || !previous || (['zone', 'x', 'z', 'y', 'angle', 'look', 'upper'] as const).some(key => camera[key] !== previous[key]))) setPickedSurface(undefined);
         if (camera && [camera.zone,camera.x,camera.z,camera.y,camera.angle,camera.look].every(Number.isFinite) && built?.source === current.current.document) editorCamera.current = { camera, room: built.topology?.cells.find(cell => cell.id === camera.zone)?.sourceId ?? built.source.roomSource.rooms.find(room => room.originZone === camera.zone)?.id };
       }
       if (message.type === 'camera-invalid') { positionCamera(); setNotice('Camera returned inside the edited room after its geometry changed.'); }
@@ -234,6 +234,7 @@ export function EnginePreview({ editorView = false, placement, onEngineView, doc
     if (ready) send('instructions', { text: (playing ? playKeys : previewKeys).map(([key, action]) => `${key}: ${action}`).join(' · ') });
   }, [ready, playing]);
 
+  useEffect(() => { if (editorView && (playing || starting)) stop(); }, [editorView, playing, starting]);
   function stop() { send('play', { playing: false }); setPlaying(false); setStarting(false); pendingPlay.current = false; }
   function reloadEngine() {
     hasLoadedFrame.current = false;
