@@ -69,7 +69,7 @@ export function RoomHeightSection({ settings, baseline, onCommit }: { settings: 
         <line className="height-hit" x1={sharedPlane && field === 'upperFloor' ? 120 : 12} x2={sharedPlane && field === 'ceiling' ? 112 : 228} y1={y(heights[field])} y2={y(heights[field])} />
         <line className="height-line" x1="12" x2="228" y1={y(heights[field])} y2={y(heights[field])} />
         <text x={sharedPlane && field === 'upperFloor' ? 208 : 16} textAnchor={sharedPlane && field === 'upperFloor' ? 'end' : 'start'} y={y(heights[field]) - 7}>{names[field]} {heights[field]}</text>
-        <circle cx={sharedPlane && field === 'ceiling' ? 25 : 215} cy={y(heights[field])} r="5" />
+        <circle cx={fields.length === 4 && field === 'ceiling' ? 25 : 215} cy={y(heights[field])} r="5" />
       </g>)}
     </svg>
     {fields.length === 4 && <p className="field-note">{sharedPlane ? 'The upper floor and lower ceiling meet at the same height. Left handle: lower ceiling. Right handle: upper floor.' : gap > 0 ? `The two rooms have ${gap} units between the lower ceiling and upper floor.` : 'The storey planes overlap. Move them back into a valid order.'}</p>}

@@ -56,7 +56,8 @@ test('two-storey headroom is independent and shared ceiling/floor handles remain
   await expect(page.locator('.room-height-section')).toContainText('meet at the same height');
   const ceilingHandle = page.getByRole('slider', { name: 'Lower ceiling handle', exact: true });
   await page.locator('.room-height-section svg').scrollIntoViewIfNeeded(); const knob = (await ceilingHandle.locator('circle').boundingBox())!;
-  await page.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2); await page.mouse.down(); await page.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2 + 12, { steps: 3 }); await page.mouse.up();
+  await page.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2); await page.mouse.down(); await page.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2 + 12, { steps: 3 });
+  await expect(ceilingHandle.locator('circle')).toHaveAttribute('cx', '25'); await page.mouse.up();
   expect(Number(await ceilingHandle.getAttribute('aria-valuenow'))).toBeGreaterThan(before.ceiling);
   await expect(page.getByRole('slider', { name: 'Upper floor handle', exact: true })).toHaveAttribute('aria-valuenow', String(before.upperFloor));
   await page.getByRole('button', { name: 'View room from side', exact: true }).click();
