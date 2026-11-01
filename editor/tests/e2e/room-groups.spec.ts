@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { roomHeightFixture } from '../roomHeightFixture';
 import { encodeProject, decodeProject } from '../../src/model/project';
 import { enginePlayerState, engineObjectState } from '../engineCapture';
-import { applyCommand, setSourceTeleport } from '../../src/model/commands';
+import { applyCommand, setSourceTeleport, editRoomSource, editRoomAppearance } from '../../src/model/commands';
 import { createObject, objectTemplates } from '../../src/model/objectAuthoring';
+import { beginRoomDraft, commitRoomDraft, setDraftCorners } from '../../src/model/roomSource';
 
 test('imported room groups toggle conventionally and Escape clears only selection', async ({ page }) => {
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
@@ -19,6 +20,36 @@ test('imported room groups toggle conventionally and Escape clears only selectio
   await page.keyboard.press('Escape'); await expect(group).toHaveCount(0);
   await expect(first).toHaveAttribute('aria-pressed', 'false'); await expect(second).toHaveAttribute('aria-pressed', 'false');
   await expect(page.locator('.dirty-dot')).toHaveCount(0);
+});
+
+test('shared-boundary room moves protect a neighbouring start and compile a valid deformation in the native engine', async ({ page }, testInfo) => {
+  const fixture = roomHeightFixture(); let document = fixture.document;
+  document = applyCommand(document, editRoomSource(commitRoomDraft(document.roomSource, setDraftCorners(beginRoomDraft(document, document.roomSource, 0, fixture.to.id),
+    [{ x: 20256, z: 20064 }, { x: 20512, z: 20064 }, { x: 20512, z: 20192 }, { x: 20256, z: 20192 }]))));
+  document = applyCommand(document, editRoomSource(commitRoomDraft(document.roomSource, setDraftCorners(beginRoomDraft(document, document.roomSource, 0),
+    [{ x: 22000, z: 20000 }, { x: 22256, z: 20000 }, { x: 22256, z: 20256 }, { x: 22000, z: 20256 }]))));
+  const third = document.roomSource.rooms.at(-1)!;
+  document = applyCommand(document, editRoomAppearance(document, { ...document.roomAppearances!.find(item => item.room === fixture.from.id)!, room: third.id }));
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.locator('input[type=file]').setInputFiles({ name: 'neighbour-move.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
+  await expect(page.locator('.project-picker strong')).toHaveText(document.name);
+  await page.getByRole('button', { name: new RegExp(`^Room ${fixture.to.id.replace(/^room-/, '')}(?:\\s|$)`) }).click();
+  await page.getByRole('button', { name: new RegExp(`^Room ${third.id.replace(/^room-/, '')}(?:\\s|$)`) }).click({ modifiers: ['Shift'] });
+  const group = page.getByRole('complementary', { name: 'Room group inspector' });
+  const x = group.getByRole('spinbutton', { name: 'Room group X offset' });
+  await x.fill('-160'); await group.getByRole('button', { name: 'Move selected rooms', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Player 1 start would be outside neighbouring room');
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Dismiss error', exact: true }).click();
+  await x.fill('-16'); await group.getByRole('button', { name: 'Move selected rooms', exact: true }).click();
+  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const path = testInfo.outputPath('neighbour-move.ab3d'); await (await download).saveAs(path);
+  const saved = decodeProject(new Uint8Array(await readFile(path)));
+  expect(saved.sourceStarts).toEqual(document.sourceStarts);
+  expect(saved.roomSource.rooms.find(room => room.id === fixture.from.id)!.vertices).toEqual(expect.arrayContaining([{ x: 20240, z: 20064 }, { x: 20240, z: 20192 }, { x: 20000, z: 20000 }]));
+  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
+  expect(await enginePlayerState(page)).toMatchObject({ x: 20128, z: 20128, playing: false });
 });
 
 test('room translation moves linked starts, objects and inbound teleport destinations with one undo and native positions', async ({ page }, testInfo) => {

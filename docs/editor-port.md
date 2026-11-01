@@ -1622,3 +1622,17 @@ fixtures can establish current-format support independently.
   exact saved inbound teleport coordinates and unchanged original native bytes,
   rejection without edits, and one-Undo native restoration. Room clipboard,
   rotations/reflections and remaining full-editor requirements stay open.
+
+- Shared-boundary dependency checkpoint: translation now also validates starts,
+  active non-avatar objects and teleport destinations in unselected rooms whose
+  shared boundary deforms. A geometrically valid move that would leave one of
+  those dependencies outside is rejected atomically with its subject and room,
+  retaining source/history. Valid neighbour deformations keep those positional
+  records unchanged. Focused model coverage exercises starts, objects and inbound
+  links independently; all 13 room-group/source tests pass. All eight Chromium/
+  Firefox room-group cases pass, including rejected deformation without edits,
+  exact saved shared corners and a valid T-junction deformation loaded by the
+  actual engine with its neighbouring start retained.
+  CI run 41270633486 (e16eaa3) completed: Windows passed; Linux failed only the
+  two controls tooltip-focus checks. Their scroll/focus symptoms match the issue
+  subsequently addressed in c683627. Newer Linux CI must still verify that fix.

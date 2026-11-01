@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { roomHeightFixture } from './roomHeightFixture';
 import { moveRoomGroup } from '../src/model/roomGroups';
-import { applyCommand, execute, undo, redo, setSourceTeleport } from '../src/model/commands';
+import { applyCommand, execute, undo, redo, setSourceTeleport, setSourceStart, editRoomSource } from '../src/model/commands';
 import { createObject, objectTemplates } from '../src/model/objectAuthoring';
 import { buildPlayableLevel } from '../src/model/playableBuild';
 import { decodeProject, encodeProject } from '../src/model/project';
@@ -25,6 +25,35 @@ it('moves room geometry, starts, fractional object positions and inbound telepor
   history = undo(history); expect(history.document.roomSource).toBe(document.roomSource);
   expect(history.document.sourceStarts).toBe(document.sourceStarts); expect(history.document.sourceObjects).toBe(document.sourceObjects); expect(history.document.sourceTeleports).toBe(document.sourceTeleports);
   history = redo(history); expect(history.document.sourceStarts![0]).toMatchObject({ x: 20192, z: 20096 });
+});
+
+function adjoiningRooms() {
+  const fixture = roomHeightFixture();
+  const change = commitRoomDraft(fixture.document.roomSource, setDraftCorners(beginRoomDraft(fixture.document, fixture.document.roomSource, 0, fixture.to.id),
+    [{ x: 20256, z: 20064 }, { x: 20512, z: 20064 }, { x: 20512, z: 20192 }, { x: 20256, z: 20192 }]));
+  return { ...fixture, document: applyCommand(fixture.document, editRoomSource(change)) };
+}
+
+it('rejects a valid shared-boundary deformation that would exclude a neighbouring player start', () => {
+  const { document, to } = adjoiningRooms();
+  expect(() => translateSourceRooms(document.roomSource, [to.id], -160, 0)).not.toThrow();
+  expect(() => moveRoomGroup(document, [to.id], -160, 0)).toThrow(/Player 1 start.*neighbouring room.*No rooms were moved/);
+  expect(document.sourceStarts![0]).toMatchObject({ x: 20128, z: 20128 });
+});
+
+it('protects neighbouring objects and inbound teleport destinations independently', () => {
+  const fixture = adjoiningRooms();
+  const document = applyCommand(fixture.document, setSourceStart(fixture.document, 1, fixture.from.id, 20032, 20032));
+  const template = objectTemplates(document).find(object => object.type === 1)!;
+  const proposal = createObject(document, { template: template.id, room: fixture.from.id, x: 20128, z: 20128, y: -8 });
+  const withObject = applyCommand(document, proposal.command);
+  expect(() => moveRoomGroup(withObject, [fixture.to.id], -160, 0)).toThrow(new RegExp(`Object ${proposal.id}.*neighbouring room`));
+  const incoming = document.roomSource.rooms.find(room => room.originZone === 0)!;
+  const withTeleport = applyCommand(document, setSourceTeleport(document, incoming.id, fixture.from.id, 20128, 20128));
+  expect(() => moveRoomGroup(withTeleport, [fixture.to.id], -160, 0)).toThrow(/teleport destination.*neighbouring room/);
+  const safe = applyCommand(withTeleport, moveRoomGroup(withTeleport, [fixture.to.id], -16, 0));
+  expect(safe.sourceStarts).toBe(withTeleport.sourceStarts);
+  expect(safe.sourceTeleports).toBe(withTeleport.sourceTeleports);
 });
 
 it('moves groups simultaneously rather than rejecting an intermediate overlap with another selected room', () => {
