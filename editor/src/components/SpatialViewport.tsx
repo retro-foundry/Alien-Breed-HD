@@ -101,7 +101,7 @@ export function SpatialViewport(props: Props) {
       handles.push({ id: field, label: `Drag room ${field} height`, position, axis: vertical,
         change: { kind: 'height', room: sourceRoom.id, field: layer === 'upper' ? field === 'floor' ? 'upperFloor' : 'upperCeiling' : field, value: position.y }, colour: field === 'floor' ? '#b2de7a' : '#e6bd81' });
     }
-    sourceRoom.vertices.forEach((position, index) => handles.push({ id: `corner-${index}`, label: `Move room corner ${index + 1}`, position: { ...position, y: floor }, colour: '#b2de7a',
+    sourceRoom.vertices.forEach((position, index) => handles.push({ id: `corner-${index}`, label: `Move room corner ${index + 1}`, position: { ...position, y: floor }, axis: view === 'left' || view === 'right' ? axes[2]!.vector : view === 'front' || view === 'back' ? axes[0]!.vector : undefined, colour: '#b2de7a',
       change: { kind: 'corner', room: sourceRoom.id, index, position: { ...position, y: floor } } }));
   }
   useLayoutEffect(() => {

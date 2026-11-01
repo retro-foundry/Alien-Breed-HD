@@ -131,3 +131,17 @@ test('orthographic upper-floor handles, source corners and perspective click pla
   expect(saved.sourceObjects?.at(-1)).toMatchObject({ room: fixture.from.id, x: 20128, z: 20192 });
   await page.screenshot({ path: testInfo.outputPath('orthographic-upper-edit.png') });
 });
+
+test('side-view corner keyboard edits move Z and preserve the hidden X coordinate', async ({ page }, testInfo) => {
+  const fixture = roomHeightFixture(), corner = fixture.from.vertices[0]!;
+  await openFixture(page, fixture.document); await selectRoom(page, fixture.from.id);
+  await page.getByRole('combobox', { name: 'Editing view', exact: true }).selectOption('left');
+  await page.getByRole('combobox', { name: 'Grid spacing' }).selectOption('8');
+  await page.getByRole('button', { name: 'Move room corner 1', exact: true }).focus(); await page.keyboard.press('ArrowRight');
+  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const path = testInfo.outputPath('side-corner.ab3d'); await (await download).saveAs(path);
+  const saved = decodeProject(new Uint8Array(await readFile(path))), room = saved.roomSource.rooms.find(r => r.id === fixture.from.id)!;
+  expect(room.vertices).toContainEqual({ x: corner.x, z: corner.z + 8 });
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.locator('.status-message')).toContainText('Undo');
+});
