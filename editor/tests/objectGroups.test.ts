@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { roomHeightFixture } from './roomHeightFixture';
 import { createObject, objectTemplates } from '../src/model/objectAuthoring';
 import { applyCommand, execute, redo, undo, numberPatch, moveObject, setSourceObject } from '../src/model/commands';
-import { editObjectGroup, objectSelectionIds, objectsInRectangle } from '../src/model/objectGroups';
+import { editObjectGroup, editObjectGroupHeight, objectSelectionIds, objectsInRectangle } from '../src/model/objectGroups';
 import { editableObjects } from '../src/model/sourceObjects';
 import { buildPlayableLevel } from '../src/model/playableBuild';
 import { decodeProject, encodeProject } from '../src/model/project';
@@ -101,4 +101,27 @@ it('box selection uses authored positions, includes edge points and accepts eith
   expect(() => objectsInRectangle(document, a, { x: Infinity, z: 0 }, true)).toThrow(/finite/);
   const moved = applyCommand(document, setSourceObject(document, fixture.ids[0]!, fixture.from.id, 20145.25, 20155.75));
   expect(objectsInRectangle(moved, { x: 20145, z: 20155 }, { x: 20146, z: 20156 }, true)).toEqual([fixture.ids[0]!]);
+});
+
+it('offsets and aligns exact group heights atomically without changing placements or floor bindings', () => {
+  const { document, ids } = fixture();
+  let history = execute({ document, past: [], future: [] }, editObjectGroupHeight(document, ids, -2.5));
+  expect(ids.map(id => history.document.objects[id]!.y)).toEqual([-10, -12.5]);
+  expect(history.document.sourceObjects).toBe(document.sourceObjects);
+  expect(ids.map(id => history.document.objects[id]!.upper)).toEqual(ids.map(id => document.objects[id]!.upper));
+  history = undo(history); expect(history.document.files).toEqual(document.files);
+  history = redo(history); history = execute(history, editObjectGroupHeight(history.document, ids, 'align'));
+  expect(ids.map(id => history.document.objects[id]!.y)).toEqual([-10, -10]);
+  const saved = decodeProject(encodeProject(history.document)), built = buildPlayableLevel(saved, -1).document;
+  expect(ids.map(id => built.objects[id]!.y)).toEqual([-10, -10]);
+  const count = history.past.length;
+  history = execute(history, editObjectGroupHeight(history.document, ids, 0)); expect(history.past).toHaveLength(count);
+});
+
+it('rejects partial group height overflow and invalid half-unit input before any edits', () => {
+  const { document, ids } = fixture(), originalFiles = document.files;
+  for (const offset of [Infinity, NaN, 0.25, -20000]) expect(() => editObjectGroupHeight(document, ids, offset)).toThrow();
+  const nearLimit = applyCommand(document, { label: 'Height bound fixture', patches: [numberPatch(document, 'data', document.objects[ids[1]!]!.offset + 4, 32767, 2)] });
+  expect(() => editObjectGroupHeight(nearLimit, ids, 0.5)).toThrow();
+  expect(document.files).toBe(originalFiles);
 });

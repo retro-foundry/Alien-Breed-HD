@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import type { LevelDocument } from '../model/level';
 import type { EditCommand } from '../model/commands';
-import { editObjectGroup } from '../model/objectGroups';
+import { editObjectGroup, editObjectGroupHeight } from '../model/objectGroups';
 
 export function ObjectGroupInspector({ document, ids, edit, clear, frame, duplicate }: { document: LevelDocument; ids: readonly number[];
   edit: (command: EditCommand | (() => EditCommand)) => void; clear: () => void; frame: () => void; duplicate: (x: number, z: number) => void }) {
   const [x, setX] = useState('0'), [z, setZ] = useState('0');
+  const [height, setHeight] = useState('0');
   return <aside className="inspector" aria-label="Object group inspector">
     <div className="panel-title">INSPECTOR · OBJECT GROUP</div><div className="inspector-scroll">
       <section className="property-section"><h2>{ids.length} selected objects</h2><p className="field-note">Shift, Ctrl or Command click objects in the map or list to add or remove them. Drag a selected marker to move the group; Escape cancels. Click an unselected object to select it alone.</p>
@@ -22,6 +23,16 @@ export function ObjectGroupInspector({ document, ids, edit, clear, frame, duplic
       </form></section>
       <section className="property-section"><h3>Align to first selected</h3>{(['x', 'z'] as const).map(axis => <button className="small-button" key={axis} title={`Set every selected object's ${axis.toUpperCase()} to the first selected object's coordinate. Other coordinates and heights stay intact. All destinations must be valid.`}
         onClick={() => edit(() => editObjectGroup(document, ids, { kind: 'align', axis }))}>Align {axis.toUpperCase()}</button>)}</section>
+      <section className="property-section"><h3>Object heights</h3><p className="field-note">Smaller values are higher. Half-unit steps preserve the native scale. Floor bindings stay unchanged.</p>
+        <form onSubmit={event => { event.preventDefault(); if (height.trim()) edit(() => editObjectGroupHeight(document, ids, Number(height))); }}>
+          <label className="number-field"><span>Offset</span><input type="number" required step={0.5} aria-label="Group height offset" value={height}
+            title="Add this vertical offset to every selected object's exact height. Negative values raise the group; positive values lower it. Half-unit steps only. No changes are applied unless every result fits the native range."
+            onChange={event => setHeight(event.target.value)} /></label>
+          <button className="small-button" type="submit" title="Apply this height offset to the entire group as one undoable edit. X/Z positions and floor bindings remain intact.">Offset selected heights</button>
+        </form>
+        <button className="small-button" title="Set every selected object's absolute height to the first selected object's height, as one undoable edit. This does not move objects between floors."
+          onClick={() => edit(() => editObjectGroupHeight(document, ids, 'align'))}>Align heights</button>
+      </section>
       <section className="property-section"><button className="danger-button" title="Delete all selected objects as one action. Shortcut: Delete. Undo restores the complete group. Player avatars cannot be deleted."
         onClick={() => edit(() => editObjectGroup(document, ids, { kind: 'delete' }))}>Delete selected objects</button></section>
     </div>

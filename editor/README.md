@@ -52,6 +52,10 @@ Opening local files does not upload them anywhere.
   Drag in any direction; hold Shift to add. Completion returns to Select so the
   group can be moved immediately. Escape during a gesture cancels it and retains
   the previous selection. Hidden markers and player avatars are excluded.
+  The group inspector's **Object heights** section applies a shared half-unit
+  offset or aligns absolute heights to the first selected object. Negative offsets
+  raise objects. These edits preserve X/Z and floor bindings, are undoable as a
+  group, and reject the whole operation if any height would exceed the native range.
 - Toggle **Visibility overlay** on the map, then select a room. Amber marks its
   selected runtime cell, cyan its potential visibility and green its portals.
   Concave rooms offer each compiled cell separately. Expand Runtime visibility

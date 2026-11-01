@@ -1453,3 +1453,18 @@ fixtures can establish current-format support independently.
   group-editing and controls cases pass. The focused authored-position model
   check also passes. Visual review confirms the rectangle preview and floor
   controls remain usable. No native simulation changes were made.
+
+- Group object heights checkpoint: the group inspector now applies a shared
+  half-world-unit height offset or aligns absolute heights to the first selected
+  record. The command edits only native Y words, preserving source X/Z placements
+  and lower/upper bindings. It validates the entire batch before execution;
+  overflow identifies the offending object in world units and applies nothing.
+  Zero offsets preserve no-op history. Models check exact scale, alignment,
+  partial overflow, source identity, saves/builds and undo/redo. Browser scenarios
+  check upper-floor records through the actual engine's 24.8 height probe, native
+  floor flags in saved projects and failed edits without partial changes.
+  Full moving-height authoring, clipboard, room groups and remaining editor work
+  are still required before final deployment.
+  All 706 model tests, production builds and six Chromium/Firefox height/group
+  scenarios pass. Both focused cases also pass with source-relative upper-floor
+  fixture heights. Native simulation code is unchanged.

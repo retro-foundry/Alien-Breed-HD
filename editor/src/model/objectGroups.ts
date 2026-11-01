@@ -1,5 +1,5 @@
 import { objectName, type LevelDocument } from './level';
-import type { EditCommand } from './commands';
+import { numberPatch, type EditCommand } from './commands';
 import { editableObjects, objectIsActive, objectPlayer, objectDestinationRoom, placeSourceObject, runtimeObjectPosition } from './sourceObjects';
 
 export function objectSelectionIds(document: LevelDocument, search = '', upper?: boolean): number[] {
@@ -41,4 +41,16 @@ export function editObjectGroup(document: LevelDocument, ids: readonly number[],
   }
   return { label: `${operation.kind === 'move' ? 'Move' : operation.kind === 'align' ? `Align ${operation.axis.toUpperCase()}` : 'Delete'} ${objects.length} objects`, patches: [],
     sourceObjects: { before: document.sourceObjects, after: working.sourceObjects } };
+}
+
+/** Renderer object Y words are half-world units. Validate every proposed word
+ * before exposing one command, retaining each object's X/Z and storey binding. */
+export function editObjectGroupHeight(document: LevelDocument, ids: readonly number[], offset: number | 'align'): EditCommand {
+  const objects = selectedObjects(document, ids);
+  if (offset !== 'align' && (!Number.isFinite(offset) || !Number.isInteger(offset * 2))) throw new Error('Object height offsets must use finite half-unit steps.');
+  return { label: offset === 'align' ? `Align ${objects.length} object heights` : `Offset ${objects.length} object heights`, patches: objects.map(object => {
+    const height = offset === 'align' ? objects[0]!.y : object.y + offset;
+    if (height < -16384 || height > 16383.5) throw new Error(`Object ${object.id} would exceed the height range -16384 to 16383.5. No group heights were changed.`);
+    return numberPatch(document, 'data', object.offset + 4, height * 2, 2);
+  }) };
 }
