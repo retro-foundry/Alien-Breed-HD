@@ -1531,3 +1531,13 @@ fixtures can establish current-format support independently.
   Existing exact movement assertions remain unchanged. The focused browser run
   covering source starts, room redraw, teleports and object authoring passed
   locally in Chromium and Firefox. Full cross-platform CI remains to be checked.
+
+- Modal keyboard checkpoint: Help, Recent Workspaces and the archive level
+  chooser now contain global editor shortcuts. Undo/redo, tool selection,
+  search, open and save cannot act on the workspace behind these panels.
+  Escape closes the panel without clearing the selected room/object or changing
+  tools, and existing focus restoration returns to the opening control.
+  New browser regressions check each attempted background shortcut and verify
+  Undo still works after closing Help and Recent Workspaces. TypeScript checks
+  pass; those new browser cases await a fresh build after the running baseline
+  suite. The baseline has passed all 77 Chromium cases and is running Firefox.

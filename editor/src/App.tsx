@@ -270,6 +270,16 @@ export function App() {
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       const editing = event.target instanceof HTMLElement && (event.target.matches('input, textarea, select') || event.target.isContentEditable);
+      // Modal panels own keyboard input. In particular, Undo must not change
+      // the document behind help, and closing help must retain map selection.
+      if (help || showRecents || choices.length) {
+        if (event.key === 'Escape') {
+          event.preventDefault(); setHelp(false); setShowRecents(false); setChoices([]);
+        } else if ((event.ctrlKey || event.metaKey) && ['s', 'o', 'z', 'y', 'd'].includes(event.key.toLowerCase())) {
+          event.preventDefault();
+        }
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
       if (stairsOpen || objectOpen) { if ((event.ctrlKey || event.metaKey) && ['o', 'd'].includes(event.key.toLowerCase())) event.preventDefault(); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); fileInput.current?.click(); return; }
