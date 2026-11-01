@@ -38,6 +38,12 @@ export function createObject(document: LevelDocument, placement: ObjectPlacement
   if (templateSource.original !== document.original) throw new Error('This object template belongs to another project. Cross-project resource transfer is not supported yet.');
   const template = objectTemplates(templateSource).find(object => object.id === placement.template);
   if (!template) throw new Error('Choose an enemy, pickup or scenery template; player and projectile slots cannot be duplicated.');
+  return createObjectRecord(document, placement, templateSource.files.data.slice(template.offset, template.offset + 64), `Add object from template ${template.id}`);
+}
+
+/** Shared allocation for verified library records and instance duplication. */
+export function createObjectRecord(document: LevelDocument, placement: Omit<ObjectPlacement, 'template'>, recordBytes: Uint8Array, label = 'Place object'): { id: number; command: EditCommand } {
+  if (recordBytes.length !== 64 || recordBytes[16]! > 20 || [2, 5, 11].includes(recordBytes[16]!)) throw new Error('Choose a supported enemy, pickup or scenery object.');
   if (document.objects.length >= limits.objects) throw new Error(`The native ${limits.objects}-record object table is full, including reserved shot and avatar slots.`);
   const y = checkedInteger(placement.y * 2, -32768, 32767, 'Object height in half units');
   const position = runtimeObjectPosition(placement);
@@ -63,9 +69,9 @@ export function createObject(document: LevelDocument, placement: ObjectPlacement
   data.set(reader.bytes.subarray(start, terminator), start + 8);
   for (const object of paddingUsers) view.setInt16(object.offset + 8, objectPoints + 1);
   const record = terminator + 8;
-  data.set(templateSource.files.data.subarray(template.offset, template.offset + 64), record);
+  data.set(recordBytes, record);
   view.setInt16(record, objectPoints); view.setInt16(record + 4, y);
-  data[record + 63] = (placement.upper ?? template.upper) ? 1 : 0;
+  data[record + 63] = (placement.upper ?? Boolean(recordBytes[63])) ? 1 : 0;
   view.setInt16(record + 12, -1); view.setInt16(record + 26, -1);
   data.set(reader.bytes.subarray(terminator), record + 64);
   view.setInt16(20, objectPoints + 1);
@@ -81,7 +87,7 @@ export function createObject(document: LevelDocument, placement: ObjectPlacement
   const rewritten = { ...document, ...parseLevel(document.name, files, document.encoded, document.original,
     document.playtestSlot, document.exitZone, document.roomSource, document.drawGroups) };
   const sourceObjects = placeSourceObject(rewritten, id, placement.room, position.x, position.z);
-  return { id, command: { label: `Add object from template ${template.id}`, patches: [], files: { before: document.files, after: files },
+  return { id, command: { label, patches: [], files: { before: document.files, after: files },
     sourceObjects: { before: document.sourceObjects, after: sourceObjects } } };
 }
 

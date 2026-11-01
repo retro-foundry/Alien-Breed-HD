@@ -48,6 +48,14 @@ without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
   movement/switch ownership is protected; its inspector links to the current
   controller when needed. Reassignment and grouped moving volumes remain gaps.
 
+- **Add object** opens a searchable library with one choice per supported variant:
+  named key colours, weapon ammunition, enemies and scenery. Choose a tile, then
+  click inside a room on the map. The displayed floor determines height. Repeat
+  clicks add more; Escape or **Cancel placement** ends placement. Grid snapping
+  applies; hold Alt for finer placement. Each click is independently undoable.
+  **Duplicate** / **Ctrl+ D** also uses click placement, retaining custom settings
+  and the source object's offset above the destination floor.
+
 - Select an object and choose **Type** at the top of its inspector. Named
   choices are grouped as Enemies, Pickups and Scenery, using pristine original
   released records from all 16 maps. Selection applies immediately as one Undo,
@@ -130,18 +138,9 @@ without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
   **Hide visibility controls** clears the panel out of the way while keeping its
   diagnostic drawing. Show controls restores your cell/target choices. Scrolling
   a long table keeps the map view fixed.
-- Add enemies, pickups or scenery with **Add object**. Choose an existing level
-  record as the settings template, a destination room and coordinates. Floor
-  matching preserves its offset from the floor; turn it off for a manual height
-  in native half units. Tooltips explain each control. Create is one undoable
-  edit; Cancel or Escape discards the draft. Players and projectile pools cannot
-  be templates. The native 250-record limit includes reserved records. Templates
-  currently come from the open level, rather than a cross-level object library.
-- Select an object and choose **Duplicate object** or **Ctrl / Command + D**.
-  The placement draft retains its actual authored coordinates, floor, exact
-  height and settings. Choose a position and Create object for one undoable copy;
-  Escape cancels. The original and copy have independent native position slots.
-  Duplicate starts with floor matching off to preserve deliberate height offsets.
+- Placement uses the native 250-record limit, including reserved avatar and
+  projectile pools. Those reserved records cannot be copied. Added objects and
+  duplicates have independent native position slots and portable saved records.
 - Select a key pickup and choose **Key colour** to change both its artwork and
   the door requirement it unlocks. Green, red, yellow and blue correspond to
   Key 1–4 in mechanism requirements. Undo restores both values. Custom artwork

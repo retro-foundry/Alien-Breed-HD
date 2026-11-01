@@ -18,8 +18,9 @@ interface Props {
   onObjectBoxSelect: (ids: readonly number[], add: boolean) => void;
   onGroupMove: (ids: readonly number[], x: number, z: number) => void;
   frameSelection: number;
+  placementLabel?: string; onObjectPlace: (room: string | undefined, x: number, z: number) => void;
   onMove: (selection: Exclude<Selection, null>, x: number, z: number) => void;
-  tool: 'select' | 'pan' | 'room' | 'box'; layer: 'lower' | 'upper'; grid: number; showObjects: boolean;
+  tool: 'select' | 'pan' | 'room' | 'box' | 'object'; layer: 'lower' | 'upper'; grid: number; showObjects: boolean;
   roomDraft: RoomDraft | null; selectedRoom?: SourceRoom; roomGroup: readonly SourceRoom[]; onRoomSelect: (id: string, add?: boolean) => void;
   onRoomPoint: (x: number, z: number) => void; onRoomFinish: () => void;
   onRoomCornerMove: (index: number, x: number, z: number) => void;
@@ -31,13 +32,14 @@ function floorPolygons(zone: Zone, upper: boolean) {
   return (upper ? zone.upper : zone.lower).filter(graphic => [1, 8, 9, 10, 11].includes(graphic.type) && graphic.points.length >= 3);
 }
 
-export function MapCanvas({ document, selection, objectIds, frameSelection, onObjectToggle, onObjectBoxSelect, onGroupMove, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, roomGroup, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, focusRoom }: Props) {
+export function MapCanvas({ placementLabel, onObjectPlace, document, selection, objectIds, frameSelection, onObjectToggle, onObjectBoxSelect, onGroupMove, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, roomGroup, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, focusRoom }: Props) {
   const visibility = useVisibilityInspection(document, selectedRoom?.id, selection?.kind === 'zone' ? selection.id : undefined);
   const canvas = useRef<HTMLCanvasElement>(null), holder = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const lastFit = useRef<{ data: Uint8Array; fit: number } | null>(null);
   const [view, setView] = useState<MapView>({ x: 0, z: 0, scale: 0.15 });
   const space = useRef(false);
+  const [placementPoint, setPlacementPoint] = useState<{ x: number; z: number } | null>(null);
   const drag = useRef<{ x: number; y: number; view: MapView; selection: Selection; moved: boolean } | null>(null);
   const [ghost, setGhost] = useState<{ selection: Exclude<Selection, null>; x: number; z: number } | null>(null);
   const groupDrag = useRef<readonly number[] | null>(null);
@@ -293,12 +295,19 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
         }
       }
     }
+    if (tool === 'object' && placementPoint) {
+      const point = screen(placementPoint.x, placementPoint.z);
+      context.strokeStyle = '#b2de7a'; context.lineWidth = 2;
+      context.beginPath(); context.arc(point.x, point.y, 8, 0, Math.PI * 2);
+      context.moveTo(point.x - 13, point.y); context.lineTo(point.x + 13, point.y);
+      context.moveTo(point.x, point.y - 13); context.lineTo(point.x, point.y + 13); context.stroke();
+    }
     if (boxGhost) {
       const a = screen(boxGhost.start.x, boxGhost.start.z), b = screen(boxGhost.end.x, boxGhost.end.z);
       context.fillStyle = '#82caff22'; context.strokeStyle = '#82caff'; context.lineWidth = 1.5; context.setLineDash([5, 3]);
       context.fillRect(a.x, a.y, b.x - a.x, b.y - a.y); context.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y); context.setLineDash([]);
     }
-  }, [document, selection, objectIds, view, size, grid, showObjects, layer, ghost, groupGhost, boxGhost, screen, world, sourceView, roomDraft, selectedRoom, roomGroup, cornerGhost, visibility.enabled, visibility.inspection]);
+  }, [tool, placementPoint, document, selection, objectIds, view, size, grid, showObjects, layer, ghost, groupGhost, boxGhost, screen, world, sourceView, roomDraft, selectedRoom, roomGroup, cornerGhost, visibility.enabled, visibility.inspection]);
 
   function hit(x: number, y: number): Selection {
     const context = canvas.current!.getContext('2d');
@@ -320,7 +329,8 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
   }
 
   return <div className="map-holder" ref={holder}>
-    <canvas ref={canvas} aria-label="Level map" aria-describedby="map-controls" data-world-x={view.x} data-world-z={view.z} data-world-scale={view.scale} tabIndex={0} style={{ width: size.width, height: size.height, cursor: tool === 'pan' ? 'grab' : tool === 'room' || tool === 'box' ? 'crosshair' : 'default' }}
+    <canvas ref={canvas} aria-label="Level map" aria-describedby="map-controls" data-world-x={view.x} data-world-z={view.z} data-world-scale={view.scale} tabIndex={0} style={{ width: size.width, height: size.height, cursor: tool === 'pan' ? 'grab' : tool === 'room' || tool === 'box' || tool === 'object' ? 'crosshair' : 'default' }}
+      onPointerLeave={() => setPlacementPoint(null)}
       onContextMenu={event => event.preventDefault()}
       onKeyDown={event => {
         if (event.key === 'Escape' && (boxDrag.current || groupDrag.current || drag.current || cornerDrag.current)) {
@@ -332,6 +342,15 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
       onPointerDown={event => {
         const rect = event.currentTarget.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
         const panning = event.button !== 0 || space.current || tool === 'pan';
+        if (!panning && tool === 'object') {
+          const point = world(x, y), step = event.altKey || grid === 0 ? 1 : grid;
+          const snapped = { x: Math.round(point.x / step) * step, z: Math.round(point.z / step) * step };
+          const changed = sourceView.changed.toReversed().find(room => pointInRoomOutline(room.vertices, snapped));
+          const zones = document.zones.filter(zone => !sourceView.hidden.has(zone.id) && zoneContainsPoint(document, zone, snapped.x, snapped.z));
+          const zone = zones.find(zone => floorPolygons(zone, layer === 'upper').length > 0) ?? zones[0];
+          const room = changed ?? document.roomSource.rooms.find(room => room.originZone === zone?.id);
+          event.currentTarget.focus(); onObjectPlace(room?.id, snapped.x, snapped.z); return;
+        }
         if (!panning && tool === 'box') {
           const point = world(x, y); boxDrag.current = { start: point, end: point, add: event.shiftKey }; setBoxGhost(boxDrag.current);
           event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId); return;
@@ -372,6 +391,7 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
       onPointerMove={event => {
         const rect = event.currentTarget.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
         const point = world(x, y); onCursor(point.x, point.z);
+        if (tool === 'object') { const step = event.altKey || grid === 0 ? 1 : grid; setPlacementPoint({ x: Math.round(point.x / step) * step, z: Math.round(point.z / step) * step }); }
         if (boxDrag.current) { boxDrag.current = { ...boxDrag.current, end: point }; setBoxGhost(boxDrag.current); return; }
         if (cornerDrag.current) {
           const step = event.altKey || grid === 0 ? 1 : grid;
@@ -412,7 +432,7 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
     <div className="map-label"><span className="status-dot" /> ORTHOGRAPHIC <span className="muted">/</span> {layer.toUpperCase()} FLOOR</div>
     <div className="map-compass"><span>N</span><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 6 23-6-5-6 5z" fill="currentColor" /></svg></div>
     <VisibilityOverlay state={visibility} onFrame={() => framePoints(visibility.inspection?.polygons.flatMap(polygon => polygon.vertices) ?? [])} />
-    <div id="map-controls" className="map-help">{roomDraft ? <><strong>{roomDraft.vertices.length} corners</strong> · Click corners · Enter or first corner finishes · Backspace removes last · Esc cancels · Alt bypasses snap</> : tool === 'box' ? <>Drag a rectangle · Shift adds objects · Escape cancels · Returns to Select after completion</> : <><kbd>Space</kbd> drag to pan <span>·</span> wheel to zoom <span>·</span> <kbd>F</kbd> fit <span>·</span> <kbd>?</kbd> controls</>}</div>
+    <div id="map-controls" className="map-help">{tool === 'object' ? <>Placing {placementLabel} - Click to place - Escape cancels - Alt bypasses snap</> : roomDraft ? <><strong>{roomDraft.vertices.length} corners</strong> · Click corners · Enter or first corner finishes · Backspace removes last · Esc cancels · Alt bypasses snap</> : tool === 'box' ? <>Drag a rectangle · Shift adds objects · Escape cancels · Returns to Select after completion</> : <><kbd>Space</kbd> drag to pan <span>·</span> wheel to zoom <span>·</span> <kbd>F</kbd> fit <span>·</span> <kbd>?</kbd> controls</>}</div>
     <div className="map-scale"><Icon name="grid" size={14} /> {Math.round(view.scale * 100)}%</div>
   </div>;
 }
