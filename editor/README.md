@@ -145,6 +145,11 @@ Opening local files does not upload them anywhere.
   triplet ZIP, and recover the previous workspace through browser storage.
 - Open a simultaneous 2D/3D view, visit selected zones, inspect lighting with
   the actual game renderer, and build/play the current map in a chosen slot.
+  In inspection, click a visible room to select it at the pointer without moving
+  the camera. Arrow keys turn/look; Enter selects under the centre crosshair.
+  Map/list selections still visit their rooms. Picking uses the native captured
+  frame and accounts for viewport scaling and letterboxing; it currently selects
+  rooms, rather than individual walls, floors or objects.
   Playtests use separate browser storage from the normal game.
 - Choose the target game slot in Project or the 3D toolbar. The choice supports
   undo/redo and is saved in project copies and browser recovery; changing views

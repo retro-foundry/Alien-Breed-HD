@@ -15,6 +15,22 @@ export async function engineRoomProperties(page: Page, zone: number): Promise<Ro
 }
 
 export interface EngineCamera { zone: number; x: number; z: number; upper: number; angle: number; height?: number }
+export async function enginePickSamples(page: Page, points: readonly { x: number; y: number }[]): Promise<number[]> {
+  return page.evaluate(points => new Promise((resolve, reject) => {
+    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, prefix = crypto.randomUUID();
+    const result: number[] = [], pending = new Map(points.map((_, index) => [`${prefix}-${index}`, index]));
+    const timer = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('Engine picking query timed out')); }, 10000);
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'pick-sample') return;
+      const index = pending.get(event.data.id); if (index === undefined) return;
+      result[index] = event.data.zone; pending.delete(event.data.id);
+      if (!pending.size) { clearTimeout(timer); window.removeEventListener('message', receive); resolve(result); }
+    };
+    window.addEventListener('message', receive);
+    points.forEach((point, index) => frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'pick-at', id: `${prefix}-${index}`, ...point }, location.origin));
+    if (!points.length) { clearTimeout(timer); window.removeEventListener('message', receive); resolve([]); }
+  }), points);
+}
 export async function engineSwitchState(page: Page, index: number): Promise<{ zone: number; active: boolean; phase: number; countdown: number }> {
   return page.evaluate(index => new Promise((resolve, reject) => {
     const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();

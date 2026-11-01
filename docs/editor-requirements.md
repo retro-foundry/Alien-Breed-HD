@@ -58,7 +58,9 @@ undo/redo regression.
 R9 now includes object multiselect in the map/list and atomic group translation,
 alignment and deletion, with invalid destinations rejecting the whole edit.
 Browser/native checks cover gestures, source round trips and group undo. Room
-groups and cross-project clipboard workflows remain open. Single objects and
+groups now support atomic movement and a validated same-project placement
+clipboard with attached-room capture. Broader transforms and cross-project
+clipboard workflows remain open. Single objects and
 groups now support a session clipboard within the same workspace, preserving
 captured settings after original edits, deletion or undo; paste validates the
 whole batch and creates independent records as one undoable action. Browser
@@ -102,7 +104,11 @@ floor/other resource conversions and the other resource classes remain open.
 
 The actual game engine is now embedded beside the map, with zone visits,
 lighting-edit reloads and isolated playtests. All 16 maps load and draw in both
-Chromium and Firefox. Full wall/floor/object picking and overlays are pending.
+Chromium and Firefox. Native pixel picking now selects the room at the clicked
+position, retains the inspection camera and maps generated cells back to source
+rooms. Enter selects at the crosshair. Authored stair views, native upper-floor
+views with remapped IDs, viewport resizing and later list navigation are checked
+in both browsers. Full wall/floor/object picking and overlays are pending.
 Original assembly geometry helpers have 330 emulated parity fixtures, and all
 49,797 current ordering masks independently rebuild. The exact portal model
 processes all 16 maps, including concave imports, emits common clip bounds and

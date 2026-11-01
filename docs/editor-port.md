@@ -1870,3 +1870,23 @@ fixtures can establish current-format support independently.
   Broader transforms, resource ownership, independent controller creation and
   remaining R1–R12 work are still open. Deploy to the requested sibling site's
   abhd-ed directory only when the complete editor is ready.
+
+  Native 3D room picking now follows the clicked pixel instead of always querying
+  the centre. renderer_get_pixel_pick shares the existing captured visibility
+  buffers with the unchanged centre-query API; display_render_pixel uses the
+  actual presentation rectangle to account for scaling/letterboxing and reject
+  outside coordinates. The editor host remains read-only while inspecting.
+  Picks retain the camera, map generated cells to authored/original source rooms,
+  and Enter keeps centre-crosshair selection accessible from the keyboard.
+  Explicit map/list selections continue to visit rooms. Help and the README
+  describe these controls and the current room-only selection scope.
+
+  Windows Release, WebAssembly runtime and production editor builds pass, as do
+  all 775 model tests. Four final Chromium/Firefox native-picking cases pass:
+  authored stairs distinguish off-centre rooms, upper-floor picks resolve
+  deliberately remapped generated IDs after resizing, selection preserves the
+  camera, outside coordinates reject, and later list navigation still works.
+  Fourteen existing controls/engine cases also pass, including all 16 original
+  maps in both browsers and isolated playtest storage. Individual wall/floor /
+  object picking, edit overlays and the remaining R1–R12 work are still required;
+  this checkpoint does not establish full R10 or deployment readiness.

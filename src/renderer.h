@@ -367,6 +367,8 @@ void renderer_request_zone_trace(void);
 void renderer_request_center_pick_capture(void);
 /* Picking buffer query: returns center-pixel zone id and player id (0 = none). */
 void renderer_get_center_pick(int16_t *out_zone_id, int *out_player_id);
+/* Last captured frame, internal raster coordinates. Outside/uncaptured = none. */
+void renderer_get_pixel_pick(int x, int y, int16_t *out_zone_id, int *out_player_id);
 /* Emit one-shot F2 debug summary for the last captured frame (zones/walls/sprites/overdraw). */
 void renderer_log_f2_pick_debug(const GameState *state,
                                 int16_t standing_zone,

@@ -23,6 +23,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
   const [actualExit, setActualExit] = useState<number>();
   const [spawnZone, setSpawnZone] = useState<number>();
   const revisionRef = useRef(0), pendingPlay = useRef(false);
+  const pickedViewTarget = useRef<{ source: LevelDocument; zone?: number; room?: string; layer: Props['layer'] } | undefined>(undefined);
   const reloadTimer = useRef<number | undefined>(undefined);
   const failedDocument = useRef<LevelDocument | undefined>(undefined);
   const artifact = useRef<PlayableLevel | undefined>(undefined), previousDocument = useRef(document), readyRef = useRef(ready);
@@ -113,12 +114,18 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
       if (message.type === 'pick' && message.zone !== undefined && message.zone >= 0) {
         const built = artifact.current;
         if (!built || built.source !== current.current.document) return;
-        if (!built.topology) current.current.onSelectZone(message.zone);
+        const pick = { source: built.source, layer: current.current.layer };
+        if (!built.topology) {
+          pickedViewTarget.current = { ...pick, zone: message.zone }; current.current.onSelectZone(message.zone);
+        }
         else {
           const id = built.topology.cells.find(cell => cell.id === message.zone)?.sourceId;
           const room = built.source.roomSource.rooms.find(room => room.id === id);
-          if (room?.originZone !== null && room?.originZone !== undefined) current.current.onSelectZone(room.originZone);
-          else if (room) current.current.onSelectRoom(room.id);
+          if (room?.originZone !== null && room?.originZone !== undefined) {
+            pickedViewTarget.current = { ...pick, zone: room.originZone }; current.current.onSelectZone(room.originZone);
+          } else if (room) {
+            pickedViewTarget.current = { ...pick, room: room.id }; current.current.onSelectRoom(room.id);
+          }
         }
       }
     };
@@ -139,7 +146,15 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
     setActualSlot(-1); setActualExit(undefined); setSpawnZone(undefined); setNonblack(0);
   }, [document]);
 
-  useEffect(() => { if (loaded && !playing) positionCamera(); }, [selection, sourceRoomId, layer, loaded]);
+  useEffect(() => {
+    const picked = pickedViewTarget.current; pickedViewTarget.current = undefined;
+    // Picking changes the inspector, not the inspection camera. A later map /
+    // list selection still visits its room normally, including the same room.
+    if (picked?.source === document && picked.layer === layer && (
+      picked.room !== undefined && picked.room === sourceRoomId
+      || picked.zone !== undefined && selection?.kind === 'zone' && selection.id === picked.zone)) return;
+    if (loaded && !playing) positionCamera();
+  }, [selection, sourceRoomId, layer, loaded]);
   useEffect(() => {
     if (ready) send('instructions', { text: (playing ? playKeys : previewKeys).map(([key, action]) => `${key}: ${action}`).join(' · ') });
   }, [ready, playing]);
@@ -160,7 +175,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
       {!playing && loaded && <span className="engine-crosshair" aria-hidden="true">+</span>}
       {error && <div className="engine-error" role="alert"><Icon name="alert" /><p>{error}</p><button title="Restart the preview engine. Your editable document is kept." onClick={reloadEngine}>Reload engine</button></div>}
     </div>
-    <div className="engine-controls">{playing ? <span>Click to capture mouse · WASD move · C crouch · Space use · Esc release mouse · Stop returns to editing</span> : <><button disabled={!loaded} aria-label="Turn preview left" title="Turn the inspection camera left. Left Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: -256 })}>←</button><button disabled={!loaded} aria-label="Turn preview right" title="Turn the inspection camera right. Right Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: 256 })}>→</button><button disabled={!loaded} aria-label="Look up in preview" title="Look up. Up Arrow also looks up when the 3D view has focus." onClick={() => send('turn', { look: -12 })}>↑</button><button disabled={!loaded} aria-label="Look down in preview" title="Look down. Down Arrow also looks down when the 3D view has focus." onClick={() => send('turn', { look: 12 })}>↓</button><span>Select a zone to visit · Click the view to select under the crosshair and focus arrow keys</span></>}
+    <div className="engine-controls">{playing ? <span>Click to capture mouse · WASD move · C crouch · Space use · Esc release mouse · Stop returns to editing</span> : <><button disabled={!loaded} aria-label="Turn preview left" title="Turn the inspection camera left. Left Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: -256 })}>←</button><button disabled={!loaded} aria-label="Turn preview right" title="Turn the inspection camera right. Right Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: 256 })}>→</button><button disabled={!loaded} aria-label="Look up in preview" title="Look up. Up Arrow also looks up when the 3D view has focus." onClick={() => send('turn', { look: -12 })}>↑</button><button disabled={!loaded} aria-label="Look down in preview" title="Look down. Down Arrow also looks down when the 3D view has focus." onClick={() => send('turn', { look: 12 })}>↓</button><span>Select a zone to visit · Click a visible room to select it ? Arrow keys turn/look ? Enter selects at the crosshair</span></>}
       <details className="engine-key-help"><summary title="Show the keys for the current 3D mode. Enter or Space opens this list.">Controls</summary><div><strong>{playing ? 'Playtest controls' : '3D inspection controls'}</strong>{(playing ? playKeys : previewKeys).map(([key, action]) => <p key={key}><span>{action}</span><kbd>{key}</kbd></p>)}</div></details>
     </div>
   </section>;

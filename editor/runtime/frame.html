@@ -112,6 +112,10 @@
         if (!engine._editor_camera(c.zone,c.x,c.z,c.upper,c.angle)) throw new Error('Place the preview camera inside the selected zone.');
       }
       if (loaded && request.type === 'turn') engine._editor_turn(request.delta|0, request.look|0);
+      if (loaded && request.type === 'pick-at') {
+        if (!Number.isFinite(request.x) || !Number.isFinite(request.y)) throw new Error('Invalid preview pick coordinates.');
+        send('pick-sample', {id:request.id, zone:engine._editor_pick_at(request.x, request.y), revision:currentRevision});
+      }
       if (loaded && request.type === 'capture') {
         const c = request.camera;
         if (!c || ![c.zone,c.x,c.z,c.upper,c.angle].every(Number.isInteger)) throw new Error('Invalid capture camera.');
@@ -178,11 +182,14 @@
       }
     } catch(error) { fail(error, request.type === 'load' ? request.revision : currentRevision); }
   });
-  canvas.addEventListener('click', () => {
-    if (loaded && !playing) send('pick', {zone:engine._editor_pick(), revision:currentRevision});
+  canvas.addEventListener('click', event => {
+    const rect = canvas.getBoundingClientRect();
+    if (loaded && !playing && rect.width > 0 && rect.height > 0)
+      send('pick', {zone:engine._editor_pick_at((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height), revision:currentRevision});
   });
   canvas.addEventListener('keydown', event => {
     if (playing || !loaded) return;
+    if (event.key === 'Enter') { event.preventDefault(); send('pick', {zone:engine._editor_pick(), revision:currentRevision}); return; }
     const controls = {ArrowLeft:[-128,0],ArrowRight:[128,0],ArrowUp:[0,-8],ArrowDown:[0,8]};
     if (controls[event.key]) { event.preventDefault(); engine._editor_turn(...controls[event.key]); }
   });

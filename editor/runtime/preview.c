@@ -113,6 +113,15 @@ EMSCRIPTEN_KEEPALIVE int editor_pick(void)
     return zone;
 }
 
+EMSCRIPTEN_KEEPALIVE int editor_pick_at(double x, double y)
+{
+    int px, py;
+    int16_t zone = -1;
+    if (!preview_loaded || preview_playing || !display_render_pixel(x, y, &px, &py)) return -1;
+    renderer_get_pixel_pick(px, py, &zone, NULL);
+    return zone;
+}
+
 EMSCRIPTEN_KEEPALIVE int editor_nonblack_pixels(void)
 {
     const RendererPixel *pixels = renderer_get_cw_buffer();

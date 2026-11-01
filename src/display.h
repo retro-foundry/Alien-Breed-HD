@@ -21,6 +21,8 @@ void display_toggle_fullscreen(void); /* borderless ini fullscreen or windowed <
 void display_emscripten_frame_resize_poll(void);
 void display_on_resize(int w, int h);  /* call on window resize to resize framebuffer */
 void display_handle_resize(void);      /* query renderer output size and resize (use on SDL_WINDOWEVENT_RESIZED) */
+/* Normalized output coordinates to software raster; rejects letterbox/outside. */
+int display_render_pixel(double x, double y, int *out_x, int *out_y);
 
 /* Screen management */
 void display_alloc_text_screen(void);

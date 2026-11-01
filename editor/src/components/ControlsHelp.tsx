@@ -1,4 +1,4 @@
-export const previewKeys = [['← / →', 'Turn the inspection camera'], ['↑ / ↓', 'Look up / down'], ['Click view', 'Select the zone under the crosshair']] as const;
+export const previewKeys = [['← / →', 'Turn the inspection camera'], ['↑ / ↓', 'Look up / down'], ['Click view', 'Select the room at the pointer'], ['Enter', 'Select the room under the centre crosshair']] as const;
 // Verified against src/input.c and player.c; inspection keys are hosted in runtime/frame.html.
 export const playKeys = [['W / S', 'Move forward / backward'], ['A / D', 'Strafe left / right'], ['Mouse', 'Aim after clicking the game view'], ['Left click / Ctrl', 'Fire'], ['Space / right click', 'Use doors and switches'], ['C', 'Crouch'], ['Shift', 'Change run / walk speed'], ['1–6 / mouse wheel', 'Choose an available weapon'], ['Esc', 'Release the mouse / open the game menu'], ['Stop button', 'Return to editing']] as const;
 

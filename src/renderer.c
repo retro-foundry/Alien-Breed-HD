@@ -5407,17 +5407,22 @@ void renderer_request_center_pick_capture(void)
 
 void renderer_get_center_pick(int16_t *out_zone_id, int *out_player_id)
 {
+    renderer_get_pixel_pick(g_renderer.width / 2, g_renderer.height / 2,
+                            out_zone_id, out_player_id);
+}
+
+void renderer_get_pixel_pick(int x, int y, int16_t *out_zone_id, int *out_player_id)
+{
     int w = g_renderer.width;
     int h = g_renderer.height;
     if (out_zone_id) *out_zone_id = -1;
     if (out_player_id) *out_player_id = 0;
     if (!g_pick_last_frame_valid) return;
     if (w <= 0 || h <= 0 || !g_pick_zone_back_buffer || !g_pick_player_back_buffer) return;
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
 
     {
-        int cx = w / 2;
-        int cy = h / 2;
-        size_t idx = (size_t)cy * (size_t)w + (size_t)cx;
+        size_t idx = (size_t)y * (size_t)w + (size_t)x;
         uint16_t zone = g_pick_zone_back_buffer[idx];
         if (out_zone_id) {
             *out_zone_id = (zone == RENDERER_PICK_ZONE_NONE) ? -1 : (int16_t)zone;
