@@ -59,6 +59,12 @@ The current port's per-room/storey graphics command budget is now shared with
 the native renderer and enforced for preview/build/game export, while editable
 oversized files remain saveable. This covers one concrete R12 resource limit;
 the broader capability model and original-engine export profile remain open.
+Numerical lower/upper floor and ceiling editing, height copy, reset, validation
+and undo now use per-room source overrides. Native header/surface/wall rebuilds
+and browser gameplay verify quarter-unit floor standing and a step transition;
+upper-storey view changes are checked in the actual engine. This advances R6;
+graphical height handles, automatic stair tools and animated-height authoring
+are still required.
 
 The actual game engine is now embedded beside the map, with zone visits,
 lighting-edit reloads and isolated playtests. All 16 maps load and draw in both

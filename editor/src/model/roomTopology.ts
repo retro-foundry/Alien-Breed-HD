@@ -2,11 +2,13 @@ import { buildRoomEdges, convexParts, type Position } from './geometry';
 import type { LevelDocument } from './level';
 import { sourceWallForEdge, type RoomSource, type SourceRoom } from './roomSource';
 import type { VisibilityRoom } from './visibilityGeometry';
+import { restoreRoomHeights, type RoomHeights } from './roomHeights';
 
 export interface CompiledRoomCell extends VisibilityRoom {
   sourceId: string;
   recordZone: number;
   originZone: number | null;
+  heights?: RoomHeights;
   /** Original wall records supply materials; null denotes a new/internal edge. */
   sourceLines: (number | null)[];
 }
@@ -31,6 +33,7 @@ export function compileRoomTopology(document: LevelDocument, source: RoomSource)
     if (ids.has(room.id)) throw new Error('Each source room must have a unique identity.');
     ids.add(room.id);
     if (!records.has(room.recordZone)) throw new Error(`Room ${room.id} refers to missing surface record ${room.recordZone}.`);
+    if (room.heights) restoreRoomHeights(room.heights, records.get(room.recordZone)!);
     if (room.wallSources.length !== room.vertices.length || room.wallSources.some(line => line !== null && !records.get(room.recordZone)!.boundaryIds.includes(line)))
       throw new Error(`Room ${room.id} has invalid wall-source references. Restore or reassign its wall materials before building.`);
     if (room.originZone !== null) {
@@ -65,7 +68,7 @@ export function compileRoomTopology(document: LevelDocument, source: RoomSource)
       return destination;
     });
     sourceCells.set(room.id, [...(sourceCells.get(room.id) ?? []), id]);
-    return { id, sourceId: room.id, recordZone: room.recordZone, originZone: room.originZone,
+    return { id, sourceId: room.id, recordZone: room.recordZone, originZone: room.originZone, ...(room.heights ? { heights: room.heights } : {}),
       vertices: boundary.map(edge => pointId(edge.start)), neighbours, sourceLines };
   });
   // A one-sided closed portal is not a playable join. Report it at the source

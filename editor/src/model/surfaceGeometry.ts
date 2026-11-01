@@ -4,6 +4,7 @@ import type { RoomTopology } from './roomTopology';
 import { encodePolygonSurface, polygonForCell } from './surfaces';
 import type { WallSurface } from './surfaces';
 import { checkedInteger } from './binary';
+import { roomSettings } from './roomHeights';
 
 /** Bind an explicit interval along a generated wall chain using the selected
  * record's authored texels/world-unit ratio. The caller supplies distances
@@ -52,6 +53,7 @@ export function buildCellPolygons(document: LevelDocument, topology: RoomTopolog
     if (result.has(cell.id)) throw new Error('Surface geometry contains duplicate runtime room identities.');
     const template = document.zones.find(zone => zone.id === cell.recordZone);
     if (!template) throw new Error(`Room ${cell.sourceId} has no surface settings template.`);
+    const settings = roomSettings(document, cell);
     const outline = cell.vertices.map(id => {
       const point = topology.points[id];
       if (!point) throw new Error(`Room ${cell.sourceId} has a missing surface corner.`);
@@ -59,18 +61,24 @@ export function buildCellPolygons(document: LevelDocument, topology: RoomTopolog
     });
     const originalKey = outlineKey(template.boundaryIds.map(id => ({ x: document.lines[id]!.x, z: document.lines[id]!.z })));
     const unchanged = outlineKey(outline) === originalKey;
-    const layer = (records: readonly Graphic[]): GeneratedPolygon[] => records.filter(record => record.polygon).map(record => {
+    const layer = (records: readonly Graphic[], upper: boolean): GeneratedPolygon[] => records.filter(record => record.polygon).map(record => {
       const polygon = record.polygon!;
+      const floor = upper ? 'upperFloor' : 'floor', roof = upper ? 'upperCeiling' : 'ceiling';
+      const field = polygon.type === 2 ? roof : polygon.type === 7 ? undefined : floor;
+      // Only a plane coinciding with its authored room boundary is anchored.
+      // Decorative offsets and water retain their explicit source heights.
+      const height = field && polygon.heightQuarter / 4 === template[field] ? settings[field] : polygon.heightQuarter / 4;
       const retainedPoints = polygon.points.every(id => {
         const original = document.points[id]!, generated = topology.points[id];
         return generated?.x === original.x && generated.z === original.z;
       });
-      if (unchanged && retainedPoints) return { sourceOffset: record.offset, bytes: document.files.graphics.slice(record.offset, record.offset + record.size) };
+      if (unchanged && retainedPoints) return { sourceOffset: record.offset, bytes: height === polygon.heightQuarter / 4
+        ? document.files.graphics.slice(record.offset, record.offset + record.size) : encodePolygonSurface({ ...polygon, heightQuarter: height * 4 }) };
       if (polygon.points.length < 3 || outlineKey(polygon.points.map(id => document.points[id]!)) !== originalKey)
         throw new Error(`Room ${cell.sourceId} surface at byte ${record.offset} has a partial or degenerate footprint. Assign its geometry before compiling this room.`);
-      return { sourceOffset: record.offset, bytes: encodePolygonSurface(polygonForCell(polygon, cell.vertices, polygon.heightQuarter / 4)) };
+      return { sourceOffset: record.offset, bytes: encodePolygonSurface(polygonForCell(polygon, cell.vertices, height)) };
     });
-    result.set(cell.id, { lower: layer(template.lower), upper: layer(template.upper) });
+    result.set(cell.id, { lower: layer(template.lower, false), upper: layer(template.upper, true) });
   }
   return result;
 }

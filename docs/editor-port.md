@@ -1042,3 +1042,38 @@ fixtures can establish current-format support independently.
   Chromium/Firefox scenarios pass, including all sixteen original maps, budget
   boundary/rejection, source export/play and imported-room redraw. Remaining
   editor requirements and deployment are still unfinished.
+
+- Per-room numerical height editing now follows AMOS `DEFHEIGHT`,
+  `DEFROOFHEIGHT`, `DEFUPPERFLOORHEIGHT` and `DEFUPPERROOFHEIGHT`; water remains
+  separately authored as in `DEFWATERHEIGHT`. Room-source schema v3 stores four
+  optional floor/ceiling overrides without modifying original files or shared
+  templates. Existing source schemas remain readable, and ordinary snapshots
+  still use v2. Shape moves/redraws retain height overrides. Validation checks
+  native WORD quarter-unit plane bounds, positive air clearance, separated
+  upper/lower storeys and active upper material availability. Exact restoration
+  of authored closed-door/sentinel values remains possible. Older source
+  versions reject height fields rather than silently dropping them.
+  The inspector applies all fields atomically, copies shown heights into a
+  reviewable draft, restores template heights, explains direction/units and
+  keeps errors beside the form. Undo/redo, source archives and effective room
+  readouts include the overrides. Runtime cells carry room settings through
+  collision/header assembly, wall endpoint anchoring and floor/roof draw planes.
+  Existing portal height changes rebuild both sides with explicit selected
+  repair materials where original full-span material is absent; known solid
+  wall material is reused when opening into an authored room. Unanchored
+  decorative heights and water stay authored. Moving ranges and curves retain
+  explicit unsupported-build errors until their attachments can be edited.
+  Model scenarios cover template independence, quarter heights, upper/lower
+  spans, save/restore, undo/redraw retention, invalid input/schema downgrade,
+  moving-door rejection/reset and both sides of an imported height-changing
+  doorway. Real-engine browser scenarios edit imported and authored rooms,
+  copy/reset/undo, preserve source backups, compare upper/lower rendered views
+  and walk up a generated step. A read-only preview probe reports simulation
+  feet (`s_yoff + s_height`, player.c floor-target contract), avoiding rendered
+  head bob in the physical floor assertion. All 643 model checks and the
+  production build pass. Twenty-eight surrounding Chromium/Firefox scenarios
+  pass, followed by fresh height and workspace-recovery checks in both engines.
+  The preceding renderer-budget commit `40dacbd` also completed remote editor
+  CI successfully; this height change still needs its own CI result.
+  This does not complete graphical height/stair tools, animated attachments, other editor requirements
+  or deployment.

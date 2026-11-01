@@ -11,6 +11,8 @@ import type { Selection } from './MapCanvas';
 import { Icon } from './Icon';
 import type { SourceRoom } from '../model/roomSource';
 import { RoomInspector } from './RoomInspector';
+import { RoomHeightInspector } from './RoomHeightInspector';
+import { roomSettings } from '../model/roomHeights';
 import { NumberField } from './NumberField';
 
 function PositionForm({ x, z, zone, onApply }: { x: number; z: number; zone: number; onApply: (x: number, z: number, zone: number) => void }) {
@@ -35,6 +37,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner,
   sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomRedraw: () => void; onRoomDelete: () => void; onShowDestination: (room: string) => void }) {
   if (!selection && !sourceRoom) return <aside className="inspector"><div className="panel-title">INSPECTOR</div><div className="empty-inspector"><Icon name="select" size={32} /><h2>Select something</h2><p>Click a zone, object or player start to inspect it.</p><p className="muted">Drag objects and starts to reposition them. Hold Alt to ignore the grid.</p></div></aside>;
   const zone = selection?.kind === 'zone' ? document.zones.find(zone => zone.id === selection.id) : undefined;
+  const dimensions = sourceRoom ? roomSettings(document, sourceRoom) : zone;
   const object = selection?.kind === 'object' ? editableObjects(document).find(object => object.id === selection.id) : undefined;
   const sourceAvatar = object && !sourceMatchesLevel(document) ? objectPlayer(document, object) : undefined;
   const start = selection?.kind === 'start' ? editableStarts(document).find(start => start.player === selection.id) : undefined;
@@ -47,10 +50,11 @@ export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner,
     <div className="inspector-scroll">
       {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onRedraw={onRoomRedraw} onDelete={onRoomDelete} />}
       {sourceRoom && <RoomAppearanceInspector document={document} room={sourceRoom} edit={edit} />}
+      {sourceRoom && <RoomHeightInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && (!zone || !sourceMatchesLevel(document)) && <TeleportInspector document={document} room={sourceRoom} edit={edit} onShowDestination={onShowDestination} />}
       {zone && <>
-        <section className="property-section"><h3>Geometry</h3><InfoRow label="Floor height" value={zone.floor} /><InfoRow label="Ceiling height" value={zone.ceiling} /><InfoRow label="Clearance" value={zone.floor - zone.ceiling} />
-          {zone.upper.length > 0 && <><InfoRow label="Upper floor" value={zone.upperFloor} /><InfoRow label="Upper ceiling" value={zone.upperCeiling} /></>}
+        <section className="property-section"><h3>Geometry</h3><InfoRow label="Floor height" value={dimensions!.floor} /><InfoRow label="Ceiling height" value={dimensions!.ceiling} /><InfoRow label="Clearance" value={dimensions!.floor - dimensions!.ceiling} />
+          {dimensions!.upper.length > 0 && <><InfoRow label="Upper floor" value={dimensions!.upperFloor} /><InfoRow label="Upper ceiling" value={dimensions!.upperCeiling} /></>}
           <InfoRow label="Water height" value={zone.water < zone.floor && zone.water > zone.ceiling ? zone.water : 'Dry'} />
           <InfoRow label="Outdoor sky" value={zone.backdrop ? 'Yes' : 'No'} />
         </section>

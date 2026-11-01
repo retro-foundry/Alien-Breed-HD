@@ -14,6 +14,7 @@ import { buildZoneRecords } from './zoneBuild';
 import { buildDrawTopology } from './drawTopology';
 import { closedPortalEdges, newPortalTarget, unassignedBoundaryEdges } from './portalWalls';
 import { resolveAnimationRoom } from './animationRooms';
+import { airHeightsChanged } from './roomHeights';
 
 export interface SourceBuildOptions {
   /** Resolved game configuration in source room identities; -1 disables exit.
@@ -33,6 +34,14 @@ export interface SourceBuildOptions {
 export function buildSourceLevel(document: LevelDocument, options: SourceBuildOptions) {
   const source = document.roomSource, topology = compileRoomTopology(document, source);
   const moving = new Set(document.mechanisms.map(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift')));
+  for (const cell of topology.cells) {
+    if (!airHeightsChanged(document, cell)) continue;
+    const template = document.zones.find(zone => zone.id === cell.recordZone)!;
+    if (cell.originZone !== null && moving.has(cell.originZone))
+      throw new Error('Changing a moving door or lift height needs synchronized animation ranges. Restore its original heights before building.');
+    if ([...template.lower, ...template.upper].some(record => record.type === 5))
+      throw new Error('Changing curved-wall heights needs explicit curve height attachments. Restore the original heights before building.');
+  }
   for (const cell of topology.cells) if (closedPortalEdges(document, cell).length && cell.originZone !== null && moving.has(cell.originZone))
     throw new Error('Closing a doorway in a moving door or lift needs synchronized animation attachments. Restore the doorway before building.');
   for (const cell of topology.cells) if (unassignedBoundaryEdges(topology, cell).length && cell.originZone !== null && moving.has(cell.originZone))

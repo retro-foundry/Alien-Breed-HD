@@ -3,11 +3,12 @@ import type { NewRoomGraphics, ClosingRoomGraphics } from './cellGraphics';
 import type { LevelDocument } from './level';
 import type { PointLightingBinding } from './pointLighting';
 import type { SourceRoom } from './roomSource';
+import { roomSettings } from './roomHeights';
 
 export interface RoomAppearance { readonly room: string; readonly lowerWall: number; readonly upperWall: number | null; readonly lightingPoint: number }
 
 export function roomAppearanceChoices(document: LevelDocument, room: SourceRoom) {
-  const template = document.zones.find(zone => zone.id === room.recordZone);
+  const template = roomSettings(document, room);
   if (!template) throw new Error(`Room ${room.id} has no surface template.`);
   return { template, lower: template.lower.filter(record => record.wall), upper: template.upper.filter(record => record.wall),
     points: [...new Set([...template.lower, ...template.upper].flatMap(record => record.points))] };

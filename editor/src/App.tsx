@@ -288,7 +288,10 @@ export function App() {
     } catch (error) { fail(error); }
   };
 
-  const filteredZones = document?.zones.filter(zone => document.roomSource.rooms.some(room => room.originZone === zone.id) && String(zone.id).includes(search)) ?? [];
+  const filteredZones = document?.zones.filter(zone => document.roomSource.rooms.some(room => room.originZone === zone.id) && String(zone.id).includes(search)).map(zone => {
+    const room = document.roomSource.rooms.find(room => room.originZone === zone.id);
+    return room?.heights ? { ...zone, ...room.heights } : zone;
+  }) ?? [];
   const newRooms = document?.roomSource.rooms.filter(room => room.originZone === null && room.id.toLowerCase().includes(search.toLowerCase())) ?? [];
   const objects = document ? editableObjects(document) : [];
   const filteredObjects = objects.filter(object => objectIsActive(object) && `${object.id} ${objectName(object.type)}`.toLowerCase().includes(search.toLowerCase()));

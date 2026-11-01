@@ -151,6 +151,9 @@ EMSCRIPTEN_KEEPALIVE void editor_play(int playing)
 EMSCRIPTEN_KEEPALIVE int editor_player_zone(void) { return preview_loaded ? g_state.plr1.zone : -1; }
 EMSCRIPTEN_KEEPALIVE int editor_player_x(void) { return preview_loaded ? g_state.plr1.xoff >> 16 : 0; }
 EMSCRIPTEN_KEEPALIVE int editor_player_z(void) { return preview_loaded ? g_state.plr1.zoff >> 16 : 0; }
+/* player.c updates the collision target from floor - s_height. Rendering Y
+ * includes the view offset/bob, so report the simulation feet for validation. */
+EMSCRIPTEN_KEEPALIVE int editor_player_feet_fixed(void) { return preview_loaded ? g_state.plr1.s_yoff + g_state.plr1.s_height : 0; }
 
 static void preview_frame(void)
 {

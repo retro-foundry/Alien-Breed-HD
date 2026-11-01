@@ -107,6 +107,21 @@ projects without the newer fields retain their earlier format. Incomplete
 projects can be saved/recovered before all build dependencies are assigned.
 Appearance and geometry edits use the same undo/history model.
 
+Room heights are independent of the shared material template. Select a room,
+edit its floor/ceiling fields in Room heights and choose Apply heights. Enter
+also submits the full set; Escape restores the focused field. Values use native
+quarter units and smaller values are higher. Upper fields appear for an active
+two-storey template. Copy shown heights from another room loads a draft for
+review; Apply heights commits it. Restore template heights removes overrides.
+All changes support undo/redo and portable source saves. Collision headers,
+anchored walls, floor/roof surfaces and doorway openings rebuild together.
+Changed imported doorways may need Wall repair appearance on both sides; the
+build error identifies the room. Water retains its independently authored
+height. Moving-door/lift ranges and curved-wall height attachments still need
+their dedicated authoring work; unsupported builds preserve editable source.
+Height-bearing room source uses schema v3; ordinary projects retain schema v2
+and earlier project/room-source formats remain readable.
+
 Preview and game export enforce the current port's graphics-command budget per
 room and floor. Walls, surfaces and draw controls share that budget; Help shows
 the value used by the engine. An oversized file can still be opened and saved

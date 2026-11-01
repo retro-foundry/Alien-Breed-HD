@@ -2,6 +2,7 @@ import { BinaryReader } from './binary';
 import type { LevelDocument, Zone } from './level';
 import type { CompiledRoomCell, RoomTopology } from './roomTopology';
 import type { WallSurface } from './surfaces';
+import { airHeightsChanged } from './roomHeights';
 
 /** Existing imported openings keep their authored draw records. New openings
  * are determined by the generated neighbour and original collision identity,
@@ -13,7 +14,8 @@ export function newPortalTarget(document: LevelDocument, topology: RoomTopology,
   if (!target) throw new Error(`Doorway ${cell.id} -> ${neighbour} has no draw-room identity.`);
   if (target.sourceId === cell.sourceId) return undefined;
   const line = cell.sourceLines[edge];
-  return cell.originZone !== null && line !== null && line !== undefined && document.lines[line]!.connect === target.originZone ? undefined : target;
+  return cell.originZone !== null && line !== null && line !== undefined && document.lines[line]!.connect === target.originZone
+    && !airHeightsChanged(document, cell) && !airHeightsChanged(document, target) ? undefined : target;
 }
 
 /** Original portals whose destination no longer shares this generated edge

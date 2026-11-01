@@ -4,6 +4,7 @@ import type { RoomSource } from './roomSource';
 import type { RoomTopology } from './roomTopology';
 import { assertRoomReferences, planRoomReferences, type RoomReferencePlan } from './roomReferences';
 import { runtimeObjectPosition } from './sourceObjects';
+import { roomHeightFields } from './roomHeights';
 
 export interface RoomDataReferences {
   data: Uint8Array;
@@ -73,6 +74,9 @@ export function buildRoomDataReferences(document: LevelDocument, source: RoomSou
     if (!template) throw new Error(`Room ${cell.sourceId} has no settings template.`);
     const header = document.files.data.slice(template.offset, template.offset + 48), headerView = new DataView(header.buffer);
     headerView.setInt16(0, cell.id);
+    // Defs.i / level.c: lower floor/roof and upper floor/roof are 24.8
+    // LONGs at +2/+6/+10/+14. Water (+18) is separately authored.
+    if (cell.heights) roomHeightFields.forEach((field, index) => headerView.setInt32(2 + index * 4, cell.heights![field] * 256));
     headerView.setInt16(38, checkedInteger(references.cellTeleports.get(cell.id)!, -32768, topology.cells.length - 1, 'Teleport destination room'));
     const teleport = document.sourceTeleports?.find(item => item.room === cell.sourceId);
     if (teleport) {
