@@ -1,3 +1,5 @@
+import { NumberField } from './NumberField';
+import { setRoomHeadroom } from '../model/roomHeadroom';
 import { useEffect, useState } from 'react';
 import { editRoomSource, type EditCommand } from '../model/commands';
 import type { LevelDocument } from '../model/level';
@@ -6,7 +8,7 @@ import { setRoomHeights, type SourceRoom } from '../model/roomSource';
 import { RoomHeightSection } from './RoomHeightSection';
 
 const labels = { floor: 'Lower floor height', ceiling: 'Lower ceiling height', upperFloor: 'Upper floor height', upperCeiling: 'Upper ceiling height' };
-export function RoomHeightInspector({ document, room, edit }: { document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void }) {
+export function RoomHeightInspector({ document, room, edit, onViewSide }: { document: LevelDocument; room: SourceRoom; onViewSide: () => void; edit: (command: EditCommand | (() => EditCommand)) => void }) {
   const settings = roomSettings(document, room), upper = settings.upper.length > 0 && settings.upperFloor > settings.upperCeiling;
   const values = () => Object.fromEntries(roomHeightFields.map(field => [field, String(settings[field])])) as Record<keyof RoomHeights, string>;
   const [draft, setDraft] = useState(values), [copy, setCopy] = useState(''), [error, setError] = useState('');
@@ -20,9 +22,16 @@ export function RoomHeightInspector({ document, room, edit }: { document: LevelD
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
   };
   return <section className="property-section"><h3>Room heights</h3>
-    <p className="field-note">Smaller height values are higher. Lower clearance: {settings.floor - settings.ceiling}. Apply all fields together; preview rebuilds automatically. Water keeps its own height.</p>
+    <p className="field-note">A room is the usable space between its floor and ceiling. Increase its height to raise the ceiling; the floor stays put.</p>
+    <div className="room-headroom-controls">{(upper ? [false, true] : [false]).map(upperRoom => <NumberField key={String(upperRoom)} label={upper ? `${upperRoom ? 'Upper' : 'Lower'} room headroom` : 'Room headroom'} displayLabel={upper ? `${upperRoom ? 'Upper' : 'Lower'} room height` : 'Room height (headroom)'} min={.25} max={16383.75} step={.25} value={settings[upperRoom ? 'upperFloor' : 'floor'] - settings[upperRoom ? 'upperCeiling' : 'ceiling']}
+      help="Distance from floor to ceiling. A larger size raises the ceiling; a smaller size lowers it. The floor, other storey and water remain fixed."
+      onCommit={height => { try { const change = setRoomHeadroom(document, document.roomSource, room.id, upperRoom, height); setError(''); edit(editRoomSource(change)); } catch (error) { setError(error instanceof Error ? error.message : String(error)); } }} />)}</div>
+    {error && <p className="field-note" role="alert">{error}</p>}
+    {settings.floor === settings.ceiling && <p className="field-note">This room has no headroom at its starting position. For a door, use its mechanism controls to set the opening.</p>}
+    <button className="small-button" onClick={onViewSide} title="Show this room from the front, framed to reveal its floor and ceiling height handles.">View room from side</button>
     <RoomHeightSection key={`${room.id}:${room.recordZone}`} settings={settings} baseline={document.original.data} onCommit={apply} />
     <form onSubmit={event => { event.preventDefault(); apply(Object.fromEntries(roomHeightFields.map(field => [field, Number(draft[field])])) as Record<keyof RoomHeights, number>); }}>
+      <h4>Absolute plane positions</h4><p className="field-note">These are positions, not room sizes. Smaller numbers are higher up. Moving a floor leaves its ceiling in place. Enter or Apply heights commits these fields together.</p>
       <div className="field-grid">{fields.map(field => <label className="number-field" key={field}><span>{labels[field]}</span>
         <input type="number" required aria-label={labels[field]} min={-8192} max={8191.75} step={0.25} value={draft[field]}
           title="Native height in quarter units. Enter applies all heights; Escape restores this field. Smaller values are higher. Floor and ceiling must leave positive clearance."
@@ -30,7 +39,6 @@ export function RoomHeightInspector({ document, room, edit }: { document: LevelD
           onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setDraft(current => ({ ...current, [field]: String(settings[field]) })); } }} />
       </label>)}</div>
       <button className="small-button" type="submit" title="Apply the room's floor and ceiling heights as one undoable edit. Collision, surfaces and doorway openings rebuild together; missing doorway styles are reported before export.">Apply heights</button>
-      {error && <p className="field-note" role="alert">{error}</p>}
     </form>
     <button className="small-button" disabled={!room.heights} title="Remove this room's height overrides and restore its original template heights as one undoable edit." onClick={() => {
       const original = document.zones.find(zone => zone.id === room.recordZone)!;

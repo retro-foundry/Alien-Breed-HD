@@ -56,6 +56,20 @@ and material appearance are inspected in Engine view.
 - Add/duplicate use click placement in editing views. Top retains room drawing
   and rectangle selection; choosing those tools switches to Top automatically.
 
+## Understanding ceilings
+
+Select a room and edit **Room height (headroom)** for its normal, positive
+floor-to-ceiling size. A larger size raises the ceiling; the floor and water
+stay fixed. Two-storey rooms have independent lower/upper headroom controls.
+**View room from side** frames the room and its F/C handles. Each headroom edit
+is one Undo and uses the same validated native planes as direct height edits.
+
+The shaded section labels each usable room. When an upper floor meets the
+lower ceiling, its two handles are separated left/right. **Absolute plane
+positions** still expose native coordinates (larger numbers are lower down).
+**Show ceilings** only affects editing-view visibility, leaving game geometry
+intact. Open or closed doors use their mechanism movement controls.
+
 ## Current working workflows
 
 - Select a connected original or newly drawn room with no inward corners.

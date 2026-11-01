@@ -2435,3 +2435,17 @@ height cancellation and corner Undo. Publication is site commit `18bd235`,
 JavaScript `index-BEa1x5u2.js`, CSS `index-DwRnkAfo.css`; Pages run `41315345996`
 completed successfully. All five native runtime resource hashes remain verified
 under `runtime/r-ad32e275c8d0e039/`.
+
+
+## Ceiling usability and positive room height
+
+Room heights now lead with a positive headroom size instead of requiring an
+inverted absolute ceiling coordinate. `setRoomHeadroom` derives the selected
+ceiling from its existing floor and delegates to `setRoomHeights`; floors,
+water and the other storey remain unchanged. Native range/storey constraints,
+project storage and compilation stay shared. The side-view button frames the
+selected room; the section labels usable air and separates coincident lower
+ceiling/upper floor handles. Show ceilings explicitly describes visibility only.
+Absolute positions remain available in a readable two-column layout. This
+addresses the user's reported ceiling confusion while the remaining AMOS and
+R0-R12 requirements continue to apply.
