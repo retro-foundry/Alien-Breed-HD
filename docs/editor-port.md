@@ -2155,3 +2155,12 @@ fixtures can establish current-format support independently.
   pass, including per-surface pixels, lower/upper independent paint, exact Undo,
   reopening source and synchronized door/lift motion. This advances the full editor
   goal; it does not establish complete AMOS parity.
+
+
+  The exact packaged build also passes all eight installed Edge/Brave normal
+  floor/ceiling cases. The reset oracle now waits for the changed preview
+  revision before comparing pixels (the first packaged run exposed a stale-frame
+  race in that assertion). Source bcf1d94 is published by site commit b9ad98d;
+  runtime resource hashes remain unchanged and floor-bank files preserve their
+  original bytes through explicit Git attributes. Live deployment verification
+  follows the Pages run.

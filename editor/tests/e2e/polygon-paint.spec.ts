@@ -77,7 +77,10 @@ for (const upper of [false, true]) for (const type of [1, 2]) test(`paint a ${up
   expect(await captureEngine(page, camera)).toBe(paintedHash);
   await canvas.click({ position: { x: point.x * rect.width, y: point.y * rect.height } });
   await page.getByRole('button', { name: 'Paint this surface', exact: true }).click();
+  const resetRevision = (await preview.getAttribute('data-revision'))!;
   await dialog.getByRole('button', { name: 'Reset surface material', exact: true }).click();
-  await expect(dialog).toHaveCount(0); await expect(preview.getByRole('status')).toContainText('zones loaded');
+  await expect(dialog).toHaveCount(0);
+  await expect(preview).not.toHaveAttribute('data-revision', resetRevision);
+  await expect(preview.getByRole('status')).toContainText('zones loaded');
   expect(await captureEngine(page, camera)).toBe(beforeHash);
 });
