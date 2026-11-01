@@ -14,6 +14,7 @@ interface Props {
   document: LevelDocument; selection: Selection; onSelect: (selection: Selection) => void;
   objectIds: readonly number[]; onObjectToggle: (id: number) => void;
   onGroupMove: (ids: readonly number[], x: number, z: number) => void;
+  frameSelection: number;
   onMove: (selection: Exclude<Selection, null>, x: number, z: number) => void;
   tool: 'select' | 'pan' | 'room'; layer: 'lower' | 'upper'; grid: number; showObjects: boolean;
   roomDraft: RoomDraft | null; selectedRoom?: SourceRoom; onRoomSelect: (id: string) => void;
@@ -27,7 +28,7 @@ function floorPolygons(zone: Zone, upper: boolean) {
   return (upper ? zone.upper : zone.lower).filter(graphic => [1, 8, 9, 10, 11].includes(graphic.type) && graphic.points.length >= 3);
 }
 
-export function MapCanvas({ document, selection, objectIds, onObjectToggle, onGroupMove, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, focusRoom }: Props) {
+export function MapCanvas({ document, selection, objectIds, frameSelection, onObjectToggle, onGroupMove, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, focusRoom }: Props) {
   const visibility = useVisibilityInspection(document, selectedRoom?.id, selection?.kind === 'zone' ? selection.id : undefined);
   const canvas = useRef<HTMLCanvasElement>(null), holder = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -56,6 +57,13 @@ export function MapCanvas({ document, selection, objectIds, onObjectToggle, onGr
   }, [document]);
   const screen = useCallback((x: number, z: number) => ({ x: size.width / 2 + (x - view.x) * view.scale, y: size.height / 2 - (z - view.z) * view.scale }), [view, size]);
   const world = useCallback((x: number, y: number) => ({ x: view.x + (x - size.width / 2) / view.scale, z: view.z - (y - size.height / 2) / view.scale }), [view, size]);
+  const framePoints = useCallback((points: readonly { x: number; z: number }[]) => {
+    if (!points.length || size.width <= 100 || size.height <= 100) return;
+    const xs = points.map(point => point.x), zs = points.map(point => point.z);
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
+    setView({ x: (minX + maxX) / 2, z: (minZ + maxZ) / 2, scale: Math.min(8, (size.width - 100) / Math.max(200, maxX - minX), (size.height - 100) / Math.max(200, maxZ - minZ)) });
+  }, [size]);
+
 
   useLayoutEffect(() => {
     const node = holder.current;
@@ -100,6 +108,19 @@ export function MapCanvas({ document, selection, objectIds, onObjectToggle, onGr
         z: room.vertices.reduce((sum, point) => sum + point.z, 0) / room.vertices.length };
     });
   }, [focusRoom]);
+
+  const lastSelectionFrame = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!frameSelection || size.width < 120 || size.height < 120 || lastSelectionFrame.current === frameSelection) return;
+    if (selection?.kind === 'object') {
+      const ids = objectIds.length ? objectIds : [selection.id];
+      framePoints(editableObjects(document).filter(object => ids.includes(object.id) && objectIsActive(object)));
+    } else if (selection?.kind === 'start') framePoints(editableStarts(document).filter(start => start.player === selection.id));
+    else if (selectedRoom) framePoints(selectedRoom.vertices);
+    else if (selection?.kind === 'zone') framePoints(document.zones.find(zone => zone.id === selection.id)?.boundaryIds.map(id => document.lines[id]!) ?? []);
+    else if (selection?.kind === 'point') framePoints(document.points.filter(point => point.id === selection.id));
+    lastSelectionFrame.current = frameSelection;
+  }, [frameSelection, size, selection, objectIds, document, selectedRoom, framePoints]);
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
@@ -348,13 +369,7 @@ export function MapCanvas({ document, selection, objectIds, onObjectToggle, onGr
       onLostPointerCapture={() => { groupDrag.current = null; setGroupGhost(null); setGhost(null); drag.current = null; cornerDrag.current = null; setCornerGhost(null); }} />
     <div className="map-label"><span className="status-dot" /> ORTHOGRAPHIC <span className="muted">/</span> {layer.toUpperCase()} FLOOR</div>
     <div className="map-compass"><span>N</span><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 6 23-6-5-6 5z" fill="currentColor" /></svg></div>
-    <VisibilityOverlay state={visibility} onFrame={() => {
-      const points = visibility.inspection?.polygons.flatMap(polygon => polygon.vertices) ?? [];
-      if (!points.length) return;
-      const xs = points.map(point => point.x), zs = points.map(point => point.z);
-      const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
-      setView({ x: (minX + maxX) / 2, z: (minZ + maxZ) / 2, scale: Math.max(0.02, Math.min(8, (size.width - 100) / Math.max(200, maxX - minX), (size.height - 100) / Math.max(200, maxZ - minZ))) });
-    }} />
+    <VisibilityOverlay state={visibility} onFrame={() => framePoints(visibility.inspection?.polygons.flatMap(polygon => polygon.vertices) ?? [])} />
     <div id="map-controls" className="map-help">{roomDraft ? <><strong>{roomDraft.vertices.length} corners</strong> · Click corners · Enter or first corner finishes · Backspace removes last · Esc cancels · Alt bypasses snap</> : <><kbd>Space</kbd> drag to pan <span>·</span> wheel to zoom <span>·</span> <kbd>F</kbd> fit <span>·</span> <kbd>?</kbd> controls</>}</div>
     <div className="map-scale"><Icon name="grid" size={14} /> {Math.round(view.scale * 100)}%</div>
   </div>;

@@ -16,6 +16,7 @@ export function ControlsHelp() {
       ['Shift / Ctrl / Command + click object', 'Add or remove an object from the group; move, align or delete using its inspector'],
       ['V', 'Select tool'], ['H / Space + drag', 'Pan the map'], ['Middle / right drag', 'Pan without changing tools'], ['Wheel', 'Zoom around the pointer'],
       ['F', 'Fit the whole map'], ['Alt + drag', 'Bypass grid snapping'], ['/', 'Search map contents'],
+      ['Shift + F', 'Frame the selected object group, object, room or player start in the map'],
       ['Ctrl / Command + D', 'Duplicate the selected enemy, pickup or scenery into a placement draft'],
       ['Ctrl / ⌘ + Z', 'Undo'], ['Ctrl / ⌘ + Shift + Z', 'Redo (also Ctrl / ⌘ + Y)'], ['Ctrl / ⌘ + S', 'Download a project copy'],
       ['Ctrl / ⌘ + O', 'Open a project or level'], ['Enter', 'Apply a numeric property'], ['Esc', 'Cancel a numeric edit / clear selection / close help'], ['?', 'Open this help'],

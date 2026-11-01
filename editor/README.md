@@ -32,6 +32,9 @@ Opening local files does not upload them anywhere.
   Moves keep each object's floor: on shared boundaries, upper-floor objects choose
   a room with an upper floor. Moving them into a single-floor room rejects the
   whole group. The current room is preferred when it remains compatible.
+  **Frame selected objects** fits the group's authored positions in the map.
+  **Shift+F** also frames a single object, room or player start. Framing changes
+  only the view and stays explicit: later edits do not undo your pan or zoom.
 - Toggle **Visibility overlay** on the map, then select a room. Amber marks its
   selected runtime cell, cyan its potential visibility and green its portals.
   Concave rooms offer each compiled cell separately. Expand Runtime visibility

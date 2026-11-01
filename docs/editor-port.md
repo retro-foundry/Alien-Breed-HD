@@ -1380,3 +1380,15 @@ fixtures can establish current-format support independently.
   All 697 model tests and production builds pass. Eight Chromium/Firefox
   group/existing-object scenarios pass, followed by both focused upper-floor
   checks after the native-record guard was added. Full-editor work remains open.
+
+- Selection framing checkpoint: Frame selected objects and Shift+F now fit the
+  current source selection into the map, including groups spread across rooms.
+  Single objects, source room outlines, native zones, points and player starts
+  are supported by the same framing action. Object/start coordinates come from
+  editable source metadata, not stale original record coordinates. Framing from
+  3D switches back to the map and waits for usable layout dimensions. Subsequent
+  edits, selection changes and pointer updates do not reapply an old framing
+  request, preserving manual pan/zoom. Visibility framing shares the same bounds
+  calculation. Eight Chromium/Firefox framing/visibility scenarios and production
+  builds pass, covering source coordinates, screen bounds, no dirtying, keyboard
+  use, panning followed by edits and 3D-to-map layout. Full-editor work remains open.
