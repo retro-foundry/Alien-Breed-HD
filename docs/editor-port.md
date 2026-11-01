@@ -1859,3 +1859,14 @@ fixtures can establish current-format support independently.
   save. Production builds pass. Room-copy/placement UI, dependency/material review,
   broader transforms/resources and remaining full-editor requirements stay open;
   this does not claim completed R9 or deployment readiness.
+
+  Room clipboard UI now captures required motion/switch/material attachments,
+  lists selected and attached rooms, and validates placement before applying.
+  Copy/Paste/Duplicate buttons and keyboard shortcuts have tooltips and help;
+  coordinates or the snapped map cursor place the marked group anchor. Escape
+  cancels, successful paste selects/frames the group, and one Undo reverses it.
+  All 775 model tests and 20 Chromium/Firefox room-placement/object-clipboard /
+  controls cases pass. Production builds pass and placement layout was inspected.
+  Broader transforms, resource ownership, independent controller creation and
+  remaining R1–R12 work are still open. Deploy to the requested sibling site's
+  abhd-ed directory only when the complete editor is ready.

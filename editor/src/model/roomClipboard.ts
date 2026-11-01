@@ -11,12 +11,18 @@ import { editableObjects, objectIsActive, objectPlayer } from './sourceObjects';
 import { createObject, objectTemplates } from './objectAuthoring';
 import { copyRoomControllers } from './roomClipboardControllers';
 import { buildPlayableLevel } from './playableBuild';
+import { roomCopyDependencies } from './roomCopyDependencies';
 
-export interface RoomClipboard { readonly source: LevelDocument; readonly ids: readonly string[] }
+export interface RoomClipboard { readonly source: LevelDocument; readonly ids: readonly string[]; readonly requestedIds?: readonly string[] }
 
 export function copyRooms(source: LevelDocument, ids: readonly string[]): RoomClipboard {
   if (!ids.length || ids.length !== new Set(ids).size || ids.some(id => !source.roomSource.rooms.some(room => room.id === id))) throw new Error('Select one or more different existing rooms to copy.');
   return Object.freeze({ source, ids: Object.freeze([...ids]) });
+}
+
+export function copyRoomGroup(source: LevelDocument, ids: readonly string[]): RoomClipboard {
+  const requested = copyRooms(source, ids);
+  return Object.freeze({ ...copyRooms(source, roomCopyDependencies(source, ids)), requestedIds: requested.ids });
 }
 
 /** Assemble privately, then validate the complete native artifact. No source,
@@ -44,7 +50,7 @@ export function pasteRooms(document: LevelDocument, clipboard: RoomClipboard, x:
     const room = source.roomSource.rooms.find(room => room.id === id)!;
     const appearance = source.roomAppearances?.find(item => item.room === id);
     const choices = roomAppearanceChoices(source, room);
-    const selected = appearance ? { ...appearance, room: mapped } : choices.lower.length ? { room: mapped, lowerWall: choices.lower[0]!.offset,
+    const selected = appearance ? { ...appearance, room: mapped } : choices.lower.length && (choices.template.upper.length === 0 || choices.upper.length) ? { room: mapped, lowerWall: choices.lower[0]!.offset,
       upperWall: choices.upper[0]?.offset ?? null, lightingPoint: choices.points[0]! } : undefined;
     if (selected) working = { ...working, roomAppearances: setRoomAppearance(working, selected) };
     const link = editableTeleport(source, room);

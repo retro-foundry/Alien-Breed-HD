@@ -379,8 +379,22 @@ through its newly pasted switch; the source circuit remains inactive, every
 sampled moving wall/plane stays synchronized and saved source retains the plan.
 Production builds pass.
 
-This is the validated copy model, not a completed clipboard UI. Room selection /
-placement dialogs, dependency expansion and appearance review, transforms beyond
-translation, cross-project resource transfer and remaining editor requirements
-stay open. Shared native material resources retain their existing project
-provenance; broader independent resource authoring remains R8/R11 work.
+Room selection now exposes Copy rooms, Paste rooms and Duplicate rooms, with
+Ctrl/Command C, V and D shortcuts. Capture expands controlled volumes to the
+attached rooms required by native graphics, collision and open material joins.
+The placement dialog lists every included room, marks the anchor and accepts
+exact whole coordinates or the snapped map cursor. Debounced full compilation
+must validate the current document and coordinates before committing; stale
+validation cannot enable a changed placement. Escape cancels without editing.
+Paste selects and frames the new group, with one Undo/Redo for the entire edit.
+Duplicate opens placement without replacing the clipboard. Text fields retain
+their native clipboard behavior, and modal dialogs isolate editor shortcuts.
+
+All 775 model tests pass. Twenty Chromium/Firefox room placement, object clipboard
+and controls cases pass; the placement layout was visually inspected. Coverage
+includes overlap rejection, cancellation, attached-room disclosure, selection /
+framing, save, Undo/Redo and shortcut isolation. Production builds pass.
+Appearance review, transforms beyond translation, cross-project resource transfer
+and remaining editor requirements stay open. Shared native material resources
+retain their existing project provenance; broader independent resource authoring
+remains R8/R11 work. Deployment is pending full editor readiness.

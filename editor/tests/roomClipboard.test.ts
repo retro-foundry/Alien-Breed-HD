@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { copyRooms, pasteRooms } from '../src/model/roomClipboard';
+import { copyRooms, copyRoomGroup, pasteRooms } from '../src/model/roomClipboard';
 import { applyCommand, editRoomSource, setSourceTeleport, setZoneProperty } from '../src/model/commands';
 import { roomHeightFixture } from './roomHeightFixture';
 import { movingControllerCopyFixture } from './movingControllerCopyFixture';
@@ -120,4 +120,14 @@ it('does not assign a copied switch to an unused condition bit reserved by an ex
   expect(copy.slot).not.toBe(firstFree);
   expect(pasted.mechanisms[0]!.conditions).toBe(1 << (firstFree + 4));
   expect(new BinaryReader(new Uint8Array(pasted.roomSource.controllerCopies!.at(-1)!.header), 'new gate').u16(14)).toBe(1 << (copy.slot + 4));
+});
+
+it('captures required motion attachments automatically without changing the requested anchor', () => {
+  const fixture = movingControllerCopyFixture('door');
+  const document = applyCommand(fixture.document, editRoomSource(setRoomControllerCopies(fixture.document, [fixture.copy])));
+  const captured = copyRoomGroup(document, [fixture.copy.room]);
+  expect(captured.requestedIds).toEqual([fixture.copy.room]); expect(captured.ids[0]).toBe(fixture.copy.room);
+  expect(new Set(captured.ids)).toEqual(new Set(fixture.added.map(room => room.id)));
+  const result = pasteRooms(document, captured, -8000, 0);
+  expect(buildPlayableLevel(applyCommand(document, result.command), -1).document.mechanisms).toHaveLength(3);
 });
