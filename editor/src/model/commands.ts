@@ -2,7 +2,7 @@ import { BinaryReader, checkedInteger } from './binary';
 import { parseLevel, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './level';
 import type { RoomChange, RoomSource } from './roomSource';
 import { placeSourceStart, type SourceStart } from './sourceStarts';
-import { placeSourceObject, type SourceObject } from './sourceObjects';
+import { placeSourceObject, objectPlayer, type SourceObject } from './sourceObjects';
 import { placeSourceTeleport, type SourceTeleport } from './sourceTeleports';
 import { setRoomAppearance, type RoomAppearance } from './roomAppearance';
 import { nativeWallSheets, restoreWallOverrides, type WallOverride } from './wallOverrides';
@@ -229,6 +229,7 @@ export function moveObject(document: LevelDocument, objectId: number, x: number,
 export function removeObject(document: LevelDocument, objectId: number): EditCommand {
   const object = document.objects.find(object => object.id === objectId);
   if (!object) throw new Error('That object no longer exists.');
+  if (objectPlayer(document, object) !== undefined) throw new Error('Player avatars cannot be deleted. Select the player in Starts to edit its position.');
   assertNotAuthoredAvatar(document, object.offset);
   const authored = document.sourceObjects?.find(item => item.id === objectId);
   if (authored) return setSourceObject(document, objectId, null, authored.x, authored.z);

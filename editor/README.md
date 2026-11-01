@@ -35,6 +35,9 @@ Opening local files does not upload them anywhere.
   **Frame selected objects** fits the group's authored positions in the map.
   **Shift+F** also frames a single object, room or player start. Framing changes
   only the view and stays explicit: later edits do not undo your pan or zoom.
+  **Delete** removes selected objects as one undoable action. It is ignored while
+  editing a field, drawing a room or using a dialog. Ctrl/Command+Z restores the
+  object or complete group.
 - Toggle **Visibility overlay** on the map, then select a room. Amber marks its
   selected runtime cell, cyan its potential visibility and green its portals.
   Concave rooms offer each compiled cell separately. Expand Runtime visibility

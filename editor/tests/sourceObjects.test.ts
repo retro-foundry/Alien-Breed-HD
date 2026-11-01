@@ -11,6 +11,14 @@ import { buildSourceLevel } from '../src/model/sourceBuild';
 import { editableObjects, objectIsActive, restoreSourceObjects, validateSourceObjects } from '../src/model/sourceObjects';
 import { originalFiles } from './helpers';
 
+it('protects both native player avatar records from deletion before source starts are authored', () => {
+  const document = openLevel('Native avatars', originalFiles(1)), reader = new BinaryReader(document.files.data, 'avatars');
+  for (const field of [46, 50]) {
+    const avatar = document.objects.find(object => object.offset === reader.i32(field))!;
+    expect(() => removeObject(document, avatar.id)).toThrow(/Player avatars cannot be deleted/);
+  }
+});
+
 function fixture() {
   const original = openLevel('Object authoring', originalFiles(1));
   const object = original.objects.find(object => object.type === 1 && object.zone >= 0 && !object.upper)!;

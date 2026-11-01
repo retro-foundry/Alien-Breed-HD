@@ -71,7 +71,18 @@ test('multi-object selection moves, aligns, rejects partial changes and deletes 
   expect(ids.map(id => saved.sourceObjects!.find(object => object.id === id))).toMatchObject([
     { x: 20119.5, z: 20144.25 }, { x: 20119.5, z: 20208.25 },
   ]);
-  await inspector.getByRole('button', { name: 'Delete selected objects', exact: true }).click();
+  await inspector.getByRole('spinbutton', { name: 'Group X offset' }).focus(); await page.keyboard.press('Delete');
+  await expect(first).toHaveCount(1); await expect(second).toHaveCount(1);
+  await page.getByRole('button', { name: 'Add object', exact: true }).click();
+  await page.keyboard.press('Delete');
+  await page.getByRole('dialog', { name: 'Add object', exact: true }).getByRole('button', { name: 'Cancel object', exact: true }).click();
+  await expect(first).toHaveCount(1); await expect(second).toHaveCount(1);
+  await map.focus(); await page.keyboard.press('?');
+  await expect(page.getByRole('dialog', { name: 'Editor help', exact: true })).toBeVisible();
+  await page.keyboard.press('Delete');
+  await page.getByRole('dialog', { name: 'Editor help', exact: true }).getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await expect(first).toHaveCount(1); await expect(second).toHaveCount(1);
+  await map.focus(); await page.keyboard.press('Delete');
   await expect(first).toHaveCount(0); await expect(second).toHaveCount(0);
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(inspector).toBeVisible();
@@ -81,6 +92,8 @@ test('multi-object selection moves, aligns, rejects partial changes and deletes 
   expect(await engineObjectState(page, ids[1]!)).toMatchObject({ x: 20119.5, z: 20208.25 });
   await first.click({ modifiers: ['Control'] });
   await expect(inspector).toHaveCount(0);
+  await page.keyboard.press('Delete'); await expect(second).toHaveCount(0);
+  await page.keyboard.press('Control+z'); await expect(second).toHaveCount(1);
 });
 
 test('upper-floor groups choose the compatible room at a shared lower-room edge', async ({ page }, testInfo) => {

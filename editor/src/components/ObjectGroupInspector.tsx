@@ -20,7 +20,7 @@ export function ObjectGroupInspector({ document, ids, edit, clear, frame }: { do
       </form></section>
       <section className="property-section"><h3>Align to first selected</h3>{(['x', 'z'] as const).map(axis => <button className="small-button" key={axis} title={`Set every selected object's ${axis.toUpperCase()} to the first selected object's coordinate. Other coordinates and heights stay intact. All destinations must be valid.`}
         onClick={() => edit(() => editObjectGroup(document, ids, { kind: 'align', axis }))}>Align {axis.toUpperCase()}</button>)}</section>
-      <section className="property-section"><button className="danger-button" title="Delete all selected objects as one action. Undo restores the complete group. Player avatars cannot be deleted."
+      <section className="property-section"><button className="danger-button" title="Delete all selected objects as one action. Shortcut: Delete. Undo restores the complete group. Player avatars cannot be deleted."
         onClick={() => edit(() => editObjectGroup(document, ids, { kind: 'delete' }))}>Delete selected objects</button></section>
     </div>
   </aside>;

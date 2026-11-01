@@ -1392,3 +1392,19 @@ fixtures can establish current-format support independently.
   calculation. Eight Chromium/Firefox framing/visibility scenarios and production
   builds pass, covering source coordinates, screen bounds, no dirtying, keyboard
   use, panning followed by edits and 3D-to-map layout. Full-editor work remains open.
+
+- Keyboard deletion checkpoint: Delete now invokes existing object removal or
+  atomic group deletion, skipping inactive selections and preserving one-action
+  undo. The shortcut is guarded during numeric/text entry, room drawing, busy
+  operations and all editor dialogs; key-repeat cannot remove subsequent records.
+  Help and tooltips expose the control. Browser scenarios exercise group deletion
+  and one-step restoration, single-object deletion/undo, numeric-field safety,
+  object-dialog safety and help-dialog safety alongside native group placement.
+  The shortcut reuses existing removal commands; native simulation is unchanged.
+  Review also found native player-avatar deletion was guarded only after a source
+  start was authored. The removal API now rejects both native avatar records in
+  all cases, and the inspector disables their delete control. A direct model test
+  protects both header-referenced avatars. Normal object removal is unchanged.
+  All 698 model tests and the final production build pass. Fourteen Chromium/
+  Firefox group/controls checks pass, followed by four focused group checks after
+  the avatar guard. Full-editor requirements and deployment remain open.

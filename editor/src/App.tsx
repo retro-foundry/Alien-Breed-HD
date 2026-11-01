@@ -1,7 +1,7 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { openLevel, objectName, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './model/level';
-import { execute, redo, undo, moveObject, setStart, setSourceStart, setSourceObject, setPlaytestSlot, setExitZone, editRoomSource, type EditCommand, type History } from './model/commands';
+import { execute, redo, undo, moveObject, removeObject, setStart, setSourceStart, setSourceObject, setPlaytestSlot, setExitZone, editRoomSource, type EditCommand, type History } from './model/commands';
 import { editableStarts } from './model/sourceStarts';
 import { editableObjects, objectIsActive, objectDestinationRoom } from './model/sourceObjects';
 import { pointInRoomOutline } from './model/geometry';
@@ -229,6 +229,15 @@ export function App() {
     setRoomDraft(null); setTool('select'); setObjectSeed(selection.id); setObjectOpen(true);
   }, [selection, busy, objectIds.length]);
 
+  const deleteSelectedObjects = useCallback(() => {
+    const source = workspaceRef.current?.history.document;
+    if (!source || busy || selection?.kind !== 'object') return;
+    const objects = editableObjects(source);
+    const ids = (objectIds.length ? objectIds : [selection.id]).filter(id => objects.some(object => object.id === id && objectIsActive(object)));
+    if (ids.length > 1) edit(() => editObjectGroup(source, ids, { kind: 'delete' }));
+    else if (ids.length === 1) edit(() => removeObject(source, ids[0]!));
+  }, [objectIds, selection, busy, edit]);
+
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       const editing = event.target instanceof HTMLElement && (event.target.matches('input, textarea, select') || event.target.isContentEditable);
@@ -236,6 +245,10 @@ export function App() {
       if (stairsOpen || objectOpen) { if ((event.ctrlKey || event.metaKey) && ['o', 'd'].includes(event.key.toLowerCase())) event.preventDefault(); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); fileInput.current?.click(); return; }
       if (editing) return;
+      if (event.key === 'Delete' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        if (!event.repeat && !roomDraft && !help && !showRecents && !choices.length) { event.preventDefault(); deleteSelectedObjects(); }
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); if (!help && !showRecents && !choices.length) duplicateObject(); return; }
       if (roomDraft && event.target instanceof HTMLCanvasElement) {
         if (event.key === 'Enter') { event.preventDefault(); finishRoom(); return; }
@@ -253,7 +266,7 @@ export function App() {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [save, historyAction, roomDraft, finishRoom, select, stairsOpen, objectOpen, duplicateObject, help, showRecents, choices.length, frameCurrent]);
+  }, [save, historyAction, roomDraft, finishRoom, select, stairsOpen, objectOpen, duplicateObject, help, showRecents, choices.length, frameCurrent, deleteSelectedObjects]);
 
   async function openDocument(next: LevelDocument, id?: string, request = ++generation.current) {
     const current = workspaceRef.current;
