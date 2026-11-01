@@ -8,6 +8,7 @@ export function RoomGroupInspector({ rooms, frame, clear, remove, move }: {
   return <aside className="inspector" aria-label="Room group inspector"><div className="panel-title">INSPECTOR · ROOM GROUP</div><div className="inspector-scroll">
     <section className="property-section"><h2>{rooms.length} selected rooms</h2>
       <p className="field-note">Shift, Ctrl or Command click rooms in the map or list to add or remove them. Click a room normally to inspect it alone.</p>
+      <p className="field-note">In 3D, drag LF/LC to change every selected floor/ceiling by the same amount. UF/UC are available when every zone has an upper storey. Height differences are preserved; Undo restores the whole group and Escape cancels a drag.</p>
       <p className="field-note">Group deletion is one undoable action. Linked starts, objects, teleports and portal appearances remain editable; repair any reported build dependencies before export.</p>
       <ul>{rooms.map(room => <li key={room.id}>Room {room.id.replace(/^room-/, '')}{room.originZone === null ? ' (new)' : ` · Zone ${room.originZone}`}</li>)}</ul>
       <button className="small-button" title="Fit every selected room outline in the map. Changes only the view. Shortcut: Shift+F." onClick={frame}>Frame selected rooms</button>

@@ -159,19 +159,21 @@ export function SpatialViewport(props: Props) {
         change: { kind: 'marker', marker: selectedMarker, position: selectedMarker.position }, colour: axis.colour });
     }
   }
-  if (tool === 'select' && sourceRoom) {
-    const settings = roomSettings(preview.document, sourceRoom), floor = settings[layer === 'upper' ? 'upperFloor' : 'floor'];
-    const centre = { x: sourceRoom.vertices.reduce((sum, p) => sum + p.x, 0) / sourceRoom.vertices.length, z: sourceRoom.vertices.reduce((sum, p) => sum + p.z, 0) / sourceRoom.vertices.length };
+  const heightRooms = props.roomGroup.length > 1 ? props.roomGroup : sourceRoom ? [sourceRoom] : [];
+  const heightRoom = preview.document.roomSource.rooms.find(room => room.id === heightRooms.at(-1)?.id);
+  if (tool === 'select' && heightRoom) {
+    const settings = roomSettings(preview.document, heightRoom), floor = settings[layer === 'upper' ? 'upperFloor' : 'floor'];
+    const centre = { x: heightRoom.vertices.reduce((sum, p) => sum + p.x, 0) / heightRoom.vertices.length, z: heightRoom.vertices.reduce((sum, p) => sum + p.z, 0) / heightRoom.vertices.length };
     const storeys = orbit && settings.upper.length && settings.upperFloor > settings.upperCeiling ? [false, true] : [layer === 'upper'];
-    for (const upper of storeys) for (const field of ['floor', 'ceiling'] as const) {
+    for (const upper of storeys.filter(upper => !upper || heightRooms.every(room => { const s = roomSettings(preview.document, room); return s.upper.length > 0 && s.upperFloor > s.upperCeiling; }))) for (const field of ['floor', 'ceiling'] as const) {
       const setting = upper ? field === 'floor' ? 'upperFloor' : 'upperCeiling' : field;
       const separation = orbit && storeys.length === 2 ? (upper ? 1 : -1) * Math.min(camera.distance / 20, 32) : 0;
       const position = add({ ...centre, y: settings[setting] }, mul(cameraBasis(camera).right, separation));
       handles.push({ id: orbit ? `${upper ? 'upper' : 'lower'}-${field}` : field,
         label: orbit ? `Drag ${upper ? 'upper' : 'lower'} ${field} height` : `Drag room ${field} height`, position, axis: vertical,
-        change: { kind: 'height', room: sourceRoom.id, field: setting, value: position.y }, colour: field === 'floor' ? '#b2de7a' : '#e6bd81' });
+        change: { kind: 'height', room: heightRoom.id, rooms: heightRooms.map(room => room.id), field: setting, value: position.y }, colour: field === 'floor' ? '#b2de7a' : '#e6bd81' });
     }
-    sourceRoom.vertices.forEach((position, index) => handles.push({ id: `corner-${index}`, label: `Move room corner ${index + 1}`, position: { ...position, y: floor }, axis: view === 'left' || view === 'right' ? axes[2]!.vector : view === 'front' || view === 'back' ? axes[0]!.vector : undefined, colour: '#b2de7a',
+    sourceRoom?.vertices.forEach((position, index) => handles.push({ id: `corner-${index}`, label: `Move room corner ${index + 1}`, position: { ...position, y: floor }, axis: view === 'left' || view === 'right' ? axes[2]!.vector : view === 'front' || view === 'back' ? axes[0]!.vector : undefined, colour: '#b2de7a',
       change: { kind: 'corner', room: sourceRoom.id, index, position: { ...position, y: floor } } }));
   }
   useLayoutEffect(() => {
@@ -298,7 +300,7 @@ export function SpatialViewport(props: Props) {
     {!faces.length && <div className="spatial-empty" role="status">{layer === 'upper' ? 'No upper-floor rooms are visible. Choose Lower to edit the lower floor.' : 'No rooms yet. Use Draw room in Top view to create one.'}</div>}
     <div className="map-label">EDITING / {view.toUpperCase()} / {orbit ? 'LOWER + UPPER' : layer.toUpperCase()}</div>
     <div className="spatial-options">{view==='perspective' && <><button aria-pressed={!walking} title="Orbit and frame editable geometry; right drag rotates around the selection." onClick={()=>{setWalking(false);setCamera(frameCamera(cameraFor(view),sourceRoom?scene.faces.filter(f=>f.room===sourceRoom.id).flatMap(f=>[...f.points]):points,size.width,size.height));}}>Orbit</button><button aria-pressed={walking} title="Inspect from player one inside this same editable 3D view. WASD moves, right drag looks, Q/E moves down/up and Shift moves faster. Does not run the game." onClick={walkFromStart}>Walk</button></>}{orbit && <label title="Cut away outward-facing surfaces to see inside both storeys without changing the level."><input type="checkbox" checked={cutaway} onChange={event=>setCutaway(event.target.checked)} />Cutaway</label>}<label title="Show ceiling surfaces in this editing view. Hiding them lets you look inside; it does not remove ceilings from the game."><input type="checkbox" checked={ceilings} onChange={event => setCeilings(event.target.checked)} />Show ceilings</label><label title="Show room outlines without filled surfaces."><input type="checkbox" checked={wireframe} onChange={event => setWireframe(event.target.checked)} />Wireframe</label></div>
-    {handles.toSorted((a, b) => project(b.position).depth - project(a.position).depth).map(handle => { const p = project(handle.position); return p.visible && p.x > 5 && p.x < size.width - 5 && p.y > 5 && p.y < size.height - 5 ? <button key={handle.id} className={`spatial-handle ${handle.id.startsWith('corner') ? 'spatial-corner' : ''}`} aria-label={handle.label} title={`${handle.label}. Drag to preview; release applies one edit. Escape cancels. Arrow keys nudge; Shift increases the step. Y increases downwards.`}
+    {handles.toSorted((a, b) => project(b.position).depth - project(a.position).depth).map(handle => { const p = project(handle.position); return p.visible && p.x > 5 && p.x < size.width - 5 && p.y > 5 && p.y < size.height - 5 ? <button key={handle.id} className={`spatial-handle ${handle.id.startsWith('corner') ? 'spatial-corner' : ''}`} aria-label={handle.label} title={`${handle.label}.${handle.change.kind === 'height' && heightRooms.length > 1 ? ` Moves all ${heightRooms.length} selected zones by the same amount; preserves their height differences.` : ''} Drag to preview; release applies one edit. Escape cancels. Arrow keys nudge; Shift increases the step. Y increases downwards.`}
       style={{ left: p.x, top: p.y, borderColor: handle.colour, color: handle.colour }} onPointerDown={event => { event.preventDefault(); startEdit(event, handle.change, handle.axis); }}
       onKeyDown={event => { if (['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'].includes(event.key)) { event.preventDefault(); event.stopPropagation(); nudge(handle, (event.key === 'ArrowUp' || event.key === 'ArrowRight' ? 1 : -1) * (handle.change.kind === 'height' ? -1 : 1), event.shiftKey); } }}>
       {handle.id.startsWith('axis-') ? handle.id.slice(5) : handle.change.kind === 'height' ? `${handle.change.field.startsWith('upper') ? 'U' : 'L'}${handle.change.field.toLowerCase().endsWith('floor') ? 'F' : 'C'}` : ''}</button> : null; })}

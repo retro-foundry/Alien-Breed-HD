@@ -53,15 +53,29 @@ export function pickSceneFace(faces: readonly SceneFace[], ray: Ray) {
 }
 export type SpatialEdit = { kind: 'marker'; marker: SceneMarker; position: Vector3 }
   | { kind: 'corner'; room: string; index: number; position: Vector3 }
-  | { kind: 'height'; room: string; field: 'floor' | 'ceiling' | 'upperFloor' | 'upperCeiling'; value: number };
+  | { kind: 'height'; room: string; field: 'floor' | 'ceiling' | 'upperFloor' | 'upperCeiling'; value: number; rooms?: readonly string[] };
 /** One gesture produces one ordinary editor command. Validation occurs before
  * history changes, so a rejected drag cannot leave position and height split. */
 export function spatialEdit(document: LevelDocument, change: SpatialEdit): EditCommand {
   if (change.kind === 'height') {
     const room = document.roomSource.rooms.find(r => r.id === change.room);
     if (!room) throw new Error('The selected room no longer exists. Select it again.');
-    const { floor, ceiling, upperFloor, upperCeiling } = roomSettings(document, room);
-    return editRoomSource(setRoomHeights(document, document.roomSource, room.id, { floor, ceiling, upperFloor, upperCeiling, [change.field]: change.value }));
+    const ids = [...new Set(change.rooms ?? [room.id])];
+    if (!ids.includes(room.id)) throw new Error('The height handle must belong to the selected rooms.');
+    const delta = change.value - roomSettings(document, room)[change.field];
+    let after = document.roomSource;
+    for (const id of ids) {
+      const target = document.roomSource.rooms.find(r => r.id === id);
+      if (!target) throw new Error('A selected room no longer exists. Select the rooms again.');
+      const settings = roomSettings(document, target);
+      const { floor, ceiling, upperFloor, upperCeiling } = settings;
+      try {
+        after = setRoomHeights(document, after, id, { floor, ceiling, upperFloor, upperCeiling, [change.field]: settings[change.field] + delta }).after;
+      } catch (error) {
+        throw new Error(`Room ${id.replace(/^room-/, '')}: ${error instanceof Error ? error.message : String(error)} No selected rooms were changed.`);
+      }
+    }
+    return editRoomSource({ before: document.roomSource, after, label: ids.length > 1 ? `Change ${ids.length} rooms' ${change.field} heights` : 'Change room heights' });
   }
   if (change.kind === 'corner') return editRoomSource(moveSourceCorner(document.roomSource, change.room, change.index, { x: change.position.x, z: change.position.z }));
   const { marker, position } = change;

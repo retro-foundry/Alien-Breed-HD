@@ -482,3 +482,5 @@ broader resource authoring and export profiles remain in progress.
 | Clear selection / close dialog | Escape |
 
 Left gestures select in Top, orthographic and perspective views without moving the camera or map content. Drag explicit corner, height or object movement handles to edit geometry or position. In Top view, selected objects and starts have a Move selection handle. Middle drag pans; right drag pans in Top and orbits in 3D.
+
+With multiple zones selected, LF/LC height drags affect every selected zone by the same amount, preserving existing height differences. UF/UC work when all selected zones have upper storeys. A group height gesture is one Undo; Escape cancels. If any zone would become invalid, the entire edit is rejected.

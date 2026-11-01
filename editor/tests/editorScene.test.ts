@@ -56,3 +56,18 @@ it('spatial corner edits keep only horizontal source fields and reopen cleanly',
   expect(vertices).toContainEqual({ x: corner.x + 8, z: corner.z });
   expect(vertices.every(p => Object.keys(p).sort().join(',') === 'x,z')).toBe(true);
 });
+
+it('group height gestures preserve relative heights and reject every room on any failure', () => {
+  const fixture = roomHeightFixture(), first = roomSettings(fixture.document, fixture.from);
+  const document = applyCommand(fixture.document, spatialEdit(fixture.document, {kind:'height',room:fixture.from.id,field:'floor',value:first.floor - 8}));
+  const ids = [fixture.from.id,fixture.to.id], before = ids.map(id => roomSettings(document,document.roomSource.rooms.find(r=>r.id===id)!));
+  const command = spatialEdit(document,{kind:'height',room:fixture.to.id,rooms:ids,field:'floor',value:before[1]!.floor - .25});
+  let history = execute({document,past:[],future:[]},command);
+  const saved = decodeProject(encodeProject(history.document));
+  ids.forEach((id,i)=>{const settings=roomSettings(saved,saved.roomSource.rooms.find(r=>r.id===id)!);expect(settings.floor).toBe(before[i]!.floor-.25);expect(settings.ceiling).toBe(before[i]!.ceiling);expect(settings.water).toBe(before[i]!.water);});
+  expect(history.past).toHaveLength(1);history=undo(history);expect(history.document.roomSource).toBe(document.roomSource);history=redo(history);expect(history.past).toHaveLength(1);
+  const originalSource=document.roomSource;
+  expect(()=>spatialEdit(document,{kind:'height',room:fixture.to.id,rooms:[fixture.to.id,fixture.from.id],field:'floor',value:before[1]!.ceiling+4})).toThrow('No selected rooms were changed');
+  expect(document.roomSource).toBe(originalSource);
+  expect(()=>spatialEdit(document,{kind:'height',room:fixture.to.id,rooms:[fixture.to.id,'missing'],field:'floor',value:before[1]!.floor-1})).toThrow('no longer exists');
+});

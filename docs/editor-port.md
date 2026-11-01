@@ -2662,3 +2662,16 @@ passed (Top, orthographic and perspective), including unchanged source and
 camera during selection, Shift grouping, explicit movement handles and middle
 navigation. All five native runtime hashes still match r-c8b6aa3eff4f5614.
 Remaining AMOS and R0-R12 scope stays open.
+
+
+## Multi-zone floor and ceiling handles
+
+Room groups now retain LF/LC handles in editable 3D and UF/UC when every selected
+room has an active upper storey. The last selected room anchors the handles;
+a gesture applies its height delta to the matching plane in every selected
+room, preserving existing offsets. The shared spatial command builds a complete
+provisional RoomSource, validates each room with the existing quarter-unit and
+storey rules, and publishes one command only if every room succeeds. Preview,
+Escape, keyboard nudges, portable saves and one-step Undo use that same path.
+Single-room corner handles remain tied to single-room selection. Inspector
+notes and handle tooltips explain group behavior and upper-storey requirements.
