@@ -2350,3 +2350,44 @@ fixtures can establish current-format support independently.
   checks pass direct named selection, cross-level native class loading, history,
   saved bytes and library failure/retry. Runtime manifest hashes are unchanged;
   unrelated site files are untouched.
+
+
+- Eligible existing rooms now support independent door/lift creation without
+  replacing their original source identities. Native movement/switch graphics
+  and collision ownership are checked before conversion. Existing owners remain
+  editable through a Go to existing link that selects and frames their room;
+  adjacent independent moving volumes still need explicit synchronized grouping.
+  Original starts, actors and controller settings retain their links/state.
+
+  Static geometry is compiled at its editable clearance first. The initial
+  moving plane/header is then applied to generated graphics, and the mechanism
+  owns its lintel/riser bands. Closing an imported room no longer requires the
+  user to assign repair appearances to every neighbouring room. Point-coordinate
+  aliases are matched geometrically, and changing a generated band opcode drops
+  incompatible imported record provenance. New bands cannot overwrite existing
+  moving or switch targets.
+
+  Moving-wall material choices include the map's existing native styles, not
+  only walls already drawn in the selected room. Thus a portal-only volume can
+  choose its face material explicitly. Selected source styles are bounds-checked
+  against the native texture bank. Archives retain only stable source settings;
+  generated pointers never replace imported IDs.
+
+  A picked authored moving face now offers Edit door/lift, selecting its source
+  controller. The ordinary wall-paint action is suppressed for that generated
+  face because the controller would replace a neighbour's paint during rebuild.
+  Normal wall painting and floor/ceiling pattern painting remain independent.
+
+  All 895 model tests pass, including door/lift conversion on all 16 released
+  maps, original starts/actor positions, existing controllers, save/reopen and
+  cross-room material selection. Fourteen Chromium/Firefox workflow/attachment
+  checks pass; ten further conversion/picking/normal-paint checks pass with the
+  contextual moving-face action. Packaged and live release checks follow. This
+  advances R0 while controller reassignment, grouped/multi-plane/curve ownership,
+  navigation authoring and the rest of the full editor goal remain open.
+
+  Final local verification: all 895 model tests pass after the ownership and
+  moving-face changes, and TypeScript passes. The exact packaged build passes
+  15 installed Edge/Brave/Firefox cases covering original-room conversion,
+  generated-face Edit routing, existing-owner navigation, fresh-room creation,
+  archives/history and native movement. The native bundle remains unchanged.

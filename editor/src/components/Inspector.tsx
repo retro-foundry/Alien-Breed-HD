@@ -44,9 +44,9 @@ function SourceStartForm({ document, player, edit }: { document: LevelDocument; 
     onApply={(room, x, z) => edit(() => setSourceStart(document, player, room, x, z))} />;
 }
 
-export function Inspector({ document, selection, edit, sourceRoom, onObjectDuplicate, onRoomCorner, onRoomRedraw, onRoomDelete, onShowDestination }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
+export function Inspector({ document, selection, edit, sourceRoom, onObjectDuplicate, onRoomCorner, onRoomRedraw, onRoomDelete, onShowDestination, onInspectRoom }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
   onObjectDuplicate: () => void;
-  sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomRedraw: () => void; onRoomDelete: () => void; onShowDestination: (room: string) => void }) {
+  sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomRedraw: () => void; onRoomDelete: () => void; onShowDestination: (room: string) => void; onInspectRoom: (room: string) => void }) {
   if (!selection && !sourceRoom) return <aside className="inspector"><div className="panel-title">INSPECTOR</div><div className="empty-inspector"><Icon name="select" size={32} /><h2>Select something</h2><p>Click a zone, object or player start to inspect it.</p><p className="muted">Drag objects and starts to reposition them. Hold Alt to ignore the grid.</p></div></aside>;
   const zone = selection?.kind === 'zone' ? document.zones.find(zone => zone.id === selection.id) : undefined;
   const dimensions = sourceRoom ? roomSettings(document, sourceRoom) : zone;
@@ -63,7 +63,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
       {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onRedraw={onRoomRedraw} onDelete={onRoomDelete} />}
       {sourceRoom && <RoomAppearanceInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && <RoomHeightInspector document={document} room={sourceRoom} edit={edit} />}
-      {sourceRoom && <AuthoredMechanismInspector document={document} room={sourceRoom} edit={edit} />}
+      {sourceRoom && <AuthoredMechanismInspector document={document} room={sourceRoom} edit={edit} onShowRoom={onInspectRoom} />}
       {sourceRoom && <CopiedMechanismInspector document={document} room={sourceRoom} edit={edit} />}
       <SwitchesInspector document={document} room={sourceRoom} zone={zone?.id} edit={edit} frameRoom={onShowDestination} />
       {sourceRoom && (!zone || sourceRoom.properties) && <RoomPropertiesInspector document={document} room={sourceRoom} edit={edit} />}

@@ -1,26 +1,28 @@
+import { movingRoomOwnership } from '../model/movingRoomEligibility';
 import { useEffect, useState } from 'react';
 import type { LevelDocument } from '../model/level';
 import type { SourceRoom } from '../model/roomSource';
 import { roomSettings } from '../model/roomHeights';
 import { roomAppearanceChoices } from '../model/roomAppearance';
-import { sourceMovingSettings, movingRoomFromDraft, setSourceMovingRoom } from '../model/sourceMovingRoom';
+import { sourceMovingSettings, movingRoomFromDraft, movingWallChoices, setSourceMovingRoom } from '../model/sourceMovingRoom';
 import { editRoomSource, type EditCommand } from '../model/commands';
 import { buildPlayableLevel } from '../model/playableBuild';
 import { MechanismRulesInspector } from './MechanismRulesInspector';
 import { WallStyleBrowser } from './WallStyleBrowser';
 
-export function AuthoredMechanismInspector({ document, room, edit }: { document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void }) {
+export function AuthoredMechanismInspector({ document, room, edit, onShowRoom }: { document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void; onShowRoom: (id: string) => void }) {
   const existing = room.moving && sourceMovingSettings(room.moving), settings = roomSettings(document, room);
   const initial = (kind: 'door' | 'lift' = existing?.kind ?? 'door') => {
     const saved = existing?.kind === kind ? existing : undefined;
     return { kind, top: String(saved?.top ?? (kind === 'door' ? settings.ceiling : settings.floor)),
       bottom: String(saved?.bottom ?? settings.floor), start: saved ? saved.current === saved.top ? 'top' : saved.current === saved.bottom ? 'bottom' : 'saved' : 'bottom',
-      wall: String(room.moving?.wall ?? document.roomAppearances?.find(item => item.room === room.id)?.lowerWall ?? ''),
+      wall: String(room.moving?.wall ?? document.roomAppearances?.find(item => item.room === room.id)?.lowerWall ?? (room.originZone !== null ? roomAppearanceChoices(document, room).lower[0]?.offset : undefined) ?? ''),
       conditions: saved?.conditions ?? 0, openRule: saved?.openRule ?? 0, closeRule: saved?.closeRule ?? 0 };
   };
   const [active, setActive] = useState<'door' | 'lift' | undefined>(existing?.kind), [draft, setDraft] = useState(initial), [error, setError] = useState('');
   useEffect(() => { setActive(existing?.kind); setDraft(initial()); setError(''); }, [document, room.id]);
-  if (room.originZone !== null || document.roomSource.controllerCopies?.some(copy => copy.room === room.id)) return null;
+  const conflict = movingRoomOwnership(document, room);
+  if (conflict && !room.moving) return <section className="property-section"><h3>Door or lift</h3><p className="field-note">{conflict.reason}</p>{conflict.room && conflict.room !== room.id && <button type="button" title="Select and frame the room with the existing mechanism." onClick={() => onShowRoom(conflict.room!)}>Go to existing {conflict.kind}</button>}</section>;
   const reset = () => { setDraft(initial()); setActive(existing?.kind); setError(''); };
   const begin = (kind: 'door' | 'lift') => { setDraft(initial(kind)); setActive(kind); setError(''); };
   const apply = () => {
@@ -48,7 +50,7 @@ export function AuthoredMechanismInspector({ document, room, edit }: { document:
         <label className="select-field"><span>Starts</span><select aria-label="New mechanism initial position" value={draft.start} title="Choose its initial endpoint without changing the editable room's open clearance." onChange={event => setDraft({ ...draft, start: event.target.value })}>
           <option value="top">{draft.kind === 'door' ? 'Open' : 'At upper destination'}</option><option value="bottom">{draft.kind === 'door' ? 'Closed' : 'At lower destination'}</option>{existing?.kind === draft.kind && <option value="saved">Keep saved height ({existing.current})</option>}</select></label>
         <MechanismRulesInspector mechanism={draft} prefix="New mechanism" change={(conditions, openRule, closeRule) => setDraft({ ...draft, conditions, openRule, closeRule })} />
-        <WallStyleBrowser records={roomAppearanceChoices(document, room).lower} value={draft.wall} onChange={wall => setDraft({ ...draft, wall })} label="moving wall" overrides={document.wallOverrides} />
+        <WallStyleBrowser records={movingWallChoices(document, room)} value={draft.wall} onChange={wall => setDraft({ ...draft, wall })} label="moving wall" overrides={document.wallOverrides} />
         <p className="field-note">Destinations use world units; smaller numbers are higher. Space uses doors and lifts in Build &amp; play. Choose trigger rules above. Apply is one Undo; Escape or Cancel discards the draft.</p>
         {error && <p role="alert">{error}</p>}
         <button type="button" onClick={reset} title="Discard uncommitted settings. Escape also cancels.">Cancel mechanism draft</button>

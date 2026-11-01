@@ -1,5 +1,5 @@
 import { compileSourceMovingRoom } from './sourceMovingRoom';
-import { buildAuthoredMovingRooms, appendAuthoredMovingAnimations, initialMovingTopology, type AuthoredMovingRoom } from './authoredMovingRoom';
+import { buildAuthoredMovingRooms, appendAuthoredMovingAnimations, initialMovingGraphics, type AuthoredMovingRoom } from './authoredMovingRoom';
 import { buildAnimationAttachments } from './animationAttachments';
 import { checkedInteger } from './binary';
 import { buildCellGraphics, type NewRoomGraphics, type ClosingRoomGraphics } from './cellGraphics';
@@ -50,7 +50,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
   const switchCopies = options.switchCopies ?? compileSwitchCopies(source.switchCopies ?? []);
   validateSwitchCopies(document, switchCopies);
   const plans = options.authoredControllers ?? source.rooms.flatMap(room => { const plan = compileSourceMovingRoom(document, room); return plan ? [plan] : []; });
-  const topology = initialMovingTopology(document, compileRoomTopology(document, source), plans);
+  const topology = compileRoomTopology(document, source);
   const moving = new Set(document.mechanisms.map(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift')));
   for (const room of source.rooms) if (room.originZone === null && hasNativeWallMaterials(room.originZone, room.wallSources)) {
     if (moving.has(room.recordZone) && mechanismsForRoom(document, room.recordZone).some(mechanism =>
@@ -91,7 +91,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
   const geometry = paintCellPolygons(source, paintCellWalls(document, source, buildCellGraphics(document, source, topology, options.newRoomGraphics, options.closingRoomGraphics)));
   const lighting = buildGeometryLighting(document, source, geometry, options.newRoomLighting);
   const collision = compileCollisionGeometry(lighting.graphics.topology);
-  const authored = buildAuthoredMovingRooms(document, lighting.graphics, collision, plans);
+  const authored = buildAuthoredMovingRooms(document, initialMovingGraphics(document, lighting.graphics, plans), collision, plans);
   const attachments = buildAnimationAttachments(document, authored.graphics, collision, controllerCopies, switchCopies);
   const animations = appendAuthoredMovingAnimations(attachments.tables, authored.authored);
   const graphics = attachments.graphics;

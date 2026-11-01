@@ -1,3 +1,4 @@
+import { authoredMovingSurfaceOwner } from '../model/authoredMovingRoom';
 import { useEffect, useRef, useState } from 'react';
 import { type LevelDocument } from '../model/level';
 import { type Selection } from './MapCanvas';
@@ -223,6 +224,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
     setPlaying(false); setStarting(false); setReady(false); setLoaded(false); setError(''); setNotice('Loading the game engine…');
     frame.current?.contentWindow?.location.reload();
   }
+  const movingOwner = pickedSurface && artifact.current?.source === document ? authoredMovingSurfaceOwner(artifact.current, pickedSurface.zone, pickedSurface) : undefined;
   const paintTarget = pickedSurface && artifact.current?.source === document ? surfaceMaterialTarget(artifact.current, pickedSurface.zone, pickedSurface) : undefined;
   const polygonTarget = pickedSurface && artifact.current?.source === document ? polygonMaterialTarget(artifact.current, pickedSurface.zone, pickedSurface) : undefined;
   return <section className="engine-preview" aria-label="3D game engine preview" data-revision={revision} data-rendered-pixels={nonblack} data-level-slot={actualSlot} data-exit-zone={actualExit} data-spawn-zone={spawnZone}>
@@ -242,6 +244,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
       <span>Room settings are in the inspector.</span>
       {paintTarget && <button type="button" className="small-button" style={{ pointerEvents: 'auto' }} title="Choose a material for this source wall only, including its generated pieces. Other faces keep their materials. Opens a cancellable draft."
         onClick={() => setWallPaint({ source: document, target: paintTarget })}>Paint this wall</button>}
+      {movingOwner && <button type="button" className="small-button" style={{ pointerEvents: 'auto' }} title="Select this mechanism to edit its material and movement settings." onClick={() => onSelectRoom(movingOwner.room)}>Edit {movingOwner.kind}</button>}
       {polygonTarget && <button type="button" className="small-button" style={{ pointerEvents: 'auto' }} title="Choose any original normal floor-bank pattern and its repeat for this source floor or ceiling surface. Opens a cancellable draft."
         onClick={() => setPolygonPaint({ source: document, target: polygonTarget })}>Paint this surface</button>}
     </div>}

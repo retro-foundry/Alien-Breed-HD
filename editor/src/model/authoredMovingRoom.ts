@@ -1,3 +1,7 @@
+import { resolveAnimationRoom } from './animationRooms';
+import type { PlayableLevel } from './playableBuild';
+import { resolveEngineSurface, type NativeSurfacePick } from './engineSurfacePick';
+import { movingRoomConflict } from './movingRoomEligibility';
 import type { RoomTopology } from './roomTopology';
 import { BinaryReader, checkedInteger } from './binary';
 import type { CellGraphics } from './cellGraphics';
@@ -34,16 +38,38 @@ export function initialMovingTopology(document: LevelDocument, topology: RoomTop
   }) };
 }
 
+/** Build static authored doorway geometry first. Initial moving heights are
+ * then applied only to the controlled plane/header; the mechanism builder owns
+ * its lintel/riser bands instead of asking every neighbour for wall repairs. */
+export function initialMovingGraphics(document: LevelDocument, graphics: CellGraphics, plans: readonly AuthoredMovingRoom[]): CellGraphics {
+  if (!plans.length) return graphics;
+  const topology = initialMovingTopology(document, graphics.topology, plans), streams = new Map(graphics.streams);
+  for (const cell of topology.cells) {
+    const plan = plans.find(plan => plan.room === cell.sourceId);
+    if (!plan) continue;
+    const current = new BinaryReader(plan.header, 'initial moving plane').i16(4), stream = streams.get(cell.id)!;
+    const lower = stream.lower.map(item => {
+      const type = new BinaryReader(item.bytes, 'initial moving graphic').i16(0);
+      if (!(plan.kind === 'door' ? [2, 9, 11] : [1, 8, 10]).includes(type)) return item;
+      const bytes = item.bytes.slice(); new DataView(bytes.buffer).setInt16(2, current);
+      return { ...item, bytes };
+    });
+    streams.set(cell.id, { ...stream, lower });
+  }
+  return { ...graphics, topology, streams };
+}
+
 /** Anims.s DoorRoutine/LiftRoutine and objects.c: roofs/wall bottoms move for
  * doors; floors/wall tops move for lifts. A portal needs both the neighbour's
  * moving band and static interior pit walls over the entire swept range. */
 export function attachAuthoredMovingRoom(document: LevelDocument, graphics: CellGraphics, collision: CollisionGeometry, input: AuthoredMovingRoom): { graphics: CellGraphics; animation: MovingRoomAnimation } {
   const { topology } = graphics, cells = topology.cells.filter(cell => cell.sourceId === input.room);
   const source = document.roomSource.rooms.find(room => room.id === input.room);
-  if (!source || source.originZone !== null || cells.length !== 1) throw new Error('A new door/lift needs one newly authored convex room. Split or imported mechanisms need explicit controller grouping.');
-  if (document.roomSource.controllerCopies?.some(copy => copy.room === input.room)) throw new Error('This room already has a copied moving controller.');
+  if (!source || cells.length !== 1) throw new Error('A door/lift needs one room without inward corners. Split moving volumes need explicit controller grouping.');
+  const conflict = movingRoomConflict(document, source);
+  if (conflict) throw new Error(conflict);
   if (input.header.length !== 18) throw new Error('An authored controller needs its complete 18-byte native settings header.');
-  const cell = cells[0]!, settings = roomSettings(document, cell), header = new BinaryReader(input.header, 'authored controller');
+  const cell = cells[0]!, settings = roomSettings(document, cell), baseline = roomSettings(document, source), header = new BinaryReader(input.header, 'authored controller');
   const top = header.i16(2) / 4, bottom = header.i16(0) / 4, current = header.i16(4) / 4;
   assertMechanismRange({ kind: input.kind, direction: header.i16(6), conditions: header.u16(14), current }, top, bottom);
   if (header.u8(16) > (input.kind === 'door' ? 5 : 3) || header.u8(17) > (input.kind === 'door' ? 1 : 3)) throw new Error('The controller has unsupported native trigger rules.');
@@ -56,12 +82,15 @@ export function attachAuthoredMovingRoom(document: LevelDocument, graphics: Cell
     const record = read(item);
     return (input.kind === 'door' ? [2, 9, 11] : [1, 8, 10]).includes(record.type) ? [{ record, index }] : [];
   });
+  const pointKey = (id: number) => `${topology.points[id]!.x},${topology.points[id]!.z}`;
+  const samePoint = (a: number, b: number) => pointKey(a) === pointKey(b);
   if (planes.length !== 1 || planes[0]!.record.polygon!.heightQuarter !== current * 4
-    || new Set(planes[0]!.record.points).size !== cell.vertices.length || !cell.vertices.every(point => planes[0]!.record.points.includes(point)))
+    || new Set(planes[0]!.record.points.map(pointKey)).size !== cell.vertices.length || !cell.vertices.every(point => planes[0]!.record.points.some(other => samePoint(point, other))))
     throw new Error('A new moving room needs one complete lower floor/ceiling polygon. Partial surfaces need synchronized animation targets.');
   if (cell.neighbours.every(id => id < 0)) throw new Error('Connect the new door/lift room to another room before creating its moving wall attachments.');
   const streams = new Map(graphics.streams), references = new Map(graphics.pointReferences), links: { line: number; base: number; owner: number; item: GraphicsRecordInput }[] = [];
-  const nativeTargets = new Set(document.mechanisms.flatMap(item => [ ...item.walls.map(wall => wall.graphic) ]));
+  const nativeTargets = new Set([...document.mechanisms.flatMap(item => item.walls.map(wall => wall.graphic)),
+    ...document.switches.filter(item => item.zone >= 0).map(item => item.graphic - 10)]);
   const update = (id: number, items: readonly GraphicsRecordInput[]) => {
     streams.set(id, { ...streams.get(id)!, lower: items });
     references.set(id, [...new Set([...(references.get(id) ?? []), ...items.flatMap(item => read(item).points)])]);
@@ -69,7 +98,7 @@ export function attachAuthoredMovingRoom(document: LevelDocument, graphics: Cell
   // Solid sides must still cover the air exposed by the moving plane.
   update(cell.id, stream.lower.map(item => {
     const record = read(item), wall = record.wall;
-    if (!wall || !cell.vertices.some((point, edge) => cell.neighbours[edge]! < 0 && wall.points.includes(point) && wall.points.includes(cell.vertices[(edge + 1) % cell.vertices.length]!))) return item;
+    if (!wall || !cell.vertices.some((point, edge) => cell.neighbours[edge]! < 0 && wall.points.some(other => samePoint(point, other)) && wall.points.some(other => samePoint(cell.vertices[(edge + 1) % cell.vertices.length]!, other)))) return item;
     return { ...item, bytes: encodeWallSurface({ ...wall, ...(input.kind === 'door' ? { topFixed: Math.min(wall.topFixed, top * 256) } : { bottomFixed: Math.max(wall.bottomFixed, bottom * 256) }) }) };
   }));
   const length = input.wall.length;
@@ -81,14 +110,15 @@ export function attachAuthoredMovingRoom(document: LevelDocument, graphics: Cell
     const items = [...streams.get(owner)!.lower];
     const matches = items.flatMap((item, index) => {
       const candidate = read(item).wall;
-      return candidate && candidate.points[0] === points[0] && candidate.points[1] === points[1]
+      return candidate && samePoint(candidate.points[0], points[0]) && samePoint(candidate.points[1], points[1])
         && candidate.topFixed === oldTop * 256 && candidate.bottomFixed === oldBottom * 256 ? [index] : [];
     });
     if (matches.length > 1) throw new Error('Several decorative walls overlap a moving band. Assign their animation ownership before building.');
     const existing = matches.length ? items[matches[0]!] : undefined;
     const index = matches[0] ?? items.reduce((position, item, index) => [0, 5, 13].includes(read(item).type) ? index + 1 : position, 0);
-    if (existing?.sourceOffset !== undefined && nativeTargets.has(existing.sourceOffset)) throw new Error('A new moving band overlaps an existing controller wall. Reassign that mechanism before building.');
-    const item = { ...existing, bytes: encodeWallSurface(wall) };
+    if (existing?.sourceOffset !== undefined && nativeTargets.has(existing.sourceOffset)) throw new Error('A new moving band overlaps an existing animated wall. Reassign that mechanism before building.');
+    const { sourceOffset, ...metadata } = existing ?? {};
+    const item = { ...metadata, ...(sourceOffset !== undefined && read(existing!).type === wall.type ? { sourceOffset } : {}), bytes: encodeWallSurface(wall) };
     if (existing) items[index] = item; else items.splice(index, 0, item);
     update(owner, items); return { owner, item };
   };
@@ -101,7 +131,7 @@ export function attachAuthoredMovingRoom(document: LevelDocument, graphics: Cell
     if (opposite < 0 || neighbour.neighbours[opposite] !== cell.id) throw new Error('A moving room portal needs matching reverse collision boundaries.');
     if (top < adjacent.ceiling || input.kind === 'door' && bottom > adjacent.floor) throw new Error('The moving range crosses the adjoining room ceiling or door floor. Adjust its destinations before building.');
     const band = input.kind === 'door' ? makeWall([b, a], adjacent.ceiling, current) : makeWall([b, a], current, adjacent.floor);
-    const target = putBand(neighbour.id, [b, a], input.kind === 'door' ? adjacent.ceiling : current, input.kind === 'door' ? current : adjacent.floor, band);
+    const target = putBand(neighbour.id, [b, a], input.kind === 'door' ? adjacent.ceiling : baseline.floor, input.kind === 'door' ? baseline.ceiling : adjacent.floor, band);
     // door_wall_texture_words decodes a legacy 4096-byte tile base and applies
     // -(position >> 8) & 255. Invert that scroll modulo 256 so the selected
     // authored row phase stays aligned at the initial position (mask <= 255).
@@ -115,13 +145,13 @@ export function attachAuthoredMovingRoom(document: LevelDocument, graphics: Cell
       links.push({ line, base, ...target });
     if (input.kind === 'lift' && bottom > adjacent.floor) {
       const pit = makeWall([a, b], adjacent.floor, bottom);
-      putBand(cell.id, [a, b], adjacent.floor, current, pit);
+      putBand(cell.id, [a, b], adjacent.floor, baseline.floor, pit);
     }
   });
   cell.neighbours.forEach((neighbour, edge) => {
     if (neighbour >= 0) return;
     const points: [number, number] = [cell.vertices[edge]!, cell.vertices[(edge + 1) % cell.vertices.length]!];
-    if (streams.get(cell.id)!.lower.some(item => { const wall = read(item).wall; return wall && wall.points[0] === points[0] && wall.points[1] === points[1]; })) return;
+    if (streams.get(cell.id)!.lower.some(item => { const wall = read(item).wall; return wall && samePoint(wall.points[0], points[0]) && samePoint(wall.points[1], points[1]); })) return;
     const wall = makeWall(points, input.kind === 'door' ? top : settings.ceiling, input.kind === 'lift' ? bottom : settings.floor);
     putBand(cell.id, points, current, current, wall);
   });
@@ -137,10 +167,16 @@ export function buildAuthoredMovingRooms(document: LevelDocument, graphics: Cell
   const topology = graphics.topology;
   let movingGraphics = graphics;
   const authored: { kind: 'door' | 'lift'; animation: MovingRoomAnimation }[] = [];
+  const occupied = new Set(plans.map(plan => plan.room));
+  for (const control of document.mechanisms) {
+    const origin = resolveAnimationRoom(document, control.zone, control.kind === 'lift');
+    for (const cell of topology.cells) if (cell.originZone === origin) occupied.add(cell.sourceId);
+  }
+  for (const copy of document.roomSource.controllerCopies ?? []) occupied.add(copy.room);
   if (new Set(plans.map(plan => plan.room)).size !== plans.length) throw new Error('Each authored moving room needs one controller.');
   for (const plan of plans) {
     const cell = topology.cells.find(cell => cell.sourceId === plan.room);
-    if (cell?.neighbours.some(id => plans.some(other => other.room !== plan.room && topology.cells.some(cell => cell.id === id && cell.sourceId === other.room))))
+    if (cell?.neighbours.some(id => topology.cells.some(target => target.id === id && target.sourceId !== plan.room && occupied.has(target.sourceId))))
       throw new Error('Adjacent independently moving rooms need explicit synchronized controller grouping.');
     const before = movingGraphics, built = attachAuthoredMovingRoom(document, before, collision, plan);
     // A new band enters the existing wall batch. Rebind earlier exact targets
@@ -167,4 +203,19 @@ export function appendAuthoredMovingAnimations(tables: AnimationTables, authored
     // DoWaterAnims scans 21 groups after a lift terminator. Empty structural
     // groups have no plane/zone entries, so they cause no level writes.
     water: lifts.length && !tables.water.length ? Array.from({ length: 21 }, () => ({ header: new Uint8Array(14), entries: [] })) : tables.water };
+}
+
+
+/** Native animation tables identify the actual generated moving face. Resolve
+ * that ownership back to its source controller instead of painting a neighbour
+ * whose rebuilt material would immediately be replaced by the controller. */
+export function authoredMovingSurfaceOwner(built: PlayableLevel, zone: number, pick: NativeSurfacePick): { room: string; kind: 'door' | 'lift' } | undefined {
+  if (!built.topology || !resolveEngineSurface(built.document, zone, pick)) return;
+  const reader = new BinaryReader(built.document.files.graphics, 'moving surface ownership');
+  for (const controller of built.document.mechanisms) {
+    if (!controller.walls.some(wall => wall.graphic === pick.offset) && reader.i32(controller.offset + 8) !== pick.offset) continue;
+    const id = built.topology.cells.find(cell => cell.id === controller.zone)?.sourceId;
+    const room = built.source.roomSource.rooms.find(room => room.id === id && room.moving?.kind === controller.kind);
+    if (room) return Object.freeze({ room: room.id, kind: controller.kind });
+  }
 }

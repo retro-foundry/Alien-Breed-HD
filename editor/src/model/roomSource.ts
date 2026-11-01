@@ -117,7 +117,6 @@ export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSo
     if (!('originZone' in item) || (item.originZone !== null && (typeof item.originZone !== 'number' || !records.has(item.originZone) || origins.has(item.originZone))))
       throw new Error(`Room ${item.id} has a missing or duplicate original-zone reference.`);
     const origin = item.originZone as number | null;
-    if ('moving' in item && origin !== null) throw new Error('Independent moving source settings require a newly authored room.');
     if (origin !== null) origins.add(origin);
     if (!('vertices' in item) || !Array.isArray(item.vertices) || item.vertices.length > 2048) throw new Error(`Room ${item.id} has an invalid corner list.`);
     const vertices = item.vertices.map((point: unknown) => {

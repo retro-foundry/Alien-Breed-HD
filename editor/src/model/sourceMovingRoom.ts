@@ -1,3 +1,5 @@
+import { validateWallMaterialSampling } from './wallMaterials';
+import { movingRoomConflict } from './movingRoomEligibility';
 import { BinaryReader, checkedInteger } from './binary';
 import type { LevelDocument } from './level';
 import type { RoomChange, SourceRoom } from './roomSource';
@@ -27,15 +29,17 @@ export function sourceMovingSettings(value: SourceMovingRoom) {
 export function compileSourceMovingRoom(document: LevelDocument, room: SourceRoom): AuthoredMovingRoom | undefined {
   if (!room.moving) return;
   const value = restoreSourceMovingRoom(room.moving);
-  const record = document.zones.find(zone => zone.id === room.recordZone)?.lower.find(record => record.offset === value.wall && record.wall);
+  const record = document.zones.flatMap(zone => [...zone.lower, ...zone.upper]).find(record => record.offset === value.wall && record.wall);
   if (!record?.wall) throw new Error(`Room ${room.id} has lost its door/lift wall material. Choose its material again.`);
+  validateWallMaterialSampling(record.wall, record.wall);
   const [a, b] = record.wall.points.map(id => document.points[id]!);
   return { room: room.id, kind: value.kind, header: new Uint8Array(value.header), wall: { surface: record.wall, length: Math.hypot(b!.x - a!.x, b!.z - a!.z) } };
 }
 export function setSourceMovingRoom(document: LevelDocument, id: string, value: SourceMovingRoom | null): RoomChange {
   const before = document.roomSource, room = before.rooms.find(room => room.id === id);
-  if (!room || room.originZone !== null) throw new Error('Select a newly drawn room to create an independent door or lift.');
-  if (before.controllerCopies?.some(copy => copy.room === id)) throw new Error('This room already has a copied controller. Edit that controller instead.');
+  if (!room) throw new Error('Select an existing room to create a door or lift.');
+  const conflict = value !== null && movingRoomConflict(document, room);
+  if (conflict) throw new Error(conflict);
   const moving = value === null ? undefined : restoreSourceMovingRoom(value);
   if (moving) compileSourceMovingRoom(document, { ...room, moving });
   if (JSON.stringify(room.moving) === JSON.stringify(moving)) return { label: 'Change door/lift', before, after: before };
@@ -55,4 +59,21 @@ export function movingRoomFromDraft(draft: MovingRoomDraft): SourceMovingRoom {
   view.setUint8(16, checkedInteger(draft.openRule, 0, draft.kind === 'door' ? 5 : 3, 'Opening rule'));
   view.setUint8(17, checkedInteger(draft.closeRule, 0, draft.kind === 'door' ? 1 : 3, 'Closing rule'));
   return restoreSourceMovingRoom({ kind: draft.kind, wall: draft.wall, header: [...header] });
+}
+
+
+/** Mechanism faces can use any existing native wall material, even when the
+ * controlled room contains only portals and has no wall draw record itself. */
+export function movingWallChoices(document: LevelDocument, room: SourceRoom) {
+  const all = document.zones.flatMap(zone => [...zone.lower, ...zone.upper]).filter(record => record.wall);
+  const own = document.zones.find(zone => zone.id === room.recordZone)!.lower.filter(record => record.wall);
+  const selected = all.find(record => record.offset === room.moving?.wall);
+  const preferred = selected && !own.includes(selected) ? [selected, ...own] : [...own];
+  const materialKey = (record: typeof all[number]) => {
+    const { points, topFixed: _top, bottomFixed: _bottom, stripEnd, ...material } = record.wall!;
+    const [a, b] = points.map(id => document.points[id]!);
+    return JSON.stringify([material, (stripEnd - material.stripStart) / Math.hypot(b!.x - a!.x, b!.z - a!.z)]);
+  };
+  const seen = new Set(preferred.map(materialKey));
+  return [...preferred, ...all.filter(record => { const key = materialKey(record); if (seen.has(key)) return false; seen.add(key); return true; })];
 }

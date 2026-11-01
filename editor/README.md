@@ -34,8 +34,9 @@ without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
 
 ## Current working workflows
 
-- Draw a connected room with no inward corners, apply its room appearance, and
-  select **Make door** or **Make lift** in the inspector. Set destinations,
+- Select a connected original or newly drawn room with no inward corners.
+  Apply room appearance for a newly drawn room, then select **Make door** or
+  **Make lift** in the inspector. Set destinations,
   starting endpoint and trigger rules, then **Apply mechanism**. Smaller height
   numbers are higher. Doors initially use the room's ceiling/floor as open and
   closed destinations and start closed. Lifts need two different destinations.
@@ -43,7 +44,9 @@ without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
   manually triggered mechanism in **Build & play**. Cancel/Escape discards the
   draft; Apply/Remove each supports Undo. Save project retains the mechanism;
   room copy automatically includes adjoining rooms and creates independent
-  controllers. Imported-room conversion and grouped moving volumes remain gaps.
+  controllers. Original room identities and their starts/actors remain linked. Existing
+  movement/switch ownership is protected; its inspector links to the current
+  controller when needed. Reassignment and grouped moving volumes remain gaps.
 
 - Select an object and choose **Type** at the top of its inspector. Named
   choices are grouped as Enemies, Pickups and Scenery, using pristine original

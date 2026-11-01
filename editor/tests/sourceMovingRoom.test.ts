@@ -49,5 +49,6 @@ it('rejects malformed source settings and unsupported old archive fields without
   const changed = applyCommand(document, editRoomSource(setSourceMovingRoom(document, room.id, valid)));
   const snapshot = roomSourceSnapshot(changed.roomSource);
   expect(() => restoreRoomSource(document, { ...snapshot, version: 9 })).toThrow(/unsupported source fields/);
-  expect(() => setSourceMovingRoom(document, 'room-0', valid)).toThrow(/newly drawn/);
+  const owned = document.mechanisms.find(item => item.kind === 'door')!;
+  expect(() => setSourceMovingRoom(document, `room-${owned.zone}`, valid)).toThrow(/existing door/);
 });

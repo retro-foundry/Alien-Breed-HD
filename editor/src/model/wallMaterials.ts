@@ -1,3 +1,4 @@
+import { authoredMovingSurfaceOwner } from './authoredMovingRoom';
 import { BinaryReader, checkedInteger } from './binary';
 import type { LevelDocument } from './level';
 import type { RoomChange, RoomSource } from './roomSource';
@@ -64,6 +65,7 @@ export function restoreWallMaterials(value: unknown): readonly WallMaterial[] {
 /** Generated offsets are resolved once against the exact artifact, then discarded.
  * Source room + native record + stream survive renumbering and copied rooms. */
 export function wallMaterialTarget(built: PlayableLevel, zone: number, pick: NativeSurfacePick): WallMaterialTarget | undefined {
+  if (authoredMovingSurfaceOwner(built, zone, pick)) return;
   const surface = resolveEngineSurface(built.document, zone, pick);
   if (!surface || ![0, 13].includes(surface.type)) return;
   const room = built.topology ? built.source.roomSource.rooms.find(room => room.id === built.topology!.cells.find(cell => cell.id === zone)?.sourceId)
@@ -78,6 +80,7 @@ export function wallMaterialTarget(built: PlayableLevel, zone: number, pick: Nat
 }
 
 export function surfaceMaterialTarget(built: PlayableLevel, zone: number, pick: NativeSurfacePick): SurfaceMaterialTarget | undefined {
+  if (authoredMovingSurfaceOwner(built, zone, pick)) return;
   const native = wallMaterialTarget(built, zone, pick);
   if (native) return native;
   const wall = resolveEngineSurface(built.document, zone, pick);
