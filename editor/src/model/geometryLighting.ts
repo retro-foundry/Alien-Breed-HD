@@ -6,6 +6,7 @@ import type { LevelDocument } from './level';
 import { buildPointLighting, resolvePointLighting, type PointLightingBinding } from './pointLighting';
 import type { GraphicsRecordInput } from './graphicsBuild';
 import type { RoomSource } from './roomSource';
+import { hasNativeWallMaterials } from './roomMaterials';
 
 const on = (point: Position, a: Position, b: Position) => (point.x - a.x) * (b.z - a.z) === (point.z - a.z) * (b.x - a.x)
   && point.x >= Math.min(a.x, b.x) && point.x <= Math.max(a.x, b.x) && point.z >= Math.min(a.z, b.z) && point.z <= Math.max(a.z, b.z);
@@ -32,7 +33,7 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
     const cells = graphics.topology.cells.filter(cell => cell.sourceId === room.id);
     if (!cells.length) continue;
     const references = new Set(cells.flatMap(cell => [...cell.vertices, ...graphics.pointReferences.get(cell.id)!]));
-    if (room.originZone === null) {
+    if (!hasNativeWallMaterials(room.originZone, room.wallSources)) {
       const selection = newRoomLighting.get(room.id);
       if (!selection) throw new Error(`Room ${room.id} needs its initial point-lighting selection before building.`);
       references.forEach(id => claim(id, selection, room.id)); continue;

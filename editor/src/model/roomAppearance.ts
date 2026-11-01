@@ -4,6 +4,7 @@ import type { LevelDocument } from './level';
 import type { PointLightingBinding } from './pointLighting';
 import type { SourceRoom } from './roomSource';
 import { roomSettings } from './roomHeights';
+import { hasNativeWallMaterials } from './roomMaterials';
 
 export interface RoomAppearance { readonly room: string; readonly lowerWall: number; readonly upperWall: number | null; readonly lightingPoint: number }
 
@@ -59,7 +60,7 @@ export function roomAppearanceBuildOptions(document: LevelDocument) {
   const closingRoomGraphics = new Map<string, ClosingRoomGraphics>();
   for (const room of document.roomSource.rooms) {
     const selected = appearances.find(item => item.room === room.id);
-    if (!selected && room.originZone !== null) continue;
+    if (!selected && hasNativeWallMaterials(room.originZone, room.wallSources)) continue;
     if (!selected) throw new Error(`Room ${room.id.replace(/^room-/, '')} needs an appearance. Select it and apply its wall style and lighting before building.`);
     const { template, lower, upper } = roomAppearanceChoices(document, room);
     const lowerRecord = lower.find(record => record.offset === selected.lowerWall)!;
@@ -69,8 +70,8 @@ export function roomAppearanceBuildOptions(document: LevelDocument) {
       upper: upperRecord ? [{ ...upperRecord.wall!, topFixed: template.upperCeiling * 256, bottomFixed: template.upperFloor * 256 }] : [],
     }, wallInsertion: { lower: template.lower.indexOf(lowerRecord), ...(upperRecord ? { upper: template.upper.indexOf(upperRecord) } : {}) } };
     newRoomLighting.set(room.id, { kind: 'copy', source: selected.lightingPoint });
-    if (room.originZone === null) newRoomGraphics.set(room.id, graphics);
-    else closingRoomGraphics.set(room.id, { ...graphics, lightingPoint: selected.lightingPoint });
+    if (hasNativeWallMaterials(room.originZone, room.wallSources)) closingRoomGraphics.set(room.id, { ...graphics, lightingPoint: selected.lightingPoint });
+    else newRoomGraphics.set(room.id, graphics);
   }
   return { newRoomGraphics, newRoomLighting, closingRoomGraphics };
 }

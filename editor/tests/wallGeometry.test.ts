@@ -94,7 +94,11 @@ it('translates interior decorations exactly and rejects unsupported reshaping wi
   expect(() => buildCellWallGeometry(document, reshaped, topology)).toThrow(/not attached to a single boundary/);
   expect(topology).toEqual(before);
   const newSource = { ...source, rooms: source.rooms.map(room => ({ ...room, originZone: null })) };
-  expect(() => buildCellWallGeometry(document, newSource, compileRoomTopology(document, newSource))).toThrow(/explicit wall materials/);
+  const copiedTopology = compileRoomTopology(document, newSource), copied = buildCellWallGeometry(document, newSource, copiedTopology);
+  expect(copied.walls.get(copiedTopology.sourceCells.get(room.id)![0]!)!.lower).toEqual(translated.walls.get(translatedTopology.sourceCells.get(room.id)![0]!)!.lower);
+  expect(copiedTopology.cells.every(cell => cell.originZone === null)).toBe(true);
+  const perimeterOnly = { ...newSource, rooms: newSource.rooms.map(room => ({ ...room, wallSources: room.wallSources.map(() => null) })) };
+  expect(() => buildCellWallGeometry(document, perimeterOnly, compileRoomTopology(document, perimeterOnly))).toThrow(/explicit wall materials/);
 });
 
 it('keeps texture columns continuous when one source wall becomes two cell boundary segments', () => {

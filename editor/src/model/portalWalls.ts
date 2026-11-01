@@ -3,6 +3,7 @@ import type { LevelDocument, Zone } from './level';
 import type { CompiledRoomCell, RoomTopology } from './roomTopology';
 import type { WallSurface } from './surfaces';
 import { airHeightsChanged } from './roomHeights';
+import { hasNativeWallMaterials } from './roomMaterials';
 
 /** Existing imported openings keep their authored draw records. New openings
  * are determined by the generated neighbour and original collision identity,
@@ -14,14 +15,15 @@ export function newPortalTarget(document: LevelDocument, topology: RoomTopology,
   if (!target) throw new Error(`Doorway ${cell.id} -> ${neighbour} has no draw-room identity.`);
   if (target.sourceId === cell.sourceId) return undefined;
   const line = cell.sourceLines[edge];
-  return cell.originZone !== null && line !== null && line !== undefined && document.lines[line]!.connect === target.originZone
+  const targetOrigin = target.originZone ?? (hasNativeWallMaterials(target.originZone, target.sourceLines) ? target.recordZone : null);
+  return hasNativeWallMaterials(cell.originZone, cell.sourceLines) && line !== null && line !== undefined && document.lines[line]!.connect === targetOrigin
     && !airHeightsChanged(document, cell) && !airHeightsChanged(document, target) ? undefined : target;
 }
 
 /** Original portals whose destination no longer shares this generated edge
  * need new solid graphics as well as closed collision geometry. */
 export function closedPortalEdges(document: LevelDocument, cell: CompiledRoomCell): number[] {
-  if (cell.originZone === null) return [];
+  if (!hasNativeWallMaterials(cell.originZone, cell.sourceLines)) return [];
   return cell.neighbours.flatMap((neighbour, edge) => {
     const line = cell.sourceLines[edge];
     return neighbour < 0 && line != null && document.lines[line]!.connect >= 0 ? [edge] : [];
@@ -31,7 +33,7 @@ export function closedPortalEdges(document: LevelDocument, cell: CompiledRoomCel
 /** Replace old portal materials when the generated boundary is solid or now
  * opens into a different room. The new destination supplies the air bands. */
 export function changedPortalEdges(document: LevelDocument, topology: RoomTopology, cell: CompiledRoomCell): number[] {
-  if (cell.originZone === null) return [];
+  if (!hasNativeWallMaterials(cell.originZone, cell.sourceLines)) return [];
   return cell.neighbours.flatMap((neighbour, edge) => {
     const line = cell.sourceLines[edge];
     return line != null && document.lines[line]!.connect >= 0
@@ -42,7 +44,7 @@ export function changedPortalEdges(document: LevelDocument, topology: RoomTopolo
 /** True new perimeter edges need explicit material/lighting; decomposition
  * seams are internal and must never acquire walls. */
 export function unassignedBoundaryEdges(topology: RoomTopology, cell: CompiledRoomCell): number[] {
-  if (cell.originZone === null) return [];
+  if (!hasNativeWallMaterials(cell.originZone, cell.sourceLines)) return [];
   return cell.neighbours.flatMap((neighbour, edge) => cell.sourceLines[edge] == null
     && (neighbour < 0 || topology.cells.find(target => target.id === neighbour)?.sourceId !== cell.sourceId) ? [edge] : []);
 }

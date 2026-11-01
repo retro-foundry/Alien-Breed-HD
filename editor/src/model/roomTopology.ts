@@ -3,6 +3,7 @@ import type { LevelDocument } from './level';
 import { sourceWallForEdge, type RoomSource, type SourceRoom } from './roomSource';
 import type { VisibilityRoom } from './visibilityGeometry';
 import { restoreRoomHeights, type RoomHeights } from './roomHeights';
+import { hasNativeWallMaterials } from './roomMaterials';
 
 export interface CompiledRoomCell extends VisibilityRoom {
   sourceId: string;
@@ -64,7 +65,7 @@ export function compileRoomTopology(document: LevelDocument, source: RoomSource)
       if (edge.neighbour === null) return -1;
       const destination = Number(edge.neighbour), other = pieces[destination]!.room;
       const line = sourceLines[index] ?? null;
-      if (line !== null && document.lines[line]!.connect === -1 && other.originZone !== null && other.id !== room.id) return -1;
+      if (line !== null && document.lines[line]!.connect === -1 && hasNativeWallMaterials(other.originZone, other.wallSources) && other.id !== room.id) return -1;
       return destination;
     });
     sourceCells.set(room.id, [...(sourceCells.get(room.id) ?? []), id]);

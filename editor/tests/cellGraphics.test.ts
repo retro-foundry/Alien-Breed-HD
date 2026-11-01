@@ -60,6 +60,10 @@ it('translates arc and beam points while retaining surrounding control order and
     decoded.points.forEach(id => expect(built.pointReferences.get(0)).toContain(id));
   }
   expect(topology).toEqual(before);
+  const copies = { ...source, rooms: source.rooms.map(room => ({ ...room, originZone: null })) };
+  const copiedTopology = compileRoomTopology(document, copies), copied = buildCellGraphics(document, copies, copiedTopology);
+  expect(copiedTopology.cells.every(cell => cell.originZone === null)).toBe(true);
+  expect(copied.streams.get(0)!.lower).toEqual(generated);
   const reshaped = { ...source, rooms: document.roomSource.rooms.map(room => ({ ...room, vertices: room.vertices.map(point => ({ x: point.x * 2, z: point.z * 2 })) })) };
   expect(() => buildCellGraphics(document, reshaped, compileRoomTopology(document, reshaped))).toThrow(/explicit geometry mapping/);
 });

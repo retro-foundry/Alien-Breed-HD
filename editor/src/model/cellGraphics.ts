@@ -9,6 +9,7 @@ import { buildCellPolygons } from './surfaceGeometry';
 import { buildCellWallGeometry, type NewRoomWallMaterials, type ClosingWallMaterials } from './wallGeometry';
 import { buildDrawTopology } from './drawTopology';
 import { assertGraphicsRecordBudget } from './renderLimits';
+import { hasNativeWallMaterials } from './roomMaterials';
 
 export interface NewRoomGraphics {
   walls: NewRoomWallMaterials;
@@ -30,10 +31,10 @@ export interface CellGraphics {
  */
 export function buildCellGraphics(document: LevelDocument, source: RoomSource, topology: RoomTopology,
   newRooms: ReadonlyMap<string, NewRoomGraphics> = new Map(), closures: ReadonlyMap<string, ClosingRoomGraphics> = new Map()): CellGraphics {
-  for (const id of newRooms.keys()) if (!source.rooms.some(room => room.id === id && room.originZone === null))
-    throw new Error(`New-room graphics settings refer to missing or imported room ${id}.`);
-  for (const id of closures.keys()) if (!source.rooms.some(room => room.id === id && room.originZone !== null))
-    throw new Error(`Closure graphics settings refer to missing or newly drawn room ${id}.`);
+  for (const id of newRooms.keys()) if (!source.rooms.some(room => room.id === id && !hasNativeWallMaterials(room.originZone, room.wallSources)))
+    throw new Error(`New-room perimeter graphics refer to missing room ${id} or a room that inherits native wall materials.`);
+  for (const id of closures.keys()) if (!source.rooms.some(room => room.id === id && hasNativeWallMaterials(room.originZone, room.wallSources)))
+    throw new Error(`Closure graphics refer to missing room ${id} or a room without native wall materials.`);
   const draw = buildDrawTopology(source, topology);
   const closing = new Map<string, ClosingWallMaterials>([...closures].map(([id, room]) => [id, { walls: room.walls, lightingPoint: room.lightingPoint }]));
   const generated = buildCellWallGeometry(document, source, draw.topology, new Map([...newRooms].map(([id, room]) => [id, room.walls])), closing);
@@ -54,9 +55,10 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
   const streams = new Map<number, GraphicsStreamInput>(), pointReferences = new Map<number, number[]>();
   for (const cell of topology.cells) {
     const room = source.rooms.find(room => room.id === cell.sourceId)!, template = document.zones.find(zone => zone.id === cell.recordZone)!;
+    const native = hasNativeWallMaterials(room.originZone, room.wallSources);
     const originalCorners = normaliseRoomOutline(template.boundaryIds.map(id => ({ x: document.lines[id]!.x, z: document.lines[id]!.z })));
     const dx = room.vertices[0]!.x - originalCorners[0]!.x, dz = room.vertices[0]!.z - originalCorners[0]!.z;
-    const translation = room.originZone !== null && room.vertices.length === originalCorners.length
+    const translation = native && room.vertices.length === originalCorners.length
       && room.vertices.every((point, index) => point.x - originalCorners[index]!.x === dx && point.z - originalCorners[index]!.z === dz);
     const owner = draw.owners.get(cell.id)!, members = topology.cells.filter(target => target.sourceId === cell.sourceId);
     const polygonLayers = wholePolygons.get(owner) ?? { lower: members.flatMap(member => polygons.get(member.id)!.lower), upper: members.flatMap(member => polygons.get(member.id)!.upper) };
@@ -65,7 +67,7 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
       const wallRecords = upper ? wallLayers.upper : wallLayers.lower, polygonRecords = upper ? polygonLayers.upper : polygonLayers.lower;
       const insertion = upper ? selection?.wallInsertion.upper : selection?.wallInsertion.lower;
       const additions = wallRecords.filter(item => item.sourceOffset === undefined);
-      if ((room.originZone === null || additions.length > 0) && ((insertion === undefined && wallRecords.length > 0)
+      if ((!native || additions.length > 0) && ((insertion === undefined && wallRecords.length > 0)
         || (insertion !== undefined && (!Number.isInteger(insertion) || insertion < 0 || insertion > records.length))))
         throw new Error(`Room ${room.id} needs a valid ${upper ? 'upper' : 'lower'} wall insertion position in its material template.`);
       const result: GraphicsRecordInput[] = [];
@@ -73,7 +75,7 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
         if (index === insertion) result.push(...additions);
         const record = records[index]; if (!record) continue;
         if (record.wall) {
-          if (room.originZone !== null) result.push(...wallRecords.filter(item => item.sourceOffset === record.offset));
+          if (native) result.push(...wallRecords.filter(item => item.sourceOffset === record.offset));
         } else if (record.polygon) result.push(...polygonRecords.filter(item => item.sourceOffset === record.offset));
         else {
           const bytes = reader.bytes.slice(record.offset, record.offset + record.size);

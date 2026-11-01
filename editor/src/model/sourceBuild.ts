@@ -15,6 +15,7 @@ import { buildDrawTopology } from './drawTopology';
 import { closedPortalEdges, newPortalTarget, unassignedBoundaryEdges } from './portalWalls';
 import { resolveAnimationRoom } from './animationRooms';
 import { airHeightsChanged } from './roomHeights';
+import { hasNativeWallMaterials } from './roomMaterials';
 
 export interface SourceBuildOptions {
   /** Resolved game configuration in source room identities; -1 disables exit.
@@ -34,6 +35,10 @@ export interface SourceBuildOptions {
 export function buildSourceLevel(document: LevelDocument, options: SourceBuildOptions) {
   const source = document.roomSource, topology = compileRoomTopology(document, source);
   const moving = new Set(document.mechanisms.map(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift')));
+  for (const room of source.rooms) if (room.originZone === null && hasNativeWallMaterials(room.originZone, room.wallSources)) {
+    if (moving.has(room.recordZone)) throw new Error(`Room ${room.id} copies a moving door or lift. Allocate its independent controller and wall attachments before building; the original controller cannot drive a room copy.`);
+    if (document.switches.some(item => item.zone === room.recordZone)) throw new Error(`Room ${room.id} copies a switch. Allocate and link its independent activation record before building.`);
+  }
   for (const cell of topology.cells) {
     if (!airHeightsChanged(document, cell)) continue;
     const template = document.zones.find(zone => zone.id === cell.recordZone)!;

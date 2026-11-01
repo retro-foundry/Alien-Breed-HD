@@ -1636,3 +1636,17 @@ fixtures can establish current-format support independently.
   CI run 41270633486 (e16eaa3) completed: Windows passed; Linux failed only the
   two controls tooltip-focus checks. Their scroll/focus symptoms match the issue
   subsequently addressed in c683627. Newer Linux CI must still verify that fix.
+
+- Native room-material checkpoint: material provenance is now independent of
+  original runtime zone identity across wall geometry, ordered streams, portal
+  topology, appearance selection and point lighting. Existing wall-source fields
+  let a fresh room identity retain individual materials and decorative records;
+  original closed boundaries remain closed. One-sided inherited portals still
+  need an explicit closure style. Native-material copies of moving rooms or
+  switch rooms fail with an independent-control-record diagnostic instead of
+  silently becoming inert copies. All 720 model tests pass, including exact
+  translated decoration and arc/beam stream comparisons with fresh identities,
+  static native-copy save/build and behavioural-copy rejection. Both native
+  Chromium/Firefox inspection cases pass (four repeatable views); 16 adjacent
+  portal/group/sprite cases also pass. This is a room-clipboard compiler
+  prerequisite, not complete clipboard UI or all-content render parity.

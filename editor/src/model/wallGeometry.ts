@@ -7,6 +7,7 @@ import { encodeWallSurface, type WallSurface } from './surfaces';
 import { wallForSpan } from './surfaceGeometry';
 import { changedPortalEdges, hasUpperLayer, newPortalTarget, portalWallSpans, unassignedBoundaryEdges } from './portalWalls';
 import { roomSettings } from './roomHeights';
+import { hasNativeWallMaterials } from './roomMaterials';
 
 export interface CellWalls { lower: GraphicsRecordInput[]; upper: GraphicsRecordInput[] }
 export interface NewRoomWallMaterials { lower: readonly WallSurface[]; upper?: readonly WallSurface[] }
@@ -53,6 +54,7 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
     if (walls.has(cell.id)) throw new Error('Wall geometry contains duplicate runtime room identities.');
     const room = source.rooms.find(room => room.id === cell.sourceId), template = document.zones.find(zone => zone.id === cell.recordZone);
     if (!room || !template) throw new Error(`Room ${cell.sourceId} has a missing wall source or settings template.`);
+    const native = hasNativeWallMaterials(room.originZone, room.wallSources);
     const settings = roomSettings(document, cell);
     const unassigned = unassignedBoundaryEdges(topology, cell);
     const changed = [...changedPortalEdges(document, topology, cell), ...unassigned], closing = closingMaterials.get(room.id);
@@ -70,7 +72,7 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
       && room.vertices.every((point, index) => point.x - originalCorners[index]!.x === dx && point.z - originalCorners[index]!.z === dz);
     const retained = (record: Graphic) => record.points.every(id => points[id]?.x === document.points[id]!.x && points[id]?.z === document.points[id]!.z);
     const layer = (records: readonly Graphic[], selected: readonly WallSurface[] | undefined, upper: boolean): GraphicsRecordInput[] => {
-      if (room.originZone === null) {
+      if (!native) {
         if (!selected) throw new Error(`Room ${room.id} needs explicit wall materials before building.`);
         return cell.vertices.flatMap((a, index) => {
           const neighbour = cell.neighbours[index]!;
@@ -150,8 +152,8 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
       }));
       return [...original, ...fills];
     };
-    const selected = room.originZone === null ? newMaterials.get(room.id) : closing?.walls;
-    walls.set(cell.id, { lower: layer(template.lower, selected?.lower, false), upper: layer(template.upper, selected?.upper ?? (room.originZone === null ? [] : undefined), true) });
+    const selected = native ? closing?.walls : newMaterials.get(room.id);
+    walls.set(cell.id, { lower: layer(template.lower, selected?.lower, false), upper: layer(template.upper, selected?.upper ?? (native ? undefined : []), true) });
   }
   return { topology: { ...topology, points }, walls };
 }

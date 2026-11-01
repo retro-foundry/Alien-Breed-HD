@@ -15,17 +15,19 @@ clipboard feature or a reduction to copying only simple rooms.
   validated against `recordZone` for both imported and new rooms. They survive
   normalization and T-junction splitting. Do not replace these with nulls and
   then claim a material-preserving copy.
-- `wallGeometry.ts` currently branches on `originZone === null`: it repeats the
-  selected new-room wall materials on each perimeter edge. The imported path
+- `wallGeometry.ts` originally branched on `originZone === null`, repeating the
+  selected new-room wall materials on each perimeter edge. The native path
   preserves individual wall records, sampling, phase, decorative fragments,
   heights and stream identities. Copying an imported room needs that provenance
-  without also borrowing its original runtime identity.
+  without also borrowing its original runtime identity. `roomMaterials.ts` now
+  makes this decision from the retained native wall provenance separately.
 - `cellGraphics.ts` similarly inserts new-room walls as a batch, but preserves
   imported wall records at their original draw positions. Arc and LightDraw
   point references are translated only for an established whole-room translation.
   Ordered water/object/clip/backdrop records must stay in their native order.
 - `portalWalls.ts` distinguishes original openings from new or closed openings
-  using original zone identities. A copy needs explicit correspondence between
+  using material provenance and original/template correspondence. A copy needs
+  explicit correspondence between
   its copied neighbour and the source relationship. Copying only one side of an
   opening needs a valid closure appearance; copying both must retain an opening.
 - `sourceBuild.ts` reconstructs visibility and collision from source geometry.
@@ -62,3 +64,23 @@ external teleport/switch destinations, independent door/lift cycles, captured
 settings after original edits/deletion, capacity rejection, cancellation,
 save/reopen and whole-operation undo. Original-level byte passthrough and simple
 new-room copies do not establish this contract.
+
+## Material compiler checkpoint
+
+The wall, stream-order, topology/portal, appearance and lighting stages now
+distinguish inherited native walls from a new perimeter-material selection.
+Fresh room identities can retain their wall records, native closed boundaries,
+paired openings, ordered arc/beam graphics and point-lighting provenance.
+One-sided inherited openings still require an explicit closure appearance.
+Source saves use the existing validated wall-source fields; no generated tables
+or copied original zone identities are written into the editable baseline.
+
+All 720 model tests pass. Tests compare translated interior decorations and
+ordered arc/beam streams with and without original runtime identities; a static
+native-material copy compiles through project save/reopen. Both Chromium/Firefox
+native-render cases pass, inspecting four deterministic camera directions, as
+do 16 adjacent portal/group/sprite cases. This is compiler acceptance and
+record-preservation evidence, not complete original/copy frame parity for every
+content class. Controller/switch copies are explicitly rejected before build
+until independent authoring exists. Full clipboard assembly/UI, partial surface
+mapping and the remaining relationship/profile requirements are still open.
