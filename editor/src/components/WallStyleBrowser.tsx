@@ -1,28 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Graphic } from '../model/graphics';
 import { loadWallCatalog, loadWallTexture } from '../model/wallAssets';
-import { wallTextureRgba, type WallSheet, type WallTexture } from '../model/wallTextures';
+import { type WallSheet, type WallTexture } from '../model/wallTextures';
 import './WallStyleBrowser.css';
 import type { WallOverride } from '../model/wallOverrides';
 import { NativeWallAssetEditor } from './NativeWallAssetEditor';
+import { WallSheetImage } from './WallSheetImage';
+import { PngWallImporter } from './PngWallImporter';
 
 interface BrowserProps { records: readonly Graphic[]; value: string; onChange: (value: string) => void; label: string;
-  overrides?: readonly WallOverride[]; baseline?: Uint8Array; onAssetChange?: (texture: number, bytes: Uint8Array | null) => void }
-
-function SheetImage({ sheet, texture, shade }: { sheet: WallSheet; texture: WallTexture; shade: number }) {
-  const canvas = useRef<HTMLCanvasElement>(null);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    try {
-      const context = canvas.current!.getContext('2d');
-      if (!context) throw new Error('The browser cannot draw wall material thumbnails.');
-      const pixels = context.createImageData(texture.width, texture.height); pixels.data.set(wallTextureRgba(texture, shade));
-      context.putImageData(pixels, 0, 0); setError('');
-    } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
-  }, [texture, shade]);
-  return <><canvas ref={canvas} width={texture.width} height={texture.height} role="img"
-    aria-label={`${sheet.name} texture sheet, ${texture.width} by ${texture.height}, shade ${shade}`} />{error && <span role="alert">{error}</span>}</>;
-}
+  overrides?: readonly WallOverride[]; baseline?: Uint8Array; onAssetChange?: (texture: number, bytes: Uint8Array | null, sourcePng?: Uint8Array) => void }
 
 function Browser({ records, value, onChange, label, overrides, baseline, onAssetChange }: BrowserProps) {
   const [loaded, setLoaded] = useState<{ ids: string; map: ReadonlyMap<number, { sheet: WallSheet; texture: WallTexture }> }>();
@@ -52,12 +39,13 @@ function Browser({ records, value, onChange, label, overrides, baseline, onAsset
           `${asset.sheet.name} ${record.texture} style ${index + 1}`.toLowerCase().includes(query.toLowerCase().trim())).map(({ record, index, asset }) =>
           <button type="button" className="wall-style-tile" key={record.offset} aria-pressed={value === String(record.offset)}
             aria-label={`Choose ${label} style ${index + 1}: ${asset.sheet.name}`} title="Select this authored wall style. Apply the form to commit it as an undoable edit." onClick={() => onChange(String(record.offset))}>
-            <SheetImage {...asset} shade={shade} /><span>{asset.sheet.name.replace(/\.wad$/i, '')}</span><small>Style {index + 1} · Texture {record.texture}</small>
+            <WallSheetImage {...asset} shade={shade} /><span>{asset.sheet.name.replace(/\.wad$/i, '')}</span><small>Style {index + 1} · Texture {record.texture}</small>
           </button>)}
       </div>}
     {assets && !records.some((record, index) => `${assets.get(record.texture!)!.sheet.name} ${record.texture} style ${index + 1}`.toLowerCase().includes(query.toLowerCase().trim())) && <p role="status">No matching wall styles.</p>}
-    {selected && baseline && onAssetChange && <NativeWallAssetEditor key={selected.sheet.id} sheet={selected.sheet} label={label}
-      baseline={baseline} overrides={overrides} onChange={onAssetChange} />}
+    {selected && baseline && onAssetChange && <><PngWallImporter key={`png:${selected.sheet.id}`} {...selected} label={label} baseline={baseline}
+      override={overrides?.find(asset => asset.texture === selected.sheet.id)} onChange={onAssetChange} />
+      <NativeWallAssetEditor key={selected.sheet.id} sheet={selected.sheet} label={label} baseline={baseline} overrides={overrides} onChange={onAssetChange} /></>}
   </div>;
 }
 

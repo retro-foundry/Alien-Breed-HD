@@ -109,13 +109,14 @@ export function undo(history: History): History {
   return { document: applyCommand(history.document, command, true), past: history.past.slice(0, -1), future: [...history.future, command] };
 }
 
-export function replaceWallAsset(document: LevelDocument, texture: number, bytes: Uint8Array | null): EditCommand {
+export function replaceWallAsset(document: LevelDocument, texture: number, bytes: Uint8Array | null, sourcePng?: Uint8Array): EditCommand {
   if (!Number.isInteger(texture) || !nativeWallSheets[texture]) throw new Error('Choose an existing native wall material slot.');
   const old = document.wallOverrides?.find(asset => asset.texture === texture);
-  if ((bytes === null && !old) || (bytes && old && sameBytes(bytes, old.bytes)))
+  if ((bytes === null && !old) || (bytes && old && sameBytes(bytes, old.bytes)
+    && (sourcePng === undefined || sourcePng === old.sourcePng || (sourcePng && old.sourcePng && sameBytes(sourcePng, old.sourcePng)))))
     return { label: 'Replace wall material', patches: [] };
   const remaining = (document.wallOverrides ?? []).filter(asset => asset.texture !== texture);
-  const next = bytes ? [...remaining, { texture, bytes }] : remaining;
+  const next = bytes ? [...remaining, { texture, bytes, ...(sourcePng ? { sourcePng } : {}) }] : remaining;
   return { label: bytes ? 'Replace wall material' : 'Restore original wall material', patches: [],
     wallOverrides: { before: document.wallOverrides, after: next.length ? restoreWallOverrides(next) : undefined } };
 }

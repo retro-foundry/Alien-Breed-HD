@@ -645,6 +645,7 @@ fixtures can establish current-format support independently.
   point brightness generation, portal height openings, general decorative
   geometry mapping and full compiler/UI integration remain required before
   deployment.
+
 - Generated point lighting now has an explicit compiler contract: preserve a
   retained identity, copy a selected original point, sample an original segment
   by a rational fraction, or assign lower/upper words directly. New or moved
@@ -1184,3 +1185,29 @@ fixtures can establish current-format support independently.
   `amiga/archive/amos/256wallchunk.amos`; this is a completed native asset path,
   not completion of PNG authoring, other R8/R11 resources, the full goal or
   deployment.
+
+- PNG wall import now resizes a still image to the selected native sheet,
+  matches its existing palette, composites alpha onto the material background
+  and packs native five-bit pixels while preserving all authored lighting
+  palettes. Fitted/native comparison and adjusted-pixel counts precede Apply;
+  Cancel/Escape and stale asset/project changes keep source unchanged. Apply
+  commits original PNG and native output as one undoable asset edit; identical
+  reapply closes review without adding history or dropping source. Archive
+  capacity is validated before committing the import. Project v10 explicitly
+  declares PNG source slots and retains their original bytes separately from
+  WADs. Missing originals/schema downgrades fail loudly, legacy projects remain
+  readable and native game ZIPs contain WADs only. The original PNG can be
+  downloaded unchanged after workspace recovery. Restore original sheet is
+  exposed alongside PNG import rather than requiring native-file tools.
+  Source inspection corrected the earlier converter assumption:
+  `256wallchunk.amos` stops before its inactive `.256wad` tail, which uses a
+  different palette representation. The new import policy and its limited use
+  of the stored colour-distance expression are documented in
+  [editor-png.md](editor-png.md); native layout comes from the active C loader
+  and renderer, not a claim of running that AMOS tool.
+  All 671 model checks and production builds pass. Browser checks in Chromium
+  and Firefox cover 4K resizing, transparency, invalid input, review/cancel,
+  no-op reapply, atomic undo/redo, native renderer changes, exports and unchanged
+  original PNG recovery/downloads. Surrounding material/native-asset and controls
+  regressions also pass. New-palette generation, broader material assignment,
+  other resource conversions and remaining editor/deployment work remain open.

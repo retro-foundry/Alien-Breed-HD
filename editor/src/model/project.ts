@@ -24,13 +24,15 @@ export interface ProjectCandidate { name: string; folder: string; files: LevelFi
 export function encodeProject(document: LevelDocument): Uint8Array {
   const files = exportLevel(document);
   const walls = document.wallOverrides ? restoreWallOverrides(document.wallOverrides) : undefined;
-  return zipSync({
-    [MANIFEST]: strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: walls ? 9 : document.roomAppearances ? 8 : document.sourceTeleports ? 7 : document.sourceObjects ? 6 : document.sourceStarts ? 5 : 4, name: document.name, playtestSlot: document.playtestSlot, exitZone: document.exitZone,
+  const entries: Record<string, Uint8Array> = {
+    [MANIFEST]: strToU8(JSON.stringify({ format: 'alien-breed-level-project', version: walls?.some(asset => asset.sourcePng) ? 10 : walls ? 9 : document.roomAppearances ? 8 : document.sourceTeleports ? 7 : document.sourceObjects ? 6 : document.sourceStarts ? 5 : 4, name: document.name, playtestSlot: document.playtestSlot, exitZone: document.exitZone,
       ...(walls ? { wallAssets: walls.map(asset => asset.texture), sourceFiles: [ROOM_SOURCE,
         ...(document.sourceStarts ? [PLAYER_STARTS] : []), ...(document.sourceObjects ? [OBJECT_PLACEMENTS] : []),
         ...(document.sourceTeleports ? [TELEPORTER_LINKS] : []), ...(document.roomAppearances ? [ROOM_APPEARANCES] : []),
-        ...(document.drawGroups ? ['level/twolev.cfg'] : [])] } : {}) })),
+        ...(document.drawGroups ? ['level/twolev.cfg'] : [])],
+        ...(walls.some(asset => asset.sourcePng) ? { wallSourcePng: walls.filter(asset => asset.sourcePng).map(asset => asset.texture) } : {}) } : {}) })),
     ...Object.fromEntries((walls ?? []).map(asset => [`assets/walls/${asset.texture}.wad`, asset.bytes])),
+    ...Object.fromEntries((walls ?? []).filter(asset => asset.sourcePng).map(asset => [`assets/wall-sources/${asset.texture}.png`, asset.sourcePng!])),
     [ROOM_SOURCE]: strToU8(JSON.stringify(roomSourceSnapshot(document.roomSource))),
     ...(document.sourceStarts ? { [PLAYER_STARTS]: strToU8(JSON.stringify(restoreSourceStarts(document.sourceStarts))) } : {}),
     ...(document.sourceObjects ? { [OBJECT_PLACEMENTS]: strToU8(JSON.stringify(validateSourceObjects(document, document.sourceObjects))) } : {}),
@@ -38,7 +40,12 @@ export function encodeProject(document: LevelDocument): Uint8Array {
     ...(document.roomAppearances ? { [ROOM_APPEARANCES]: strToU8(JSON.stringify(validateRoomAppearances(document, document.roomAppearances))) } : {}),
     'level/twolev.bin': files.data, 'level/twolev.graph.bin': files.graphics, 'level/twolev.clips': files.clips,
     ...(document.drawGroups ? { 'level/twolev.cfg': encodeLevelSetup(document.exitZone, document.drawGroups) } : {}),
-  }, { level: 6 });
+  };
+  if (Object.values(entries).some(bytes => bytes.length > MAX_FILE) || Object.values(entries).reduce((total, bytes) => total + bytes.length, 0) > MAX_ARCHIVE)
+    throw new Error('The project exceeds the 64 MiB source archive limit. Use smaller PNG source images or remove unused overrides.');
+  const archive = zipSync(entries, { level: 6 });
+  if (archive.length > MAX_ARCHIVE) throw new Error('The compressed project exceeds the 64 MiB archive limit. Use smaller PNG source images.');
+  return archive;
 }
 
 export function encodeGameLevel(document: LevelDocument): Uint8Array {
@@ -63,15 +70,24 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
   let roomAppearances: readonly RoomAppearance[] | undefined;
   let wallOverrides: readonly WallOverride[] | undefined;
   const wallFiles = Object.entries(entries).filter(([path]) => /^(assets\/walls\/|includes\/walls\/)/i.test(path.replaceAll('\\', '/')));
+  const pngFiles = Object.keys(entries).filter(path => /^assets\/wall-sources\//i.test(path.replaceAll('\\', '/')));
   const manifest = entries[MANIFEST];
   if (manifest) {
     if (manifest.length > 16384) throw new Error('The project manifest is too large.');
     let metadata: unknown;
     try { metadata = JSON.parse(strFromU8(manifest)); }
     catch { throw new Error('The project manifest is not valid JSON.'); }
-    if (!metadata || typeof metadata !== 'object' || !('format' in metadata) || metadata.format !== 'alien-breed-level-project' || !('version' in metadata) || typeof metadata.version !== 'number' || ![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(metadata.version))
+    if (!metadata || typeof metadata !== 'object' || !('format' in metadata) || metadata.format !== 'alien-breed-level-project' || !('version' in metadata) || typeof metadata.version !== 'number' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(metadata.version))
       throw new Error('This project format is not supported by this editor version.');
-    if (metadata.version === 9) {
+    if (metadata.version >= 9) {
+      let pngSlots: number[] = [];
+      if (metadata.version === 10) {
+        if (!('wallSourcePng' in metadata) || !Array.isArray(metadata.wallSourcePng) || !metadata.wallSourcePng.length
+          || metadata.wallSourcePng.length !== pngFiles.length || new Set(metadata.wallSourcePng).size !== pngFiles.length
+          || metadata.wallSourcePng.some(id => typeof id !== 'number' || !Number.isInteger(id) || !nativeWallSheets[id]
+            || !entries[`assets/wall-sources/${id}.png`])) throw new Error('The original PNG source list is missing or disagrees with its files.');
+        pngSlots = metadata.wallSourcePng as number[];
+      } else if (pngFiles.length || 'wallSourcePng' in metadata) throw new Error('Original PNG sources require project format version 10.');
       const sourceNames = [ROOM_SOURCE, PLAYER_STARTS, OBJECT_PLACEMENTS, TELEPORTER_LINKS, ROOM_APPEARANCES, 'level/twolev.cfg'];
       if (!('sourceFiles' in metadata) || !Array.isArray(metadata.sourceFiles) || !metadata.sourceFiles.includes(ROOM_SOURCE)
         || new Set(metadata.sourceFiles).size !== metadata.sourceFiles.length || metadata.sourceFiles.some(name => typeof name !== 'string' || !sourceNames.includes(name))
@@ -83,9 +99,11 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
         if (typeof texture !== 'number' || !Number.isInteger(texture) || !nativeWallSheets[texture]) throw new Error('Invalid project wall asset slot.');
         const bytes = entries[`assets/walls/${texture}.wad`];
         if (!bytes) throw new Error('A project wall asset file is missing.');
-        return { texture, bytes };
+        return { texture, bytes, ...(pngSlots.includes(texture) ? { sourcePng: entries[`assets/wall-sources/${texture}.png`]! } : {}) };
       }));
+      if (pngSlots.some(id => !wallOverrides!.some(asset => asset.texture === id))) throw new Error('A PNG source has no matching native wall asset.');
     } else if (wallFiles.length || 'wallAssets' in metadata) throw new Error('Wall assets require project format version 9.');
+    if (metadata.version < 9 && (pngFiles.length || 'wallSourcePng' in metadata)) throw new Error('Original PNG sources require project format version 10.');
     if (metadata.version >= 2) {
       if (!('playtestSlot' in metadata) || typeof metadata.playtestSlot !== 'number' || !Number.isInteger(metadata.playtestSlot) || metadata.playtestSlot < 0 || metadata.playtestSlot > 15)
         throw new Error('The project has an invalid game level slot. Choose a slot from 1 to 16.');
@@ -136,6 +154,7 @@ function candidates(entries: Record<string, Uint8Array>, title: string): Project
     } else if (entries[ROOM_APPEARANCES]) throw new Error('Room appearances require project format version 8.');
     if ('name' in metadata && typeof metadata.name === 'string') projectName = metadata.name.slice(0, 200);
   }
+  if (!manifest && pngFiles.length) throw new Error('Original PNG sources require a project manifest.');
   if (!manifest && wallFiles.length) wallOverrides = restoreWallOverrides(wallFiles.map(([path, bytes]) => {
     const name = path.replaceAll('\\', '/').toLowerCase();
     const sheet = nativeWallSheets.find(sheet => `includes/walls/${sheet.name}`.toLowerCase() === name);
@@ -185,7 +204,7 @@ export function openArchive(bytes: Uint8Array, name: string): ProjectCandidate[]
   try {
     entries = unzipSync(bytes, { filter(file) {
       const base = file.name.replaceAll('\\', '/').split('/').at(-1)?.toLowerCase() ?? '';
-      if (!LEVEL_NAMES.includes(base) && !/^(assets\/walls\/|includes\/walls\/)/i.test(file.name.replaceAll('\\', '/')) && file.name !== MANIFEST && file.name !== ROOM_SOURCE && file.name !== PLAYER_STARTS && file.name !== OBJECT_PLACEMENTS && file.name !== TELEPORTER_LINKS && file.name !== ROOM_APPEARANCES) return false;
+      if (!LEVEL_NAMES.includes(base) && !/^(assets\/(walls|wall-sources)\/|includes\/walls\/)/i.test(file.name.replaceAll('\\', '/')) && file.name !== MANIFEST && file.name !== ROOM_SOURCE && file.name !== PLAYER_STARTS && file.name !== OBJECT_PLACEMENTS && file.name !== TELEPORTER_LINKS && file.name !== ROOM_APPEARANCES) return false;
       if (file.originalSize > MAX_FILE || (extracted += file.originalSize) > MAX_ARCHIVE)
         throw new Error('The archive contains too much unpacked level data.');
       return true;

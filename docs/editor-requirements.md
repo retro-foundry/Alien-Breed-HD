@@ -74,12 +74,15 @@ dragged floors. Animated-height authoring is still required.
 R8 now has visual lower/upper wall style selection in room and stair forms,
 using packaged native texture sheets, original palette levels, search and
 explicit draft/apply behavior. Every decoded sheet matches independent native
-C dump pixels. Errors and retries preserve source. Broader material assignment,
+C dump pixels. Errors and retries preserve source.
 Native wall overrides now persist independently of original levels, pass
 through compiled preview/export and restore on undo, reopening and recovery.
 Raw/SB WAD import is available in advanced material tools. This establishes the
-wall-asset path for R8/R11; PNG import/conversion and the other resource classes
-remain open.
+wall-asset path for R8/R11. PNG wall import now resizes automatically, matches
+the existing native palette, previews before applying and preserves original
+PNGs in v10 project backups/recovery. Native pixel packing and actual renderer
+changes are checked. New-palette authoring, broader material assignment,
+floor/other resource conversions and the other resource classes remain open.
 
 The actual game engine is now embedded beside the map, with zone visits,
 lighting-edit reloads and isolated playtests. All 16 maps load and draw in both

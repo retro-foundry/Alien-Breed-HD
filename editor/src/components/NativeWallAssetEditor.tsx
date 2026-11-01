@@ -23,8 +23,5 @@ export function NativeWallAssetEditor({ sheet, label, baseline, overrides, onCha
         } catch (error) { if (id === request.current) setError(error instanceof Error ? error.message : String(error)); }
       }} /></label>
     {error && <p role="alert">{error}</p>}
-    <button type="button" disabled={!overrides?.some(asset => asset.texture === sheet.id)}
-      title="Restore the packaged original sheet as one undoable edit. All walls using this material update together."
-      onClick={() => onChange(sheet.id, null)}>Restore original sheet</button>
   </details>;
 }

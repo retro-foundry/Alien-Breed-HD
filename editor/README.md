@@ -20,9 +20,15 @@ Opening local files does not upload them anywhere.
 
 ## Current working workflows
 
+- Import a PNG in a room's material browser. It resizes to the native sheet,
+  matches its existing colours and preserves its lighting palettes. Compare
+  fitted/native previews, then Apply PNG as one undoable shared-material edit.
+  Cancel or Escape discards the conversion. The original PNG stays in the
+  project and can be downloaded unchanged after reopening or recovery.
 - Keep native wall-sheet replacements inside the project, with undo/redo,
   workspace recovery, preview and game export. Advanced Native sheet tools in
-  the material browser import compatible raw/SB WADs and restore the original.
+  the material browser import compatible raw/SB WADs; Restore original sheet
+  is available beside PNG import.
   An imported sheet changes all walls using that shared material. Exported
   installation notes identify shared wall files as well as the target level.
 - Browse lower/upper wall styles visually in the room and stair forms. Search
@@ -222,8 +228,10 @@ pixel. Browser checks compare packaged catalog dimensions and canvas pixels.
 Native wall overrides now use project format v9: original level files stay
 unchanged, while native material bytes and required source-file declarations
 travel with the project. Preview restoration and game ZIP re-import are tested.
-Original v1–v8 projects remain readable. PNG import/conversion, broader resource
-authoring and export profiles remain in progress.
+Projects retaining PNG sources use v10; v1–v9 projects remain readable. Game
+exports carry the converted native WAD, while projects keep the original image.
+See [PNG conversion contracts](../docs/editor-png.md). New-palette generation,
+broader resource authoring and export profiles remain in progress.
 
 ## Shortcuts
 
