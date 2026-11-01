@@ -1571,3 +1571,17 @@ fixtures can establish current-format support independently.
   single/group clipboard saves, atomic undo/redo, native heights/types, modal
   containment, tooltip focus, duplication and Select All. Cross-platform CI and
   the remaining full-editor requirements still need verification/completion.
+
+- Paste placement checkpoint: Place pasted objects / Ctrl/Command+Shift+V opens
+  a transactional placement dialog. Its X/Z anchor belongs to the first captured
+  object; the shared offset preserves every other object's spacing and exact
+  height/storey/settings. Use map cursor fills the anchor from the last map
+  position. Whole-batch validation disables Paste here for invalid destinations;
+  Escape or Cancel paste discards the draft and retains the previous selection.
+  Native in-place Ctrl/Command+V remains available. Dialog text, field tooltips,
+  toolbar descriptions and Help explain placement and cancellation.
+  Production builds and all 20 focused Chromium/Firefox controls/modal/clipboard
+  cases pass, including map-anchor placement, rejection without source changes,
+  cancellation, one-step undo/redo and exact saved positions/heights. This extends
+  same-workspace object clipboard authoring; room groups, cross-project resource
+  transfer and the other full-editor requirements remain open.

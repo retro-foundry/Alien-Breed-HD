@@ -13,6 +13,7 @@ import { Inspector } from './components/Inspector';
 import { ObjectGroupInspector } from './components/ObjectGroupInspector';
 import { StairBuilder } from './components/StairBuilder';
 import { ObjectBuilder } from './components/ObjectBuilder';
+import { ObjectPaste } from './components/ObjectPaste';
 import { objectTemplates } from './model/objectAuthoring';
 import { editObjectGroup, objectSelectionIds } from './model/objectGroups';
 import { duplicateObjects } from './model/duplicateObjects';
@@ -71,8 +72,9 @@ export function App() {
   const [roomTemplate, setRoomTemplate] = useState(0);
   const [stairsOpen, setStairsOpen] = useState(false);
   const [objectOpen, setObjectOpen] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
   const [objectSeed, setObjectSeed] = useState<number>();
-  useEffect(() => { setStairsOpen(false); setObjectOpen(false); }, [workspace?.id]);
+  useEffect(() => { setStairsOpen(false); setObjectOpen(false); setPasteOpen(false); }, [workspace?.id]);
   const [layer, setLayer] = useState<'lower' | 'upper'>('lower'), [grid, setGrid] = useState(64), [showObjects, setShowObjects] = useState(true);
   const [view, setView] = useState<'map' | 'split' | '3d'>('map');
   const [cursor, setCursor] = useState({ x: 0, z: 0 }), [fitKey, setFitKey] = useState(0), [focusZone, setFocusZone] = useState<{ id: number; request: number }>();
@@ -302,13 +304,17 @@ export function App() {
         return;
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
-      if (stairsOpen || objectOpen) { if ((event.ctrlKey || event.metaKey) && ['o', 'd'].includes(event.key.toLowerCase())) event.preventDefault(); return; }
+      if (stairsOpen || objectOpen || pasteOpen) { if ((event.ctrlKey || event.metaKey) && ['o', 'd'].includes(event.key.toLowerCase())) event.preventDefault(); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); fileInput.current?.click(); return; }
       if (editing) return;
       if ((event.ctrlKey || event.metaKey) && ['c', 'v'].includes(event.key.toLowerCase())) {
         if (event.key.toLowerCase() === 'c' && selection?.kind !== 'object') return;
         event.preventDefault();
-        if (!event.repeat) { if (event.key.toLowerCase() === 'c') copySelectedObjects(); else pasteCopiedObjects(); }
+        if (!event.repeat) {
+          if (event.key.toLowerCase() === 'c') copySelectedObjects();
+          else if (event.shiftKey) { if (objectClipboard && !busy && !roomDraft) setPasteOpen(true); }
+          else pasteCopiedObjects();
+        }
         return;
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a' && (tab === 'objects' || event.target instanceof HTMLCanvasElement)) {
@@ -336,7 +342,7 @@ export function App() {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [save, historyAction, roomDraft, finishRoom, select, stairsOpen, objectOpen, duplicateObject, help, showRecents, choices.length, frameCurrent, deleteSelectedObjects, selectAllObjects, tab, beginBoxSelection, selection, copySelectedObjects, pasteCopiedObjects]);
+  }, [save, historyAction, roomDraft, finishRoom, select, stairsOpen, objectOpen, pasteOpen, duplicateObject, help, showRecents, choices.length, frameCurrent, deleteSelectedObjects, selectAllObjects, tab, beginBoxSelection, selection, copySelectedObjects, pasteCopiedObjects, objectClipboard, busy]);
 
   async function openDocument(next: LevelDocument, id?: string, request = ++generation.current) {
     const current = workspaceRef.current;
@@ -460,6 +466,7 @@ export function App() {
         <button className="small-button" disabled={!document || !!busy} title="Add an enemy, pickup or scenery object using a source template. Choose its room and position; Escape cancels the draft." onClick={() => { setRoomDraft(null); setTool('select'); setObjectSeed(undefined); setObjectOpen(true); }}>Add object</button>
         <button className="small-button" disabled={selection?.kind !== 'object' || !!busy || !!roomDraft} title="Capture selected objects and their current settings in the editor clipboard. Shortcut: Ctrl/Command+C. Text fields keep normal copy controls." onClick={copySelectedObjects}>Copy objects</button>
         <button className="small-button" disabled={!objectClipboard || !document || objectClipboard.source.original !== document.original || !!busy || !!roomDraft} title="Paste captured objects in place as one undoable edit, then drag or use the inspector to move them. Same workspace only; clipboard lasts until reload. Shortcut: Ctrl/Command+V." onClick={pasteCopiedObjects}>Paste objects</button>
+        <button className="small-button" disabled={!objectClipboard || !document || objectClipboard.source.original !== document.original || !!busy || !!roomDraft} title="Choose the first copied object's destination before pasting the whole selection. Spacing and heights are retained. Escape cancels. Shortcut: Ctrl/Command+Shift+V." onClick={() => setPasteOpen(true)}>Place pasted objects</button>
         {roomDraft && <><button className="small-button" disabled={roomDraft.vertices.length < 3} title="Validate and commit this whole outline as one undoable edit. Shortcut: Enter on the map." onClick={finishRoom}>Finish room</button><button className="small-button" title="Discard this unfinished outline. No project geometry changes. Shortcut: Escape." onClick={() => { setRoomDraft(null); setTool('select'); }}>Cancel room</button></>}
         <button className="icon-button" aria-label="Undo" title={`Undo ${workspace?.history.past.at(-1)?.label ?? ''} (Ctrl+Z)`} disabled={!workspace?.history.past.length} onClick={() => historyAction('undo')}><Icon name="undo" /></button><button className="icon-button" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled={!workspace?.history.future.length} onClick={() => historyAction('redo')}><Icon name="redo" /></button><span className="toolbar-divider" />
         <div className="layer-toggle"><button className={layer === 'lower' ? 'active' : ''} title="Inspect the lower floor of each zone." onClick={() => setLayer('lower')}>Lower</button><button className={layer === 'upper' ? 'active' : ''} title="Inspect upper-floor geometry where a zone has two floors." onClick={() => setLayer('upper')}>Upper</button></div><span className="toolbar-spacer" />
@@ -473,6 +480,8 @@ export function App() {
         {busy && <div className="busy-overlay" role="status"><span className="spinner" />{busy}</div>}
         {stairsOpen && document && template !== undefined && <StairBuilder document={document} template={template} selected={selectedRoom} cursor={cursor}
           onCancel={() => setStairsOpen(false)} onCreate={proposal => { edit(proposal.command); setStairsOpen(false); setTool('select'); setView('map'); selectRoom(proposal.rooms[0]!.id); }} />}
+        {pasteOpen && document && objectClipboard && <ObjectPaste document={document} clipboard={objectClipboard} cursor={cursor} onCancel={() => setPasteOpen(false)}
+          onPaste={proposal => { edit(proposal.command); setPasteOpen(false); setTool('select'); setTab('objects'); setShowObjects(true); setObjectIds(proposal.ids); setSelection({ kind: 'object', id: proposal.ids.at(-1)! }); setSelectedRoomId(null); }} />}
         {objectOpen && document && <ObjectBuilder document={document} initialObject={objectSeed} room={selectedRoom?.id} cursor={cursor} layer={layer} onCancel={() => setObjectOpen(false)}
           onCreate={proposal => { edit(proposal.command); setObjectOpen(false); setTab('objects'); setShowObjects(true); select({ kind: 'object', id: proposal.id }); }} />}
       </main>

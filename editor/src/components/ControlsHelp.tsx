@@ -25,6 +25,7 @@ export function ControlsHelp() {
       ['Delete', 'Delete selected objects as one undoable action; ignored while editing fields or in a dialog'],
       ['Ctrl / Command + D', 'Duplicate one object into a placement draft, or copy a selected group in place'],
       ['Ctrl / Command + C / V', 'Copy selected objects / paste captured copies in place in this workspace'],
+      ['Ctrl / Command + Shift + V', 'Place pasted objects: choose the first object position, or use the last map cursor position; Escape cancels'],
       ['Ctrl / ⌘ + Z', 'Undo'], ['Ctrl / ⌘ + Shift + Z', 'Redo (also Ctrl / ⌘ + Y)'], ['Ctrl / ⌘ + S', 'Download a project copy'],
       ['Ctrl / ⌘ + O', 'Open a project or level'], ['Enter', 'Apply a numeric property'], ['Esc', 'Cancel a numeric edit / clear selection / close help'], ['?', 'Open this help'],
     ]} />
