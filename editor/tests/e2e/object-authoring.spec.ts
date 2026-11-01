@@ -5,7 +5,7 @@ import { objectTemplates, createObject, floorMatchedObjectHeight } from '../../s
 import { applyCommand } from '../../src/model/commands';
 import { ammunitionType, weaponPickupType } from '../../src/model/objectSettings';
 import { decodeProject, encodeProject } from '../../src/model/project';
-import { captureEngine, engineObjectState, enginePlayerState } from '../engineCapture';
+import { captureEngine, engineObjectState, enginePlayerInventory } from '../engineCapture';
 
 test('new objects have independent native positions, atomic history and portable saved records', async ({ page }, testInfo) => {
   test.setTimeout(90000);
@@ -78,12 +78,12 @@ test('a newly placed blue key is collected by native gameplay and grants only it
   expect(await engineObjectState(page, id)).toMatchObject({ type: 4, x: 20128, z: 20240 });
   await preview.getByRole('button', { name: 'Build & play', exact: true }).click();
   await expect(preview.getByRole('status')).toHaveText('Playtest running');
-  expect((await enginePlayerState(page)).conditions).toBe(0);
+  expect((await enginePlayerInventory(page)).conditions).toBe(0);
   await page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas').focus();
   await page.keyboard.down('w');
   try { await expect.poll(async () => (await engineObjectState(page, id)).zone).toBe(-1); }
   finally { await page.keyboard.up('w'); }
-  expect((await enginePlayerState(page)).conditions).toBe(8);
+  expect((await enginePlayerInventory(page)).conditions).toBe(8);
   await preview.getByRole('button', { name: 'Stop', exact: true }).click();
   await page.screenshot({ path: testInfo.outputPath('key-settings.png'), fullPage: true });
 });
@@ -111,13 +111,13 @@ test('ammunition choices change native pickup artwork and grant the selected wea
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   await preview.getByRole('button', { name: 'Build & play', exact: true }).click();
   await expect(preview.getByRole('status')).toHaveText('Playtest running');
-  const before = (await enginePlayerState(page)).ammunition;
+  const before = (await enginePlayerInventory(page)).ammunition;
   await page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas').focus();
   await page.keyboard.down('w');
   try { await expect.poll(async () => (await engineObjectState(page, proposal.id)).zone).toBe(-1); }
   finally { await page.keyboard.up('w'); }
   const expected = [...before]; expected[1] = expected[1]! + 20 * 8; // default_plr1_guns plasma ammo_in_clip, ItsAnAmmoClip shift.
-  expect((await enginePlayerState(page)).ammunition).toEqual(expected);
+  expect((await enginePlayerInventory(page)).ammunition).toEqual(expected);
   await preview.getByRole('button', { name: 'Stop', exact: true }).click();
 });
 
@@ -147,14 +147,14 @@ test('weapon choices preserve floor placement and grant the correct native weapo
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   await preview.getByRole('button', { name: 'Build & play', exact: true }).click();
   await expect(preview.getByRole('status')).toHaveText('Playtest running');
-  const before = await enginePlayerState(page); expect(before.weapons[2]).toBe(false);
+  const before = await enginePlayerInventory(page); expect(before.weapons[2]).toBe(false);
   await page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas').focus();
   await page.keyboard.down('w');
   try { await expect.poll(async () => (await engineObjectState(page, proposal.id)).zone).toBe(-1); }
   finally { await page.keyboard.up('w'); }
   const expectedWeapons = [...before.weapons], expectedAmmo = [...before.ammunition];
   expectedWeapons[2] = true; expectedAmmo[2] = expectedAmmo[2]! + 5; // pickup 1 maps to rocket gun 2, AmmoInGuns[1].
-  const after = await enginePlayerState(page);
+  const after = await enginePlayerInventory(page);
   expect(after.weapons).toEqual(expectedWeapons); expect(after.ammunition).toEqual(expectedAmmo);
   await preview.getByRole('button', { name: 'Stop', exact: true }).click();
 });

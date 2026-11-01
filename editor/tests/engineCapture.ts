@@ -51,7 +51,19 @@ export async function captureEngine(page: Page, camera: EngineCamera): Promise<n
   }), camera);
 }
 
-export async function enginePlayerState(page: Page): Promise<{ zone: number; x: number; z: number; conditions: number; ammunition: number[]; weapons: boolean[]; playing: boolean }> {
+// Keep the position/play-state contract stable as optional inspection fields
+// grow. Exact movement assertions must not silently become partial assertions.
+export async function enginePlayerState(page: Page): Promise<{ zone: number; x: number; z: number; playing: boolean }> {
+  const { zone, x, z, playing } = await queryPlayerSnapshot(page);
+  return { zone, x, z, playing };
+}
+
+export async function enginePlayerInventory(page: Page): Promise<{ conditions: number; ammunition: number[]; weapons: boolean[] }> {
+  const { conditions, ammunition, weapons } = await queryPlayerSnapshot(page);
+  return { conditions, ammunition, weapons };
+}
+
+async function queryPlayerSnapshot(page: Page): Promise<{ zone: number; x: number; z: number; conditions: number; ammunition: number[]; weapons: boolean[]; playing: boolean }> {
   return page.evaluate(() => new Promise((resolve, reject) => {
     const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!;
     const id = crypto.randomUUID();

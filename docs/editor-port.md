@@ -1522,3 +1522,12 @@ fixtures can establish current-format support independently.
   All 709 model tests and production builds pass. Twelve Chromium/Firefox
   loading/motion/cycle cases pass; final focused range checks and both gate-edit
   cases also pass after sharing the activation validation.
+
+- Browser CI contract checkpoint: Windows and Linux browser runs exposed six
+  failures caused by inventory fields being added to a helper whose callers
+  assert exact player position/play-state objects. Those positions were correct.
+  The position helper now retains its original four-field contract; pickup checks
+  use a separate inventory helper backed by the same native snapshot query.
+  Existing exact movement assertions remain unchanged. The focused browser run
+  covering source starts, room redraw, teleports and object authoring passed
+  locally in Chromium and Firefox. Full cross-platform CI remains to be checked.
