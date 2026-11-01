@@ -2162,5 +2162,6 @@ fixtures can establish current-format support independently.
   revision before comparing pixels (the first packaged run exposed a stale-frame
   race in that assertion). Source bcf1d94 is published by site commit b9ad98d;
   runtime resource hashes remain unchanged and floor-bank files preserve their
-  original bytes through explicit Git attributes. Live deployment verification
-  follows the Pages run.
+  original bytes through explicit Git attributes. The public URL now serves the new frontend
+  (`index-Be-5ouop.js`); both downloaded floor resources match the packaged
+  original bytes exactly.
