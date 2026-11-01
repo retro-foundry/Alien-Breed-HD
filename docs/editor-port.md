@@ -2125,3 +2125,13 @@ fixtures can establish current-format support independently.
   The deployed runtime directory is `runtime/r-ad32e275c8d0e039/`. Live-site
   verification follows publication; the remaining R1–R12 work and Linux CI
   graphics-environment issue remain open.
+
+  Publication is verified: editor source `2831d8b` is deployed in site commit
+  `4edbafa`, followed by `f1485aa` / `23159d8` to preserve native bundle bytes
+  through Git's Windows line-ending filters. All committed runtime blobs match
+  the release manifest. Pages deployment succeeds. On the public URL, installed
+  Edge and Brave each create Room 138, edit a corner, Undo, apply its appearance,
+  download editable source, compile its 3D view and start/stop native gameplay.
+  The live iframe uses `runtime/r-ad32e275c8d0e039/frame.html`. Room drawing and
+  wall/corner editing are now published; this does not close the remaining
+  editor-port requirements.
