@@ -294,3 +294,27 @@ tightening the v6 list contract. Browser tests open actual editable source,
 activate the copied switch, save, reopen the downloaded project and verify its
 authored state resets without changing original files. Production builds pass.
 Switch authoring UI and complete room clipboard assembly remain open.
+
+## Native unused-slot write safety
+
+Native inspection found that the C switch routine's per-tick wall refresh also
+wrote through unused slot graphics fields. In `Anims.s`, `nobutt` advances unused
+off records without that unconditional write. The port could therefore corrupt
+graphics headers at offset zero or write outside the buffer through stale
+positive offsets, even though editable/native formats correctly preserve unused
+stored fields rather than treating them as active references.
+
+The refresh now applies only to active slots. Every switch graphics write,
+including use and timer-reset paths, requires the complete six-byte phase/texture
+write span inside the loaded graphics buffer. Native condition bits, activation,
+timer behavior and audio events remain unchanged, including the original timed
+reset branch for a stored inactive/on record with a valid target.
+
+`tests/feedback_switch_slots.c` reproduces the old unused-slot corruption and
+checks active toggles, idle slots, negative/large/partial-span offsets, zero/short
+buffer lengths, boundary canaries, condition bits, timer paths and audio events.
+It passes as a Windows executable and in WebAssembly with SAFE_HEAP, and runs in
+editor CI. The Windows Release game and editor preview runtime build; all 18
+focused Chromium/Firefox switch/copy-control/motion cases pass with that runtime.
+Workflow actionlint also passes. This fixes a port-specific memory write issue;
+it does not complete switch authoring or the room clipboard workflow.

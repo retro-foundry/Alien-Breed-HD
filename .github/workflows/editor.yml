@@ -11,6 +11,7 @@ on:
       - 'tools/build_editor_runtime.py'
       - 'tests/feedback_points.c'
       - 'tests/feedback_animation_limits.c'
+      - 'tests/feedback_switch_slots.c'
       - 'tests/feedback_animation_rooms.c'
       - 'tests/feedback_draw_rooms.c'
       - 'src/**'
@@ -28,6 +29,7 @@ on:
       - 'tools/build_editor_runtime.py'
       - 'tests/feedback_points.c'
       - 'tests/feedback_animation_limits.c'
+      - 'tests/feedback_switch_slots.c'
       - 'tests/feedback_animation_rooms.c'
       - 'tests/feedback_draw_rooms.c'
       - 'src/**'
@@ -71,6 +73,8 @@ jobs:
           node "$RUNNER_TEMP/editor-point-test.js"
           emcc tests/feedback_animation_limits.c src/objects.c src/logging.c -Isrc -sUSE_SDL=2 -sENVIRONMENT=node -O2 -o "$RUNNER_TEMP/editor-animation-test.js"
           node "$RUNNER_TEMP/editor-animation-test.js"
+          emcc tests/feedback_switch_slots.c src/objects.c -Isrc -sUSE_SDL=2 -sENVIRONMENT=node -O2 -sSAFE_HEAP=1 -o "$RUNNER_TEMP/editor-switch-test.js"
+          node "$RUNNER_TEMP/editor-switch-test.js"
           emcc tests/feedback_animation_rooms.c src/sb_decompress.c src/logging.c -Isrc -sUSE_SDL=2 -sENVIRONMENT=node -O2 --embed-file amiga/data/levels -o "$RUNNER_TEMP/editor-animation-rooms.js"
           node "$RUNNER_TEMP/editor-animation-rooms.js"
           emcc tests/feedback_draw_rooms.c src/level.c src/level_setup.c src/logging.c -Isrc -sUSE_SDL=2 -sENVIRONMENT=node -O2 -o "$RUNNER_TEMP/editor-draw-rooms.js"

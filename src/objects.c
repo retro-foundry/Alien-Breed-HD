@@ -5482,6 +5482,13 @@ void switch_routine(GameState *state)
         unsigned int bit_num = 4 + (unsigned int)switch_index;
         uint16_t bit_mask = (uint16_t)(1u << bit_num);
         int32_t gfx_off = (int32_t)be32(sw + 6);
+        /* Inactive slots retain unused source fields. Do not turn a stale
+         * graphics word into a live write target. All switch writes touch six
+         * bytes (phase at +0 and texture at +4), including timer resets. */
+        uint8_t *wall_ptr = NULL;
+        if (state->level.graphics && gfx_off >= 0 && state->level.graphics_byte_count >= 6u &&
+            (size_t)gfx_off <= state->level.graphics_byte_count - 6u)
+            wall_ptr = state->level.graphics + (size_t)gfx_off;
 
         /* Auto-reset branch (backtoend/nobutt): keep the fixed-update countdown
          * stable in real time instead of tying it to the current render cadence. */
@@ -5490,8 +5497,7 @@ void switch_routine(GameState *state)
                 sw[3] = (uint8_t)((int8_t)sw[3] - auto_dec);
                 if ((int8_t)sw[3] == 0) {
                     sw[10] = 0;
-                    if (state->level.graphics && gfx_off >= 0) {
-                        uint8_t *wall_ptr = state->level.graphics + (uint32_t)gfx_off;
+                    if (wall_ptr) {
                         write_be16(wall_ptr + 4, 11);
                         int16_t w = be16(wall_ptr);
                         w = (int16_t)(w & 0x007C);
@@ -5535,8 +5541,7 @@ void switch_routine(GameState *state)
 
             if (near_plr1 || near_plr2) {
                 sw[10] = (uint8_t)(~sw[10]); /* not.b 10(a0) */
-                if (state->level.graphics && gfx_off >= 0) {
-                    uint8_t *wall_ptr = state->level.graphics + (uint32_t)gfx_off;
+                if (wall_ptr) {
                     write_be16(wall_ptr + 4, 11);
                     int16_t w = be16(wall_ptr);
                     w = (int16_t)(w & 0x007C);
@@ -5549,10 +5554,10 @@ void switch_routine(GameState *state)
             }
         }
 
-        /* Keep wall state synced to current on/off and condition bits.
-         * This helps after save/load and mirrors what the Amiga writes during toggles. */
-        if (state->level.graphics && gfx_off >= 0) {
-            uint8_t *wall_ptr = state->level.graphics + gfx_off;
+        /* Keep active wall state synced after save/load. Anims.s nobutt has no
+         * unconditional graphics write for an unused/off slot; its stored
+         * graphics field is not a live attachment. */
+        if (zone_id >= 0 && wall_ptr) {
             write_be16(wall_ptr + 4, 11);
             int16_t w = be16(wall_ptr);
             w = (int16_t)(w & 0x007C);

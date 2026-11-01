@@ -1815,3 +1815,17 @@ fixtures can establish current-format support independently.
   strict v6 contract change. Production builds pass. Switch authoring UI, full
   room clipboard assembly and remaining R1–R12 requirements are still open;
   deployment remains pending readiness.
+
+  Native switch-slot safety: the C routine's extra unconditional wall refresh
+  wrote unused/off slot graphics fields, unlike `Anims.s` nobutt. It could corrupt
+  header bytes at zero or dereference stale positive offsets. Refresh now requires
+  an active slot, and all switch phase/texture writes (including use/timer reset)
+  validate the entire six-byte span against the actual graphics buffer. Native
+  activation, condition bits, countdown behavior and audio are preserved.
+  `feedback_switch_slots.c` fails on the old unused-slot write and passes after
+  the fix, with canaries and short/negative/large/boundary cases, active toggles
+  and timer paths. Windows native and WebAssembly SAFE_HEAP executions pass;
+  Windows Release and editor runtime builds pass; all 18 focused Chromium/Firefox
+  switch/copy-control/motion cases pass with the rebuilt engine. CI runs the new
+  regression, and workflow actionlint passes. Switch authoring and the broader
+  editor requirements remain open; deployment is still pending readiness.
