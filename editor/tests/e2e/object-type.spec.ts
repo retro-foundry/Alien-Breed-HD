@@ -4,25 +4,31 @@ import { roomHeightFixture } from '../roomHeightFixture';
 import { objectTemplates, createObject } from '../../src/model/objectAuthoring';
 import { applyCommand } from '../../src/model/commands';
 import { encodeProject, decodeProject } from '../../src/model/project';
+import { originalObjectTypes } from '../../src/model/objectTypes';
+import { originalFiles } from '../helpers';
 import { engineObjectState } from '../engineCapture';
 
-test('existing object changes complete type in place, with draft, history, portable save and native preview', async ({ page }, info) => {
+test('a compact named Type selector changes class immediately with history, portable save and native preview', async ({ page }, info) => {
   test.setTimeout(90000);
   const fixture = roomHeightFixture(), alien = objectTemplates(fixture.document).find(item => item.type === 0)!;
   const proposal = createObject(fixture.document, { template: alien.id, room: fixture.from.id, x: 20128, z: 20192, y: -7.5 });
-  const document = applyCommand(fixture.document, proposal.command), key = objectTemplates(document).find(item => item.type === 4)!;
+  const document = applyCommand(fixture.document, proposal.command);
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'types.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('tab', { name: 'Objects', exact: true }).click();
   await page.getByRole('button', { name: `Alien ${proposal.id}`, exact: true }).click();
-  const choice = page.getByRole('combobox', { name: 'Object type template', exact: true });
-  const apply = page.getByRole('button', { name: 'Apply object type', exact: true });
-  await expect(apply).toBeDisabled();
-  await choice.selectOption(String(key.id));
-  await expect(page.locator('.dirty-dot')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: `Alien ${proposal.id}`, exact: true })).toBeVisible();
-  await apply.click();
+  const choice = page.getByRole('combobox', { name: 'Object type', exact: true });
+  await expect(choice).toBeEnabled();
+  await expect(choice).toHaveValue('0');
+  await expect(page.getByRole('button', { name: 'Apply object type', exact: true })).toHaveCount(0);
+  await expect(page.getByText('Collision ID', { exact: true })).toHaveCount(0);
+  expect(await choice.locator('optgroup').allTextContents()).toHaveLength(3);
+  const typeBox = (await choice.boundingBox())!, positionBox = (await page.getByRole('spinbutton', { name: 'Position X', exact: true }).boundingBox())!;
+  expect(typeBox.y).toBeLessThan(positionBox.y);
+  await page.mouse.move(400, 180);
+  await page.screenshot({ path: info.outputPath('compact-object-inspector.png'), fullPage: true });
+  await choice.selectOption('4');
   await expect(page.getByRole('button', { name: `Key ${proposal.id}`, exact: true })).toBeVisible();
   await expect(page.getByRole('combobox', { name: 'Key colour', exact: true })).toBeVisible();
   await expect(page.getByRole('spinbutton', { name: 'Height', exact: true })).toHaveValue('-7.5');
@@ -38,4 +44,27 @@ test('existing object changes complete type in place, with draft, history, porta
   await page.getByRole('button', { name: '3D view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' }).getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
   expect(await engineObjectState(page, proposal.id)).toMatchObject({ type: 4, x: 20128, z: 20192, yFixed: -7.5 * 256 });
+  const cross = originalObjectTypes(Array.from({ length: 16 }, (_, index) => originalFiles(index + 1).data)).find(choice => !objectTemplates(document).some(item => item.type === choice.type && item.zone >= 0))!;
+  expect(cross).toBeDefined();
+  const preview = page.getByRole('region', { name: '3D game engine preview' }), revision = (await preview.getAttribute('data-revision'))!;
+  await choice.selectOption(String(cross.type));
+  await expect(preview).not.toHaveAttribute('data-revision', revision); await expect(preview.getByRole('status')).toContainText('zones loaded');
+  expect(await engineObjectState(page, proposal.id)).toMatchObject({ type: cross.type, x: 20128, z: 20192, yFixed: -7.5 * 256 });
+
+});
+
+
+test('a failed type library keeps the object editable and retries without changing its type', async ({ page }) => {
+  await page.route('**/reference/level_p/twolev.bin', route => route.fulfill({ status: 503, body: 'Unavailable' }));
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.getByRole('tab', { name: 'Objects', exact: true }).click();
+  await page.getByRole('button', { name: 'Barrel 16', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: 'Object type', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Retry object types', exact: true })).toBeVisible();
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  await page.unroute('**/reference/level_p/twolev.bin');
+  await page.getByRole('button', { name: 'Retry object types', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: 'Object type', exact: true })).toBeEnabled();
+  await expect(page.getByRole('combobox', { name: 'Object type', exact: true })).toHaveValue('10');
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
 });

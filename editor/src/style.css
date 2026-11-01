@@ -18,3 +18,5 @@
 .room-corner-row>.eyebrow{display:block;margin:10px 0 4px}.room-corner-row>.field-grid{gap:10px}.room-corner-row .number-field{min-width:0}.room-corner-row input{min-width:0;width:70px}
 .mechanism-attachments table{width:100%;border-collapse:collapse;font-size:11px}.mechanism-attachments caption{text-align:left;color:#b2de7a;margin:10px 0 6px}.mechanism-attachments th,.mechanism-attachments td{text-align:left;vertical-align:top;padding:5px 3px;border-bottom:1px solid #29333e}.mechanism-attachments .small-button{font-size:10px;padding:4px 6px;margin:2px 0}.mechanism-attachments ul{padding-left:20px;font-size:11px}
 .engine-surface-info{position:absolute;left:10px;right:10px;bottom:10px;pointer-events:none;display:flex;flex-wrap:wrap;gap:6px 14px;padding:8px 12px;background:#202b31;border-top:1px solid #40504b;font-size:11px;color:#b9c8cc;flex-shrink:0}.engine-surface-info strong{color:#b2de7a}
+
+.inspector .object-type-field select{width:100%;max-width:100%;min-width:0}.inspector .object-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.inspector .object-actions>button{margin:0;width:100%}

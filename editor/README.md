@@ -45,12 +45,12 @@ without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
   room copy automatically includes adjoining rooms and creates independent
   controllers. Imported-room conversion and grouped moving volumes remain gaps.
 
-- Select an object and use **Object type template ? Apply object type** to
-  replace its complete type/settings from another object in this level. This
-  copies artwork, dimensions, health and behaviour together, retaining the
-  object's identity, position, height, room and floor. Choosing a template is a
-  draft; Apply is one undoable edit. The full original object library remains
-  required; player avatars and reserved projectile slots are protected.
+- Select an object and choose **Type** at the top of its inspector. Named
+  choices are grouped as Enemies, Pickups and Scenery, using pristine original
+  released records from all 16 maps. Selection applies immediately as one Undo,
+  including artwork, dimensions, health and behaviour settings. Position,
+  height, room, floor and identity stay fixed. Pickup-specific settings follow
+  the type selector. Player avatars and projectile pools stay protected.
 
 - In paused 3D view, click a normal floor or ceiling and choose **Paint this surface**.
   Select any of the original 16 patterns and a texture repeat from 1/32? to 4?.

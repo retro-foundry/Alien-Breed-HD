@@ -2317,3 +2317,30 @@ fixtures can establish current-format support independently.
   closed-door camera/selection assertion. Earlier live Edge/Brave creation cases
   and all six final packaged Edge/Brave/Firefox workflows pass. Source and site
   changes are committed and pushed; unrelated site abhd/abhd.zip is untouched.
+
+
+- Object inspector redesign: Type is a direct named selector at the top,
+  grouped as Enemies, Pickups and Scenery. It applies immediately as one Undo;
+  the duplicate read-only Type row, Collision ID, template explanation and
+  separate Apply action are removed. Type-specific controls follow the selector,
+  and Duplicate/Delete share one compact row. Tooltips explain Undo and retained
+  position without making implementation details part of normal editing.
+
+  The type catalog reads pristine active records from all 16 released native
+  maps, excluding reserved projectile pools and player avatars. Fifteen unique
+  released classes are available independently of the current level; artwork,
+  dimensions, health and type parameters change together. CID, position, height,
+  logical/graphic room and storey retain their identity. Original AMOS-only
+  definitions absent from released maps are not fabricated; the complete object
+  bank, variants and placement workflow remain part of the full goal.
+
+  All 878 model tests pass. Six Chromium/Firefox browser checks pass, including
+  direct selection, compact ordering, Undo/Redo/save, protected duplication,
+  library failure/retry and a native class absent from the starting map. The
+  rendered inspector screenshot was reviewed. Packaged and live verification
+  follow before reporting the redesign as published.
+
+  The exact packaged redesign passes six installed Edge/Brave/Firefox checks,
+  including the cross-level native class change and asset-failure recovery.
+  This release updates the inspector; the separate Add/Duplicate placement
+  workflow and original AMOS-only object banks remain follow-up work.

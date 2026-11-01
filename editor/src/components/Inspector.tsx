@@ -98,15 +98,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
         <section className="property-section"><h3>Visibility</h3><InfoRow label="Visible zones" value={zone.visibleZones.length} /><InfoRow label="Lower graphics" value={zone.lower.length} /><InfoRow label="Upper graphics" value={zone.upper.length} /></section>
       </>}
       {object && <>
-        <section className="property-section"><h3>Position</h3>{sourceAvatar !== undefined
-          ? <p className="field-note">This avatar follows player {sourceAvatar}. Use Starts in the navigator to change its position.</p> : !sourceMatchesLevel(document)
-          ? <RoomPositionForm rooms={document.roomSource.rooms} identity={`object-${object.id}`} room={object.room ?? document.roomSource.rooms.find(room => room.originZone === object.zone)?.id ?? ''} x={object.x} z={object.z} step="any" label="Object room"
-            onApply={(room, x, z) => edit(() => setSourceObject(document, object.id, room, x, z))} />
-          : <PositionForm x={object.x} z={object.z} zone={object.zone} onApply={(x, z, zone) => edit(() => moveObject(document, object.id, x, z, zone))} />}
-          <NumberField help="Vertical object position in world units, using half-unit steps. Larger values are farther down in the level." label="Height" value={object.y} step={0.5} min={-16384} max={16383.5} onCommit={value => edit({ label: `Change object ${object.id} height`, patches: [numberPatch(document, 'data', object.offset + 4, value * 2, 2)] })} />
-          <InfoRow label="Floor" value={object.upper ? 'Upper' : 'Lower'} />
-        </section>
-        <section className="property-section"><h3>Object</h3><InfoRow label="Type" value={objectName(object.type)} /><InfoRow label="Collision ID" value={object.cid} /><ObjectTypeInspector document={document} id={object.id} edit={edit} />
+        <section className="property-section"><ObjectTypeInspector document={document} id={object.id} edit={edit} />
           {object.type === 3 && <><label className="select-field"><span>Weapon pickup</span><select aria-label="Weapon pickup" value={weaponPickupType(document, object.id) ?? ''}
             title="Choose the weapon granted by this pickup. Updates its artwork, dimensions and grant together, preserving its floor-relative anchor. Undo restores the complete change."
             onChange={event => edit(() => setWeaponPickupType(document, object.id, Number(event.target.value)))}>
@@ -124,8 +116,16 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
           </select></label><p className="field-note">Unlocks mechanisms requiring the matching key. Custom records stay unchanged until you choose a colour.</p></>}
           {[0, 6, 7, 8, 12, 13, 14, 15, 17, 18, 19].includes(object.type) && <NumberField label="Health" value={object.health} min={0} max={127} onCommit={value => edit({ label: `Change object ${object.id} health`, patches: [numberPatch(document, 'data', object.offset + 18, value, 1)] })} />}
         </section>
-        <section className="property-section"><button disabled={!objectIsActive(object) || !objectTemplates(document).some(template => template.id === object.id)} title="Copy this object's settings, room, position, floor and exact height into a placement draft. Choose Create object to commit one undoable copy. Shortcut: Ctrl / Command + D. Escape cancels." onClick={onObjectDuplicate}>Duplicate object</button>
-          <button className="danger-button" disabled={!objectIsActive(object) || objectPlayer(document, object) !== undefined} title={objectPlayer(document, object) !== undefined ? 'Player avatars are controlled through Starts in the navigator.' : 'Remove this object. Shortcut: Delete. Undo restores it (Ctrl / Command + Z).'} onClick={() => edit(() => removeObject(document, object.id))}>Delete object</button></section>
+        <section className="property-section"><h3>Position</h3>{sourceAvatar !== undefined
+          ? <p className="field-note">This avatar follows player {sourceAvatar}. Use Starts in the navigator to change its position.</p> : !sourceMatchesLevel(document)
+          ? <RoomPositionForm rooms={document.roomSource.rooms} identity={`object-${object.id}`} room={object.room ?? document.roomSource.rooms.find(room => room.originZone === object.zone)?.id ?? ''} x={object.x} z={object.z} step="any" label="Object room"
+            onApply={(room, x, z) => edit(() => setSourceObject(document, object.id, room, x, z))} />
+          : <PositionForm x={object.x} z={object.z} zone={object.zone} onApply={(x, z, zone) => edit(() => moveObject(document, object.id, x, z, zone))} />}
+          <NumberField help="Vertical object position in world units, using half-unit steps. Larger values are farther down in the level." label="Height" value={object.y} step={0.5} min={-16384} max={16383.5} onCommit={value => edit({ label: `Change object ${object.id} height`, patches: [numberPatch(document, 'data', object.offset + 4, value * 2, 2)] })} />
+          <InfoRow label="Floor" value={object.upper ? 'Upper' : 'Lower'} />
+        </section>
+        <section className="property-section object-actions"><button disabled={!objectIsActive(object) || !objectTemplates(document).some(template => template.id === object.id)} title="Copy this object's settings, room, position, floor and exact height into a placement draft. Choose Create object to commit one undoable copy. Shortcut: Ctrl / Command + D. Escape cancels." onClick={onObjectDuplicate} aria-label="Duplicate object">Duplicate</button>
+          <button className="danger-button" disabled={!objectIsActive(object) || objectPlayer(document, object) !== undefined} title={objectPlayer(document, object) !== undefined ? 'Player avatars are controlled through Starts in the navigator.' : 'Remove this object. Shortcut: Delete. Undo restores it (Ctrl / Command + Z).'} onClick={() => edit(() => removeObject(document, object.id))} aria-label="Delete object">Delete</button></section>
       </>}
       {start && <section className="property-section"><h3>Position</h3>{!sourceMatchesLevel(document)
         ? <SourceStartForm document={document} player={start.player} edit={edit} />
