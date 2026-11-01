@@ -20,6 +20,12 @@ Opening local files does not upload them anywhere.
 
 ## Current working workflows
 
+- Select an existing door/lift room to edit its movement destinations. **Apply
+  range** commits both endpoints together; Undo restores them. Values use world
+  units in 0.25 steps, with smaller values higher. The range must contain the
+  fixed initial position. Rules, native speeds and attached graphics stay intact.
+  Escape restores one draft field; Reset range draft discards both. Creating new
+  controllers and synchronizing edits to moving-room geometry remain in progress.
 - Shift/Ctrl/Command click objects in the map or object list to add/remove them
   from a group. The group inspector moves them by X/Z offsets, aligns either
   coordinate to the first selected object, or deletes the selection. Every edit

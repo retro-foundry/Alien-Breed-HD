@@ -14,6 +14,7 @@ import { RoomInspector } from './RoomInspector';
 import { RoomHeightInspector } from './RoomHeightInspector';
 import { roomSettings } from '../model/roomHeights';
 import { NumberField } from './NumberField';
+import { MechanismRangeInspector } from './MechanismRangeInspector';
 import { objectTemplates } from '../model/objectAuthoring';
 import { keyColour, keyColours, setKeyColour, ammunitionChoices, ammunitionType, setAmmunitionType, weaponPickupChoices, weaponPickupType, setWeaponPickupType } from '../model/objectSettings';
 
@@ -77,6 +78,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
         </section>}
         {mechanisms.map(mechanism => <section className="property-section" key={`${mechanism.kind}-${mechanism.id}`}><h3>{mechanism.kind === 'door' ? 'Door' : 'Lift'} {mechanism.id}</h3>
           <InfoRow label="Closed / bottom" value={mechanism.bottom} /><InfoRow label="Open / top" value={mechanism.top} />
+          <MechanismRangeInspector document={document} mechanism={mechanism} edit={edit} />
           <label className="select-field"><span>Opens when</span><select aria-label={`${mechanism.kind} ${mechanism.id} opening rule`} title="Choose what starts opening or raising this mechanism. All selected key and switch requirements must also be met." value={mechanism.openRule} onChange={event => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, mechanism.conditions, Number(event.target.value), mechanism.closeRule))}>
             {(mechanism.kind === 'door' ? ['Player uses it', 'Player touches it', 'Bullet hits it', 'Enemy touches it', 'Timer expires', 'Never'] : ['Player uses it', 'Player touches it', 'Timer expires', 'Never']).map((label, value) => <option key={value} value={value}>{label}</option>)}
           </select></label>

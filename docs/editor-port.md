@@ -1468,3 +1468,20 @@ fixtures can establish current-format support independently.
   All 706 model tests, production builds and six Chromium/Firefox height/group
   scenarios pass. Both focused cases also pass with source-relative upper-floor
   fixture heights. Native simulation code is unchanged.
+
+- Moving-room range checkpoint: existing door/lift destinations now have an
+  atomic draft/apply form with quarter-world-unit inputs, current-position readout,
+  immediate validation, field Escape/reset and undo. `level.c` converts the source
+  top/bottom/current words by 64 into runtime 24.8; `door_routine` and `lift_routine`
+  own subsequent movement and attached-wall updates. This edit changes only the
+  two endpoint words, preserves the initial position and requires it inside the
+  new range. Native signed-word limits and the first-word 999 table terminator
+  are enforced before mutation, with errors expressed in user-facing world units.
+  All original records are checked for field isolation and undo; project saves
+  and native host probes verify loaded door/lift endpoints in Chromium/Firefox.
+  These checks establish configuration loading, not complete authored mechanism
+  motion coverage. New controllers, synchronized moving-geometry edits and broader
+  R7 runtime/restriction scenarios remain open before final deployment.
+  All 708 model tests and four Chromium/Firefox range scenarios pass. The final
+  world-unit validation passes the focused model checks and production build.
+  The native simulation is unchanged; only read-only editor inspection was added.

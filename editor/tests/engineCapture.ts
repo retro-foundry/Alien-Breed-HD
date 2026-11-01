@@ -1,6 +1,18 @@
 import type { Page } from '@playwright/test';
 
 export interface EngineCamera { zone: number; x: number; z: number; upper: number; angle: number }
+export async function engineMechanismState(page: Page, kind: 'door' | 'lift', index: number): Promise<{ zone: number; current: number; top: number; bottom: number }> {
+  return page.evaluate(({ kind, index }) => new Promise((resolve, reject) => {
+    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();
+    const timer = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('Engine mechanism query timed out')); }, 10000);
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'mechanism-state' || event.data.id !== id) return;
+      clearTimeout(timer); window.removeEventListener('message', receive); resolve(event.data.mechanism);
+    };
+    window.addEventListener('message', receive);
+    frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'mechanism-state', id, kind, index }, location.origin);
+  }), { kind, index });
+}
 export async function engineObjectState(page: Page, object: number): Promise<{ id: number; cid: number; zone: number; type: number; x: number; z: number; yFixed: number; health: number }> {
   return page.evaluate(object => new Promise((resolve, reject) => {
     const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();

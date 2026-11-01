@@ -159,6 +159,22 @@ EMSCRIPTEN_KEEPALIVE int editor_player_zone(void) { return preview_loaded ? g_st
 EMSCRIPTEN_KEEPALIVE int editor_conditions(void) { return (uint16_t)game_conditions; }
 EMSCRIPTEN_KEEPALIVE int editor_ammunition(int gun) { return preview_loaded && gun >= 0 && gun < MAX_GUNS ? g_state.plr1.gun_data[gun].ammo : -1; }
 EMSCRIPTEN_KEEPALIVE int editor_weapon_owned(int gun) { return preview_loaded && gun >= 0 && gun < MAX_GUNS ? g_state.plr1.gun_data[gun].visible != 0 : 0; }
+/* Read-only native moving-room state, after level.c converts quarter-unit
+ * source words into runtime 24.8 positions. */
+EMSCRIPTEN_KEEPALIVE int editor_mechanism_value(int lift, int index, int field)
+{
+    if (!preview_loaded || index < 0 || index >= (lift ? g_state.level.num_lifts : g_state.level.num_doors)) return field == 0 ? -1 : 0;
+    const uint8_t *table = lift ? g_state.level.lift_data : g_state.level.door_data;
+    if (!table) return field == 0 ? -1 : 0;
+    const uint8_t *record = table + index * (lift ? 20 : 22);
+    switch (field) {
+    case 0: return obj_w(record);
+    case 1: return obj_l(record + 4);
+    case 2: return obj_l(record + 10);
+    case 3: return obj_l(record + 14);
+    default: return 0;
+    }
+}
 EMSCRIPTEN_KEEPALIVE int editor_player_x(void) { return preview_loaded ? g_state.plr1.xoff >> 16 : 0; }
 EMSCRIPTEN_KEEPALIVE int editor_player_z(void) { return preview_loaded ? g_state.plr1.zoff >> 16 : 0; }
 /* player.c updates the collision target from floor - s_height. Rendering Y

@@ -1,0 +1,37 @@
+import { expect, test } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import { openLevel } from '../../src/model/level';
+import { originalFiles } from '../helpers';
+import { encodeProject, decodeProject } from '../../src/model/project';
+import { resolveAnimationRoom } from '../../src/model/animationRooms';
+import { engineMechanismState } from '../engineCapture';
+
+for (const kind of ['door', 'lift'] as const) test(`${kind} movement range validates, applies atomically and loads native quarter-unit destinations`, async ({ page }, testInfo) => {
+  test.setTimeout(90000);
+  const document = Array.from({ length: 16 }, (_, index) => openLevel('Movement range', originalFiles(index + 1))).find(document => document.mechanisms.some(item => item.kind === kind && item.top <= item.current && item.bottom >= item.current && item.top < item.bottom))!;
+  const mechanism = document.mechanisms.find(item => item.kind === kind && item.top <= item.current && item.bottom >= item.current && item.top < item.bottom)!;
+  const zone = resolveAnimationRoom(document, mechanism.zone, kind === 'lift')!;
+  const field = mechanism.top < mechanism.current ? 'top' : 'bottom', value = field === 'top' ? mechanism.top + 0.25 : mechanism.bottom - 0.25;
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.locator('input[type=file]').setInputFiles({ name: 'ranges.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
+  await expect(page.locator('.project-picker strong')).toHaveText(document.name);
+  await page.getByRole('button', { name: new RegExp(`^Zone ${String(zone).padStart(3, '0')}(?:\\s|$)`) }).click();
+  const form = page.getByRole('form', { name: `${kind} ${mechanism.id} movement range`, exact: true });
+  const top = form.getByRole('spinbutton', { name: `${kind} ${mechanism.id} top destination` });
+  await top.fill(String(mechanism.bottom + 1));
+  await expect(form.getByRole('alert')).toBeVisible(); await expect(form.getByRole('button', { name: 'Apply range', exact: true })).toBeDisabled();
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  await top.press('Escape'); await expect(top).toHaveValue(String(mechanism.top));
+  await form.getByRole('spinbutton', { name: `${kind} ${mechanism.id} ${field} destination` }).fill(String(value));
+  await form.getByRole('button', { name: 'Apply range', exact: true }).click();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(form.getByRole('spinbutton', { name: `${kind} ${mechanism.id} ${field} destination` })).toHaveValue(String(mechanism[field]));
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const path = testInfo.outputPath(`${kind}-range.ab3d`); await (await download).saveAs(path);
+  const saved = decodeProject(new Uint8Array(await readFile(path))), changed = saved.mechanisms.find(item => item.kind === kind && item.id === mechanism.id)!;
+  expect(changed[field]).toBe(value); expect(changed.current).toBe(mechanism.current); expect(changed.walls).toEqual(mechanism.walls);
+  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
+  expect(await engineMechanismState(page, kind, mechanism.id)).toMatchObject({ zone, current: mechanism.current, top: changed.top, bottom: changed.bottom });
+});
