@@ -7,6 +7,7 @@ import { buildPointLighting, resolvePointLighting, type PointLightingBinding } f
 import type { GraphicsRecordInput } from './graphicsBuild';
 import type { RoomSource } from './roomSource';
 import { hasNativeWallMaterials } from './roomMaterials';
+import { nativeRoomTranslation } from './roomTranslation';
 
 const on = (point: Position, a: Position, b: Position) => (point.x - a.x) * (b.z - a.z) === (point.z - a.z) * (b.x - a.x)
   && point.x >= Math.min(a.x, b.x) && point.x <= Math.max(a.x, b.x) && point.z >= Math.min(a.z, b.z) && point.z <= Math.max(a.z, b.z);
@@ -47,6 +48,7 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
       }
     }
     const template = document.zones.find(zone => zone.id === room.recordZone)!;
+    const translation = nativeRoomTranslation(document, room);
     const records = [...template.lower, ...template.upper], sourcePoints = new Set(records.flatMap(record => record.points));
     const originalAt = (position: Position, candidates = sourcePoints): number => {
       let ids = [...candidates].filter(id => document.points[id]!.x === position.x && document.points[id]!.z === position.z);
@@ -116,7 +118,12 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
         const stream = graphics.streams.get(cell.id)!;
         for (const item of [...stream.lower, ...(stream.upper ?? [])].filter(item => item.sourceOffset === record.offset)) {
           const generated = readGraphicRecord(new BinaryReader(item.bytes, 'polygon lighting'), 0, points.length);
-          generated.points.forEach(id => claim(id, boundaryBinding(id, candidates), room.id));
+          generated.points.forEach((id, index) => {
+            const original = document.points[record.points[index]!];
+            const direct = translation && original && generated.points.length === record.points.length
+              && points[id]!.x === original.x + translation.x && points[id]!.z === original.z + translation.z;
+            claim(id, direct ? { kind: 'copy', source: record.points[index]! } : boundaryBinding(id, candidates), room.id);
+          });
         }
       }
     }

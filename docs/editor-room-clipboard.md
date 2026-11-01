@@ -82,5 +82,16 @@ native-render cases pass, inspecting four deterministic camera directions, as
 do 16 adjacent portal/group/sprite cases. This is compiler acceptance and
 record-preservation evidence, not complete original/copy frame parity for every
 content class. Controller/switch copies are explicitly rejected before build
-until independent authoring exists. Full clipboard assembly/UI, partial surface
-mapping and the remaining relationship/profile requirements are still open.
+until independent authoring exists. Full clipboard assembly/UI, arbitrary
+partial-surface reshaping and remaining relationship/profile work stay open.
+
+Exact whole-room translations now preserve partial floor/roof/water polygon
+footprints, point order, closure references, materials, sampling and native
+lighting roles, including interior points. Translation detection tolerates
+collinear portal splits without removing editable wall identities. Whole native
+draw volumes retain their polygon records independently of convex collision
+partitioning; arbitrary shape changes still require explicit footprint mapping.
+The 723-test full model run passes, plus the subsequent partial-water/translation
+focused checks. All 20 focused Chromium/Firefox native-copy, room-group, height
+and sprite cases pass. These checks extend compiler support; they do not expose
+or establish completion of the full room clipboard operation.

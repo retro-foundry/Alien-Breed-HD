@@ -1,5 +1,4 @@
 import { BinaryReader } from './binary';
-import { normaliseRoomOutline } from './geometry';
 import { readGraphicRecord, type Graphic } from './graphics';
 import type { GraphicsRecordInput, GraphicsStreamInput } from './graphicsBuild';
 import type { LevelDocument } from './level';
@@ -10,6 +9,7 @@ import { buildCellWallGeometry, type NewRoomWallMaterials, type ClosingWallMater
 import { buildDrawTopology } from './drawTopology';
 import { assertGraphicsRecordBudget } from './renderLimits';
 import { hasNativeWallMaterials } from './roomMaterials';
+import { nativeRoomTranslation } from './roomTranslation';
 
 export interface NewRoomGraphics {
   walls: NewRoomWallMaterials;
@@ -39,8 +39,6 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
   const closing = new Map<string, ClosingWallMaterials>([...closures].map(([id, room]) => [id, { walls: room.walls, lightingPoint: room.lightingPoint }]));
   const generated = buildCellWallGeometry(document, source, draw.topology, new Map([...newRooms].map(([id, room]) => [id, room.walls])), closing);
   const compiledTopology = { ...topology, points: generated.topology.points };
-  const polygons = buildCellPolygons(document, compiledTopology);
-  const wholePolygons = buildCellPolygons(document, { ...compiledTopology, cells: draw.topology.cells.filter(cell => cell.vertices.length <= 10) });
   const points = compiledTopology.points;
   const coordinates = new Map<string, number>();
   points.forEach((point, id) => { const key = `${point.x},${point.z}`; if (!coordinates.has(key)) coordinates.set(key, id); });
@@ -51,15 +49,19 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
     if (points.length >= 2048) throw new Error('Graphics geometry exceeds the engine limit of 2,048 points.');
     const id = points.length; points.push({ x, z }); coordinates.set(key, id); return id;
   };
+  const translations = new Map(source.rooms.flatMap(room => {
+    const translation = nativeRoomTranslation(document, room);
+    return translation && (translation.x !== 0 || translation.z !== 0 || room.originZone === null) ? [[room.id, translation] as const] : [];
+  }));
+  const polygons = buildCellPolygons(document, { ...compiledTopology, cells: topology.cells.filter(cell => !translations.has(cell.sourceId)) });
+  const wholePolygons = buildCellPolygons(document, { ...compiledTopology,
+    cells: draw.topology.cells.filter(cell => translations.has(cell.sourceId) || cell.vertices.length <= 10) }, { rooms: translations, pointId });
   const reader = new BinaryReader(document.files.graphics, 'source graphics'), table = reader.i32(12);
   const streams = new Map<number, GraphicsStreamInput>(), pointReferences = new Map<number, number[]>();
   for (const cell of topology.cells) {
     const room = source.rooms.find(room => room.id === cell.sourceId)!, template = document.zones.find(zone => zone.id === cell.recordZone)!;
     const native = hasNativeWallMaterials(room.originZone, room.wallSources);
-    const originalCorners = normaliseRoomOutline(template.boundaryIds.map(id => ({ x: document.lines[id]!.x, z: document.lines[id]!.z })));
-    const dx = room.vertices[0]!.x - originalCorners[0]!.x, dz = room.vertices[0]!.z - originalCorners[0]!.z;
-    const translation = native && room.vertices.length === originalCorners.length
-      && room.vertices.every((point, index) => point.x - originalCorners[index]!.x === dx && point.z - originalCorners[index]!.z === dz);
+    const translation = nativeRoomTranslation(document, room), dx = translation?.x ?? 0, dz = translation?.z ?? 0;
     const owner = draw.owners.get(cell.id)!, members = topology.cells.filter(target => target.sourceId === cell.sourceId);
     const polygonLayers = wholePolygons.get(owner) ?? { lower: members.flatMap(member => polygons.get(member.id)!.lower), upper: members.flatMap(member => polygons.get(member.id)!.upper) };
     const wallLayers = generated.walls.get(owner)!, selection = newRooms.get(room.id) ?? closures.get(room.id);

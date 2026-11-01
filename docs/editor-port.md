@@ -1650,3 +1650,20 @@ fixtures can establish current-format support independently.
   Chromium/Firefox inspection cases pass (four repeatable views); 16 adjacent
   portal/group/sprite cases also pass. This is a room-clipboard compiler
   prerequisite, not complete clipboard UI or all-content render parity.
+
+- Partial-surface translation checkpoint: proven native whole-room translations
+  now carry their exact floor/roof/water footprints, point order, closing corner,
+  heights, material/sampling values and lighting roles. Partial polygons are not
+  expanded to the perimeter. Interior decorative vertices retain their own native
+  lighting instead of seeking a boundary interpolation. Exact-shape comparison
+  tolerates inserted collinear portal points without changing editable source;
+  different shapes/sizes remain unsupported without explicit footprint mapping.
+  Whole draw-volume polygons are retained separately from convex collision cells.
+  The full 723-test model run passes, followed by six focused material/translation
+  checks including a partial water plane. All 20 focused Chromium/Firefox native
+  copy/group/height/sprite cases pass, including a partial floor with a distinct
+  interior lighting point in the actual engine. Production builds pass.
+  CI run 41272068999 (c683627) completed successfully on both Windows and Linux,
+  confirming the earlier tooltip fix; newer compiler changes still need their CI
+  results checked. Full room clipboard UI, independent mechanisms and remaining
+  editor requirements stay open.

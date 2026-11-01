@@ -87,5 +87,5 @@ it('uses the explicit new-wall position relative to water and object passes', ()
   expect(types.slice(0, 7)).toEqual([4, 7, wall.type, wall.type, wall.type, wall.type, 4]);
   expect(() => buildCellGraphics(document, source, topology, new Map([[room.id,
     { ...settings, wallInsertion: { lower: 9999 } }]]))).toThrow(/wall insertion position/);
-  expect(() => buildCellGraphics(document, source, topology, new Map([['missing', settings]]))).toThrow(/missing or imported room/);
+  expect(() => buildCellGraphics(document, source, topology, new Map([['missing', settings]]))).toThrow(/missing room missing/);
 });

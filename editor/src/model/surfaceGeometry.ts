@@ -35,6 +35,10 @@ export interface GeneratedPolygon {
   bytes: Uint8Array;
 }
 export interface CellPolygons { lower: GeneratedPolygon[]; upper: GeneratedPolygon[] }
+export interface SurfaceTranslations {
+  rooms: ReadonlyMap<string, Position>;
+  pointId: (x: number, z: number) => number;
+}
 
 function outlineKey(points: readonly Position[]): string {
   return JSON.stringify(normaliseRoomOutline(points.map(({ x, z }) => ({ x, z }))));
@@ -43,11 +47,12 @@ function outlineKey(points: readonly Position[]): string {
 /** Bind complete room floor/roof/water material records to generated convex
  * cells. Heights, sampling scale, tile and brightness remain authored values.
  * Unchanged footprints retain the exact original corner order and tail bytes.
- * Partial decorative polygons need their own geometry mapping; do not expand
- * them silently across an edited room. Stream ordering and wall/animation
+ * Proven whole draw-volume translations retain partial polygon footprints
+ * and point order. Other reshaping needs explicit geometry mapping; never
+ * expand a partial decoration across an edited room. Stream ordering and wall/animation
  * dependencies are assembled separately from this polygon stage.
  */
-export function buildCellPolygons(document: LevelDocument, topology: RoomTopology): Map<number, CellPolygons> {
+export function buildCellPolygons(document: LevelDocument, topology: RoomTopology, translations?: SurfaceTranslations): Map<number, CellPolygons> {
   const result = new Map<number, CellPolygons>();
   for (const cell of topology.cells) {
     if (result.has(cell.id)) throw new Error('Surface geometry contains duplicate runtime room identities.');
@@ -74,6 +79,16 @@ export function buildCellPolygons(document: LevelDocument, topology: RoomTopolog
       });
       if (unchanged && retainedPoints) return { sourceOffset: record.offset, bytes: height === polygon.heightQuarter / 4
         ? document.files.graphics.slice(record.offset, record.offset + record.size) : encodePolygonSurface({ ...polygon, heightQuarter: height * 4 }) };
+      const translation = translations?.rooms.get(cell.sourceId);
+      if (translation) {
+        const translatedPoint = (id: number) => {
+          const point = document.points[id];
+          if (!point) throw new Error(`Room ${cell.sourceId} surface has a missing translated source point ${id}.`);
+          return translations!.pointId(point.x + translation.x, point.z + translation.z);
+        };
+        return { sourceOffset: record.offset, bytes: encodePolygonSurface({ ...polygon,
+          points: polygon.points.map(translatedPoint), closingPoint: polygon.closingPoint < 0 ? polygon.closingPoint : translatedPoint(polygon.closingPoint), heightQuarter: height * 4 }) };
+      }
       if (polygon.points.length < 3 || outlineKey(polygon.points.map(id => document.points[id]!)) !== originalKey)
         throw new Error(`Room ${cell.sourceId} surface at byte ${record.offset} has a partial or degenerate footprint. Assign its geometry before compiling this room.`);
       return { sourceOffset: record.offset, bytes: encodePolygonSurface(polygonForCell(polygon, cell.vertices, height)) };

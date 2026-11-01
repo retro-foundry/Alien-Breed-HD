@@ -8,6 +8,7 @@ import { wallForSpan } from './surfaceGeometry';
 import { changedPortalEdges, hasUpperLayer, newPortalTarget, portalWallSpans, unassignedBoundaryEdges } from './portalWalls';
 import { roomSettings } from './roomHeights';
 import { hasNativeWallMaterials } from './roomMaterials';
+import { nativeRoomTranslation, outlineTranslation } from './roomTranslation';
 
 export interface CellWalls { lower: GraphicsRecordInput[]; upper: GraphicsRecordInput[] }
 export interface NewRoomWallMaterials { lower: readonly WallSurface[]; upper?: readonly WallSurface[] }
@@ -67,9 +68,9 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
     });
     const originalOutline = template.boundaryIds.map(id => ({ x: document.lines[id]!.x, z: document.lines[id]!.z }));
     const unchanged = key(outline) === key(originalOutline);
-    const originalCorners = normaliseRoomOutline(originalOutline), dx = room.vertices[0]!.x - originalCorners[0]!.x, dz = room.vertices[0]!.z - originalCorners[0]!.z;
-    const translatedWholeRoom = key(outline) === key(room.vertices) && room.vertices.length === originalCorners.length
-      && room.vertices.every((point, index) => point.x - originalCorners[index]!.x === dx && point.z - originalCorners[index]!.z === dz);
+    const translation = nativeRoomTranslation(document, room), whole = outlineTranslation(room.vertices, outline);
+    const dx = translation?.x ?? 0, dz = translation?.z ?? 0;
+    const translatedWholeRoom = !!translation && whole?.x === 0 && whole.z === 0;
     const retained = (record: Graphic) => record.points.every(id => points[id]?.x === document.points[id]!.x && points[id]?.z === document.points[id]!.z);
     const layer = (records: readonly Graphic[], selected: readonly WallSurface[] | undefined, upper: boolean): GraphicsRecordInput[] => {
       if (!native) {

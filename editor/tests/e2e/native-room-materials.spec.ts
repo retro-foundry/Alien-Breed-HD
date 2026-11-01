@@ -1,11 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { nativeRoomCopyFixture } from '../nativeRoomCopyFixture';
+import { nativeRoomCopyFixture, nativePartialRoomCopyFixture } from '../nativeRoomCopyFixture';
 import { encodeProject } from '../../src/model/project';
 import { buildPlayableLevel } from '../../src/model/playableBuild';
 import { captureEngine } from '../engineCapture';
 
-test('a fresh native-material room identity loads ordered graphics and point lighting in the actual engine', async ({ page }, testInfo) => {
-  const { document, copy } = nativeRoomCopyFixture();
+for (const [name, fixture] of [['whole surfaces', nativeRoomCopyFixture], ['partial floor with interior lighting', nativePartialRoomCopyFixture]] as const)
+test(`a fresh native-material room identity loads ${name} in the actual engine`, async ({ page }, testInfo) => {
+  const { document, copy } = fixture();
   const built = buildPlayableLevel(document, -1), cell = built.topology!.cells.find(cell => cell.sourceId === copy.id)!;
   const centre = cell.vertices.reduce((sum, id) => ({ x: sum.x + built.topology!.points[id]!.x / cell.vertices.length,
     z: sum.z + built.topology!.points[id]!.z / cell.vertices.length }), { x: 0, z: 0 });
