@@ -2667,7 +2667,7 @@ Remaining AMOS and R0-R12 scope stays open.
 ## Multi-zone floor and ceiling handles
 
 Room groups now retain LF/LC handles in editable 3D and UF/UC when every selected
-room has an active upper storey. The last selected room anchors the handles;
+room has an active upper storey. A selected room anchors the handles;
 a gesture applies its height delta to the matching plane in every selected
 room, preserving existing offsets. The shared spatial command builds a complete
 provisional RoomSource, validates each room with the existing quarter-unit and
@@ -2675,3 +2675,18 @@ storey rules, and publishes one command only if every room succeeds. Preview,
 Escape, keyboard nudges, portable saves and one-step Undo use that same path.
 Single-room corner handles remain tied to single-room selection. Inspector
 notes and handle tooltips explain group behavior and upper-storey requirements.
+
+Verification: 20 relevant model tests passed, including preserving relative
+floor heights, saved snapshots, one Undo/Redo and rejection after a later room
+fails validation. All 30 packaged Edge/Brave/Firefox height and selection
+regressions passed. The six group tests drag and cancel each of LF/LC/UF/UC in
+perspective and orthographic views, compare both rooms' saved plane values,
+undo each gesture once, and retain selection, camera and textured preview.
+Implementation: d73621e. No project schema or native runtime change.
+
+Published site 7cf4e5d serves index-DyLwurzD.js with unchanged
+index-Cx88Qus4.css and native r-c8b6aa3eff4f5614 (all five hashes checked).
+Pages run 41333976458 succeeded. All four public Edge/Brave group-height
+regressions passed, covering both 3D projections and all four planes with
+cancellation, saved relative values and one-step Undo. Remaining AMOS/R0-R12
+scope stays open.
