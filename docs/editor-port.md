@@ -1246,3 +1246,19 @@ fixtures can establish current-format support independently.
   Production builds, all 681 model tests and all four Chromium/Firefox object
   authoring scenarios pass. The native simulation is unchanged; the preview
   host exposes a read-only conditions probe for gameplay verification.
+
+- Ammunition configuration checkpoint: the object inspector offers named pistol,
+  plasma, rocket, grenade and shotgun ammunition choices, with tooltips and
+  explicit preservation of custom records. One command changes AmmoType at +18
+  and the inspection artwork to match `object_handle_ammo` and its native
+  `ammo_graphic_table`, now generated from game_data.c during asset preparation.
+  Weapon-pickup IDs are deliberately not used as ammunition indices. The native
+  handler rejects flamethrower clips; unused weapon slots are not offered.
+  Model checks cover complete-field isolation, custom artwork, atomic undo,
+  invalid types and portable saves. Native browser gameplay checks the selected
+  plasma clip's removal and the actual player ammo increase from the original
+  `default_plr1_guns.ammo_in_clip` and `ItsAnAmmoClip` scaling, without modifying
+  any other weapon's ammunition or the simulation.
+  The production build, all 683 model tests and six Chromium/Firefox object
+  authoring/playback scenarios pass. Broader weapon/enemy configuration and
+  remaining full-editor requirements are still open; deployment remains pending.

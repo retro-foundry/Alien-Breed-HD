@@ -1,7 +1,9 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { roomHeightFixture } from '../roomHeightFixture';
-import { objectTemplates } from '../../src/model/objectAuthoring';
+import { objectTemplates, createObject, floorMatchedObjectHeight } from '../../src/model/objectAuthoring';
+import { applyCommand } from '../../src/model/commands';
+import { ammunitionType } from '../../src/model/objectSettings';
 import { decodeProject, encodeProject } from '../../src/model/project';
 import { captureEngine, engineObjectState, enginePlayerState } from '../engineCapture';
 
@@ -84,4 +86,37 @@ test('a newly placed blue key is collected by native gameplay and grants only it
   expect((await enginePlayerState(page)).conditions).toBe(8);
   await preview.getByRole('button', { name: 'Stop', exact: true }).click();
   await page.screenshot({ path: testInfo.outputPath('key-settings.png'), fullPage: true });
+});
+
+test('ammunition choices change native pickup artwork and grant the selected weapon ammunition', async ({ page }, testInfo) => {
+  test.setTimeout(90000);
+  const fixture = roomHeightFixture(), template = objectTemplates(fixture.document).find(object => object.type === 9)!;
+  const proposal = createObject(fixture.document, { template: template.id, room: fixture.from.id, x: 20128, z: 20240,
+    y: floorMatchedObjectHeight(fixture.document, template, fixture.from.id) });
+  const document = applyCommand(fixture.document, proposal.command);
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.locator('input[type=file]').setInputFiles({ name: 'ammo.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
+  await expect(page.locator('.project-picker strong')).toHaveText(document.name);
+  await page.getByRole('tab', { name: 'Objects', exact: true }).click();
+  await page.getByRole('button', { name: `Ammunition ${proposal.id}`, exact: true }).click();
+  const weapon = page.getByRole('combobox', { name: 'Ammunition weapon', exact: true });
+  await weapon.selectOption('2'); await weapon.selectOption('1');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click(); await expect(weapon).toHaveValue('2');
+  await page.getByRole('button', { name: 'Redo', exact: true }).click(); await expect(weapon).toHaveValue('1');
+  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const path = testInfo.outputPath('ammo.ab3d'); await (await download).saveAs(path);
+  expect(ammunitionType(decodeProject(new Uint8Array(await readFile(path))), proposal.id)).toBe(1);
+  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  const preview = page.getByRole('region', { name: '3D game engine preview' });
+  await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
+  await preview.getByRole('button', { name: 'Build & play', exact: true }).click();
+  await expect(preview.getByRole('status')).toHaveText('Playtest running');
+  const before = (await enginePlayerState(page)).ammunition;
+  await page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas').focus();
+  await page.keyboard.down('w');
+  try { await expect.poll(async () => (await engineObjectState(page, proposal.id)).zone).toBe(-1); }
+  finally { await page.keyboard.up('w'); }
+  const expected = [...before]; expected[1] = expected[1]! + 20 * 8; // default_plr1_guns plasma ammo_in_clip, ItsAnAmmoClip shift.
+  expect((await enginePlayerState(page)).ammunition).toEqual(expected);
+  await preview.getByRole('button', { name: 'Stop', exact: true }).click();
 });

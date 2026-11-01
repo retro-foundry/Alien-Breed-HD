@@ -14,7 +14,7 @@ import { RoomInspector } from './RoomInspector';
 import { RoomHeightInspector } from './RoomHeightInspector';
 import { roomSettings } from '../model/roomHeights';
 import { NumberField } from './NumberField';
-import { keyColour, keyColours, setKeyColour } from '../model/objectSettings';
+import { keyColour, keyColours, setKeyColour, ammunitionChoices, ammunitionType, setAmmunitionType } from '../model/objectSettings';
 
 function PositionForm({ x, z, zone, onApply }: { x: number; z: number; zone: number; onApply: (x: number, z: number, zone: number) => void }) {
   const [draft, setDraft] = useState({ x, z, zone });
@@ -95,6 +95,11 @@ export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner,
           <InfoRow label="Floor" value={object.upper ? 'Upper' : 'Lower'} />
         </section>
         <section className="property-section"><h3>Object</h3><InfoRow label="Type" value={objectName(object.type)} /><InfoRow label="Collision ID" value={object.cid} />
+          {object.type === 9 && <><label className="select-field"><span>Ammunition for</span><select aria-label="Ammunition weapon" value={ammunitionType(document, object.id) ?? ''}
+            title="Choose which weapon receives this pickup. Updates its native ammunition type and artwork together. The game controls how much ammunition it grants."
+            onChange={event => edit(() => setAmmunitionType(document, object.id, Number(event.target.value)))}>
+            <option value="" disabled>Custom artwork or ammunition type</option>{ammunitionChoices.map(choice => <option key={choice.id} value={choice.id}>{choice.name}</option>)}
+          </select></label><p className="field-note">Pickup amount follows the game's weapon data. Custom records stay unchanged until you choose a weapon.</p></>}
           {object.type === 4 && <><label className="select-field"><span>Key colour</span><select aria-label="Key colour" value={keyColour(document, object.id) ?? ''}
             title="Change the key artwork and matching door requirement together. Green is Key 1, Red Key 2, Yellow Key 3 and Blue Key 4. Undo restores both."
             onChange={event => edit(() => setKeyColour(document, object.id, Number(event.target.value)))}>

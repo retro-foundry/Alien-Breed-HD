@@ -31,6 +31,10 @@ Opening local files does not upload them anywhere.
   the door requirement it unlocks. Green, red, yellow and blue correspond to
   Key 1–4 in mechanism requirements. Undo restores both values. Custom artwork
   or condition combinations are retained until you explicitly choose a colour.
+- Select an ammunition pickup and choose **Ammunition for** by weapon name.
+  Its type and native artwork change together, with one undo. The game retains
+  control of the pickup amount. Custom records are preserved until a choice is
+  made; unsupported flamethrower/unused ammunition slots are excluded.
 - Import a PNG in a room's material browser. It resizes to the native sheet,
   matches its existing colours and preserves its lighting palettes. Compare
   fitted/native previews, then Apply PNG as one undoable shared-material edit.

@@ -112,7 +112,7 @@
         send('captured', {id:request.id, checksum:engine._editor_capture(c.zone,c.x,c.z,c.upper,c.angle) >>> 0});
       }
       if (loaded && request.type === 'player-state') {
-        send('player-state', {id:request.id, zone:engine._editor_player_zone(), x:engine._editor_player_x(), z:engine._editor_player_z(), feetFixed:engine._editor_player_feet_fixed(), conditions:engine._editor_conditions(), playing});
+        send('player-state', {id:request.id, zone:engine._editor_player_zone(), x:engine._editor_player_x(), z:engine._editor_player_z(), feetFixed:engine._editor_player_feet_fixed(), conditions:engine._editor_conditions(), ammunition:Array.from({length:8}, (_, gun) => engine._editor_ammunition(gun)), playing});
       }
       if (loaded && request.type === 'object-state') {
         const object = request.object;

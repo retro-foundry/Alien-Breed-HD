@@ -56,3 +56,6 @@ for (const [key, symbol] of [['objects', 'MAX_OBJECTS'], ['sourceShotSlots', 'PL
   objectLimits[key] = value;
 }
 await writeFile(new URL('src/model/objectLimits.json', root), `${JSON.stringify(objectLimits, null, 2)}\n`);
+const ammoFrames = /const int8_t ammo_graphic_table\[8\]\s*=\s*\{([^}]+)\}/.exec(gameData)?.[1].split(',').map(value => Number(value.trim()));
+if (!ammoFrames || ammoFrames.length !== 8 || !ammoFrames.every(Number.isInteger)) throw new Error('Cannot read native ammunition artwork table.');
+await writeFile(new URL('src/model/ammoFrames.json', root), `${JSON.stringify(ammoFrames)}\n`);

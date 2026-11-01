@@ -3,7 +3,8 @@ import { openLevel } from '../src/model/level';
 import { originalFiles } from './helpers';
 import { execute, undo, redo, applyCommand, numberPatch } from '../src/model/commands';
 import { BinaryReader } from '../src/model/binary';
-import { keyColour, setKeyColour } from '../src/model/objectSettings';
+import { keyColour, setKeyColour, ammunitionChoices, ammunitionType, setAmmunitionType } from '../src/model/objectSettings';
+import ammoFrames from '../src/model/ammoFrames.json' with { type: 'json' };
 import { decodeProject, encodeProject } from '../src/model/project';
 
 it('changes key artwork and door condition atomically across original levels', () => {
@@ -54,4 +55,31 @@ it('preserves custom key artwork and masks until an explicit colour choice and r
   expect(keyColour(history.document, key.id)).toBe(0);
   const restored = undo(history).document;
   expect(Buffer.from(restored.files.data).equals(Buffer.from(document.files.data))).toBe(true);
+});
+
+it('updates ammunition type and native artwork together, preserves other fields and supports project round trips', () => {
+  const document = openLevel('Ammo', originalFiles(1)), object = document.objects.find(object => object.type === 9)!;
+  for (const choice of ammunitionChoices) {
+    const command = setAmmunitionType(document, object.id, choice.id), history = execute({ document, past: [], future: [] }, command);
+    const data = new BinaryReader(history.document.files.data, 'ammo');
+    expect(data.i16(object.offset + 18)).toBe(choice.id);
+    expect(data.i32(object.offset + 8)).toBe(65536 + ammoFrames[choice.id]!);
+    expect(ammunitionType(decodeProject(encodeProject(history.document)), object.id)).toBe(choice.id);
+    for (let index = 0; index < document.files.data.length; index++) {
+      if (index >= object.offset + 8 && index < object.offset + 12 || index >= object.offset + 18 && index < object.offset + 20) continue;
+      if (history.document.files.data[index] !== document.files.data[index]) throw new Error(`Unexpected mutation at ${index}`);
+    }
+    if (history.past.length) expect(Buffer.from(undo(history).document.files.data).equals(Buffer.from(document.files.data))).toBe(true);
+  }
+  for (const type of [-1, 3, 5, 6, 8, NaN]) expect(() => setAmmunitionType(document, object.id, type)).toThrow();
+  expect(() => setAmmunitionType(document, document.objects.find(object => object.type !== 9)!.id, 0)).toThrow(/ammunition pickup/);
+});
+
+it('preserves custom ammunition artwork until a weapon is explicitly selected', () => {
+  const original = openLevel('Custom ammo', originalFiles(1)), object = original.objects.find(object => object.type === 9)!;
+  const document = applyCommand(original, { label: 'Custom ammo fixture', patches: [numberPatch(original, 'data', object.offset + 8, 65536 + 99, 4)] });
+  expect(ammunitionType(document, object.id)).toBeUndefined();
+  const history = execute({ document, past: [], future: [] }, setAmmunitionType(document, object.id, 7));
+  expect(ammunitionType(history.document, object.id)).toBe(7);
+  expect(Buffer.from(undo(history).document.files.data).equals(Buffer.from(document.files.data))).toBe(true);
 });
