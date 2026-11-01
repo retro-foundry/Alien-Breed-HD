@@ -51,6 +51,12 @@
     if (changed) engine._editor_reload_wall_assets();
   }
   const send = (type, detail = {}) => parent.postMessage({source:'ab3d-engine', type, ...detail}, location.origin);
+  function pickAt(x, y) {
+    const offset = engine._editor_pick_graphic(x, y, 0);
+    return {zone:engine._editor_pick_at(x, y), pixel:engine._editor_pixel_at(x, y), surface:offset < 0 ? null : {
+      offset, upper:!!engine._editor_pick_graphic(x, y, 1), type:engine._editor_pick_graphic(x, y, 2)
+    }, revision:currentRevision};
+  }
   function mechanismState(kind, index) {
     if (!['door', 'lift'].includes(kind) || !Number.isInteger(index) || index < 0) throw new Error('Invalid mechanism inspection.');
     const value = field => engine._editor_mechanism_value(kind === 'lift' ? 1 : 0, index, field);
@@ -110,11 +116,14 @@
         const c = request.camera;
         if (!c || ![c.zone,c.x,c.z,c.upper,c.angle].every(Number.isInteger)) throw new Error('Invalid preview camera.');
         if (!engine._editor_camera(c.zone,c.x,c.z,c.upper,c.angle)) throw new Error('Place the preview camera inside the selected zone.');
+        send('view-changed', {revision:currentRevision});
       }
-      if (loaded && request.type === 'turn') engine._editor_turn(request.delta|0, request.look|0);
+      if (loaded && request.type === 'turn') {
+        engine._editor_turn(request.delta|0, request.look|0); send('view-changed', {revision:currentRevision});
+      }
       if (loaded && request.type === 'pick-at') {
         if (!Number.isFinite(request.x) || !Number.isFinite(request.y)) throw new Error('Invalid preview pick coordinates.');
-        send('pick-sample', {id:request.id, zone:engine._editor_pick_at(request.x, request.y), revision:currentRevision});
+        send('pick-sample', {id:request.id, ...pickAt(request.x, request.y)});
       }
       if (loaded && request.type === 'capture') {
         const c = request.camera;
@@ -185,13 +194,13 @@
   canvas.addEventListener('click', event => {
     const rect = canvas.getBoundingClientRect();
     if (loaded && !playing && rect.width > 0 && rect.height > 0)
-      send('pick', {zone:engine._editor_pick_at((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height), revision:currentRevision});
+      send('pick', pickAt((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height));
   });
   canvas.addEventListener('keydown', event => {
     if (playing || !loaded) return;
-    if (event.key === 'Enter') { event.preventDefault(); send('pick', {zone:engine._editor_pick(), revision:currentRevision}); return; }
+    if (event.key === 'Enter') { event.preventDefault(); send('pick', pickAt(.5, .5)); return; }
     const controls = {ArrowLeft:[-128,0],ArrowRight:[128,0],ArrowUp:[0,-8],ArrowDown:[0,8]};
-    if (controls[event.key]) { event.preventDefault(); engine._editor_turn(...controls[event.key]); }
+    if (controls[event.key]) { event.preventDefault(); engine._editor_turn(...controls[event.key]); send('view-changed', {revision:currentRevision}); }
   });
 </script>
 </html>

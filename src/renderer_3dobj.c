@@ -390,6 +390,7 @@ static void draw_filled_polygon(const int *sx, const int *sy, int n,
     int W = g_renderer.width;
     int H = g_renderer.height;
     uint16_t cw_fill = renderer_argb_to_amiga12(color);
+    uint32_t *pick_graphic = renderer_get_graphic_pick_target();
     for (int y = min_y; y <= max_y; y++) {
         int x0 = span_min[y - min_y];
         int x1 = span_max[y - min_y];
@@ -401,6 +402,7 @@ static void draw_filled_polygon(const int *sx, const int *sy, int n,
             if (renderer_get_rgb_raster_expand())
                 row[x] = color;
             poly_cw_store_xy(cw, x, y, W, H, cw_fill);
+            if (pick_graphic) pick_graphic[(size_t)y * W + x] = UINT32_MAX;
         }
     }
 }
@@ -791,6 +793,7 @@ static void draw_textured_triangle(const int *sx, const int *sy,
 {
     uint32_t *rgb = renderer_get_active_rgb_target();
     RendererPixel *cw = renderer_get_active_cw_target();
+    uint32_t *pick_graphic = renderer_get_graphic_pick_target();
     if (!cw || (renderer_get_rgb_raster_expand() && !rgb)) return;
 
     int min_x = sx[0], max_x = sx[0];
@@ -847,6 +850,7 @@ static void draw_textured_triangle(const int *sx, const int *sy,
             if (renderer_get_rgb_raster_expand())
                 row[x] = amiga12_to_argb_local(pal_cw);
             poly_cw_store_xy(cw, x, y, W, H, pal_cw);
+            if (pick_graphic) pick_graphic[(size_t)y * W + x] = UINT32_MAX;
         }
     }
 }

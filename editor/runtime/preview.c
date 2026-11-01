@@ -122,6 +122,31 @@ EMSCRIPTEN_KEEPALIVE int editor_pick_at(double x, double y)
     return zone;
 }
 
+EMSCRIPTEN_KEEPALIVE int editor_pick_graphic(double x, double y, int field)
+{
+    int px, py, upper;
+    int32_t offset;
+    if (!preview_loaded || preview_playing || !display_render_pixel(x, y, &px, &py)
+        || !renderer_get_graphic_pick(px, py, &offset, &upper)
+        || offset < 0 || (size_t)offset + 2 > g_state.level.graphics_byte_count) return -1;
+    if (field == 0) return offset;
+    if (field == 1) return upper;
+    if (field == 2) return obj_w(g_state.level.graphics + offset);
+    return -1;
+}
+
+EMSCRIPTEN_KEEPALIVE int editor_pixel_at(double x, double y)
+{
+    int px, py;
+    const RendererPixel *pixels = renderer_get_cw_buffer();
+    if (!preview_loaded || !pixels || !display_render_pixel(x, y, &px, &py)) return -1;
+#if AB3D_CW_COL_MAJOR
+    return pixels[(size_t)px * renderer_get_height() + py];
+#else
+    return pixels[(size_t)py * renderer_get_width() + px];
+#endif
+}
+
 EMSCRIPTEN_KEEPALIVE int editor_nonblack_pixels(void)
 {
     const RendererPixel *pixels = renderer_get_cw_buffer();
@@ -332,6 +357,10 @@ int main(void)
 {
     SDL_SetMainReady();
     setup_game(&g_state);
+    if (!renderer_set_graphic_picking(1)) {
+        fprintf(stderr, "Cannot allocate editor surface picking buffers\n");
+        abort();
+    }
     play_game_load_shared_assets(&g_state);
     emscripten_set_main_loop(preview_frame, 0, 0);
     return 0;

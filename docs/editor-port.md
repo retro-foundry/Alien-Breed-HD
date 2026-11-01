@@ -1890,3 +1890,26 @@ fixtures can establish current-format support independently.
   maps in both browsers and isolated playtest storage. Individual wall/floor /
   object picking, edit overlays and the remaining R1–R12 work are still required;
   this checkpoint does not establish full R10 or deployment readiness.
+
+  Surface inspection now captures the native graphics record/stream at each
+  world pixel, using the existing wall/floor raster coverage and an opt-in pair
+  of provenance buffers. Normal game startup allocates neither buffer. Backdrop,
+  opaque sprite and polygon-object writes clear covered surface identities;
+  transparent pixels retain the surface behind them. The host exposes read-only
+  record and colour-word samples; the UI checks picks against its exact compiled
+  artifact and shows kind, lower/upper stream, material and authored height.
+  Picking preserves the camera, while navigation/rebuilds clear the readout.
+  Inspector edits remain explicitly scoped to the selected room. See
+  editor-surface-picking.md for lifecycle and source-identity constraints.
+
+  All 777 model tests and 24 Chromium/Firefox controls/picking/occlusion/engine
+  cases pass, including all 16 original maps in both browsers. Native pixel
+  tests distinguish walls/floors, ceilings/water and remapped upper-room records.
+  Independent before/after colour words prove opaque sprite and polygon-object
+  coverage while gaps inside their observed silhouette bounds remain pickable.
+  Surface readout layout was inspected. Linux native and WebAssembly SAFE_HEAP
+  buffer regressions pass; Windows Release, WebAssembly runtime and production
+  editor builds pass. CI runs the capture regression, and workflow actionlint
+  passes. Stable source surface ownership/overrides, individual editing, object
+  picking, graphical overlays and the rest of R1–R12 remain required. Deployment
+  remains pending full readiness at the requested abhd-ed destination.

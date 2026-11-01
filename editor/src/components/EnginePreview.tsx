@@ -7,8 +7,9 @@ import { encodeLevelSetup } from '../model/levelSetup';
 import { validateAnimationReferences } from '../model/animationBuild';
 import { preparePlayableLevel, type PlayableLevel } from '../model/playableBuild';
 import { wallOverrideFiles } from '../model/wallOverrides';
+import { resolveEngineSurface, type EngineSurfacePick, type NativeSurfacePick } from '../model/engineSurfacePick';
 
-interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number }
+interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number; surface?: NativeSurfacePick | null }
 interface Props { document: LevelDocument; selection: Selection; sourceRoomId?: string; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSelectRoom: (room: string) => void; onSlotChange: (slot: number) => void }
 
 export function EnginePreview({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSlotChange }: Props) {
@@ -16,6 +17,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
   const [ready, setReady] = useState(false), [loaded, setLoaded] = useState(false);
   const [playing, setPlaying] = useState(false), [starting, setStarting] = useState(false);
   const [error, setError] = useState(''), [notice, setNotice] = useState('Loading the game engine…');
+  const [pickedSurface, setPickedSurface] = useState<EngineSurfacePick>();
   const slot = document.playtestSlot;
   const [revision, setRevision] = useState(0);
   const [nonblack, setNonblack] = useState(0);
@@ -38,6 +40,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
     setActualSlot(-1); setActualExit(undefined); setSpawnZone(undefined); setNonblack(0);
   }
   function positionCamera() {
+    setPickedSurface(undefined);
     const { document: source, selection, sourceRoomId, layer } = current.current;
     const built = artifact.current;
     if (!built || built.source !== source) return;
@@ -75,6 +78,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
       window.clearTimeout(reloadTimer.current); reloadTimer.current = undefined;
     }
     const source = current.current.document;
+    setPickedSurface(undefined);
     pendingPlay.current = play;
     setStarting(play); setLoaded(false); setError(''); setNotice('Building current level…');
     const next = ++revisionRef.current; setRevision(next);
@@ -111,6 +115,12 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
         setError(message.message ?? 'The engine preview stopped.'); setStarting(false); setPlaying(false); setLoaded(false);
       }
       if (message.type === 'stopped') { setPlaying(false); setStarting(false); setNotice('Playtest ended. Build and play again to restart.'); }
+      if (message.type === 'view-changed') setPickedSurface(undefined);
+      if (message.type === 'pick') {
+        const built = artifact.current;
+        setPickedSurface(built?.source === current.current.document && message.zone !== undefined
+          ? resolveEngineSurface(built.document, message.zone, message.surface) : undefined);
+      }
       if (message.type === 'pick' && message.zone !== undefined && message.zone >= 0) {
         const built = artifact.current;
         if (!built || built.source !== current.current.document) return;
@@ -142,6 +152,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
   useEffect(() => {
     if (previousDocument.current === document) return;
     previousDocument.current = document; ++revisionRef.current; pendingPlay.current = false; artifact.current = undefined;
+    setPickedSurface(undefined);
     send('play', { playing: false }); setPlaying(false); setStarting(false); setLoaded(false);
     setActualSlot(-1); setActualExit(undefined); setSpawnZone(undefined); setNonblack(0);
   }, [document]);
@@ -174,8 +185,14 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
     <div className="engine-stage"><iframe ref={frame} title="Alien Breed game engine" src={`${import.meta.env.BASE_URL}runtime/frame.html`} allow="autoplay; fullscreen" onError={() => setError('The game preview could not be loaded. Your map is still available. Reload the preview to try again.')} />
       {!playing && loaded && <span className="engine-crosshair" aria-hidden="true">+</span>}
       {error && <div className="engine-error" role="alert"><Icon name="alert" /><p>{error}</p><button title="Restart the preview engine. Your editable document is kept." onClick={reloadEngine}>Reload engine</button></div>}
+      {!playing && loaded && pickedSurface && <div className="engine-surface-info" role="note" aria-label="Picked surface" data-graphic={pickedSurface.offset} data-storey={pickedSurface.upper ? 'upper' : 'lower'}>
+      <strong>{pickedSurface.kind} · {pickedSurface.upper ? 'Upper' : 'Lower'}</strong>
+      {pickedSurface.texture !== undefined && <span>Material {pickedSurface.texture}</span>}
+      {pickedSurface.height !== undefined && <span>Authored height {pickedSurface.height}</span>}
+      <span>Inspector settings apply to the room.</span>
+    </div>}
     </div>
-    <div className="engine-controls">{playing ? <span>Click to capture mouse · WASD move · C crouch · Space use · Esc release mouse · Stop returns to editing</span> : <><button disabled={!loaded} aria-label="Turn preview left" title="Turn the inspection camera left. Left Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: -256 })}>←</button><button disabled={!loaded} aria-label="Turn preview right" title="Turn the inspection camera right. Right Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: 256 })}>→</button><button disabled={!loaded} aria-label="Look up in preview" title="Look up. Up Arrow also looks up when the 3D view has focus." onClick={() => send('turn', { look: -12 })}>↑</button><button disabled={!loaded} aria-label="Look down in preview" title="Look down. Down Arrow also looks down when the 3D view has focus." onClick={() => send('turn', { look: 12 })}>↓</button><span>Select a zone to visit · Click a visible room to select it ? Arrow keys turn/look ? Enter selects at the crosshair</span></>}
+    <div className="engine-controls">{playing ? <span>Click to capture mouse · WASD move · C crouch · Space use · Esc release mouse · Stop returns to editing</span> : <><button disabled={!loaded} aria-label="Turn preview left" title="Turn the inspection camera left. Left Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: -256 })}>←</button><button disabled={!loaded} aria-label="Turn preview right" title="Turn the inspection camera right. Right Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: 256 })}>→</button><button disabled={!loaded} aria-label="Look up in preview" title="Look up. Up Arrow also looks up when the 3D view has focus." onClick={() => send('turn', { look: -12 })}>↑</button><button disabled={!loaded} aria-label="Look down in preview" title="Look down. Down Arrow also looks down when the 3D view has focus." onClick={() => send('turn', { look: 12 })}>↓</button><span>Select a zone to visit · Click a surface to inspect it · Arrow keys turn/look · Enter selects at the crosshair</span></>}
       <details className="engine-key-help"><summary title="Show the keys for the current 3D mode. Enter or Space opens this list.">Controls</summary><div><strong>{playing ? 'Playtest controls' : '3D inspection controls'}</strong>{(playing ? playKeys : previewKeys).map(([key, action]) => <p key={key}><span>{action}</span><kbd>{key}</kbd></p>)}</div></details>
     </div>
   </section>;

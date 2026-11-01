@@ -264,6 +264,9 @@ static uint16_t *g_pick_zone_buffer = NULL;
 static uint16_t *g_pick_zone_back_buffer = NULL;
 static uint8_t *g_pick_player_buffer = NULL;
 static uint8_t *g_pick_player_back_buffer = NULL;
+static uint32_t *g_pick_graphic_buffer = NULL;
+static uint32_t *g_pick_graphic_back_buffer = NULL;
+static int g_pick_graphic_enabled = 0;
 /* Picking is one-shot on demand (F2): armed -> captured on next frame only. */
 static int g_pick_capture_armed = 0;
 static int g_pick_capture_active = 0;
@@ -2093,6 +2096,7 @@ typedef AB3D_CACHELINE_ALIGN struct {
     int16_t slice_right;
     int16_t automap_stage_slot;
     int16_t pick_zone_id;
+    uint32_t pick_graphic;
     uint8_t pick_player_id;
     int8_t  fill_screen_water;
     int8_t  update_column_clip;
@@ -2134,6 +2138,7 @@ static void render_slice_context_reset(RenderSliceContext *ctx,
     ctx->slice_right = right;
     /* Preserve caller-assigned stage slot (worker slot vs main slot). */
     ctx->pick_zone_id = -1;
+    ctx->pick_graphic = UINT32_MAX;
     ctx->pick_player_id = 0;
     ctx->cur_wall_pal = NULL;
     ctx->fill_screen_water = 0;
@@ -2198,6 +2203,11 @@ static inline uint8_t *renderer_active_pick_player(void)
     return g_pick_player_buffer;
 }
 
+uint32_t *renderer_get_graphic_pick_target(void)
+{
+    return g_pick_capture_active ? g_pick_graphic_buffer : NULL;
+}
+
 static inline uint16_t renderer_pick_zone_encode(int16_t zone_id)
 {
     if (zone_id < 0) return RENDERER_PICK_ZONE_NONE;
@@ -2214,6 +2224,7 @@ static void renderer_pick_clear_active_buffers(void)
     count = (size_t)w * (size_t)h;
     memset(g_pick_zone_buffer, 0xFF, count * sizeof(uint16_t));
     memset(g_pick_player_buffer, 0, count * sizeof(uint8_t));
+    if (g_pick_graphic_buffer) memset(g_pick_graphic_buffer, 0xFF, count * sizeof(uint32_t));
 }
 
 static inline void renderer_pick_mark_row_span(const RenderSliceContext *ctx,
@@ -2222,6 +2233,7 @@ static inline void renderer_pick_mark_row_span(const RenderSliceContext *ctx,
 {
     uint16_t *pick_zone = renderer_active_pick_zone();
     uint8_t *pick_player = renderer_active_pick_player();
+    uint32_t *pick_graphic = renderer_get_graphic_pick_target();
     int w = g_renderer.width;
     size_t row;
     if ((!pick_zone && !pick_player) || !ctx) return;
@@ -2236,6 +2248,7 @@ static inline void renderer_pick_mark_row_span(const RenderSliceContext *ctx,
     if (pick_player) {
         memset(pick_player + row, 0, (size_t)(xr - xl + 1));
     }
+    if (pick_graphic) for (int x = xl; x <= xr; x++) pick_graphic[row + (size_t)(x - xl)] = ctx->pick_graphic;
 }
 
 static inline void renderer_pick_mark_wall_column(const RenderSliceContext *ctx,
@@ -2245,6 +2258,7 @@ static inline void renderer_pick_mark_wall_column(const RenderSliceContext *ctx,
 {
     uint16_t *pick_zone = renderer_active_pick_zone();
     uint8_t *pick_player = renderer_active_pick_player();
+    uint32_t *pick_graphic = renderer_get_graphic_pick_target();
     uint16_t zone_value;
     int w = g_renderer.width;
     size_t pix;
@@ -2254,6 +2268,11 @@ static inline void renderer_pick_mark_wall_column(const RenderSliceContext *ctx,
     zone_value = renderer_pick_zone_encode(ctx->pick_zone_id);
     pix = (size_t)ct * (size_t)w + (size_t)x;
     for (int y = ct; y <= cb; y++) {
+        if (pick_graphic) {
+            pick_graphic[pix] = ctx->pick_graphic;
+            if (do_ext_l && x > 0) pick_graphic[pix - 1] = ctx->pick_graphic;
+            if (do_ext_r && x + 1 < w) pick_graphic[pix + 1] = ctx->pick_graphic;
+        }
         if (pick_zone) {
             pick_zone[pix] = zone_value;
             if (do_ext_l && x > 0) pick_zone[pix - 1] = zone_value;
@@ -2270,11 +2289,13 @@ static inline void renderer_pick_mark_wall_column(const RenderSliceContext *ctx,
     if (top_ext && ct > 0) {
         size_t up = ((size_t)(ct - 1) * (size_t)w) + (size_t)x;
         if (pick_zone) pick_zone[up] = zone_value;
+        if (pick_graphic) pick_graphic[up] = ctx->pick_graphic;
         if (pick_player) pick_player[up] = 0;
     }
     if (bot_ext && cb + 1 < g_renderer.height) {
         size_t dn = ((size_t)(cb + 1) * (size_t)w) + (size_t)x;
         if (pick_zone) pick_zone[dn] = zone_value;
+        if (pick_graphic) pick_graphic[dn] = ctx->pick_graphic;
         if (pick_player) pick_player[dn] = 0;
     }
 }
@@ -4554,6 +4575,10 @@ static const uint32_t gun_ptr_frame_offsets[32] = {
  * ----------------------------------------------------------------------- */
 static void free_buffers(void)
 {
+    ab3d_aligned_free(g_pick_graphic_buffer);
+    g_pick_graphic_buffer = NULL;
+    ab3d_aligned_free(g_pick_graphic_back_buffer);
+    g_pick_graphic_back_buffer = NULL;
     ab3d_aligned_free(g_renderer.buffer);
     g_renderer.buffer = NULL;
     ab3d_aligned_free(g_renderer.back_buffer);
@@ -4588,6 +4613,35 @@ static void free_buffers(void)
     g_renderer.clip.z2 = NULL;
 }
 
+static int allocate_graphic_pick_buffers(int w, int h)
+{
+    if (!g_pick_graphic_enabled) return 1;
+    g_pick_graphic_buffer = ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, (size_t)w * h, sizeof(uint32_t));
+    g_pick_graphic_back_buffer = ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, (size_t)w * h, sizeof(uint32_t));
+    if (g_pick_graphic_buffer && g_pick_graphic_back_buffer) {
+        memset(g_pick_graphic_buffer, 0xFF, (size_t)w * h * sizeof(uint32_t));
+        memset(g_pick_graphic_back_buffer, 0xFF, (size_t)w * h * sizeof(uint32_t));
+        return 1;
+    }
+    ab3d_aligned_free(g_pick_graphic_buffer); g_pick_graphic_buffer = NULL;
+    ab3d_aligned_free(g_pick_graphic_back_buffer); g_pick_graphic_back_buffer = NULL;
+    return 0;
+}
+
+int renderer_set_graphic_picking(int enabled)
+{
+    if (!!enabled == g_pick_graphic_enabled) return 1;
+    if (enabled && (g_renderer.width <= 0 || g_renderer.height <= 0)) return 0;
+    g_pick_graphic_enabled = !!enabled;
+    if (enabled) {
+        if (allocate_graphic_pick_buffers(g_renderer.width, g_renderer.height)) return 1;
+        g_pick_graphic_enabled = 0; return 0;
+    }
+    ab3d_aligned_free(g_pick_graphic_buffer); g_pick_graphic_buffer = NULL;
+    ab3d_aligned_free(g_pick_graphic_back_buffer); g_pick_graphic_back_buffer = NULL;
+    return 1;
+}
+
 static void allocate_buffers(int w, int h)
 {
     g_renderer.width = w;
@@ -4596,6 +4650,10 @@ static void allocate_buffers(int w, int h)
     g_renderer.present_height = h;
 
     size_t buf_size = (size_t)w * h;
+    if (!allocate_graphic_pick_buffers(w, h)) {
+        fprintf(stderr, "[RENDERER] Cannot allocate %dx%d editor graphics picking buffers\n", w, h);
+        exit(1);
+    }
 #ifndef AB3D_DOS
     g_renderer.buffer = (uint8_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, buf_size, 1);
     g_renderer.back_buffer = (uint8_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, buf_size, 1);
@@ -5355,6 +5413,9 @@ void renderer_draw_sky_pass(int16_t angpos)
 
 void renderer_swap(void)
 {
+    uint32_t *tmp_pick_graphic = g_pick_graphic_buffer;
+    g_pick_graphic_buffer = g_pick_graphic_back_buffer;
+    g_pick_graphic_back_buffer = tmp_pick_graphic;
 #ifndef AB3D_DOS
     uint8_t *tmp = g_renderer.buffer;
     g_renderer.buffer = g_renderer.back_buffer;
@@ -5409,6 +5470,19 @@ void renderer_get_center_pick(int16_t *out_zone_id, int *out_player_id)
 {
     renderer_get_pixel_pick(g_renderer.width / 2, g_renderer.height / 2,
                             out_zone_id, out_player_id);
+}
+
+int renderer_get_graphic_pick(int x, int y, int32_t *out_offset, int *out_upper)
+{
+    if (out_offset) *out_offset = -1;
+    if (out_upper) *out_upper = 0;
+    if (!g_pick_last_frame_valid || !g_pick_graphic_back_buffer
+        || x < 0 || y < 0 || x >= g_renderer.width || y >= g_renderer.height) return 0;
+    uint32_t value = g_pick_graphic_back_buffer[(size_t)y * g_renderer.width + x];
+    if (value == UINT32_MAX) return 0;
+    if (out_offset) *out_offset = (int32_t)(value >> 1);
+    if (out_upper) *out_upper = value & 1;
+    return 1;
 }
 
 void renderer_get_pixel_pick(int x, int y, int16_t *out_zone_id, int *out_player_id)
@@ -6886,6 +6960,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
     RendererPixel *cwbuf = renderer_active_cw();
     uint16_t *pick_zone = renderer_active_pick_zone();
     uint8_t *pick_player = renderer_active_pick_player();
+    uint32_t *pick_graphic = renderer_get_graphic_pick_target();
     if ((RENDER_TAGS_ENABLED && !buf) || !cwbuf || (g_renderer_rgb_raster_expand && !rgb)) return;
     if (y < 0 || y >= rs->height) return;
     if (y < (int)ctx->top_clip || y > (int)ctx->bot_clip) return;
@@ -6902,6 +6977,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
         size_t row = (size_t)y * (size_t)w;
         for (int x = xl; x <= xr; x++) {
             size_t p = row + (size_t)x;
+            if (pick_graphic) pick_graphic[p] = UINT32_MAX;
             if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
             if (pick_player) pick_player[p] = 0;
             RENDER_TAG_STORE(buf[p], 0);
@@ -6974,7 +7050,8 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                     cw12 = renderer_pixel_from_c12(cw12);
 #endif
                     size_t p = row + (size_t)x;
-                    if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
+                    if (pick_graphic) pick_graphic[p] = UINT32_MAX;
+            if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
                     if (pick_player) pick_player[p] = 0;
                     RENDER_TAG_STORE(buf[p], 0);
                     if (g_renderer_rgb_raster_expand)
@@ -6996,7 +7073,8 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                     cw12 = renderer_pixel_from_c12(cw12);
 #endif
                     size_t p = row + (size_t)x;
-                    if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
+                    if (pick_graphic) pick_graphic[p] = UINT32_MAX;
+            if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
                     if (pick_player) pick_player[p] = 0;
                     RENDER_TAG_STORE(buf[p], 0);
                     if (g_renderer_rgb_raster_expand)
@@ -7028,7 +7106,8 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                 }
                 uint8_t idx = sky_px1[toff];
                 size_t p = row + (size_t)x;
-                if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
+                if (pick_graphic) pick_graphic[p] = UINT32_MAX;
+            if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
                 if (pick_player) pick_player[p] = 0;
                 RENDER_TAG_STORE(buf[p], 0);
                 if (g_renderer_rgb_raster_expand)
@@ -7050,7 +7129,8 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                 int b = 30 + (shade * 200) / 255;
                 uint32_t px = RENDER_RGB_RASTER_PIXEL(((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b);
                 size_t p = row + (size_t)x;
-                if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
+                if (pick_graphic) pick_graphic[p] = UINT32_MAX;
+            if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
                 if (pick_player) pick_player[p] = 0;
                 RENDER_TAG_STORE(buf[p], 0);
                 if (g_renderer_rgb_raster_expand)
@@ -9420,6 +9500,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     const uint32_t spill_vis_rgb = renderer_pixel_to_argb(spill_vis_cw);
     uint16_t *pick_zone = renderer_active_pick_zone();
     uint8_t *pick_player = renderer_active_pick_player();
+    uint32_t *pick_graphic = renderer_get_graphic_pick_target();
     const uint8_t pick_player_id = ctx->pick_player_id;
     const int have_pick = (pick_player && pick_player_id) ? 1 : 0;
     const int mark_sprite_pick_zone_none = (g_debug_spill_visualize && pick_zone) ? 1 : 0;
@@ -9731,6 +9812,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                     if (profile_collect_stats) sprite_opaque_writes_total++;
                                     rgb[pix] = spr_rgb[texel];
                                     cw[pix_cw] = spr_cw[texel];
+                                    if (pick_graphic) pick_graphic[pix] = UINT32_MAX;
                                     if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
                                 }
                                 pix += rw_stride;
@@ -9746,6 +9828,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                     if (profile_collect_stats) sprite_opaque_writes_total++;
                                     rgb[pix] = spr_rgb[texel];
                                     cw[pix_cw] = spr_cw[texel];
+                                    if (pick_graphic) pick_graphic[pix] = UINT32_MAX;
                                     if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
                                 }
                                 pix += rw_stride;
@@ -9762,7 +9845,8 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                         if (profile_collect_stats) sprite_opaque_writes_total++;
                                         rgb[pix] = spr_rgb[texel];
                                         cw[pix_cw] = spr_cw[texel];
-                                        if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
+                                        if (pick_graphic) pick_graphic[pix] = UINT32_MAX;
+                                    if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
                                     }
                                 }
                                 pix += rw_stride;
@@ -9779,7 +9863,8 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                         if (profile_collect_stats) sprite_opaque_writes_total++;
                                         rgb[pix] = spr_rgb[texel];
                                         cw[pix_cw] = spr_cw[texel];
-                                        if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
+                                        if (pick_graphic) pick_graphic[pix] = UINT32_MAX;
+                                    if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
                                     }
                                 }
                                 pix += rw_stride;
@@ -9804,7 +9889,8 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                     rgb[pix] = spr_rgb[texel];
                                     cw[pix_cw] = spr_cw[texel];
                                 }
-                                if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
+                                if (pick_graphic) pick_graphic[pix] = UINT32_MAX;
+                                    if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
                             }
                         }
                         pix += rw_stride;
@@ -9831,6 +9917,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                 if (texel != 0) {
                                     if (profile_collect_stats) sprite_opaque_writes_total++;
                                     cw[pix_cw] = spr_cw[texel];
+                                    if (pick_graphic) pick_graphic[pix] = UINT32_MAX;
                                     if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
                                 }
                                 pix += rw_stride;
@@ -9845,6 +9932,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                 if (texel != 0) {
                                     if (profile_collect_stats) sprite_opaque_writes_total++;
                                     cw[pix_cw] = spr_cw[texel];
+                                    if (pick_graphic) pick_graphic[pix] = UINT32_MAX;
                                     if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
                                 }
                                 pix += rw_stride;
@@ -9860,7 +9948,8 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                     if (texel != 0) {
                                         if (profile_collect_stats) sprite_opaque_writes_total++;
                                         cw[pix_cw] = spr_cw[texel];
-                                        if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
+                                        if (pick_graphic) pick_graphic[pix] = UINT32_MAX;
+                                    if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
                                     }
                                 }
                                 pix += rw_stride;
@@ -9876,7 +9965,8 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                     if (texel != 0) {
                                         if (profile_collect_stats) sprite_opaque_writes_total++;
                                         cw[pix_cw] = spr_cw[texel];
-                                        if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
+                                        if (pick_graphic) pick_graphic[pix] = UINT32_MAX;
+                                    if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
                                     }
                                 }
                                 pix += rw_stride;
@@ -9895,7 +9985,8 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                             if (texel != 0) {
                                 if (profile_collect_stats) sprite_opaque_writes_total++;
                                 cw[pix_cw] = spill_visualize ? spill_vis_cw : spr_cw[texel];
-                                if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
+                                if (pick_graphic) pick_graphic[pix] = UINT32_MAX;
+                                    if (mark_sprite_pick_zone_none) pick_zone[pix] = RENDERER_PICK_ZONE_NONE;
                             }
                         }
                         pix += rw_stride;
@@ -14582,6 +14673,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
         while (max_iter-- > 0) {
         int16_t entry_type = rd16(ptr);
         ptr += 2; /* Consume type word (matches ASM (a0)+) */
+        ctx->pick_graphic = ((uint32_t)(ptr - 2 - level->graphics) << 1) | (use_upper ? 1u : 0u);
 
         if (entry_type < 0) break; /* End of list */
 

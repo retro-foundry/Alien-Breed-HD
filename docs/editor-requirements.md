@@ -108,7 +108,11 @@ Chromium and Firefox. Native pixel picking now selects the room at the clicked
 position, retains the inspection camera and maps generated cells back to source
 rooms. Enter selects at the crosshair. Authored stair views, native upper-floor
 views with remapped IDs, viewport resizing and later list navigation are checked
-in both browsers. Full wall/floor/object picking and overlays are pending.
+in both browsers. Native graphics provenance now additionally identifies picked
+walls, floors, ceilings and water, with stream/material/authored-height readouts.
+Actual colour-word comparisons verify opaque sprite/polygon-object coverage and
+transparent gaps. Inspector edits still apply to the room; stable individual
+surface editing, object selection from 3D and graphical edit overlays are pending.
 Original assembly geometry helpers have 330 emulated parity fixtures, and all
 49,797 current ordering masks independently rebuild. The exact portal model
 processes all 16 maps, including concave imports, emits common clip bounds and

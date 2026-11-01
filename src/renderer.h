@@ -369,6 +369,12 @@ void renderer_request_center_pick_capture(void);
 void renderer_get_center_pick(int16_t *out_zone_id, int *out_player_id);
 /* Last captured frame, internal raster coordinates. Outside/uncaptured = none. */
 void renderer_get_pixel_pick(int x, int y, int16_t *out_zone_id, int *out_player_id);
+/* Optional editor-only graphics provenance. No buffers are allocated until enabled.
+ * Returns 0 on allocation failure. Record offsets exclude objects/backdrop. */
+int renderer_set_graphic_picking(int enabled);
+int renderer_get_graphic_pick(int x, int y, int32_t *out_offset, int *out_upper);
+/* Row-major active target for polygon-object occlusion; UINT32_MAX means none. */
+uint32_t *renderer_get_graphic_pick_target(void);
 /* Emit one-shot F2 debug summary for the last captured frame (zones/walls/sprites/overdraw). */
 void renderer_log_f2_pick_debug(const GameState *state,
                                 int16_t standing_zone,
