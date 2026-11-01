@@ -14,7 +14,7 @@ test('unsafe animation imports preserve the current map, recovery and live engin
   // the validated user import boundary and must reject this archive.
   const unsafe = parseLevel('Unsafe animation', { ...original.files, graphics });
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toHaveText('138 zones loaded · Game engine', { timeout: 60000 });
   const revision = await preview.getAttribute('data-revision');

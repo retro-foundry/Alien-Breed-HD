@@ -86,7 +86,7 @@ test('a moved object renders in its authored room and disappears when deleted in
   expect(present.document.objects[object.id]!.zone).toBe(zone);
   expect(hidden.document.objects[object.id]!.zone).toBe(-1);
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   const frames: number[][] = [];
   for (const [index, built] of [present, hidden].entries()) {

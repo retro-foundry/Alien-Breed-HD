@@ -45,7 +45,7 @@ test('source appearance, export, viewport visits/picking and one-click play use 
   expect(spawn.zone).not.toBe(Number(from.id.replace(/^room-/, '')));
   expect(arrival.zone).not.toBe(Number(to.id.replace(/^room-/, '')));
   expect(compiled.exitZone).not.toBeNull();
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toHaveText(`${compiled.zones.length} zones loaded · Game engine`, { timeout: 60000 });
   await expect(preview).toHaveAttribute('data-exit-zone', String(compiled.exitZone));

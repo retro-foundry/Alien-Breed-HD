@@ -41,7 +41,7 @@ test('a compact named Type selector changes class immediately with history, port
   const saved = decodeProject(new Uint8Array(await readFile(path)));
   expect(saved.objects[proposal.id]).toMatchObject({ type: 4, y: -7.5 });
   expect(saved.sourceObjects).toEqual(document.sourceObjects);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' }).getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
   expect(await engineObjectState(page, proposal.id)).toMatchObject({ type: 4, x: 20128, z: 20192, yFixed: -7.5 * 256 });
   const cross = originalObjectTypes(Array.from({ length: 16 }, (_, index) => originalFiles(index + 1).data)).find(choice => !objectTemplates(document).some(item => item.type === choice.type && item.zone >= 0))!;

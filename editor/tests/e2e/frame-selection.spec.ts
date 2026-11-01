@@ -37,7 +37,7 @@ test('frame selection fits authored group positions and remains an explicit view
   await expect(map).toHaveAttribute('data-world-x', panned!);
   await map.focus(); await page.keyboard.press('Shift+f');
   await expect(map).toHaveAttribute('data-world-x', '20642.25');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(map).toHaveCount(0);
   await frame.click();
   await expect(map).toHaveAttribute('data-world-x', '20642.25');

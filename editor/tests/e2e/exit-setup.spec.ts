@@ -20,7 +20,7 @@ test('saved and exported exits drive actual game completion and can be cleared',
   const exported = page.waitForEvent('download'); await page.getByRole('button', { name: 'Export level', exact: true }).click();
   const gamePath = testInfo.outputPath('spawn-exit-game.zip'); await (await exported).saveAs(gamePath);
   expect(openArchive(new Uint8Array(await readFile(gamePath)), 'level.zip')[0]!.exitZone).toBe(spawn);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview).toHaveAttribute('data-exit-zone', String(spawn), { timeout: 60000 });
   await preview.getByRole('button', { name: 'Build & play', exact: true }).click();

@@ -38,7 +38,7 @@ for (const kind of ['door', 'lift'] as const) test(`copied ${kind} controls vali
   expect(saved.files).toEqual(document.files);
   expect(copiedMechanismSettings(saved.roomSource.controllerCopies![0]!)).toMatchObject({ top, conditions: 0, openRule: settings.openRule });
   await page.screenshot({ path: testInfo.outputPath(`${kind}-copied-settings.png`), fullPage: true });
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   expect(await engineMechanismState(page, kind, 1)).toMatchObject({ top });

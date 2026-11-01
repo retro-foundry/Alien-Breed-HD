@@ -86,7 +86,7 @@ test('multi-object selection moves, aligns, rejects partial changes and deletes 
   await expect(first).toHaveCount(0); await expect(second).toHaveCount(0);
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(inspector).toBeVisible();
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   expect(await engineObjectState(page, ids[0]!)).toMatchObject({ x: 20119.5, z: 20144.25 });
   expect(await engineObjectState(page, ids[1]!)).toMatchObject({ x: 20119.5, z: 20208.25 });
@@ -122,7 +122,7 @@ test('upper-floor groups choose the compatible room at a shared lower-room edge'
     expect(saved.sourceObjects!.find(object => object.id === id)).toMatchObject({ room: fixture.to.id, x: 21000 });
     expect(saved.objects[id]!.upper).toBe(true);
   }
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   for (const id of fixture.ids) expect(await engineObjectState(page, id)).toMatchObject({ x: 21000, zone: built.topology!.sourceCells.get(fixture.to.id)![0], yFixed: saved.objects[id]!.y * 256 });
 });

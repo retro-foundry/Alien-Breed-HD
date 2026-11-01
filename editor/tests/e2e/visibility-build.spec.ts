@@ -15,7 +15,7 @@ test('rebuilt visibility and relocated graphics load in the real engine and pres
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   for (let level = 1; level <= 16; level++) {
     const original = openLevel(`Level ${level}`, originalFiles(level));
     if (level > 1) await page.getByRole('combobox', { name: 'Original level' }).selectOption({ value: String(level) });

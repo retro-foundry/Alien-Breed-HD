@@ -18,7 +18,7 @@ Open the address printed by Vite. The original 16 map triplets are copied from
 the repository into ignored `public/reference/` during development and builds.
 Opening local files does not upload them anywhere.
 
-The 3D preview requires WebGL2. If its renderer cannot start, the editor shows
+Engine view requires WebGL2. If its renderer cannot start, the editor shows
 recovery steps and keeps the map editable and saveable. After enabling browser
 hardware acceleration, updating the graphics driver or changing browsers, use
 **Reload engine** to retry. A failed renderer does not count as a loaded map.
@@ -31,6 +31,30 @@ The package puts the matching native engine and bridge in a content-versioned
 directory, so refreshing an older published editor loads the new runtime too.
 `dist/build-info.json` records its resource hashes. To test that exact package
 without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
+
+## Editing views
+
+**Editor view** has Top, Bottom, Front, Back, Left, Right, 3D orthographic and
+3D perspective projections, chosen beside the viewport tabs. **Engine view**
+is the actual game renderer and playtest. **Split view** keeps the chosen
+editing projection alongside the engine. The editable volumes represent room
+outlines, native heights and actor anchors; game-specific decorative surfaces
+and material appearance are inspected in Engine view.
+
+- Click rooms, objects or starts to select them. The inspector, source document
+  and history are shared by every view.
+- Drag selected room corners to reshape outlines. Front/back lock Z; left/right
+  lock X. In 3D, corner drags stay on the room's horizontal floor plane.
+- Drag **F** / **C** to change the displayed storey's floor/ceiling. Invalid
+  heights show a diagnostic and are rejected atomically. Water stays independent.
+- Selected objects expose X/Y/Z handles. Direct drags use the visible axis plane;
+  3D direct drags keep height fixed. Y increases downwards. Starts stay floor-bound.
+- Each release is one Undo; Escape discards a drag. Tab/arrow keys nudge handles;
+  Shift increases the increment. Grid snapping applies; Alt uses finer increments.
+- Wheel zooms at the pointer. Space/middle drag pans. Right drag orbits 3D views.
+  F fits the level; Shift+F frames selection. Ceilings/Wireframe affect display.
+- Add/duplicate use click placement in editing views. Top retains room drawing
+  and rectangle selection; choosing those tools switches to Top automatically.
 
 ## Current working workflows
 
@@ -63,7 +87,7 @@ without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
   height, room, floor and identity stay fixed. Pickup-specific settings follow
   the type selector. Player avatars and projectile pools stay protected.
 
-- In paused 3D view, click a normal floor or ceiling and choose **Paint this surface**.
+- In paused Engine view, click a normal floor or ceiling and choose **Paint this surface**.
   Select any of the original 16 patterns and a texture repeat from 1/32? to 4?.
   Apply commits one undoable edit; Escape cancels. Lower and upper storeys and
   copied rooms stay independent. Saving and room copy/paste retain the paint.
@@ -71,7 +95,7 @@ without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
   surfaces** clears all surface overrides for that room. Bump mapping, water
   materials and no-roof/sky authoring are not part of this normal-pattern brush.
 
-- In paused 3D view, click a straight wall and choose **Paint this wall**.
+- In paused Engine view, click a straight wall and choose **Paint this wall**.
   Choose a native style using the sheet previews, then Apply, or Escape to cancel.
   Paint affects the picked native face or authored boundary and its generated
   pieces, including step/lintel bands around openings. Other rooms keep their

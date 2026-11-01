@@ -8,7 +8,7 @@ import { reindexRooms } from '../reindexedRooms';
 test('renumbered rooms retain engine spawn, exit setup and original views across all maps', async ({ page }, testInfo) => {
   test.setTimeout(360000); page.on('dialog', dialog => void dialog.accept());
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const comparisons: object[] = [];
   for (let level = 1; level <= 16; level++) {
     const original = openLevel(`Level ${level}`, originalFiles(level), level - 1);

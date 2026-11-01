@@ -11,7 +11,7 @@ test('an authored doorway cuts a shipped solid wall and the player walks through
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'closed-reference.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.baseline)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.baseline.name);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   const oldZone = Number(await preview.getAttribute('data-spawn-zone')), closed: number[] = [];
   for (const angle of [0, 2048, 4096, 6144]) closed.push(await captureEngine(page, { ...fixture.start, zone: oldZone, upper: 0, angle }));
@@ -52,7 +52,7 @@ test('a replacement room reconnects an imported doorway and is reachable in the 
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'replacement-room.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(preview.getByRole('alert')).toContainText('changed doorway needing a wall style', { timeout: 60000 });
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(fixture.owner.originZone).padStart(3, '0')}(?:\\s|$)`) }).click();
   await page.getByRole('combobox', { name: 'Lower wall style' }).selectOption(String(fixture.appearance.lowerWall));
@@ -93,7 +93,7 @@ test('deleting an adjoining room closes its doorway with an undoable saved appea
   await selectZone(fixture.removed.originZone!);
   await page.getByRole('button', { name: 'Delete room', exact: true }).click();
   await expect(page.getByRole('button', { name: new RegExp(`^Zone ${String(fixture.removed.originZone).padStart(3, '0')}(?:\\s|$)`) })).toHaveCount(0);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(preview.getByRole('alert')).toContainText('changed doorway needing a wall style', { timeout: 60000 });
   await selectZone(fixture.owner.originZone!);
   await expect(page.getByRole('heading', { name: 'Wall repair appearance' })).toBeVisible();

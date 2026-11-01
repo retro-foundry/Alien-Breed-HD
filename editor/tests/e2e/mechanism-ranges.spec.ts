@@ -52,7 +52,7 @@ for (const kind of ['door', 'lift'] as const) test(`${kind} movement range valid
   const path = testInfo.outputPath(`${kind}-range.ab3d`); await (await download).saveAs(path);
   const saved = decodeProject(new Uint8Array(await readFile(path))), changed = saved.mechanisms.find(item => item.kind === kind && item.id === mechanism.id)!;
   expect(changed[field]).toBe(value); expect(changed.current).toBe(mechanism.current); expect(changed.walls).toEqual(mechanism.walls);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   expect(await engineMechanismState(page, kind, mechanism.id)).toMatchObject({ zone, current: mechanism.current, top: changed.top, bottom: changed.bottom });
 });
@@ -74,7 +74,7 @@ for (const kind of ['door', 'lift'] as const) for (const cycle of [false, true])
   const form = section.getByRole('form', { name: `${kind} ${mechanism.id} movement range` });
   await form.getByRole('spinbutton', { name: `${kind} ${mechanism.id} top destination` }).fill(String(top));
   await form.getByRole('button', { name: 'Apply range', exact: true }).click();
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview).toHaveAttribute('data-level-slot', String(document.playtestSlot), { timeout: 60000 });
   expect(await engineMechanismState(page, kind, mechanism.id)).toMatchObject({ current: mechanism.current, top, bottom: mechanism.bottom, wallCount: mechanism.walls.length });

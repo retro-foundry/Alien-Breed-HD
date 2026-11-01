@@ -57,7 +57,7 @@ test('stair draft cancellation, one-step undo, source backup and native walking 
   const game = openProjectCandidate(openArchive(new Uint8Array(await readFile(gamePath)), 'stairs-game.zip')[0]!);
   const destination = game.zones.find(zone => zoneContainsPoint(game, zone, 20064, 20576))!;
   expect(destination).toMatchObject({ floor: -64, ceiling: -192 });
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   await captureEngine(page, { zone: game.starts[0]!.zone, x: 20064, z: 20064, upper: 0, angle: 0 });
   await page.mouse.move(0, 0);

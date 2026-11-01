@@ -34,7 +34,7 @@ test('new room lighting is independent source data, survives saves and changes n
   expect(saved.roomSource.rooms.find(room => room.id === to.id)!.properties).toBeUndefined();
   const generated = buildPlayableLevel(saved, -1);
   expect(generated.document.zones[cell.id]!.brightness).toBe(127);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', String(document.playtestSlot), { timeout: 60000 });
   const surfaceFrame = () => captureEngine(page, camera);
   const edited = await surfaceFrame();

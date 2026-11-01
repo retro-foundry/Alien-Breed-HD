@@ -50,7 +50,7 @@ test('duplicate drafts copy authored coordinates and exact settings, cancel safe
   await page.getByRole('button', { name: 'Add object', exact: true }).click();
   await expect(dialog.getByRole('button', { name: 'Blue key', exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   expect(await engineObjectState(page, proposal.id)).toMatchObject({ x: 20128.5, z: 20192.25, yFixed: -7.5 * 256, health: 23 });
   expect(await engineObjectState(page, copyId)).toMatchObject({ x: 20144, z: 20192, yFixed: -7.5 * 256, health: 23 });

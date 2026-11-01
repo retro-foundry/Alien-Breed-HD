@@ -36,7 +36,7 @@ test('3D controls explain the current mode and tooltips stay inside a narrow vie
   expect(bounds!.x).toBeGreaterThanOrEqual(0);
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(760);
   await page.screenshot({ path: testInfo.outputPath('control-tooltip.png'), fullPage: true });
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const details = page.locator('.engine-key-help');
   await details.locator('summary').click();
   await expect(details.getByText('3D inspection controls', { exact: true })).toBeVisible();
@@ -68,7 +68,7 @@ test('starting play before the initial preview loads survives delayed engine rep
     }, true);
   });
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toHaveText('Playtest running', { timeout: 60000 });
   await expect(preview.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
@@ -97,7 +97,7 @@ test('a rejected play load remains actionable and engine reload can start a fres
     }
   });
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('alert')).toContainText('Invalid level slot', { timeout: 60000 });
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
@@ -122,7 +122,7 @@ test('a delayed engine error from an older load cannot invalidate a newer previe
     }, true);
   });
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toHaveText('138 zones loaded · Game engine', { timeout: 60000 });
   const revision = Number(await preview.getAttribute('data-revision'));

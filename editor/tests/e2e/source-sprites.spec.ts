@@ -9,7 +9,7 @@ import { captureEngine } from '../engineCapture';
 test('authored-room sprites survive collision decomposition with their original appearance', async ({ page }, testInfo) => {
   page.on('dialog', dialog => void dialog.accept()); await page.goto('/');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const results: object[] = [];
   for (const hidden of [false, true]) {
     const files = originalFiles(2), baseline = openLevel('source', files, 1);

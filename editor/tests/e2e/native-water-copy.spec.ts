@@ -18,7 +18,7 @@ test('native material copies retain shared water motion in both the polygon and 
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'water-copy.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview).toHaveAttribute('data-level-slot', String(document.playtestSlot), { timeout: 60000 });
   await preview.getByRole('button', { name: 'Build & play', exact: true }).click();

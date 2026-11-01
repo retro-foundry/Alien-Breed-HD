@@ -18,7 +18,7 @@ test('room heights apply atomically, copy, undo and save independently of their 
   await page.locator('input[type=file]').setInputFiles({ name: 'room-heights.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(fixture.from.originZone).padStart(3, '0')}(?:\\s|$)`) }).click();
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   const before = await captureEngine(page, { zone: Number(await preview.getAttribute('data-spawn-zone')), x: 20128, z: 20128, upper: 0, angle: 0 });
   const floor = page.getByRole('spinbutton', { name: 'Lower floor height', exact: true }), ceiling = page.getByRole('spinbutton', { name: 'Lower ceiling height', exact: true });
@@ -72,7 +72,7 @@ test('an upper ceiling edit changes the actual upper-storey view without changin
   await page.locator('input[type=file]').setInputFiles({ name: 'upper-heights.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.from.id.replace(/^room-/, '')}`) }).click();
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   const camera = { zone: Number(await preview.getAttribute('data-spawn-zone')), x: 20128, z: 20128, upper: 1, angle: 0 };
   const before = await captureEngine(page, camera);
@@ -104,7 +104,7 @@ test('different authored heights generate a visible step and the native player w
   const inside = { x: fixture.x + fixture.normal.x * 128, z: fixture.z + fixture.normal.z * 128 };
   const destination = game.zones.find(zone => zoneContainsPoint(game, zone, inside.x, inside.z))!;
   expect(destination).toMatchObject({ floor: -32, ceiling: -160 });
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   const angle = fixture.normal.x > 0 ? 2048 : fixture.normal.x < 0 ? 6144 : fixture.normal.z > 0 ? 0 : 4096;
   await captureEngine(page, { ...fixture.start, zone: game.starts[0]!.zone, upper: 0, angle });

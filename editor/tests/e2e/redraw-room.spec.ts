@@ -45,7 +45,7 @@ test('redrawing an imported room cancels safely, commits one stable outline, and
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   expect((await save(page, testInfo.outputPath('undo.ab3d'))).roomSource).toEqual(fixture.baseline.roomSource);
   await page.getByRole('button', { name: 'Redo', exact: true }).click();
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('alert')).toContainText('new boundary walls needing a wall style', { timeout: 60000 });
   await page.getByRole('combobox', { name: 'Lower wall style' }).selectOption(String(fixture.appearance.lowerWall));

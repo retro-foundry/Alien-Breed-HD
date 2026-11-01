@@ -2398,3 +2398,29 @@ fixtures can establish current-format support independently.
   navigation. The source worktree is clean, deployment resources match the native
   manifest, and unrelated site abhd/abhd.zip remains untouched. Full AMOS parity
   and the remaining R0/R1-R12 editor requirements remain active work.
+
+
+## Axis and editable 3D views
+
+The game renderer is now explicitly **Engine view**. **Editor view** offers Top,
+Bottom, Front, Back, Left, Right, 3D orthographic and 3D perspective; Split view
+combines the selected editing projection with the native engine. Top retains
+room drawing and rectangle selection. Other projections expose editable source
+room volumes, current lower/upper planes, actor anchors and player starts.
+Native coordinates remain authoritative (larger Y is down); the scene does not
+claim to reproduce decorative graphics or material rendering.
+
+Camera projection, inverse rays, nearest-surface picking, near-plane clipping,
+cursor-anchored zoom and constrained transform math live in `editorCamera.ts`.
+`editorScene.ts` derives volumes from room outlines and `roomSettings`, and
+emits existing validated commands for corners, heights and actor placement.
+One drag commits one history entry; previews and rejected/cancelled gestures do
+not alter the saved document. Actor XY/ZY dragging and XYZ handles preserve
+locked dimensions; room height handles keep water independent. Object anchors
+are included when framing, even outside the room's floor/ceiling interval.
+
+User controls are in tooltips, the viewport footer and Help. Keyboard handles,
+upper/lower editing, perspective click placement, saved source and actual native
+object coordinates are covered by model/browser scenarios. Exact game surfaces,
+materials and gameplay remain available in Engine view. Complete AMOS parity
+and the remaining requirements above remain open.

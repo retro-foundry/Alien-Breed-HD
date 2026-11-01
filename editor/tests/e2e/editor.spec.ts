@@ -166,11 +166,11 @@ test('the project target slot survives undo, saves, recovery and reopening the 3
   await expect(target).toHaveValue('8');
   await expect(page.getByText('Workspace saved', { exact: true })).toBeVisible();
   await page.reload(); await expect(target).toHaveValue('8');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview).toHaveAttribute('data-level-slot', '8', { timeout: 60000 });
-  await page.getByRole('button', { name: '2D map', exact: true }).click();
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Editor view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(preview).toHaveAttribute('data-level-slot', '8', { timeout: 60000 });
   await expect(preview.getByRole('combobox', { name: 'Playtest level slot' })).toHaveValue('8');
 });

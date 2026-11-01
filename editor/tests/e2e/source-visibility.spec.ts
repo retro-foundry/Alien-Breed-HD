@@ -9,7 +9,7 @@ import { captureEngine } from '../engineCapture';
 test('rebuilding Level 13 visibility repairs the shipped gap without changing geometry', async ({ page }) => {
   page.on('dialog', dialog => void dialog.accept()); await page.goto('/');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const original = openLevel('Original 13', originalFiles(13), 12, -1);
   const built = buildSourceLevel(original, { resolvedExit: -1 });
   const reference = openLevel('Visibility reference', buildVisibilityFiles(original), 12, -1);

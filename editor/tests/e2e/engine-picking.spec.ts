@@ -16,7 +16,7 @@ test('clicked native pixels select authored rooms without moving the inspection 
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'pick-stairs.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(source)) });
   await expect(page.locator('.project-picker strong')).toHaveText(source.name);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
   await captureEngine(page, camera);
@@ -57,7 +57,7 @@ test('clicked native pixels select authored rooms without moving the inspection 
 test('native ceiling and water pixels identify their actual graphics records', async ({ page }) => {
   const document = openLevel('Native surface inspection', originalFiles(1), 0, -1);
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' }).getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
   const canvas = page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas');
   const points = Array.from({ length: 361 }, (_, index) => ({ x: (index % 19 + 1) / 20, y: (Math.floor(index / 19) + 1) / 20 }));
@@ -103,7 +103,7 @@ test('native upper-room picks resolve generated cell IDs after viewport resizing
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'pick-upper.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(source)) });
   await expect(page.locator('.project-picker strong')).toHaveText(source.name);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' }).getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
   await page.getByRole('button', { name: 'Upper', exact: true }).click();
   const canvas = page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas');

@@ -19,7 +19,7 @@ test('unavailable WebGL reports a startup error, preserves source and recovers o
     } as typeof getContext;
   });
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('alert')).toContainText('The 3D renderer could not start', { timeout: 60000 });
   await expect(preview.getByRole('alert')).toContainText('WebGL2');

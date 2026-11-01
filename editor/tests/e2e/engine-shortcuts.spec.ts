@@ -16,7 +16,7 @@ async function pickActor(page: Page) {
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'shortcut-actor.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(source)) });
   await expect(page.locator('.project-picker strong')).toHaveText(source.name);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
   await captureEngine(page, { zone: built.topology!.cells.find(cell => cell.sourceId === fixture.from.id)!.id, x: 20128, z: 20032, upper: 0, angle: 0 });
@@ -66,10 +66,10 @@ test('inspection clipboard, save, Undo/Redo and Delete use normal source history
 test('inspection dialogs, text fields, stale messages and playtests isolate editor commands', async ({ page }) => {
   test.setTimeout(90000);
   const { id, preview, canvas } = await pickActor(page), revision = Number(await preview.getAttribute('data-revision'));
-  await page.keyboard.press('Control+d'); const dialog = page.getByRole('dialog', { name: 'Add object', exact: true });
+  await page.getByRole('button', { name: 'Add object', exact: true }).click(); const dialog = page.getByRole('dialog', { name: 'Choose object to place', exact: true });
   await expect(dialog).toBeVisible();
   await sendKey(page, revision, 'Delete'); await sendKey(page, revision, 'z', { ctrlKey: true });
-  const x = dialog.getByRole('spinbutton', { name: 'New object X', exact: true });
+  const x = dialog.getByRole('searchbox', { name: 'Find object to place', exact: true });
   await x.fill('20128'); await x.press('Control+a'); await x.press('Backspace'); await expect(x).toHaveValue('');
   await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
@@ -92,7 +92,7 @@ test('inspection dialogs, text fields, stale messages and playtests isolate edit
 test('a missing shortcut module gives a recoverable engine error without losing source', async ({ page }) => {
   await page.route('**/inspection-shortcuts.mjs', route => route.abort());
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('alert')).toContainText(/import|module|fetch|load/i, { timeout: 60000 });
   await page.unroute('**/inspection-shortcuts.mjs');

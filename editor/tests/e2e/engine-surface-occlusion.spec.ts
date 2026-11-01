@@ -26,7 +26,7 @@ test(`${upper ? 'upper-floor ' : ''}${polygon ? 'polygon objects' : 'opaque spri
   for (const document of [baseline, source]) {
     await page.locator('input[type=file]').setInputFiles({ name: 'occlusion.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
     await expect(page.locator('.project-picker strong')).toHaveText(document.name);
-    if (captures.length === 0) await page.getByRole('button', { name: '3D view', exact: true }).click();
+    if (captures.length === 0) await page.getByRole('button', { name: 'Engine view', exact: true }).click();
     await expect(page.getByRole('region', { name: '3D game engine preview' }).getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
     hashes.push(await captureEngine(page, camera)); captures.push(await enginePickDetails(page, points));
   }

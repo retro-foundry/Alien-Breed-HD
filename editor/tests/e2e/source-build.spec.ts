@@ -11,7 +11,7 @@ import { buildVisibilityFiles } from '../../src/model/visibilityBuild';
 for (let level = 1; level <= 16; level++) test(`complete source build ${level} retains original starts and matches visibility-only reference views`, async ({ page }, testInfo) => {
   test.setTimeout(120000); page.on('dialog', dialog => void dialog.accept());
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const comparisons: object[] = [];
   const original = openLevel(`Level ${level}`, originalFiles(level), level - 1);
   if (level > 1) await page.getByRole('combobox', { name: 'Original level' }).selectOption(String(level));

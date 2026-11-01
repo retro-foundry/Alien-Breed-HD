@@ -30,7 +30,7 @@ test('switch inspectors explain condition numbers and edit independent reset mod
   expect(saved.files).toEqual(document.files);
   expect(saved.roomSource.switchCopies![0]!.bytes).toEqual(document.roomSource.switchCopies![0]!.bytes.map((byte, index) => index === 2 ? 1 : byte));
   await page.screenshot({ path: testInfo.outputPath('switch-reset-inspector.png'), fullPage: true });
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   await preview.getByRole('button', { name: 'Build & play', exact: true }).click(); await expect(preview.getByRole('status')).toHaveText('Playtest running');

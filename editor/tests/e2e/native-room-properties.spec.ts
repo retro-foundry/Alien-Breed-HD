@@ -19,7 +19,7 @@ for (const brightness of [17, 2 << 8]) test(`captured room properties with brigh
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'native-room-properties.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   expect(await engineRoomProperties(page, cell.id)).toEqual(properties);
   expect((await engineRoomProperties(page, 0)).brightness).toBe(6);

@@ -31,7 +31,7 @@ for (const count of [1, 2]) test(`copy/paste captures ${count} objects independe
     expect(saved.sourceObjects!.find(object => object.id === selected[index])!.room).toBeNull();
     expect(saved.sourceObjects!.find(object => object.id === id)!.room).not.toBeNull();
   }
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   for (const [index, id] of pasted.entries()) expect(await engineObjectState(page, id)).toMatchObject({ type: document.objects[selected[index]!]!.type, yFixed: document.objects[selected[index]!]!.y * 256 });
 });

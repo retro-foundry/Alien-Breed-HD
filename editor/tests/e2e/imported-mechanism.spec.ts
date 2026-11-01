@@ -38,7 +38,7 @@ for (const kind of ['door', 'lift'] as const) test(`convert an original room to 
   const mechanism = built.document.mechanisms.filter(item => item.kind === kind).at(-1)!;
   await page.getByRole('button', { name: 'Undo', exact: true }).click(); await expect(section.getByRole('button', { name: `Make ${kind}`, exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Redo', exact: true }).click();
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
   expect(await engineMechanismState(page, kind, mechanism.id)).toMatchObject({ current: mechanism.bottom });

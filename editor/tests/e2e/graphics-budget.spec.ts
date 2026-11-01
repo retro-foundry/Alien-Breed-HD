@@ -12,7 +12,7 @@ test('the final native graphics commands draw at the budget boundary, while over
   const reference = openLevel('reference', originalFiles(1)), allowed = graphicsBudgetFixture(zoneGraphicsRecordLimit), overflow = graphicsBudgetFixture(zoneGraphicsRecordLimit + 1);
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   const start = reference.starts[0]!, before = [];
   for (const angle of [0, 2048, 4096, 6144]) before.push(await captureEngine(page, { ...start, upper: 0, angle }));

@@ -22,7 +22,7 @@ test('incomplete room appearance survives saves/recovery and stops preview/expor
   expect(decodeProject(new Uint8Array(await readFile(path))).roomSource).toEqual(edited.roomSource);
   await page.getByRole('button', { name: 'Export level', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('needs an appearance');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('alert')).toContainText('needs an appearance', { timeout: 60000 });
   await expect(preview).toHaveAttribute('data-level-slot', '-1');

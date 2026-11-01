@@ -19,7 +19,7 @@ test('group height offsets and alignment preserve floor bindings and native half
   const inspector = page.getByRole('complementary', { name: 'Object group inspector' });
   const offset = inspector.getByRole('spinbutton', { name: 'Group height offset', exact: true });
   await offset.fill('-2.5'); await inspector.getByRole('button', { name: 'Offset selected heights', exact: true }).click();
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   await expect.poll(async () => (await engineObjectState(page, fixture.ids[0]!)).yFixed).toBe((base - 2.5) * 256);

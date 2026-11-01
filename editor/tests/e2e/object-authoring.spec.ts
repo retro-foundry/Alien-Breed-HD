@@ -41,7 +41,7 @@ test('new objects have independent native positions, atomic history and portable
   expect(saved.objects[id]).toMatchObject({ type: 0, x: 20128, z: 20192, y: -7.5 });
   expect(saved.sourceObjects!.find(object => object.id === id)?.room).toBe(fixture.from.id);
   expect(saved.objects[template.id]!.health).toBe(template.health);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   await captureEngine(page, { zone: Number(await preview.getAttribute('data-spawn-zone')), x: 20128, z: 20128, upper: 0, angle: 0 });
@@ -68,7 +68,7 @@ test('a newly placed blue key is collected by native gameplay and grants only it
   await page.getByRole('button', { name: 'Undo', exact: true }).click(); await expect(colour).toHaveValue(before);
   await page.getByRole('button', { name: 'Redo', exact: true }).click();
   await colour.selectOption('3');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   expect(await engineObjectState(page, id)).toMatchObject({ type: 4, x: 20128, z: 20240 });
@@ -102,7 +102,7 @@ test('ammunition choices change native pickup artwork and grant the selected wea
   const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
   const path = testInfo.outputPath('ammo.ab3d'); await (await download).saveAs(path);
   expect(ammunitionType(decodeProject(new Uint8Array(await readFile(path))), proposal.id)).toBe(1);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   await preview.getByRole('button', { name: 'Build & play', exact: true }).click();
@@ -138,7 +138,7 @@ test('weapon choices preserve floor placement and grant the correct native weapo
   const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
   const path = testInfo.outputPath('weapon.ab3d'); await (await download).saveAs(path);
   expect(weaponPickupType(decodeProject(new Uint8Array(await readFile(path))), proposal.id)).toBe(1);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   await preview.getByRole('button', { name: 'Build & play', exact: true }).click();

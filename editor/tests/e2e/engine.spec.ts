@@ -24,7 +24,7 @@ test('the actual engine reloads edits, visits zones and playtests without touchi
   await expect(preview.getByRole('status')).toHaveText('138 zones loaded · Game engine');
   await page.getByRole('button', { name: 'Turn preview right' }).click();
   await expect(preview.getByRole('alert')).toHaveCount(0);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.locator('canvas[aria-label="Level map"]')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('engine-preview.png'), fullPage: true });
   await preview.getByRole('button', { name: 'Build & play', exact: true }).click();
@@ -49,7 +49,7 @@ test('all sixteen untouched original maps load and draw in the actual game engin
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   for (let level = 1; level <= 16; level++) {
     if (level > 1) await page.getByRole('combobox', { name: 'Original level' }).selectOption({ value: String(level) });
     await expect(page.locator('.project-picker strong')).toHaveText(`Level ${level}`);

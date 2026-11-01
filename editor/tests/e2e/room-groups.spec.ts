@@ -47,7 +47,7 @@ test('shared-boundary room moves protect a neighbouring start and compile a vali
   const saved = decodeProject(new Uint8Array(await readFile(path)));
   expect(saved.sourceStarts).toEqual(document.sourceStarts);
   expect(saved.roomSource.rooms.find(room => room.id === fixture.from.id)!.vertices).toEqual(expect.arrayContaining([{ x: 20240, z: 20064 }, { x: 20240, z: 20192 }, { x: 20000, z: 20000 }]));
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   expect(await enginePlayerState(page)).toMatchObject({ x: 20128, z: 20128, playing: false });
 });
@@ -77,7 +77,7 @@ test('room translation moves linked starts, objects and inbound teleport destina
   expect(saved.sourceObjects!.find(item => item.id === object.id)).toMatchObject({ x: 20224.25, z: 20096.5 });
   expect(saved.sourceTeleports!.find(link => link.room === incoming.id)).toMatchObject({ destination: fixture.from.id, x: 20192, z: 20096 });
   expect(saved.files.data).toEqual(document.files.data);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   expect(await enginePlayerState(page)).toMatchObject({ x: 20192, z: 20096, playing: false });
   expect(await engineObjectState(page, object.id)).toMatchObject({ x: 20224.25, z: 20096.5, yFixed: -7.5 * 256 });
@@ -115,7 +115,7 @@ test('room groups frame, toggle on the map and delete as one source edit without
   expect(saved.roomSource.rooms).toHaveLength(document.roomSource.rooms.length - 2);
   expect(saved.sourceStarts).toEqual(document.sourceStarts); expect(saved.files.data).toEqual(document.files.data);
   await page.getByRole('button', { name: 'Undo', exact: true }).click(); await expect(first).toBeVisible(); await expect(second).toBeVisible();
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   expect(await enginePlayerState(page)).toMatchObject({ x: 20128, z: 20128, playing: false });
 });

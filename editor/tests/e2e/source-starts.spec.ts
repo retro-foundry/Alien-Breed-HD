@@ -63,7 +63,7 @@ test('a saved authored start spawns the real game inside a newly drawn room', as
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'compiled.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(built.document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(built.document.name);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toHaveText(`${built.document.zones.length} zones loaded · Game engine`, { timeout: 60000 });
   const spawn = built.document.starts[0]!;

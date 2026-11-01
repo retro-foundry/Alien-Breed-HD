@@ -47,7 +47,7 @@ for (const kind of ['door', 'lift'] as const) test(`make an editable ${kind}, ca
   await page.locator('input[type=file]').setInputFiles(path);
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.room.id.replace('room-', '')}(?:\\s|$)`) }).click();
   await expect(section.getByRole('heading', { level: 3 })).toHaveText(`Authored ${kind}`);
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
   if (kind === 'door') {

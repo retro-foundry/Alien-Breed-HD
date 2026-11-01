@@ -46,7 +46,7 @@ test('group duplication copies a batch with independent positions, one undo and 
     expect(saved.sourceObjects!.find(object => object.id === copy)).toMatchObject({ room: fixture.from.id, x: original.x - 8.5, z: original.z + 16.25 });
     expect(saved.objects[copy]!.y).toBe(original.y);
   }
-  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   for (let copy = firstCopy; copy < firstCopy + 4; copy++) {
     const original = document.objects[ids[(copy - firstCopy) % 2]!]!;
