@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { roomHeightFixture } from '../roomHeightFixture';
 import { objectTemplates, createObject, floorMatchedObjectHeight } from '../../src/model/objectAuthoring';
 import { applyCommand } from '../../src/model/commands';
-import { ammunitionType } from '../../src/model/objectSettings';
+import { ammunitionType, weaponPickupType } from '../../src/model/objectSettings';
 import { decodeProject, encodeProject } from '../../src/model/project';
 import { captureEngine, engineObjectState, enginePlayerState } from '../engineCapture';
 
@@ -118,5 +118,43 @@ test('ammunition choices change native pickup artwork and grant the selected wea
   finally { await page.keyboard.up('w'); }
   const expected = [...before]; expected[1] = expected[1]! + 20 * 8; // default_plr1_guns plasma ammo_in_clip, ItsAnAmmoClip shift.
   expect((await enginePlayerState(page)).ammunition).toEqual(expected);
+  await preview.getByRole('button', { name: 'Stop', exact: true }).click();
+});
+
+test('weapon choices preserve floor placement and grant the correct native weapon rather than the pickup index', async ({ page }, testInfo) => {
+  test.setTimeout(90000);
+  const fixture = roomHeightFixture(), template = objectTemplates(fixture.document).find(object => object.type === 3)!;
+  const proposal = createObject(fixture.document, { template: template.id, room: fixture.from.id, x: 20128, z: 20240,
+    y: floorMatchedObjectHeight(fixture.document, template, fixture.from.id) });
+  const document = applyCommand(fixture.document, proposal.command);
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.locator('input[type=file]').setInputFiles({ name: 'weapon.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
+  await expect(page.locator('.project-picker strong')).toHaveText(document.name);
+  await page.getByRole('tab', { name: 'Objects', exact: true }).click();
+  await page.getByRole('button', { name: `Weapon ${proposal.id}`, exact: true }).click();
+  const weapon = page.getByRole('combobox', { name: 'Weapon pickup', exact: true });
+  await weapon.selectOption('6'); const shortY = Number(await page.getByRole('spinbutton', { name: 'Height', exact: true }).inputValue());
+  await weapon.selectOption('1');
+  await expect(page.getByRole('spinbutton', { name: 'Height', exact: true })).toHaveValue(String(shortY - 32));
+  await page.getByRole('button', { name: 'Undo', exact: true }).click(); await expect(weapon).toHaveValue('6');
+  await expect(page.getByRole('spinbutton', { name: 'Height', exact: true })).toHaveValue(String(shortY));
+  await page.getByRole('button', { name: 'Redo', exact: true }).click(); await expect(weapon).toHaveValue('1');
+  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const path = testInfo.outputPath('weapon.ab3d'); await (await download).saveAs(path);
+  expect(weaponPickupType(decodeProject(new Uint8Array(await readFile(path))), proposal.id)).toBe(1);
+  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  const preview = page.getByRole('region', { name: '3D game engine preview' });
+  await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
+  await preview.getByRole('button', { name: 'Build & play', exact: true }).click();
+  await expect(preview.getByRole('status')).toHaveText('Playtest running');
+  const before = await enginePlayerState(page); expect(before.weapons[2]).toBe(false);
+  await page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas').focus();
+  await page.keyboard.down('w');
+  try { await expect.poll(async () => (await engineObjectState(page, proposal.id)).zone).toBe(-1); }
+  finally { await page.keyboard.up('w'); }
+  const expectedWeapons = [...before.weapons], expectedAmmo = [...before.ammunition];
+  expectedWeapons[2] = true; expectedAmmo[2] = expectedAmmo[2]! + 5; // pickup 1 maps to rocket gun 2, AmmoInGuns[1].
+  const after = await enginePlayerState(page);
+  expect(after.weapons).toEqual(expectedWeapons); expect(after.ammunition).toEqual(expectedAmmo);
   await preview.getByRole('button', { name: 'Stop', exact: true }).click();
 });

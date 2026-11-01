@@ -35,6 +35,10 @@ Opening local files does not upload them anywhere.
   Its type and native artwork change together, with one undo. The game retains
   control of the pickup amount. Custom records are preserved until a choice is
   made; unsupported flamethrower/unused ammunition slots are excluded.
+- Select a weapon pickup and choose plasma, rocket, grenade or shotgun by name.
+  Artwork, size and weapon grant change together as one undoable edit. Changing
+  between tall and short pickups preserves its floor-relative position, including
+  manual height offsets. Custom records remain intact until you make a choice.
 - Import a PNG in a room's material browser. It resizes to the native sheet,
   matches its existing colours and preserves its lighting palettes. Compare
   fitted/native previews, then Apply PNG as one undoable shared-material edit.

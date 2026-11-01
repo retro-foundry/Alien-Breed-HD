@@ -14,7 +14,7 @@ import { RoomInspector } from './RoomInspector';
 import { RoomHeightInspector } from './RoomHeightInspector';
 import { roomSettings } from '../model/roomHeights';
 import { NumberField } from './NumberField';
-import { keyColour, keyColours, setKeyColour, ammunitionChoices, ammunitionType, setAmmunitionType } from '../model/objectSettings';
+import { keyColour, keyColours, setKeyColour, ammunitionChoices, ammunitionType, setAmmunitionType, weaponPickupChoices, weaponPickupType, setWeaponPickupType } from '../model/objectSettings';
 
 function PositionForm({ x, z, zone, onApply }: { x: number; z: number; zone: number; onApply: (x: number, z: number, zone: number) => void }) {
   const [draft, setDraft] = useState({ x, z, zone });
@@ -95,6 +95,11 @@ export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner,
           <InfoRow label="Floor" value={object.upper ? 'Upper' : 'Lower'} />
         </section>
         <section className="property-section"><h3>Object</h3><InfoRow label="Type" value={objectName(object.type)} /><InfoRow label="Collision ID" value={object.cid} />
+          {object.type === 3 && <><label className="select-field"><span>Weapon pickup</span><select aria-label="Weapon pickup" value={weaponPickupType(document, object.id) ?? ''}
+            title="Choose the weapon granted by this pickup. Updates its artwork, dimensions and grant together, preserving its floor-relative anchor. Undo restores the complete change."
+            onChange={event => edit(() => setWeaponPickupType(document, object.id, Number(event.target.value)))}>
+            <option value="" disabled>Custom artwork or weapon type</option>{weaponPickupChoices.map(choice => <option key={choice.id} value={choice.id}>{choice.name}</option>)}
+          </select></label><p className="field-note">Keeps the pickup's floor position when changing its size. Custom records stay unchanged until you choose a weapon.</p></>}
           {object.type === 9 && <><label className="select-field"><span>Ammunition for</span><select aria-label="Ammunition weapon" value={ammunitionType(document, object.id) ?? ''}
             title="Choose which weapon receives this pickup. Updates its native ammunition type and artwork together. The game controls how much ammunition it grants."
             onChange={event => edit(() => setAmmunitionType(document, object.id, Number(event.target.value)))}>

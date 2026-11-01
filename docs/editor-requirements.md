@@ -55,6 +55,12 @@ unrestricted geometry authoring. Broader coverage is still needed
 before claiming the complete original editor workflow.
 Undo keeps the full action chain and has a 250-action
 undo/redo regression.
+New enemy/pickup/scenery records can now be created from current-level templates
+with independent native positions, floor matching, capacity validation and atomic
+undo. Named key, ammunition and weapon pickup settings update related native
+artwork and behaviour fields together. Actual browser gameplay verifies key
+conditions, ammunition grants and weapon ownership. A cross-level object library,
+broader enemy configuration and the other resource classes remain open.
 The current port's per-room/storey graphics command budget is now shared with
 the native renderer and enforced for preview/build/game export, while editable
 oversized files remain saveable. This covers one concrete R12 resource limit;

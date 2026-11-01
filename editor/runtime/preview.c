@@ -158,6 +158,7 @@ EMSCRIPTEN_KEEPALIVE void editor_play(int playing)
 EMSCRIPTEN_KEEPALIVE int editor_player_zone(void) { return preview_loaded ? g_state.plr1.zone : -1; }
 EMSCRIPTEN_KEEPALIVE int editor_conditions(void) { return (uint16_t)game_conditions; }
 EMSCRIPTEN_KEEPALIVE int editor_ammunition(int gun) { return preview_loaded && gun >= 0 && gun < MAX_GUNS ? g_state.plr1.gun_data[gun].ammo : -1; }
+EMSCRIPTEN_KEEPALIVE int editor_weapon_owned(int gun) { return preview_loaded && gun >= 0 && gun < MAX_GUNS ? g_state.plr1.gun_data[gun].visible != 0 : 0; }
 EMSCRIPTEN_KEEPALIVE int editor_player_x(void) { return preview_loaded ? g_state.plr1.xoff >> 16 : 0; }
 EMSCRIPTEN_KEEPALIVE int editor_player_z(void) { return preview_loaded ? g_state.plr1.zoff >> 16 : 0; }
 /* player.c updates the collision target from floor - s_height. Rendering Y

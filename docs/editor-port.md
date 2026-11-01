@@ -1262,3 +1262,17 @@ fixtures can establish current-format support independently.
   The production build, all 683 model tests and six Chromium/Firefox object
   authoring/playback scenarios pass. Broader weapon/enemy configuration and
   remaining full-editor requirements are still open; deployment remains pending.
+
+- Weapon pickup configuration checkpoint: named plasma, rocket, grenade and
+  shotgun choices use the original `leved.amos` BIGGUNGRAPH/BIGGUNDIM tables and
+  BIGGUNSAVE layout. Artwork, source/world dimensions, grant ID and height are
+  one command. The BIGGUNSAVE floor anchor is preserved when changing between
+  tall and short artwork, including deliberate half-unit offsets. Custom records
+  are retained until a choice; polygon artwork and height overflow fail before
+  mutation. Models exercise all original weapon records, every supported choice,
+  saves and undo/redo. Native browser gameplay checks that rocket pickup ID 1
+  actually grants player gun 2 and its original AmmoInGuns amount, with no other
+  weapon ownership or ammunition changed. The preview adds only a read-only
+  weapon-ownership probe; the game simulation remains unchanged.
+  The production build, 686 model tests and eight Chromium/Firefox object
+  authoring/gameplay scenarios pass. The full editor remains in progress.
