@@ -76,7 +76,7 @@ test('multi-object selection moves, aligns, rejects partial changes and deletes 
   await expect(first).toHaveCount(1); await expect(second).toHaveCount(1);
   await page.getByRole('button', { name: 'Add object', exact: true }).click();
   await page.keyboard.press('Delete');
-  await page.getByRole('dialog', { name: 'Add object', exact: true }).getByRole('button', { name: 'Cancel object', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Choose object to place', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(first).toHaveCount(1); await expect(second).toHaveCount(1);
   await map.focus(); await page.keyboard.press('?');
   await expect(page.getByRole('dialog', { name: 'Editor help', exact: true })).toBeVisible();
