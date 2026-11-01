@@ -2424,3 +2424,14 @@ upper/lower editing, perspective click placement, saved source and actual native
 object coordinates are covered by model/browser scenarios. Exact game surfaces,
 materials and gameplay remain available in Engine view. Complete AMOS parity
 and the remaining requirements above remain open.
+
+Verification for the published axis/3D release: 922 model tests passed. The
+48 packaged controls, shortcut, height and viewport regression checks passed
+across installed Edge, Brave and Firefox. All five viewport scenarios also
+passed against the final package (the side-axis keyboard case was checked
+separately). Ten further checks passed on the public deployment in Edge and
+Brave, including native object coordinates, upper-floor placement, save/reopen,
+height cancellation and corner Undo. Publication is site commit `18bd235`,
+JavaScript `index-BEa1x5u2.js`, CSS `index-DwRnkAfo.css`; Pages run `41315345996`
+completed successfully. All five native runtime resource hashes remain verified
+under `runtime/r-ad32e275c8d0e039/`.
