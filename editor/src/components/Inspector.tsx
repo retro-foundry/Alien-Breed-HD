@@ -14,6 +14,7 @@ import { RoomInspector } from './RoomInspector';
 import { RoomHeightInspector } from './RoomHeightInspector';
 import { roomSettings } from '../model/roomHeights';
 import { NumberField } from './NumberField';
+import { objectTemplates } from '../model/objectAuthoring';
 import { keyColour, keyColours, setKeyColour, ammunitionChoices, ammunitionType, setAmmunitionType, weaponPickupChoices, weaponPickupType, setWeaponPickupType } from '../model/objectSettings';
 
 function PositionForm({ x, z, zone, onApply }: { x: number; z: number; zone: number; onApply: (x: number, z: number, zone: number) => void }) {
@@ -34,7 +35,8 @@ function SourceStartForm({ document, player, edit }: { document: LevelDocument; 
     onApply={(room, x, z) => edit(() => setSourceStart(document, player, room, x, z))} />;
 }
 
-export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner, onRoomRedraw, onRoomDelete, onShowDestination }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
+export function Inspector({ document, selection, edit, sourceRoom, onObjectDuplicate, onRoomCorner, onRoomRedraw, onRoomDelete, onShowDestination }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
+  onObjectDuplicate: () => void;
   sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomRedraw: () => void; onRoomDelete: () => void; onShowDestination: (room: string) => void }) {
   if (!selection && !sourceRoom) return <aside className="inspector"><div className="panel-title">INSPECTOR</div><div className="empty-inspector"><Icon name="select" size={32} /><h2>Select something</h2><p>Click a zone, object or player start to inspect it.</p><p className="muted">Drag objects and starts to reposition them. Hold Alt to ignore the grid.</p></div></aside>;
   const zone = selection?.kind === 'zone' ? document.zones.find(zone => zone.id === selection.id) : undefined;
@@ -112,7 +114,8 @@ export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner,
           </select></label><p className="field-note">Unlocks mechanisms requiring the matching key. Custom records stay unchanged until you choose a colour.</p></>}
           {[0, 6, 7, 8, 12, 13, 14, 15, 17, 18, 19].includes(object.type) && <NumberField label="Health" value={object.health} min={0} max={127} onCommit={value => edit({ label: `Change object ${object.id} health`, patches: [numberPatch(document, 'data', object.offset + 18, value, 1)] })} />}
         </section>
-        <section className="property-section"><button className="danger-button" disabled={!objectIsActive(object) || sourceAvatar !== undefined} title={sourceAvatar !== undefined ? 'Player avatars are controlled through Starts in the navigator.' : 'Remove this object. Undo restores it (Ctrl / Command + Z).'} onClick={() => edit(() => removeObject(document, object.id))}>Delete object</button></section>
+        <section className="property-section"><button disabled={!objectIsActive(object) || !objectTemplates(document).some(template => template.id === object.id)} title="Copy this object's settings, room, position, floor and exact height into a placement draft. Choose Create object to commit one undoable copy. Shortcut: Ctrl / Command + D. Escape cancels." onClick={onObjectDuplicate}>Duplicate object</button>
+          <button className="danger-button" disabled={!objectIsActive(object) || sourceAvatar !== undefined} title={sourceAvatar !== undefined ? 'Player avatars are controlled through Starts in the navigator.' : 'Remove this object. Undo restores it (Ctrl / Command + Z).'} onClick={() => edit(() => removeObject(document, object.id))}>Delete object</button></section>
       </>}
       {start && <section className="property-section"><h3>Position</h3>{!sourceMatchesLevel(document)
         ? <SourceStartForm document={document} player={start.player} edit={edit} />

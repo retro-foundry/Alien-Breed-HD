@@ -39,6 +39,11 @@ Opening local files does not upload them anywhere.
   edit; Cancel or Escape discards the draft. Players and projectile pools cannot
   be templates. The native 250-record limit includes reserved records. Templates
   currently come from the open level, rather than a cross-level object library.
+- Select an object and choose **Duplicate object** or **Ctrl / Command + D**.
+  The placement draft retains its actual authored coordinates, floor, exact
+  height and settings. Choose a position and Create object for one undoable copy;
+  Escape cancels. The original and copy have independent native position slots.
+  Duplicate starts with floor matching off to preserve deliberate height offsets.
 - Select a key pickup and choose **Key colour** to change both its artwork and
   the door requirement it unlocks. Green, red, yellow and blue correspond to
   Key 1–4 in mechanism requirements. Undo restores both values. Custom artwork

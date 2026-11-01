@@ -1314,3 +1314,19 @@ fixtures can establish current-format support independently.
   scrolling leaves map scale/centre unchanged and hiding controls leaves the
   actual canvas pixels unchanged. All six focused browser cases and production
   builds pass. This change touches UI only; remaining full-editor work stays open.
+
+- Object duplication checkpoint: the inspector and Ctrl/Command+D now open a
+  seeded placement draft for the selected active enemy, pickup or scenery record.
+  It uses editable source positions rather than stale native coordinates, retains
+  fractional coordinates, storey and exact object height, and starts with floor
+  matching off. Settings come from the selected native record and creation uses
+  the existing validated table relocation, with one undo and a fresh CID.
+  Cancel/Escape leaves source unchanged. Add object explicitly clears the seed.
+  Player/projectile/deleted records cannot be duplicated; shortcuts are guarded
+  during text entry and modal workflows. Help and tooltips explain the workflow.
+  Browser checks verify cancellation, shortcuts, exact placement, copied health,
+  undo/redo, saved records and both independent native positions in the engine.
+  Multiselect, batch transforms and clipboard workflows remain required for R9.
+  All 20 Chromium/Firefox object duplication, pickup gameplay and controls
+  regression scenarios pass, together with production builds. No model or native
+  simulation changes were needed for this workflow.

@@ -12,6 +12,7 @@ import { MapCanvas, type Selection } from './components/MapCanvas';
 import { Inspector } from './components/Inspector';
 import { StairBuilder } from './components/StairBuilder';
 import { ObjectBuilder } from './components/ObjectBuilder';
+import { objectTemplates } from './model/objectAuthoring';
 import { Icon } from './components/Icon';
 import { EnginePreview } from './components/EnginePreview';
 import { ControlTooltips } from './components/ControlTooltips';
@@ -63,6 +64,7 @@ export function App() {
   const [roomTemplate, setRoomTemplate] = useState(0);
   const [stairsOpen, setStairsOpen] = useState(false);
   const [objectOpen, setObjectOpen] = useState(false);
+  const [objectSeed, setObjectSeed] = useState<number>();
   useEffect(() => { setStairsOpen(false); setObjectOpen(false); }, [workspace?.id]);
   const [layer, setLayer] = useState<'lower' | 'upper'>('lower'), [grid, setGrid] = useState(64), [showObjects, setShowObjects] = useState(true);
   const [view, setView] = useState<'map' | 'split' | '3d'>('map');
@@ -206,13 +208,23 @@ export function App() {
     });
   }, [fail]);
 
+  const duplicateObject = useCallback(() => {
+    const source = workspaceRef.current?.history.document;
+    if (!source || busy || selection?.kind !== 'object' || !objectTemplates(source).some(object => object.id === selection.id)
+      || !editableObjects(source).some(object => object.id === selection.id && objectIsActive(object))) {
+      setStatus('Select an enemy, pickup or scenery object to duplicate. Player and projectile slots cannot be copied.'); return;
+    }
+    setRoomDraft(null); setTool('select'); setObjectSeed(selection.id); setObjectOpen(true);
+  }, [selection, busy]);
+
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       const editing = event.target instanceof HTMLElement && (event.target.matches('input, textarea, select') || event.target.isContentEditable);
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
-      if (stairsOpen || objectOpen) { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') event.preventDefault(); return; }
+      if (stairsOpen || objectOpen) { if ((event.ctrlKey || event.metaKey) && ['o', 'd'].includes(event.key.toLowerCase())) event.preventDefault(); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); fileInput.current?.click(); return; }
       if (editing) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); if (!help && !showRecents && !choices.length) duplicateObject(); return; }
       if (roomDraft && event.target instanceof HTMLCanvasElement) {
         if (event.key === 'Enter') { event.preventDefault(); finishRoom(); return; }
         if (event.key === 'Backspace' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.shiftKey)) {
@@ -229,7 +241,7 @@ export function App() {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [save, historyAction, roomDraft, finishRoom, select, stairsOpen, objectOpen]);
+  }, [save, historyAction, roomDraft, finishRoom, select, stairsOpen, objectOpen, duplicateObject, help, showRecents, choices.length]);
 
   async function openDocument(next: LevelDocument, id?: string, request = ++generation.current) {
     const current = workspaceRef.current;
@@ -341,7 +353,7 @@ export function App() {
         <label className="grid-select"><select aria-label="Room settings template" title="Copy room settings from this original zone when drawing a new outline. Available even after deleting all outlines. Selecting a room also picks its settings." disabled={!document || !!roomDraft} value={template ?? 0} onChange={event => { setRoomTemplate(Number(event.target.value)); select(null); }}>{document?.zones.map(zone => <option key={zone.id} value={zone.id}>Template {zone.id}</option>)}</select></label>
         <button className={`small-button ${tool === 'room' ? 'active' : ''}`} aria-label="Draw room" aria-pressed={tool === 'room'} disabled={template === undefined} title="Draw an editable room outline using the chosen settings template, in either direction. Enter finishes; Escape cancels. Game geometry compilation is still in progress." onClick={beginRoom}>Draw room</button>
         <button className="small-button" disabled={!document || template === undefined || !!busy} title="Create adjoining steps from endpoints, width and floor heights. Preview the whole flight and apply it as one undoable edit." onClick={() => { setRoomDraft(null); setTool('select'); setStairsOpen(true); }}>Build stairs</button>
-        <button className="small-button" disabled={!document || !!busy} title="Add an enemy, pickup or scenery object using a source template. Choose its room and position; Escape cancels the draft." onClick={() => { setRoomDraft(null); setTool('select'); setObjectOpen(true); }}>Add object</button>
+        <button className="small-button" disabled={!document || !!busy} title="Add an enemy, pickup or scenery object using a source template. Choose its room and position; Escape cancels the draft." onClick={() => { setRoomDraft(null); setTool('select'); setObjectSeed(undefined); setObjectOpen(true); }}>Add object</button>
         {roomDraft && <><button className="small-button" disabled={roomDraft.vertices.length < 3} title="Validate and commit this whole outline as one undoable edit. Shortcut: Enter on the map." onClick={finishRoom}>Finish room</button><button className="small-button" title="Discard this unfinished outline. No project geometry changes. Shortcut: Escape." onClick={() => { setRoomDraft(null); setTool('select'); }}>Cancel room</button></>}
         <button className="icon-button" aria-label="Undo" title={`Undo ${workspace?.history.past.at(-1)?.label ?? ''} (Ctrl+Z)`} disabled={!workspace?.history.past.length} onClick={() => historyAction('undo')}><Icon name="undo" /></button><button className="icon-button" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled={!workspace?.history.future.length} onClick={() => historyAction('redo')}><Icon name="redo" /></button><span className="toolbar-divider" />
         <div className="layer-toggle"><button className={layer === 'lower' ? 'active' : ''} title="Inspect the lower floor of each zone." onClick={() => setLayer('lower')}>Lower</button><button className={layer === 'upper' ? 'active' : ''} title="Inspect upper-floor geometry where a zone has two floors." onClick={() => setLayer('upper')}>Upper</button></div><span className="toolbar-spacer" />
@@ -355,10 +367,10 @@ export function App() {
         {busy && <div className="busy-overlay" role="status"><span className="spinner" />{busy}</div>}
         {stairsOpen && document && template !== undefined && <StairBuilder document={document} template={template} selected={selectedRoom} cursor={cursor}
           onCancel={() => setStairsOpen(false)} onCreate={proposal => { edit(proposal.command); setStairsOpen(false); setTool('select'); setView('map'); selectRoom(proposal.rooms[0]!.id); }} />}
-        {objectOpen && document && <ObjectBuilder document={document} room={selectedRoom?.id} cursor={cursor} layer={layer} onCancel={() => setObjectOpen(false)}
+        {objectOpen && document && <ObjectBuilder document={document} initialObject={objectSeed} room={selectedRoom?.id} cursor={cursor} layer={layer} onCancel={() => setObjectOpen(false)}
           onCreate={proposal => { edit(proposal.command); setObjectOpen(false); setTab('objects'); setShowObjects(true); select({ kind: 'object', id: proposal.id }); }} />}
       </main>
-      {document && <Inspector document={document} selection={selection} edit={edit} sourceRoom={selectedRoom} onRoomCorner={editRoomCorner} onRoomRedraw={redrawRoom} onRoomDelete={deleteRoom} onShowDestination={id => { setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1, frame: true })); setView('map'); }} />}
+      {document && <Inspector document={document} selection={selection} edit={edit} sourceRoom={selectedRoom} onObjectDuplicate={duplicateObject} onRoomCorner={editRoomCorner} onRoomRedraw={redrawRoom} onRoomDelete={deleteRoom} onShowDestination={id => { setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1, frame: true })); setView('map'); }} />}
     </div>
     <footer className="statusbar"><span className="status-dot" /><span>{autosave}</span><span className="status-message" aria-live="polite">{status || 'Choose a zone to start editing'}</span><span>X <strong>{Math.round(cursor.x)}</strong></span><span>Z <strong>{Math.round(cursor.z)}</strong></span><span className="status-size">{document?.points.length ?? 0} points · {document?.zones.length ?? 0} zones</span></footer>
     {(help || showRecents || choices.length > 0) && <div className="modal-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) { setHelp(false); setShowRecents(false); setChoices([]); } }}><section className="modal" role="dialog" aria-modal="true" aria-label={help ? 'Editor help' : choices.length ? 'Choose a level' : 'Recent workspaces'}><button className="modal-close icon-button" aria-label="Close dialog" title="Close this panel. Shortcut: Esc." onClick={() => { setHelp(false); setShowRecents(false); setChoices([]); }}><Icon name="close" /></button>
