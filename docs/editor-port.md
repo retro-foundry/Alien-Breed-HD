@@ -1330,3 +1330,20 @@ fixtures can establish current-format support independently.
   All 20 Chromium/Firefox object duplication, pickup gameplay and controls
   regression scenarios pass, together with production builds. No model or native
   simulation changes were needed for this workflow.
+
+- Object group checkpoint: Shift/Ctrl/Command click now adds/removes object
+  selections in the map and navigator, with matching marker/list highlights.
+  The group inspector offers decimal X/Z translation, coordinate alignment to
+  the first selected object and deletion. Each operation builds one source-object
+  command, validates every destination and commits no partial result if any
+  object is invalid. Player avatars are excluded. Heights and native source bytes
+  remain intact; normal compiled preview/export consumes the authored placements.
+  Group deletion undo restores the entire selection. Clear/Escape and plain-click
+  single selection are supported; duplicate refuses to silently copy only one
+  member of a group. Source selection is memoized to avoid mouse-hover redraws.
+  Tests check partial failures, decimal moves, alignment, group deletion, native
+  positions, project round trips and single-action undo. Room groups, group dragging,
+  clipboard and other broader R9 workflows remain required.
+  All 694 model tests, production builds and eight Chromium/Firefox group,
+  duplication and existing-object regression scenarios pass. Final map gesture
+  checks also pass in both browsers. No native simulation changes were made.

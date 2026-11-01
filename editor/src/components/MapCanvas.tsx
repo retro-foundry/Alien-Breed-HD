@@ -12,6 +12,7 @@ export type Selection = { kind: 'zone' | 'object' | 'start' | 'point'; id: numbe
 export interface MapView { x: number; z: number; scale: number }
 interface Props {
   document: LevelDocument; selection: Selection; onSelect: (selection: Selection) => void;
+  objectIds: readonly number[]; onObjectToggle: (id: number) => void;
   onMove: (selection: Exclude<Selection, null>, x: number, z: number) => void;
   tool: 'select' | 'pan' | 'room'; layer: 'lower' | 'upper'; grid: number; showObjects: boolean;
   roomDraft: RoomDraft | null; selectedRoom?: SourceRoom; onRoomSelect: (id: string) => void;
@@ -25,7 +26,7 @@ function floorPolygons(zone: Zone, upper: boolean) {
   return (upper ? zone.upper : zone.lower).filter(graphic => [1, 8, 9, 10, 11].includes(graphic.type) && graphic.points.length >= 3);
 }
 
-export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, focusRoom }: Props) {
+export function MapCanvas({ document, selection, objectIds, onObjectToggle, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, focusRoom }: Props) {
   const visibility = useVisibilityInspection(document, selectedRoom?.id, selection?.kind === 'zone' ? selection.id : undefined);
   const canvas = useRef<HTMLCanvasElement>(null), holder = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -229,7 +230,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       if (!objectIsActive(object) || (layer === 'upper') !== object.upper) continue;
       const moving = ghost?.selection.kind === 'object' && ghost.selection.id === object.id;
       const pixel = screen(moving ? ghost.x : object.x, moving ? ghost.z : object.z);
-      const selected = selection?.kind === 'object' && selection.id === object.id;
+      const selected = objectIds.includes(object.id) || selection?.kind === 'object' && selection.id === object.id;
       const enemy = [0, 6, 7, 8, 12, 13, 14, 15, 17, 18, 19].includes(object.type);
       context.fillStyle = selected ? '#d1f5a5' : enemy ? '#de847c' : object.type === -1 ? '#85929d' : '#efbf6a';
       context.strokeStyle = '#151a20'; context.lineWidth = 1.5; context.beginPath(); context.arc(pixel.x, pixel.y, selected ? 5 : 3.5, 0, Math.PI * 2); context.fill(); context.stroke();
@@ -253,7 +254,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
         }
       }
     }
-  }, [document, selection, view, size, grid, showObjects, layer, ghost, screen, world, sourceView, roomDraft, selectedRoom, cornerGhost, visibility.enabled, visibility.inspection]);
+  }, [document, selection, objectIds, view, size, grid, showObjects, layer, ghost, screen, world, sourceView, roomDraft, selectedRoom, cornerGhost, visibility.enabled, visibility.inspection]);
 
   function hit(x: number, y: number): Selection {
     for (const start of editableStarts(document)) { const pixel = screen(start.x, start.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 13) return { kind: 'start', id: start.player }; }
@@ -293,6 +294,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
           if (room && (!selected || selected.kind === 'zone')) { onRoomSelect(room.id); event.currentTarget.focus(); return; }
         }
         const selected = panning ? null : hit(x, y);
+        if (selected?.kind === 'object' && (event.shiftKey || event.ctrlKey || event.metaKey)) { onObjectToggle(selected.id); event.currentTarget.focus(); return; }
         if (!panning) onSelect(selected);
         drag.current = { x, y, view, selection: selected, moved: false };
         event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);

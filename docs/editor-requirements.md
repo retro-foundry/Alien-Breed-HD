@@ -55,6 +55,10 @@ unrestricted geometry authoring. Broader coverage is still needed
 before claiming the complete original editor workflow.
 Undo keeps the full action chain and has a 250-action
 undo/redo regression.
+R9 now includes object multiselect in the map/list and atomic group translation,
+alignment and deletion, with invalid destinations rejecting the whole edit.
+Browser/native checks cover gestures, source round trips and group undo. Room
+groups, group dragging and clipboard workflows remain open.
 New enemy/pickup/scenery records can now be created from current-level templates
 with independent native positions, floor matching, capacity validation and atomic
 undo. Named key, ammunition and weapon pickup settings update related native

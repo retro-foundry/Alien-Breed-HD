@@ -20,6 +20,12 @@ Opening local files does not upload them anywhere.
 
 ## Current working workflows
 
+- Shift/Ctrl/Command click objects in the map or object list to add/remove them
+  from a group. The group inspector moves them by X/Z offsets, aligns either
+  coordinate to the first selected object, or deletes the selection. Every edit
+  validates the whole group and is one undoable action. Heights are preserved;
+  destinations outside editable rooms reject the complete operation. Plain click
+  selects one object; Escape or Clear object selection clears the group.
 - Toggle **Visibility overlay** on the map, then select a room. Amber marks its
   selected runtime cell, cyan its potential visibility and green its portals.
   Concave rooms offer each compiled cell separately. Expand Runtime visibility
