@@ -2477,3 +2477,16 @@ the actual renderer's existing wall/floor/ceiling pickers. Wall repair appearanc
 is identified separately. Help explains the selection, Apply/Cancel, storey and
 moving-surface workflows; unsupported special material targets are explicitly
 labelled. Material formats and native gameplay are unchanged.
+
+Verification: all 947 model tests passed, including split/compile/save/merge
+checks on one native edge in each of the 16 original maps and protected shared
+corner dependencies. Nine initial Edge scenarios exercised all lower/upper wall
+and normal floor/ceiling painters through the new inspector entry, plus native
+corner pixels/collision. Fifteen packaged cross-browser checks then passed on
+Edge, Brave and Firefox; the final package additionally passed all 12 corner
+scenarios, including pointer-position double-click insertion and Space-pan
+isolation. Four live checks passed in Edge and Brave for native pixel-preserving
+corner edits and all 16 normal lower-floor patterns through Paint room textures.
+Site commit `b865ca5` serves JavaScript `index-B71ShpUG.js` and CSS
+`index-Bgk5Y1Rh.css`; Pages run `41319077670` succeeded. Five native resource
+hashes remain verified under `runtime/r-ad32e275c8d0e039/`.
