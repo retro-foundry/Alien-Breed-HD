@@ -2645,3 +2645,20 @@ Help, inspector guidance and tooltips explain the current controls.
 The generated doorway-band material picker also retains the compiled native
 wall as its initial style when no explicit room appearance exists (3fb9727).
 This avoids an undefined style when painting geometry exposed by height edits.
+
+Verification: all 969 model tests passed. Twenty-four controls/selection checks
+passed across Edge, Brave and Firefox. After updating the object-group test's
+stale library-dialog selector, all 39 final editing regressions passed across
+those browsers: crossing selection in both directions, additive Shift clicks,
+unchanged source/camera/Undo during selection, explicit object handles and
+middle navigation, both-storey height handles, Alt-left selection, texture
+painting with portable Undo, native object positions and atomic group edits.
+Implementation is 7a9433f; the selector correction is 68b48d6. No native runtime
+or project schema changed for selection.
+
+Published site afb050f serves index-iVVJKPbC.js and index-Cx88Qus4.css.
+Pages run 41333340819 succeeded. All six public Edge/Brave selection regressions
+passed (Top, orthographic and perspective), including unchanged source and
+camera during selection, Shift grouping, explicit movement handles and middle
+navigation. All five native runtime hashes still match r-c8b6aa3eff4f5614.
+Remaining AMOS and R0-R12 scope stays open.
