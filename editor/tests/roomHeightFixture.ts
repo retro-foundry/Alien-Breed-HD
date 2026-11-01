@@ -4,8 +4,8 @@ import { beginRoomDraft, commitRoomDraft, setDraftCorners } from '../src/model/r
 import { roomAppearanceChoices } from '../src/model/roomAppearance';
 import { originalFiles } from './helpers';
 
-export function roomHeightFixture(recordZone = 0) {
-  const original = openLevel('Room height authoring', originalFiles(1)); let document = original;
+export function roomHeightFixture(recordZone = 0, original = openLevel('Room height authoring', originalFiles(1))) {
+  let document = original;
   for (const x of [20000, 21000]) {
     document = applyCommand(document, editRoomSource(commitRoomDraft(document.roomSource, setDraftCorners(
       beginRoomDraft(document, document.roomSource, recordZone), [{ x, z: 20000 }, { x: x + 256, z: 20000 }, { x: x + 256, z: 20256 }, { x, z: 20256 }]))));

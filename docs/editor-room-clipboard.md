@@ -106,7 +106,11 @@ copy assembly. Shared material resources remain separate dependencies.
 All 727 model tests and four native Chromium/Firefox property-probe cases pass,
 including static/animated words and later template changes. The native probe is
 read-only and returns authored packed words, not evaluated animation intensity.
-The local lighting-inspector experiment and its pixel assertion are still work
-in progress: native property values and reload/Undo are verified, but the chosen
-visual fixture has not demonstrated the expected brightness difference. Do not
-claim that visual behaviour or complete room clipboard authoring is finished.
+The lighting inspector now offers independent brightness controls only for the
+native bump/smooth surface paths that consume zone brightness. Point-shaded
+walls/floors and native water retain their own lighting contracts. A valid bump
+material fixture viewed from a bounded inspection eye height proves actual
+pixel changes and restoration through Undo/Redo and inheritance reset in both
+browsers. All 40 focused controls/editor/property/height cases pass. The
+inspection-height capture API changes only the paused camera and rejects heights
+outside the room's air band. Full room clipboard authoring remains incomplete.

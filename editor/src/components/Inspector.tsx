@@ -12,6 +12,7 @@ import { Icon } from './Icon';
 import type { SourceRoom } from '../model/roomSource';
 import { RoomInspector } from './RoomInspector';
 import { RoomHeightInspector } from './RoomHeightInspector';
+import { RoomPropertiesInspector } from './RoomPropertiesInspector';
 import { roomSettings } from '../model/roomHeights';
 import { NumberField } from './NumberField';
 import { MechanismRangeInspector } from './MechanismRangeInspector';
@@ -55,6 +56,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
       {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onRedraw={onRoomRedraw} onDelete={onRoomDelete} />}
       {sourceRoom && <RoomAppearanceInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && <RoomHeightInspector document={document} room={sourceRoom} edit={edit} />}
+      {sourceRoom && (!zone || sourceRoom.properties) && <RoomPropertiesInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && (!zone || !sourceMatchesLevel(document)) && <TeleportInspector document={document} room={sourceRoom} edit={edit} onShowDestination={onShowDestination} />}
       {zone && <>
         <section className="property-section"><h3>Geometry</h3><InfoRow label="Floor height" value={dimensions!.floor} /><InfoRow label="Ceiling height" value={dimensions!.ceiling} /><InfoRow label="Clearance" value={dimensions!.floor - dimensions!.ceiling} />
@@ -62,7 +64,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
           <InfoRow label="Water height" value={zone.water < zone.floor && zone.water > zone.ceiling ? zone.water : 'Dry'} />
           <InfoRow label="Outdoor sky" value={zone.backdrop ? 'Yes' : 'No'} />
         </section>
-        <section className="property-section"><h3>Lighting</h3>
+        {!sourceRoom?.properties && <section className="property-section"><h3>Lighting</h3>
           {(['brightness', 'upperBrightness'] as const).filter(property => property === 'brightness' || zone.upper.length > 0).map(property => {
             const value = zone[property], animation = (value >>> 8) & 255, animated = animation >= 1 && animation <= 3;
             return <div className="light-control" key={property}>
@@ -71,7 +73,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
             </div>;
           })}
           <p className="field-note">Lower brightness values make the room brighter.</p>
-        </section>
+        </section>}
         {sourceMatchesLevel(document) && <section className="property-section"><h3>Teleporter</h3>
           <label className="check-field"><input type="checkbox" title="Teleport the player to the destination when stepping into this zone. Apply a destination inside the target zone." checked={zone.teleport.zone >= 0} onChange={event => { const spawn = document.starts[0]!; edit(() => setTeleport(document, zone.id, event.target.checked ? spawn.zone : -1, spawn.x, spawn.z)); }} />Enabled</label>
           {zone.teleport.zone >= 0 && <PositionForm x={zone.teleport.x} z={zone.teleport.z} zone={zone.teleport.zone} onApply={(x, z, target) => edit(() => setTeleport(document, zone.id, target, x, z))} />}

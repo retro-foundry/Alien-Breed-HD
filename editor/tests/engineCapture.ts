@@ -14,7 +14,7 @@ export async function engineRoomProperties(page: Page, zone: number): Promise<Ro
   }), zone);
 }
 
-export interface EngineCamera { zone: number; x: number; z: number; upper: number; angle: number }
+export interface EngineCamera { zone: number; x: number; z: number; upper: number; angle: number; height?: number }
 export async function engineMechanismState(page: Page, kind: 'door' | 'lift', index: number): Promise<{ zone: number; current: number; top: number; bottom: number; wallCount: number; plane: number; unsynchronizedWalls: number }> {
   return page.evaluate(({ kind, index }) => new Promise((resolve, reject) => {
     const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();

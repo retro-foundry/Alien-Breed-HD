@@ -126,11 +126,8 @@ EMSCRIPTEN_KEEPALIVE int editor_nonblack_pixels(void)
 EMSCRIPTEN_KEEPALIVE int editor_current_slot(void) { return g_state.current_level; }
 EMSCRIPTEN_KEEPALIVE int editor_current_exit_zone(void) { return g_state.end_zones[g_state.current_level & 0x0F]; }
 
-EMSCRIPTEN_KEEPALIVE unsigned editor_capture(int zone, int x, int z, int upper, int angle)
+static unsigned preview_frame_hash(void)
 {
-    if (!preview_loaded || preview_playing) return 0;
-    renderer_clear_frame_history();
-    if (!editor_camera(zone, x, z, upper, angle)) return 0;
     const RendererPixel *pixels = renderer_get_cw_buffer();
     int size = renderer_get_width() * renderer_get_height();
     unsigned hash = 2166136261u;
@@ -138,6 +135,31 @@ EMSCRIPTEN_KEEPALIVE unsigned editor_capture(int zone, int x, int z, int upper, 
     hash ^= (unsigned)renderer_get_width(); hash *= 16777619u;
     hash ^= (unsigned)renderer_get_height();
     return hash;
+}
+
+EMSCRIPTEN_KEEPALIVE unsigned editor_capture(int zone, int x, int z, int upper, int angle)
+{
+    if (!preview_loaded || preview_playing) return 0;
+    renderer_clear_frame_history();
+    if (!editor_camera(zone, x, z, upper, angle)) return 0;
+    return preview_frame_hash();
+}
+
+EMSCRIPTEN_KEEPALIVE unsigned editor_capture_height(int zone, int x, int z, int upper, int angle, int height_fixed)
+{
+    LevelState *level = &g_state.level;
+    if (!preview_loaded || preview_playing || !level->zone_adds || zone < 0 || zone >= level_zone_slot_count(level)) return 0;
+    int32_t offset = obj_l(level->zone_adds + zone * 4);
+    if (offset < 0 || (size_t)offset + 48u > level->data_byte_count) return 0;
+    const uint8_t *room = level->data + offset;
+    if (height_fixed < obj_l(room + (upper ? ZONE_OFF_UPPER_ROOF : ZONE_OFF_ROOF))
+        || height_fixed > obj_l(room + (upper ? ZONE_OFF_UPPER_FLOOR : ZONE_OFF_FLOOR))) return 0;
+    renderer_clear_frame_history();
+    if (!editor_camera(zone, x, z, upper, angle)) return 0;
+    PlayerState *p = &g_state.plr1;
+    p->yoff = p->s_yoff = p->oldyoff = p->p_yoff = height_fixed;
+    preview_draw();
+    return preview_frame_hash();
 }
 
 EMSCRIPTEN_KEEPALIVE void editor_play(int playing)

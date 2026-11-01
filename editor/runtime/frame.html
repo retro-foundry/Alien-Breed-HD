@@ -109,7 +109,10 @@
       if (loaded && request.type === 'capture') {
         const c = request.camera;
         if (!c || ![c.zone,c.x,c.z,c.upper,c.angle].every(Number.isInteger)) throw new Error('Invalid capture camera.');
-        send('captured', {id:request.id, checksum:engine._editor_capture(c.zone,c.x,c.z,c.upper,c.angle) >>> 0});
+        if (c.height !== undefined && (!Number.isInteger(c.height * 256) || c.height * 256 < -2147483648 || c.height * 256 > 2147483647)) throw new Error('Invalid inspection eye height.');
+        const checksum = c.height === undefined ? engine._editor_capture(c.zone,c.x,c.z,c.upper,c.angle)
+          : engine._editor_capture_height(c.zone,c.x,c.z,c.upper,c.angle,c.height * 256);
+        send('captured', {id:request.id, checksum:checksum >>> 0});
       }
       if (loaded && request.type === 'mechanism-state') {
         if (!['door', 'lift'].includes(request.kind) || !Number.isInteger(request.index) || request.index < 0) throw new Error('Invalid mechanism inspection.');

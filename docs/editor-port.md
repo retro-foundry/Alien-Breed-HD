@@ -1682,3 +1682,24 @@ fixtures can establish current-format support independently.
   values/reloads are verified but the visual brightness assertion still fails.
   Investigate that rendering/view fixture before shipping the lighting controls.
   This checkpoint does not complete room clipboard UI or the broader goal.
+
+- Room lighting inspector checkpoint: the pending pixel assertion is resolved.
+  The inspector exposes source-owned brightness/animation only for native bump/
+  smooth surfaces, preserving the point-lighting contracts of walls/Gouraud
+  surfaces and the native distance shading of water. Tooltips and Help explain
+  those material roles and inheritance reset. Native pixel verification uses a
+  valid bump material and an explicit near-floor inspection eye height; a normal
+  standing view can omit the tested surface. The paused capture host now accepts
+  optional native fixed-point eye height within the room air band; invalid
+  heights are rejected before changing the camera. Simulation/renderer behaviour
+  is unchanged. Both Chromium/Firefox cases prove actual pixel changes, exact
+  restoration by Undo/Redo and inheritance reset, native property readback and
+  unchanged original level bytes in project saves. All 40 focused browser cases
+  pass, covering adjacent controls, editor recovery, original-level UI, native
+  properties and heights. Full clipboard UI and remaining requirements stay open.
+
+  The final 727-test model run also passes. CI run 41274356974 (67e4cbb)
+  subsequently completed with two Windows Chromium timer-cycle endpoint failures
+  in mechanism-ranges.spec.ts (door/lift). These need investigation; do not infer
+  current cross-platform readiness from the older c683627 green run or the local
+  lighting checks. The lighting change includes no simulation/renderer edits.
