@@ -127,6 +127,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
       }
       if (message.type === 'error') {
         failedDocument.current = current.current.document; pendingPlay.current = false;
+        setNotice('Engine preview unavailable');
         setError(message.message ?? 'The engine preview stopped.'); setStarting(false); setPlaying(false); setLoaded(false);
       }
       if (message.type === 'stopped') { setPlaying(false); setStarting(false); setNotice('Playtest ended. Build and play again to restart.'); }

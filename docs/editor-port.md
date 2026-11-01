@@ -2029,3 +2029,43 @@ fixtures can establish current-format support independently.
   and the browser CI rendering environment still needs investigation. Final
   packaging/deployment, curves and floor/ceiling painting, graphical overlays
   and the other open R1–R12 requirements remain pending.
+
+- Renderer startup checkpoint: the editor host now checks actual display
+  readiness (SDL window/backend, presentation texture/path and framebuffer)
+  after setup and before loading shared assets or starting its frame loop.
+  `editor_ready` is set only after successful initialization. The iframe sends
+  Ready only after that check, so denied WebGL2 context creation cannot appear
+  as a successfully loaded but blank preview. An actionable error explains
+  graphics/browser recovery, keeps portable Save available and offers Reload
+  engine. The toolbar reports Engine preview unavailable. The error overlay is
+  opaque to prevent duplicate iframe text showing through it.
+
+  Browser fault injection denies real graphics context creation for the first
+  iframe lifetime; native SDL/host initialization detects that failure. The
+  test saves the unchanged decoded original files, reloads with context creation
+  restored, and verifies native picking and an actual playtest. No renderer or
+  game simulation is replaced. Native Windows and WebAssembly builds pass, and
+  a 34-case Chromium/Firefox regression run passes startup/reload, controls,
+  authored rooms, native surface/object picks, occlusion and inspection keys.
+
+  Firefox test launches now request `webgl.force-enabled`, permitting real
+  software WebGL on GPU-less runners. This is confined to the test browser;
+  it changes no user settings and bypasses no pixel/picking assertions. The
+  rationale is Mozilla's [GPU-less WebGL2 report](https://bugzilla.mozilla.org/show_bug.cgi?id=1968347),
+  which describes the same AllowWebgl2 denial observed in the Windows trace.
+  Full Windows/Linux CI must still prove the corrected environment.
+  CI runs the real startup/recovery cases before the full browser suite, so an
+  unusable graphics environment fails early with its diagnostic artifacts rather
+  than spending the full matrix on blank-preview timeouts.
+
+  The older Linux job also exhausted the shared five-minute all-map source-build
+  test budget while taking a canvas screenshot. Those comparisons are now
+  independent per-map cases with their original camera sets, frame-hash checks,
+  visibility-only references and diagnostic images retained. Each map gets an
+  explicit two-minute bound instead of sharing a deadline with fifteen others.
+  The final 34-case run passes all sixteen maps in Chromium and Firefox, plus
+  startup failure/save/reload/play recovery in both browsers. Level 13's full
+  camera set takes about 90 seconds in Chromium and 66 seconds in Firefox on
+  this machine; full CI still needs to verify its per-map budget on runners.
+  The production build, TypeScript checks and native Windows build pass.
+  Remaining feature requirements and final deployment remain open.

@@ -18,6 +18,11 @@ Open the address printed by Vite. The original 16 map triplets are copied from
 the repository into ignored `public/reference/` during development and builds.
 Opening local files does not upload them anywhere.
 
+The 3D preview requires WebGL2. If its renderer cannot start, the editor shows
+recovery steps and keeps the map editable and saveable. After enabling browser
+hardware acceleration, updating the graphics driver or changing browsers, use
+**Reload engine** to retry. A failed renderer does not count as a loaded map.
+
 ## Current working workflows
 
 - In paused 3D view, click a straight wall and choose **Paint this wall**.

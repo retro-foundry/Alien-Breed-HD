@@ -14,6 +14,8 @@
 
 /* Lifecycle (pass state for ab3d.ini render_width/render_height/supersampling; may be NULL -> 1280x720 at 1x) */
 void display_init(GameState *state);
+/* Window, presentation backend and software framebuffer are initialized. */
+int display_is_ready(void);
 void display_shutdown(void);
 int display_is_fullscreen(void);  /* non-zero if window is fullscreen */
 void display_toggle_fullscreen(void); /* borderless ini fullscreen or windowed <-> desktop fullscreen */

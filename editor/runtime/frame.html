@@ -64,7 +64,10 @@
     if (value(0) < 0) throw new Error('The inspected mechanism does not exist.');
     return {zone:value(0), current:value(1)/256, top:value(2)/256, bottom:value(3)/256, wallCount:value(4), plane:value(5)/256, unsynchronizedWalls:value(6)};
   }
-  const fail = (error, revision = currentRevision) => { message.textContent = 'Engine preview: ' + String(error); send('error', {message:String(error), revision}); };
+  const fail = (error, revision = currentRevision) => {
+    const reason = error instanceof Error ? error.message : String(error);
+    message.textContent = 'Engine preview: ' + reason; send('error', {message:reason, revision});
+  };
   Promise.all([import('./inspection-shortcuts.mjs'), createEditorEngine({
     canvas, locateFile: name => new URL(name, location.href).href,
     print: () => {}, printErr: text => console.error('[engine]', text),
@@ -73,7 +76,10 @@
       if (kind === 1) send('loaded', {revision:currentRevision, zone, zones:value, nonblack:engine._editor_nonblack_pixels(), slot:engine._editor_current_slot(), exitZone:engine._editor_current_exit_zone()});
       if (kind === 2) { playing = false; document.exitPointerLock?.(); send('stopped', {zone, completed:!!value, revision:currentRevision}); }
     }
-  })]).then(([shortcuts, module]) => { engine = module; inspectionShortcut = shortcuts.inspectionShortcut; message.textContent = ''; send('ready'); }).catch(fail);
+  })]).then(([shortcuts, module]) => {
+    if (!module._editor_ready()) throw new Error('The 3D renderer could not start. This preview requires WebGL2. Enable browser hardware acceleration, update your graphics driver or try another supported browser, then choose Reload engine. Your map is still editable and can be saved.');
+    engine = module; inspectionShortcut = shortcuts.inspectionShortcut; message.textContent = ''; send('ready');
+  }).catch(fail);
   window.addEventListener('message', event => {
     if (event.source !== parent || event.origin !== location.origin || event.data?.source !== 'ab3d-editor' || !engine) return;
     const request = event.data;

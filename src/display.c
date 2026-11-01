@@ -2874,6 +2874,14 @@ static void display_cpu_unpack_cw_to_texture(const uint16_t *src, int w, int h)
 /* -----------------------------------------------------------------------
  * Letterbox: scale internal image to fit window, centered, aspect kept
  * ----------------------------------------------------------------------- */
+int display_is_ready(void)
+{
+    return g_window && g_sdl_ren && (g_gl_unpack_ok || g_texture)
+        && g_present_width > 0 && g_present_height > 0
+        && g_internal_w > 0 && g_internal_h > 0
+        && renderer_get_cw_buffer() != NULL;
+}
+
 int display_render_pixel(double x, double y, int *out_x, int *out_y)
 {
     if (!(x >= 0.0 && x < 1.0 && y >= 0.0 && y < 1.0)

@@ -14,6 +14,9 @@ static GameLoopCtx preview_loop;
 static bool copper_ready;
 static int preview_loaded;
 static int preview_playing;
+static int preview_initialized;
+
+EMSCRIPTEN_KEEPALIVE int editor_ready(void) { return preview_initialized && display_is_ready(); }
 
 EM_JS(void, preview_report, (int kind, int zone, int value), {
     Module['editorEvent'](kind, zone, value);
@@ -367,11 +370,15 @@ int main(void)
 {
     SDL_SetMainReady();
     setup_game(&g_state);
+    /* display_init can return early after reporting an SDL failure.
+     * The editor must not advertise a usable engine after that early return. */
+    if (!display_is_ready()) return 1;
     if (!renderer_set_graphic_picking(1)) {
         fprintf(stderr, "Cannot allocate editor surface picking buffers\n");
         abort();
     }
     play_game_load_shared_assets(&g_state);
+    preview_initialized = 1;
     emscripten_set_main_loop(preview_frame, 0, 0);
     return 0;
 }

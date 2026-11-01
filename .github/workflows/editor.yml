@@ -121,6 +121,8 @@ jobs:
         run: npm run build
       - name: Install browser engines
         run: npx playwright install --with-deps chromium firefox
+      - name: Check graphics startup and recovery
+        run: npx playwright test tests/e2e/engine-startup.spec.ts
       - name: Exercise editor in real browsers
         run: npm run test:e2e
       - name: Upload static editor
