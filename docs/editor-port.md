@@ -1841,3 +1841,21 @@ fixtures can establish current-format support independently.
   checks prove mode changes start countdown activity after actual Space input
   while the original remains unchanged. Full creation/placement and clipboard
   switch-slot/condition allocation remain required before R7/R9 completion.
+
+  An atomic room-group copy model now assembles source IDs, captured heights /
+  native properties/material provenance, objects, teleport links, independent
+  motions and switches. Internal destinations/condition bits remap; external
+  references, starts and global exit remain unchanged. Existing native or copied
+  controller relationships require complete adjoining-room mappings. Switch
+  allocation reserves unused bits already claimed by existing gates and copied
+  external requirements, avoiding accidental gate activation. Provisional full
+  native compilation checks the result before one undoable command is returned.
+  All 774 model tests pass, including actual object snapshots, partial floor
+  footprints, save/reopen/Undo, original/copy controller branches and a real
+  eight-switch capacity boundary with atomic rejection. Eight focused Chromium /
+  Firefox circuit/motion/switch cases pass; final circuit cases were rerun after
+  gate-bit reservation changed. Actual Space input activates only the pasted
+  circuit, with synchronized native moving walls/plane and preserved source on
+  save. Production builds pass. Room-copy/placement UI, dependency/material review,
+  broader transforms/resources and remaining full-editor requirements stay open;
+  this does not claim completed R9 or deployment readiness.

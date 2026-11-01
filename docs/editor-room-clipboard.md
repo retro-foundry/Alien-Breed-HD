@@ -341,3 +341,46 @@ existing native switch regression covers the timer's terminal reset branch.
 The production build passes and the inspector layout was reviewed. Full switch
 creation/placement, automatic clipboard slot/condition allocation and complete
 room clipboard assembly remain open.
+
+## Atomic room-group copy assembly
+
+`roomClipboard.ts` now captures immutable document/selection snapshots and
+assembles translated same-project room groups as one command. Copies receive
+fresh source IDs with retained wall/material provenance, captured four-plane
+heights and native room properties. Authored appearance is retained; otherwise
+closure appearance is derived from the room's own native wall material when
+available. Rooms without a suitable material still require their adjoining
+geometry or an explicit repair; no missing switch/moving wall is fabricated.
+
+Internal teleport destinations remap to new source identities and translated
+coordinates; external destinations remain external. Incoming links, player
+starts and the global exit are unchanged. Active supported non-avatar records
+use the existing full native object copier with fresh CIDs, room bindings and
+translated positions, preserving captured settings after original edits.
+Reserved/unsupported active content is an error rather than silently omitted.
+
+`roomClipboardControllers.ts` rebinds original and previously copied door/lift
+graphics and collision relationships, and allocates switch slots independently.
+Internal switch conditions remap to the new circuit; keys/external conditions
+keep their meanings. Allocation reserves both active/assigned slots and unused
+bits referenced by existing gates or external copied requirements, preventing a
+new switch from taking over an unrelated gate. Required adjoining room mappings
+must be complete. Full native compilation validates the provisional result
+before returning one source/files/object/link/appearance history command. Any
+failure leaves the destination untouched.
+
+All 774 model tests pass. Copy cases cover original/copy motion groups, actual
+object snapshots, internal/external links, partial native floor footprints,
+save/reopen, Undo/Redo, overlap/attachment errors, reserved gate bits and a real
+eight-active-switch capacity boundary. Eight focused Chromium/Firefox circuit,
+motion and switch cases pass; the two circuit cases were rerun after reservation
+validation changed. Native Space activation opens only the newly pasted door
+through its newly pasted switch; the source circuit remains inactive, every
+sampled moving wall/plane stays synchronized and saved source retains the plan.
+Production builds pass.
+
+This is the validated copy model, not a completed clipboard UI. Room selection /
+placement dialogs, dependency expansion and appearance review, transforms beyond
+translation, cross-project resource transfer and remaining editor requirements
+stay open. Shared native material resources retain their existing project
+provenance; broader independent resource authoring remains R8/R11 work.
