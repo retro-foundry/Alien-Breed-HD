@@ -70,6 +70,28 @@ positions** still expose native coordinates (larger numbers are lower down).
 **Show ceilings** only affects editing-view visibility, leaving game geometry
 intact. Open or closed doors use their mechanism movement controls.
 
+## Painting walls, floors and ceilings
+
+Select a room, then **Paint room textures** in its inspector. Engine view opens
+that room. Stop a running playtest, click the surface, choose **Paint this wall**
+or **Paint this surface**, pick a material, then **Apply**. Arrow/look controls
+reach ceilings and floors. Escape cancels a draft and Undo restores the material.
+Moving faces offer **Edit door/lift**. Straight walls and normal floor-bank
+patterns are supported; special surfaces without painting controls say so.
+**Wall repair appearance** configures newly created boundaries and changed
+openings; individual existing surfaces use the painting workflow above.
+
+## Adding and removing outline corners
+
+Select a room in Top view and use an edge's **+** button, or double-click an
+edge. Slanted edges snap along their native whole-coordinate positions. Edges
+with no interior whole-coordinate point explain why insertion is unavailable.
+The inspector's **Edit room corners** also has Add corner after / Remove corner
+controls. Shared boundaries update together and each operation is one Undo.
+Deletion preserves the minimum three corners and rejects stranded starts,
+objects and teleport destinations. Newly shaped imported boundaries may need
+an explicit Wall repair appearance, just as redrawn boundaries do.
+
 ## Current working workflows
 
 - Select a connected original or newly drawn room with no inward corners.

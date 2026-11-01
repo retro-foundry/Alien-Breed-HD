@@ -44,9 +44,9 @@ function SourceStartForm({ document, player, edit }: { document: LevelDocument; 
     onApply={(room, x, z) => edit(() => setSourceStart(document, player, room, x, z))} />;
 }
 
-export function Inspector({ document, selection, edit, sourceRoom, onObjectDuplicate, onRoomCorner, onRoomRedraw, onRoomDelete, onShowDestination, onInspectRoom, onViewRoomSide }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
-  onObjectDuplicate: () => void; onViewRoomSide: () => void;
-  sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomRedraw: () => void; onRoomDelete: () => void; onShowDestination: (room: string) => void; onInspectRoom: (room: string) => void }) {
+export function Inspector({ document, selection, edit, sourceRoom, onObjectDuplicate, onRoomCorner, onRoomCornerInsert, onRoomCornerRemove, onRoomRedraw, onRoomDelete, onShowDestination, onInspectRoom, onViewRoomSide, onPaintRoomTextures }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
+  onObjectDuplicate: () => void; onViewRoomSide: () => void; onPaintRoomTextures: () => void;
+  sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomCornerInsert: (index: number) => void; onRoomCornerRemove: (index: number) => void; onRoomRedraw: () => void; onRoomDelete: () => void; onShowDestination: (room: string) => void; onInspectRoom: (room: string) => void }) {
   if (!selection && !sourceRoom) return <aside className="inspector"><div className="panel-title">INSPECTOR</div><div className="empty-inspector"><Icon name="select" size={32} /><h2>Select something</h2><p>Click a zone, object or player start to inspect it.</p><p className="muted">Drag objects and starts to reposition them. Hold Alt to ignore the grid.</p></div></aside>;
   const zone = selection?.kind === 'zone' ? document.zones.find(zone => zone.id === selection.id) : undefined;
   const dimensions = sourceRoom ? roomSettings(document, sourceRoom) : zone;
@@ -60,8 +60,8 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
     <div className="panel-title">INSPECTOR <span className="eyebrow">{selection?.kind.toUpperCase() ?? 'ROOM'}</span></div>
     <div className="inspector-heading"><span className="selection-symbol"><Icon name={zone || sourceRoom ? 'layers' : start ? 'pin' : 'object'} size={24} /></span><div><h2>{title}</h2><span className="muted">{zone ? `${zone.boundaryIds.length} edges · ${zone.upper.length > 0 ? 'two floors' : 'single floor'}` : object ? `Object ${object.id} · ${object.room === null ? 'Deleted' : object.room ? `Room ${object.room.replace(/^room-/, '')}` : `Zone ${object.zone}`}` : sourceRoom ? 'Editable room outline' : 'Level spawn point'}</span></div></div>
     <div className="inspector-scroll">
-      {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onRedraw={onRoomRedraw} onDelete={onRoomDelete} />}
-      {sourceRoom && <RoomAppearanceInspector document={document} room={sourceRoom} edit={edit} />}
+      {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onInsertCorner={onRoomCornerInsert} onRemoveCorner={onRoomCornerRemove} onRedraw={onRoomRedraw} onDelete={onRoomDelete} />}
+      {sourceRoom && <RoomAppearanceInspector document={document} room={sourceRoom} edit={edit} onPaintTextures={onPaintRoomTextures} />}
       {sourceRoom && <RoomHeightInspector document={document} room={sourceRoom} edit={edit} onViewSide={onViewRoomSide} />}
       {sourceRoom && <AuthoredMechanismInspector document={document} room={sourceRoom} edit={edit} onShowRoom={onInspectRoom} />}
       {sourceRoom && <CopiedMechanismInspector document={document} room={sourceRoom} edit={edit} />}

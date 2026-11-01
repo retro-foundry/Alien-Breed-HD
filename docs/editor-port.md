@@ -2457,3 +2457,23 @@ site in Edge and Brave, including unchanged native player floor height and
 independent upper/lower editing. The final publication is site `75ecf3c`,
 JavaScript `index-Dq_YeS1p.js`, CSS `index-BepOojkE.css`; Pages run `41316825535`
 completed successfully. Native runtime hashes remain unchanged and verified.
+
+
+## Direct outline corners and texture discovery
+
+The original `PTADD` at `leveld.asc:7597` creates whole-coordinate authoring
+points; source outline editing now exposes insertion on an existing edge and
+safe shared-corner removal, without requiring a complete redraw. Slanted edges
+use their integer lattice, shared segments split on both sides and keep their
+native wall/paint identities. Removal changes the incident room fan atomically,
+merges identical split material identities and assigns genuinely new boundaries
+new identities. It rejects invalid outlines, fewer than three corners and
+stranded starts, active objects or teleport destinations. Save/Undo reuse the
+existing source schema. Unattached/decorative points remain an explicit gap;
+this does not establish the complete AMOS Add/Delete Point operation.
+
+The room inspector now leads with Textures and Paint room textures, routing to
+the actual renderer's existing wall/floor/ceiling pickers. Wall repair appearance
+is identified separately. Help explains the selection, Apply/Cancel, storey and
+moving-surface workflows; unsupported special material targets are explicitly
+labelled. Material formats and native gameplay are unchanged.

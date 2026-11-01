@@ -22,3 +22,7 @@
 .inspector .object-type-field select{width:100%;max-width:100%;min-width:0}.inspector .object-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.inspector .object-actions>button{margin:0;width:100%}
 
 .object-palette{width:min(640px,95vw)}.object-palette>input{width:100%;margin:16px 0}.object-palette-groups{max-height:55vh;overflow:auto}.object-palette-groups h3{margin:16px 0 8px}.object-palette-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px}.object-palette-grid button{justify-content:flex-start;white-space:normal;text-align:left;background:#252c34;border:1px solid #39434e;padding:12px}.object-placement-bar{display:flex;align-items:center;gap:12px;padding:9px 14px;background:#263526;color:#c7e9a4;font-size:12px}.object-placement-bar button{margin-left:auto}
+
+.room-edge-insert{position:absolute;transform:translate(-50%,-50%);width:20px;height:20px;padding:0;border:1px solid #74966a;border-radius:50%;color:#b2de7a;background:#18251eee;font-size:15px;z-index:2}.room-corner-actions{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px}.room-corner-actions .small-button{font-size:10px;padding:5px 7px}
+
+.room-corner-row .field-grid{grid-template-columns:1fr 1fr}.room-corner-row .number-field{flex-direction:column;align-items:stretch;gap:4px}.room-corner-row .number-field input{width:100%}

@@ -193,6 +193,61 @@ export function addSourceRooms(document: RoomRecords, current: RoomSource,
   return { label: 'Create rooms', before: current, after: source(rooms, current.nextId + added.length, current) };
 }
 
+function reshapeRoom(room: SourceRoom, vertices: readonly Position[], walls = vertices.map((start, i) => sourceWallForEdge(room, start, vertices[(i + 1) % vertices.length]!)), boundaryMaterials = remapBoundaryMaterials(room, vertices.map((start, i) => ({ start, end: vertices[(i + 1) % vertices.length]! })))) {
+  return frozenRoom(room.id, room.recordZone, vertices, room.originZone, walls, room.heights, room.properties, { ...room, boundaryMaterials });
+}
+
+/** Split the selected edge and every coincident adjoining boundary, retaining
+ * each side's own wall/paint identity. PTADD's whole native coordinates apply. */
+export function insertSourceCorner(current: RoomSource, roomId: string, edge: number, point: Position): RoomChange {
+  const selected = current.rooms.find(room => room.id === roomId), a = selected?.vertices[edge], b = selected?.vertices[(edge + 1) % selected.vertices.length];
+  if (!selected || !a || !b) throw new Error('Select an existing room edge before adding a corner.');
+  checkedInteger(point.x, -32768, 32767, 'Corner X'); checkedInteger(point.z, -32768, 32767, 'Corner Z');
+  if (!onSegment(point, a, b) || samePoint(point, a) || samePoint(point, b)) throw new Error('Place the new corner between the ends of the selected edge.');
+  const rooms = current.rooms.map(room => {
+    const index = room.vertices.findIndex((start, i) => onSegment(point, start, room.vertices[(i + 1) % room.vertices.length]!) && !samePoint(start, point) && !samePoint(room.vertices[(i + 1) % room.vertices.length]!, point));
+    if (index < 0) return room;
+    const vertices = [...room.vertices.slice(0, index + 1), { x: point.x, z: point.z }, ...room.vertices.slice(index + 1)];
+    const walls = [...room.wallSources.slice(0, index + 1), room.wallSources[index]!, ...room.wallSources.slice(index + 1)];
+    return reshapeRoom(room, vertices, walls);
+  });
+  validateRoomInteriors(rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
+  return { label: 'Insert shared room corner', before: current, after: source(rooms, current.nextId, current) };
+}
+
+/** Removing an authoring point updates its incident room fan as one change.
+ * Identical split material identities merge back; genuinely new boundaries
+ * receive new identities rather than inheriting unrelated paint. */
+export function removeSourceCorner(current: RoomSource, roomId: string, index: number): RoomChange {
+  const selected = current.rooms.find(room => room.id === roomId), point = selected?.vertices[index];
+  if (!selected || !point) throw new Error('Select an existing room corner to remove.');
+  const edges = validateRoomInteriors(current.rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
+  const affected = new Set([roomId]);
+  for (;;) {
+    const count = affected.size;
+    for (const edge of edges) if (affected.has(edge.room) && edge.neighbour && (samePoint(edge.start, point) || samePoint(edge.end, point))) affected.add(edge.neighbour);
+    if (count === affected.size) break;
+  }
+  const rooms = current.rooms.map(room => {
+    const removed = room.vertices.findIndex(p => samePoint(p, point));
+    if (!affected.has(room.id) || removed < 0) return room;
+    if (room.vertices.length <= 3) throw new Error(`Room ${room.id.replace(/^room-/, '')} needs at least three corners. Reshape its adjoining rooms before removing this shared point.`);
+    const previous = (removed + room.vertices.length - 1) % room.vertices.length;
+    const straight = onSegment(point, room.vertices[previous]!, room.vertices[(removed + 1) % room.vertices.length]!);
+    const vertices = room.vertices.filter((_, i) => i !== removed);
+    const walls = room.wallSources.filter((_, i) => i !== removed).map((line, i) => i === (removed ? removed - 1 : vertices.length - 1) && (!straight || room.wallSources[previous] !== room.wallSources[removed]) ? null : line);
+    let boundary = room.boundaryMaterials;
+    if (boundary) {
+      let nextId = boundary.nextId;
+      const ids = boundary.edges.filter((_, i) => i !== removed).map((id, i) => i === (removed ? removed - 1 : vertices.length - 1) && (!straight || boundary!.edges[previous] !== boundary!.edges[removed]) ? nextId++ : id);
+      boundary = { ...boundary, nextId, edges: ids };
+    }
+    const changed = reshapeRoom(room, vertices, walls, boundary); convexParts(changed.vertices); return changed;
+  });
+  validateRoomInteriors(rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
+  return { label: 'Remove shared room corner', before: current, after: source(rooms, current.nextId, current) };
+}
+
 export function commitRoomDraft(current: RoomSource, draft: RoomDraft): RoomChange {
   if (current !== draft.base) throw new Error('The rooms changed while this outline was being drawn. No changes were saved.');
   const existing = draft.roomId === null ? undefined : current.rooms.find(room => room.id === draft.roomId);
@@ -200,7 +255,7 @@ export function commitRoomDraft(current: RoomSource, draft: RoomDraft): RoomChan
   if (draft.roomId !== null && !existing) throw new Error('That room no longer exists.');
   const id = existing?.id ?? `room-${current.nextId}`;
   const walls = draft.vertices.map((start, i) => existing ? sourceWallForEdge(existing, start, draft.vertices[(i + 1) % draft.vertices.length]!) : null);
-  const room = frozenRoom(id, draft.recordZone, draft.vertices, existing?.originZone ?? null, walls, existing?.heights, existing?.properties, { ...existing, boundaryMaterials: existing && remapBoundaryMaterials(existing, draft.vertices.map((start, index) => ({ start, end: draft.vertices[(index + 1) % draft.vertices.length]! }))) });
+  const room = existing ? reshapeRoom(existing, draft.vertices, walls) : frozenRoom(id, draft.recordZone, draft.vertices, null, walls);
   if (existing && existing.recordZone === room.recordZone && existing.vertices.length === room.vertices.length
     && existing.vertices.every((point, i) => point.x === room.vertices[i]!.x && point.z === room.vertices[i]!.z))
     return Object.freeze({ label: 'Edit room outline', before: current, after: current });

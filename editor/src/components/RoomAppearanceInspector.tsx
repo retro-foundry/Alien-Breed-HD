@@ -8,8 +8,8 @@ import { WallStyleBrowser } from './WallStyleBrowser';
 import { clearRoomWallMaterials } from '../model/wallMaterials';
 import { clearRoomPolygonMaterials } from '../model/polygonMaterials';
 
-export function RoomAppearanceInspector({ document, room, edit }: {
-  document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void;
+export function RoomAppearanceInspector({ document, room, edit, onPaintTextures }: {
+  document: LevelDocument; room: SourceRoom; onPaintTextures: () => void; edit: (command: EditCommand | (() => EditCommand)) => void;
 }) {
   const choices = roomAppearanceChoices(document, room), selected = document.roomAppearances?.find(item => item.room === room.id);
   const [lower, setLower] = useState(selected ? String(selected.lowerWall) : '');
@@ -27,7 +27,10 @@ export function RoomAppearanceInspector({ document, room, edit }: {
     edit(command);
   };
   const paintedCount = ((room.wallMaterials?.length ?? 0) + (room.boundaryMaterials?.overrides.length ?? 0));
-  return <section className="property-section"><h3>{imported ? 'Wall repair appearance' : 'Room appearance'}</h3>
+  return <section className="property-section"><h3>Textures</h3>
+    <p className="field-note">Paint existing walls, floors and ceilings in Engine view. Click a surface, choose Paint this wall or Paint this surface, pick a material, then Apply. If playtesting, choose Stop first. Undo restores the previous material.</p>
+    <button className="small-button" onClick={onPaintTextures} title="Open this room in the game renderer. Click the wall, floor or ceiling you want to paint; its surface panel opens the material picker.">Paint room textures</button>
+    <h4>{imported ? 'Wall repair appearance' : 'Room appearance'}</h4>
     {!!room.polygonMaterials?.length && <div><p className="field-note">{room.polygonMaterials.length} floor/ceiling surfaces have independent patterns and repeat.</p>
       <button type="button" className="small-button" title="Restore this room's original floor-bank materials, including missing painted surfaces, as one undoable action."
         onClick={() => edit(() => editRoomSource(clearRoomPolygonMaterials(document, room.id)))}>Reset painted room surfaces</button></div>}

@@ -1,3 +1,4 @@
+import { edgeCornerPoint } from '../model/roomCorners';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { zoneContainsPoint, type LevelDocument, type Zone } from '../model/level';
 import { Icon } from './Icon';
@@ -23,6 +24,7 @@ interface Props {
   tool: 'select' | 'pan' | 'room' | 'box' | 'object'; layer: 'lower' | 'upper'; grid: number; showObjects: boolean;
   roomDraft: RoomDraft | null; selectedRoom?: SourceRoom; roomGroup: readonly SourceRoom[]; onRoomSelect: (id: string, add?: boolean) => void;
   onRoomPoint: (x: number, z: number) => void; onRoomFinish: () => void;
+  onRoomCornerInsert: (edge: number, near?: { x: number; z: number }) => void;
   onRoomCornerMove: (index: number, x: number, z: number) => void;
   focusRoom?: { id: string; request: number; frame?: boolean };
   onCursor: (x: number, z: number) => void; focusZone?: { id: number; request: number }; fitKey: number;
@@ -32,13 +34,14 @@ function floorPolygons(zone: Zone, upper: boolean) {
   return (upper ? zone.upper : zone.lower).filter(graphic => [1, 8, 9, 10, 11].includes(graphic.type) && graphic.points.length >= 3);
 }
 
-export function MapCanvas({ placementLabel, onObjectPlace, document, selection, objectIds, frameSelection, onObjectToggle, onObjectBoxSelect, onGroupMove, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, roomGroup, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, focusRoom }: Props) {
+export function MapCanvas({ placementLabel, onObjectPlace, document, selection, objectIds, frameSelection, onObjectToggle, onObjectBoxSelect, onGroupMove, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, roomGroup, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, onRoomCornerInsert, focusRoom }: Props) {
   const visibility = useVisibilityInspection(document, selectedRoom?.id, selection?.kind === 'zone' ? selection.id : undefined);
   const canvas = useRef<HTMLCanvasElement>(null), holder = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const lastFit = useRef<{ data: Uint8Array; fit: number } | null>(null);
   const [view, setView] = useState<MapView>({ x: 0, z: 0, scale: 0.15 });
   const space = useRef(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
   const [placementPoint, setPlacementPoint] = useState<{ x: number; z: number } | null>(null);
   const drag = useRef<{ x: number; y: number; view: MapView; selection: Selection; moved: boolean } | null>(null);
   const [ghost, setGhost] = useState<{ selection: Exclude<Selection, null>; x: number; z: number } | null>(null);
@@ -133,11 +136,11 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
       const control = event.target instanceof Element && event.target.closest('button, input, textarea, select, summary, a, [contenteditable="true"]');
-      if (event.code === 'Space' && !control) { space.current = true; event.preventDefault(); }
+      if (event.code === 'Space' && !control) { space.current = true; setSpaceHeld(true); event.preventDefault(); }
       if (event.key === 'Escape') { boxDrag.current = null; setBoxGhost(null); groupDrag.current = null; setGroupGhost(null); drag.current = null; setGhost(null); cornerDrag.current = null; setCornerGhost(null); }
     };
-    const up = (event: KeyboardEvent) => { if (event.code === 'Space') space.current = false; };
-    const blur = () => { boxDrag.current = null; setBoxGhost(null); space.current = false; drag.current = null; setGhost(null); groupDrag.current = null; setGroupGhost(null); cornerDrag.current = null; setCornerGhost(null); };
+    const up = (event: KeyboardEvent) => { if (event.code === 'Space') { space.current = false; setSpaceHeld(false); } };
+    const blur = () => { boxDrag.current = null; setBoxGhost(null); space.current = false; setSpaceHeld(false); drag.current = null; setGhost(null); groupDrag.current = null; setGroupGhost(null); cornerDrag.current = null; setCornerGhost(null); };
     window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); };
   }, []);
@@ -331,6 +334,16 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
   return <div className="map-holder" ref={holder}>
     <canvas ref={canvas} aria-label="Level map" aria-describedby="map-controls" data-world-x={view.x} data-world-z={view.z} data-world-scale={view.scale} tabIndex={0} style={{ width: size.width, height: size.height, cursor: tool === 'pan' ? 'grab' : tool === 'room' || tool === 'box' || tool === 'object' ? 'crosshair' : 'default' }}
       onPointerLeave={() => setPlacementPoint(null)}
+      onDoubleClick={event => {
+        if (tool !== 'select' || !selectedRoom) return;
+        const rect = event.currentTarget.getBoundingClientRect(), point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+        const nearest = selectedRoom.vertices.map((a, i) => {
+          const b = selectedRoom.vertices[(i + 1) % selectedRoom.vertices.length]!, start = screen(a.x, a.z), end = screen(b.x, b.z);
+          const dx = end.x - start.x, dy = end.y - start.y, t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy)));
+          return { edge: i, distance: t > .02 && t < .98 ? Math.hypot(point.x - start.x - t * dx, point.y - start.y - t * dy) : Infinity };
+        }).toSorted((a, b) => a.distance - b.distance)[0];
+        if (nearest && nearest.distance < 8) onRoomCornerInsert(nearest.edge, world(point.x, point.y));
+      }}
       onContextMenu={event => event.preventDefault()}
       onKeyDown={event => {
         if (event.key === 'Escape' && (boxDrag.current || groupDrag.current || drag.current || cornerDrag.current)) {
@@ -429,6 +442,13 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
       }}
       onPointerCancel={() => { boxDrag.current = null; setBoxGhost(null); groupDrag.current = null; setGroupGhost(null); setGhost(null); drag.current = null; cornerDrag.current = null; setCornerGhost(null); }}
       onLostPointerCapture={() => { boxDrag.current = null; setBoxGhost(null); groupDrag.current = null; setGroupGhost(null); setGhost(null); drag.current = null; cornerDrag.current = null; setCornerGhost(null); }} />
+    {tool === 'select' && !spaceHeld && selectedRoom && selectedRoom.vertices.map((a, edge) => {
+      const b = selectedRoom.vertices[(edge + 1) % selectedRoom.vertices.length]!;
+      let point, reason = ''; try { point = edgeCornerPoint(a, b); } catch (error) { point = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }; reason = error instanceof Error ? error.message : String(error); }
+      const pixel = screen(point.x, point.z), start = screen(a.x, a.z), end = screen(b.x, b.z);
+      if (Math.hypot(start.x - end.x, start.y - end.y) < 45 || pixel.x < 12 || pixel.y < 12 || pixel.x > size.width - 12 || pixel.y > size.height - 12) return null;
+      return <button key={edge} className="room-edge-insert" style={{ left: pixel.x, top: pixel.y }} disabled={!!reason} aria-label={`Add corner on edge ${edge + 1}`} title={reason || "Insert a corner here. Adjoining edges update together. You can also double-click an edge, then drag the new corner."} onClick={() => onRoomCornerInsert(edge)}>+</button>;
+    })}
     <div className="map-label"><span className="status-dot" /> ORTHOGRAPHIC <span className="muted">/</span> {layer.toUpperCase()} FLOOR</div>
     <div className="map-compass"><span>N</span><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 6 23-6-5-6 5z" fill="currentColor" /></svg></div>
     <VisibilityOverlay state={visibility} onFrame={() => framePoints(visibility.inspection?.polygons.flatMap(polygon => polygon.vertices) ?? [])} />
