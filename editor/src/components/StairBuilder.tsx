@@ -5,6 +5,7 @@ import { roomSettings } from '../model/roomHeights';
 import type { SourceRoom } from '../model/roomSource';
 import { createStairFlight, playerStepUpWorld, type StairProposal } from '../model/stairs';
 import './StairBuilder.css';
+import { WallStyleBrowser } from './WallStyleBrowser';
 
 export function StairBuilder({ document, template, selected, cursor, onCancel, onCreate }: {
   document: LevelDocument; template: number; selected?: SourceRoom; cursor: { x: number; z: number };
@@ -56,6 +57,8 @@ export function StairBuilder({ document, template, selected, cursor, onCancel, o
         </select></label>)}
         <label className="select-field"><span>Stair corner lighting</span><select required aria-label="Stair corner lighting" value={light} title="Choose an actual template lighting point for the generated corners." onChange={event => setLight(event.target.value)}><option value="">Choose lighting</option>{choices.points.map((id, index) => <option key={id} value={id}>Template point {index + 1}</option>)}</select></label>
       </div>
+      <WallStyleBrowser key={`${recordZone}:lower`} label="stair lower wall" records={choices.lower} value={lower} onChange={setLower} />
+      {hasUpper && <WallStyleBrowser key={`${recordZone}:upper`} label="stair upper wall" records={choices.upper} value={upper} onChange={setUpper} />}
       {error && <p role="alert">{error}</p>}
       {proposal ? <div className="stair-layout"><svg role="img" aria-label="Proposed stair layout" viewBox={`${minX - margin} ${-maxZ - margin} ${maxX - minX + margin * 2} ${maxZ - minZ + margin * 2}`}>
         {proposal.rooms.map((room, index) => <g key={room.id}><polygon points={room.vertices.map(p => `${p.x},${-p.z}`).join(' ')} />

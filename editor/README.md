@@ -20,6 +20,10 @@ Opening local files does not upload them anywhere.
 
 ## Current working workflows
 
+- Browse lower/upper wall styles visually in the room and stair forms. Search
+  by material/style and preview the original palette shades. Choosing a tile
+  fills the form; Apply commits the authored style as one undoable edit.
+  Missing material files show an error and retry without changing source.
 - Drag floor/ceiling handles in a room's section diagram or adjust them with
   Up/Down (quarters) and Shift (4 units). Release applies one undoable edit;
   Escape cancels. Invalid air-band crossings leave source unchanged. Split view
@@ -197,6 +201,20 @@ python tools/editor_geometry_oracles.py
 
 These validate the ordering-mask and portal-point primitives. They do not yet
 prove a full visibility compiler; see [the geometry evidence](../docs/editor-geometry.md).
+
+Wall sheet fixtures execute the current `io.c` texture-dump functions as C,
+using the independent native SB decompressor for their input. Regenerate after
+reviewing changes to native wall loading or palettes:
+
+```sh
+python tools/editor_wall_oracles.py --unpacker <path-to-sb_unpack> --cc clang
+```
+
+The tool extracts the actual native dump/dimension/BMP functions and tables
+into a temporary harness; it does not replace them with an editor-side oracle.
+Model checks compare all 14 decompressed sheets and every middle-shade RGBA
+pixel. Browser checks compare packaged catalog dimensions and canvas pixels.
+PNG import/conversion and portable custom asset overrides remain in progress.
 
 ## Shortcuts
 

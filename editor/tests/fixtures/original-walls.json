@@ -1,0 +1,118 @@
+{
+  "authority": "src/io.c native io_dump_textures at palette level 16; src/sb_decompress.c via unpacker",
+  "nativeSourceSha256": "2f11da4626ebf96ce94976e3faa767d30e52b1b3dcafdcc08e41d80ee69359e7",
+  "walls": [
+    {
+      "id": 0,
+      "name": "GreenMechanic.wad",
+      "width": 387,
+      "height": 64,
+      "unpackedSha256": "4c4a89a3ce0201f7109910c8c96f979dff5a5df86ab16bf8b2af57d66406ebb5",
+      "rgbaSha256": "557a9701cfb4af51090afe89dd48f7463dc4d780c2c5b775d74c7c74f8645a0c"
+    },
+    {
+      "id": 1,
+      "name": "BlueGreyMetal.wad",
+      "width": 258,
+      "height": 64,
+      "unpackedSha256": "2312f26838cd6f5c2146783d9dc618ac02a6632bc685bfe3d1ba8751450cbe42",
+      "rgbaSha256": "773fb893b3df2d583a8672649155d27c635184e0741e47be5478b3f7026a86e9"
+    },
+    {
+      "id": 2,
+      "name": "TechnoDetail.wad",
+      "width": 258,
+      "height": 64,
+      "unpackedSha256": "95757f81f29879e372a0451d65add21c5d3e4caab720d69ca9078482935b55b1",
+      "rgbaSha256": "4ebb382de5be1e05be6ada43c5cd64b0255990bde42a1dd03cbb4e6d0ecaaa41"
+    },
+    {
+      "id": 3,
+      "name": "BlueStone.wad",
+      "width": 66,
+      "height": 64,
+      "unpackedSha256": "3ffeb0fca6ab44628fcf93c8f3fe640d8f1b1833e999d3288f362c8757c83fa4",
+      "rgbaSha256": "2b6617ec34a10c559085b0ee4e01930b0f39d014c0ccb875804a4cbae46f4478"
+    },
+    {
+      "id": 4,
+      "name": "RedAlert.wad",
+      "width": 129,
+      "height": 64,
+      "unpackedSha256": "5740b75af1a16f851d136da359ef85313c530b178b4b81c8c5671afb98af8836",
+      "rgbaSha256": "3112ea8c77fe5d8b8fad7c7587df8b3eda06b900826972600fa0dda278e63354"
+    },
+    {
+      "id": 5,
+      "name": "rock.wad",
+      "width": 195,
+      "height": 64,
+      "unpackedSha256": "6b97b5b527805f3f62d7e6aee9be1c69a44d4eb8aac44f1422d32434b91c1184",
+      "rgbaSha256": "5fda127358ea8ea193c3624dfa0800459a20907bcc470871db3ed3e3681aa18f"
+    },
+    {
+      "id": 6,
+      "name": "scummy.wad",
+      "width": 258,
+      "height": 64,
+      "unpackedSha256": "03d8c39b83999d8e6f7a8301ef04ac4d733b884b5bdcd696660ef1cf49b9d9d4",
+      "rgbaSha256": "3945cdc0aad85e1dab94caf6ddc6a2044bafdf18f54b382a3cd5e78d48541857"
+    },
+    {
+      "id": 7,
+      "name": "stairfronts.wad",
+      "width": 33,
+      "height": 16,
+      "unpackedSha256": "d5bd079a2a9d21160c9390c2ce227d8cfa28991a0e73aaf0f20c161612800420",
+      "rgbaSha256": "6c96d090ae0ae7919b2aba5e620e19e3ec9bd08fee2d75471e0a022f669b57b8"
+    },
+    {
+      "id": 8,
+      "name": "BIGDOOR.wad",
+      "width": 129,
+      "height": 128,
+      "unpackedSha256": "dc8a41a400f8fbdb0c7d4ceddba770909962bd259b1acc43a7c38f291526a9dd",
+      "rgbaSha256": "3491848e56551c7fad85bf54fa654563e91d513b4e0a06b25e0730a10f92632c"
+    },
+    {
+      "id": 9,
+      "name": "RedRock.wad",
+      "width": 258,
+      "height": 64,
+      "unpackedSha256": "c872194398fc6b2c8f173064fc7903f2881b5ab00af760fd0da1e6ccbccac61d",
+      "rgbaSha256": "439ea12a4d1b60a8f37eea8bef2e95fb2abc18a058733c014e7fa18588939f2f"
+    },
+    {
+      "id": 10,
+      "name": "dirt.wad",
+      "width": 258,
+      "height": 128,
+      "unpackedSha256": "c68d0a29b3f4db727308ad53d30b3961e057fd99ab8927d36e848ab57805e596",
+      "rgbaSha256": "6b83e3c9e7d5e0efbf893e17ab94ac4ddc96a7edf032ae3a9664af6eb3c56b5f"
+    },
+    {
+      "id": 11,
+      "name": "switches.wad",
+      "width": 66,
+      "height": 32,
+      "unpackedSha256": "181dea5cec464dc67266d05eb0ca39bd667ef80c36669c4fe019512001651505",
+      "rgbaSha256": "374f71a480e48c287319875a69955856804a9a0365d486baba5e6fa21ce12ccb"
+    },
+    {
+      "id": 12,
+      "name": "shinymetal.wad",
+      "width": 258,
+      "height": 128,
+      "unpackedSha256": "90142aba6a86c5f3b9736b7f8f7fdc597275d2e507971e7d692c50e090f33843",
+      "rgbaSha256": "86edd6edf080b5c417295c56c16334ba71122a95f37048f9e7002d7298fc4ea8"
+    },
+    {
+      "id": 13,
+      "name": "bluemechanic.wad",
+      "width": 321,
+      "height": 64,
+      "unpackedSha256": "02d55cef47f447e4b287cf19da8c96d6bee7a081754736a278f2aca73ea01814",
+      "rgbaSha256": "d8e47aebf060a99d160b9de2eccd03fa32a08188f714a1a009f36993836e3d18"
+    }
+  ]
+}

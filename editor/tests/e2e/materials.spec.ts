@@ -1,0 +1,90 @@
+import { expect, test } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import { roomHeightFixture } from '../roomHeightFixture';
+import { roomAppearanceChoices } from '../../src/model/roomAppearance';
+import { decodeProject, encodeProject, openArchive, openProjectCandidate } from '../../src/model/project';
+import oracle from '../fixtures/original-walls.json' with { type: 'json' };
+import { captureEngine } from '../engineCapture';
+
+test('native material thumbnails match C pixels, filter and shade without changing source, and apply an undoable wall style', async ({ page }, testInfo) => {
+  test.setTimeout(90000); page.on('dialog', dialog => void dialog.accept());
+  const fixture = roomHeightFixture(), choices = roomAppearanceChoices(fixture.document, fixture.from);
+  const target = choices.lower.find(record => record.texture !== choices.lower[0]!.texture) ?? choices.lower[1]!;
+  expect(target).toBeDefined(); const native = oracle.walls[target.texture!]!;
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  const catalog = await (await page.request.get('reference/walls/catalog.json')).json();
+  expect(catalog.walls.map((sheet: { id: number; name: string; width: number; rows: number }) => ({ id: sheet.id, name: sheet.name, width: sheet.width, height: sheet.rows })))
+    .toEqual(oracle.walls.map(({ id, name, width, height }) => ({ id, name, width, height })));
+  await page.locator('input[type=file]').setInputFiles({ name: 'materials.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
+  await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
+  await page.getByRole('button', { name: new RegExp(`^Room ${fixture.from.id.replace(/^room-/, '')}`) }).click();
+  await page.getByText('Browse lower wall materials', { exact: true }).click();
+  const index = choices.lower.indexOf(target) + 1;
+  const tile = page.getByRole('button', { name: `Choose lower wall style ${index}: ${native.name}`, exact: true });
+  await expect(tile).toBeVisible(); const canvas = tile.locator('canvas');
+  const pixelHash = () => canvas.evaluate(async node => {
+    const image = node as HTMLCanvasElement;
+    const data = image.getContext('2d')!.getImageData(0, 0, image.width, image.height).data;
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  });
+  await expect.poll(pixelHash).toBe(native.rgbaSha256);
+  const query = page.getByRole('textbox', { name: 'lower wall material search' });
+  await query.fill('missing material'); await expect(page.getByText('No matching wall styles.', { exact: true })).toBeVisible();
+  await query.fill(native.name); await expect(tile).toBeVisible();
+  const shade = page.getByRole('slider', { name: 'lower wall preview shade', exact: true });
+  await shade.focus(); await shade.press('Home'); await expect(shade).toHaveValue('0');
+  await expect.poll(pixelHash).not.toBe(native.rgbaSha256);
+  await tile.click(); await expect(tile).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('combobox', { name: 'Lower wall style', exact: true })).toHaveValue(String(target.offset));
+  const before = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const draftPath = testInfo.outputPath('material-draft.ab3d'); await (await before).saveAs(draftPath);
+  expect(decodeProject(new Uint8Array(await readFile(draftPath))).roomAppearances).toEqual(fixture.document.roomAppearances);
+  await page.getByRole('button', { name: 'Apply appearance', exact: true }).click();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(tile).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Redo', exact: true }).click(); await expect(tile).toHaveAttribute('aria-pressed', 'true');
+  const save = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const sourcePath = testInfo.outputPath('material-source.ab3d'); await (await save).saveAs(sourcePath);
+  const saved = decodeProject(new Uint8Array(await readFile(sourcePath)));
+  expect(saved.files).toEqual(fixture.document.files);
+  expect(saved.roomAppearances!.find(item => item.room === fixture.from.id)!.lowerWall).toBe(target.offset);
+  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Export level', exact: true }).click();
+  const gamePath = testInfo.outputPath('material-game.zip'); await (await download).saveAs(gamePath);
+  const game = openProjectCandidate(openArchive(new Uint8Array(await readFile(gamePath)), 'material-game.zip')[0]!);
+  expect(game.zones[game.starts[0]!.zone]!.lower.filter(record => record.wall).every(record => record.texture === target.texture)).toBe(true);
+  await page.getByRole('button', { name: 'Split view', exact: true }).click();
+  const preview = page.getByRole('region', { name: '3D game engine preview' });
+  await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
+  await captureEngine(page, { zone: game.starts[0]!.zone, x: 20128, z: 20128, angle: 0, upper: 0 });
+  await tile.scrollIntoViewIfNeeded(); await page.mouse.move(0, 0);
+  await page.screenshot({ path: testInfo.outputPath('material-browser-and-engine.png') });
+});
+
+test('a missing material reports an actionable error, preserves source and retries the real asset', async ({ page }) => {
+  let blocked = true;
+  await page.route('**/reference/walls/*.wad', async route => { if (blocked) await route.fulfill({ status: 404, body: '' }); else await route.continue(); });
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.getByRole('button', { name: /^Zone 000(?:\s|$)/ }).click();
+  await page.getByText('Browse lower wall materials', { exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('could not be loaded');
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  blocked = false; await page.getByRole('button', { name: 'Retry materials', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'lower wall material choices', exact: true }).getByRole('img').first()).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+});
+
+test('stair material tiles select a draft without committing partial stairs', async ({ page }) => {
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.getByRole('button', { name: 'Build stairs', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Create stairs', exact: true });
+  await dialog.getByText('Browse stair lower wall materials', { exact: true }).click();
+  const first = dialog.getByRole('group', { name: 'stair lower wall material choices', exact: true }).getByRole('button').first();
+  await expect(first).toBeVisible(); await first.click(); await expect(first).toHaveAttribute('aria-pressed', 'true');
+  await expect(dialog.getByRole('combobox', { name: 'Stair lower wall style', exact: true })).not.toHaveValue('');
+  await expect(dialog.getByRole('button', { name: 'Create stairs', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Cancel stairs', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+});

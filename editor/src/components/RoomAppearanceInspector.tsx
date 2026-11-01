@@ -3,6 +3,7 @@ import { editRoomAppearance, type EditCommand } from '../model/commands';
 import type { LevelDocument } from '../model/level';
 import { roomAppearanceChoices } from '../model/roomAppearance';
 import type { SourceRoom } from '../model/roomSource';
+import { WallStyleBrowser } from './WallStyleBrowser';
 
 export function RoomAppearanceInspector({ document, room, edit }: {
   document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void;
@@ -28,6 +29,8 @@ export function RoomAppearanceInspector({ document, room, edit }: {
         <label className="select-field" key={field.label}><span>{field.label}</span><select required aria-label={field.label} title="Choose an existing straight-wall style from this room's selected template. Texture, alignment and sampling are retained." value={field.value} onChange={event => field.change(event.target.value)}>
           <option value="">Choose a wall style</option>{field.records.map((record, index) => <option key={record.offset} value={record.offset}>Texture {record.texture} · Style {index + 1}</option>)}
         </select></label>)}
+      <WallStyleBrowser key={`${room.id}:lower`} label="lower wall" records={choices.lower} value={lower} onChange={setLower} />
+      {hasUpper && <WallStyleBrowser key={`${room.id}:upper`} label="upper wall" records={choices.upper} value={upper} onChange={setUpper} />}
       <label className="select-field"><span>Corner lighting</span><select required aria-label="Room corner lighting" title="Use the selected template point's actual lower and upper lighting for newly generated walls." value={light} onChange={event => setLight(event.target.value)}>
         <option value="">Choose template lighting</option>{choices.points.map((id, index) => <option key={id} value={id}>Match template point {index + 1}</option>)}
       </select></label>

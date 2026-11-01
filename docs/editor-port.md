@@ -1125,3 +1125,28 @@ fixtures can establish current-format support independently.
   Six surrounding numerical-height browser cases pass, followed by sixteen
   fresh graphical-height, control and stair scenarios in Chromium/Firefox.
   Animated mechanisms, other open requirements and deployment remain unfinished.
+
+- Visual wall-style browsers now accompany the lower/upper selectors in room
+  appearance and stair authoring. Whole native texture sheets identify each
+  template's authored styles; choosing a tile changes the form draft, and the
+  existing Apply/Create action commits it transactionally. Search and preview
+  shade controls have keyboard help/tooltips. Alignment, sampling, transparency
+  and corner-lighting choices remain explicit source data. Preview shade never
+  changes saved lighting. Missing or damaged sheets show actionable errors and
+  retry; thumbnail failures do not replace source or fabricate pixel data.
+  Asset preparation reads the actual `src/io.c` wall table, declared unpacked
+  lengths and dimension overrides, then packages all fourteen original WADs
+  with a validated catalog. TypeScript decodes the original SB files, 3x5-bit
+  strip packing and all 32 RGB12 palette levels. Pixel oracles compile the
+  existing native `io_dump_textures`, dimension, RGB and BMP routines in a
+  temporary C harness and feed them independently decompressed native files.
+  All fourteen sheets match both native raw-byte and complete middle-shade
+  RGBA hashes. A native IO fingerprint requires reviewed fixture regeneration
+  after IO changes. All 664 model tests pass. Eighteen fresh Chromium/Firefox
+  cases cover native canvas hashes/catalog metadata, filtering, preview shade,
+  draft/apply/undo/source backups, real game exports and renderer views,
+  missing-asset retry, stair-dialog selection and surrounding controls/stairs.
+  The production build passes and browser/engine views were visually inspected.
+  CI now also triggers on native wall assets and their oracle tool. This
+  advances R8; global material assignment, PNG conversion/import, portable
+  custom assets, remaining requirements and final deployment are still open.

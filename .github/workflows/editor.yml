@@ -6,6 +6,7 @@ on:
     paths:
       - 'editor/**'
       - 'tools/editor_oracles.py'
+      - 'tools/editor_wall_oracles.py'
       - 'tools/build_editor_runtime.py'
       - 'tests/feedback_points.c'
       - 'tests/feedback_animation_limits.c'
@@ -15,11 +16,13 @@ on:
       - 'cmake/**'
       - 'CMakeLists.txt'
       - 'amiga/data/levels/**'
+      - 'amiga/data/includes/walls/**'
       - '.github/workflows/editor.yml'
   pull_request:
     paths:
       - 'editor/**'
       - 'tools/editor_oracles.py'
+      - 'tools/editor_wall_oracles.py'
       - 'tools/build_editor_runtime.py'
       - 'tests/feedback_points.c'
       - 'tests/feedback_animation_limits.c'
@@ -29,6 +32,7 @@ on:
       - 'cmake/**'
       - 'CMakeLists.txt'
       - 'amiga/data/levels/**'
+      - 'amiga/data/includes/walls/**'
       - '.github/workflows/editor.yml'
   workflow_dispatch:
 
