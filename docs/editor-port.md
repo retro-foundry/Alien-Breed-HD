@@ -2183,3 +2183,9 @@ fixtures can establish current-format support independently.
   Four Chromium/Firefox authoring/duplication checks and two exact packaged
   installed Edge/Brave type-change checks pass, including native object state.
   The web build retains the content-versioned native bundle.
+
+  Publication: source `11ecc6e`, site `5ecc07b`. The public URL now serves
+  `index-Dz42MKM9.js`; its delivered script includes the object-type selector
+  and Apply action. The worktree is clean after the release checkpoint. This
+  is current-level template replacement, not completion of the full object
+  library or independent AMOS door/lift authoring.
