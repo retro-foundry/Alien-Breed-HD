@@ -217,6 +217,7 @@ export function moveObject(document: LevelDocument, objectId: number, x: number,
   }
   const zone = document.zones.find(zone => zone.id === zoneId);
   if (!zone || !zoneContainsPoint(document, zone, x, z)) throw new Error('Place the object inside its selected zone.');
+  if (object.upper && !zone.upper.length) throw new Error('This object is on the upper floor. Choose a zone with an upper floor before moving it.');
   return { label: `Move object ${objectId}`, patches: [
     numberPatch(document, 'data', object.pointOffset, Math.round(x * 65536), 4),
     numberPatch(document, 'data', object.pointOffset + 4, Math.round(z * 65536), 4),

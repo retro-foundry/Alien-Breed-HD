@@ -29,6 +29,9 @@ Opening local files does not upload them anywhere.
   Drag a selected marker to preview moving the whole group. Grid snapping applies
   to the shared offset, preserving spacing and fractional starting positions.
   Release commits one edit; Escape, pointer cancellation or focus loss discards it.
+  Moves keep each object's floor: on shared boundaries, upper-floor objects choose
+  a room with an upper floor. Moving them into a single-floor room rejects the
+  whole group. The current room is preferred when it remains compatible.
 - Toggle **Visibility overlay** on the map, then select a room. Amber marks its
   selected runtime cell, cyan its potential visibility and green its portals.
   Concave rooms offer each compiled cell separately. Expand Runtime visibility

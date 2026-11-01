@@ -1,7 +1,6 @@
 import type { LevelDocument } from './level';
 import type { EditCommand } from './commands';
-import { editableObjects, objectIsActive, objectPlayer, placeSourceObject, runtimeObjectPosition } from './sourceObjects';
-import { pointInRoomOutline } from './geometry';
+import { editableObjects, objectIsActive, objectPlayer, objectDestinationRoom, placeSourceObject, runtimeObjectPosition } from './sourceObjects';
 
 export function selectedObjects(document: LevelDocument, ids: readonly number[]) {
   if (ids.length < 2 || new Set(ids).size !== ids.length) throw new Error('Select at least two different objects.');
@@ -22,10 +21,8 @@ export function editObjectGroup(document: LevelDocument, ids: readonly number[],
     const position = runtimeObjectPosition(operation.kind === 'move' ? { x: object.x + operation.x, z: object.z + operation.z }
       : operation.kind === 'align' ? { x: operation.axis === 'x' ? objects[0]!.x : object.x, z: operation.axis === 'z' ? objects[0]!.z : object.z }
       : object);
-    const currentRoom = object.room ?? document.roomSource.rooms.find(room => room.originZone === object.zone)?.id;
-    const room = operation.kind === 'delete' ? null : document.roomSource.rooms.find(room => room.id === currentRoom && pointInRoomOutline(room.vertices, position))
-      ?? document.roomSource.rooms.find(room => pointInRoomOutline(room.vertices, position));
-    if (room === undefined) throw new Error(`Object ${object.id} would be outside the editable rooms. No group changes were applied.`);
+    const room = operation.kind === 'delete' ? null : objectDestinationRoom(document, object, position);
+    if (room === undefined) throw new Error(`Object ${object.id} would be outside the editable rooms supporting its floor. No group changes were applied.`);
     working = { ...working, sourceObjects: placeSourceObject(working, object.id, room === null ? null : room.id, position.x, position.z) };
   }
   return { label: `${operation.kind === 'move' ? 'Move' : operation.kind === 'align' ? `Align ${operation.axis.toUpperCase()}` : 'Delete'} ${objects.length} objects`, patches: [],

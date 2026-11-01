@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import { openLevel, objectName, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './model/level';
 import { execute, redo, undo, moveObject, setStart, setSourceStart, setSourceObject, setPlaytestSlot, setExitZone, editRoomSource, type EditCommand, type History } from './model/commands';
 import { editableStarts } from './model/sourceStarts';
-import { editableObjects, objectIsActive } from './model/sourceObjects';
+import { editableObjects, objectIsActive, objectDestinationRoom } from './model/sourceObjects';
 import { pointInRoomOutline } from './model/geometry';
 import { decodeProject, encodeGameLevel, encodeProject, readFiles, openProjectCandidate, type ProjectCandidate } from './model/project';
 import { sourceMatchesLevel, beginRoomDraft, setDraftCorners, commitRoomDraft, removeSourceRooms, moveSourceCorner, type RoomDraft } from './model/roomSource';
@@ -301,15 +301,18 @@ export function App() {
         const current = selected.kind === 'start' ? document.sourceStarts?.find(start => start.player === selected.id)?.room
           : document.sourceObjects?.find(object => object.id === selected.id)?.room;
         const rooms = document.roomSource.rooms;
-        const target = rooms.find(room => room.id === current && pointInRoomOutline(room.vertices, { x, z }))
-          ?? rooms.find(room => pointInRoomOutline(room.vertices, { x, z }));
+        const object = selected.kind === 'object' ? editableObjects(document).find(object => object.id === selected.id) : undefined;
+        const target = object ? objectDestinationRoom(document, object, { x, z })
+          : rooms.find(room => room.id === current && pointInRoomOutline(room.vertices, { x, z })) ?? rooms.find(room => pointInRoomOutline(room.vertices, { x, z }));
         if (!target) throw new Error('Place the object or player start inside an editable room.');
         edit(selected.kind === 'start' ? setSourceStart(document, selected.id as 1 | 2, target.id, x, z)
           : setSourceObject(document, selected.id, target.id, x, z));
         return;
       }
       const oldZone = selected.kind === 'object' ? document.objects.find(object => object.id === selected.id)?.zone : document.starts.find(start => start.player === selected.id)?.zone;
-      const zone = document.zones.find(zone => zone.id === oldZone && zoneContainsPoint(document, zone, x, z)) ?? document.zones.find(zone => zoneContainsPoint(document, zone, x, z));
+      const upper = selected.kind === 'object' && !!document.objects.find(object => object.id === selected.id)?.upper;
+      const compatible = (zone: LevelDocument['zones'][number]) => (!upper || zone.upper.length > 0) && zoneContainsPoint(document, zone, x, z);
+      const zone = document.zones.find(zone => zone.id === oldZone && compatible(zone)) ?? document.zones.find(compatible);
       if (!zone) throw new Error('That point is outside the level. Place the object inside a zone.');
       if (selected.kind === 'object') edit(moveObject(document, selected.id, x, z, zone.id));
       if (selected.kind === 'start') edit(setStart(document, selected.id as 1 | 2, x, z, zone.id));

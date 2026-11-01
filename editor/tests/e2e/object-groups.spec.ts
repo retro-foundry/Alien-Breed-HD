@@ -5,6 +5,8 @@ import { createObject, objectTemplates } from '../../src/model/objectAuthoring';
 import { applyCommand } from '../../src/model/commands';
 import { encodeProject, decodeProject } from '../../src/model/project';
 import { engineObjectState } from '../engineCapture';
+import { objectStoreyFixture } from '../objectStoreyFixture';
+import { buildPlayableLevel } from '../../src/model/playableBuild';
 
 test('multi-object selection moves, aligns, rejects partial changes and deletes atomically in the native game', async ({ page }, testInfo) => {
   test.setTimeout(90000);
@@ -79,4 +81,35 @@ test('multi-object selection moves, aligns, rejects partial changes and deletes 
   expect(await engineObjectState(page, ids[1]!)).toMatchObject({ x: 20119.5, z: 20208.25 });
   await first.click({ modifiers: ['Control'] });
   await expect(inspector).toHaveCount(0);
+});
+
+test('upper-floor groups choose the compatible room at a shared lower-room edge', async ({ page }, testInfo) => {
+  test.setTimeout(90000);
+  const fixture = objectStoreyFixture();
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.locator('input[type=file]').setInputFiles({ name: 'storeys.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
+  await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
+  await page.getByRole('button', { name: 'Upper', exact: true }).click();
+  await page.getByRole('tab', { name: 'Objects', exact: true }).click();
+  await page.getByRole('button', { name: `Health ${fixture.ids[0]}`, exact: true }).click();
+  await page.getByRole('button', { name: `Health ${fixture.ids[1]}`, exact: true }).click({ modifiers: ['Shift'] });
+  const inspector = page.getByRole('complementary', { name: 'Object group inspector' });
+  await inspector.getByRole('spinbutton', { name: 'Group X offset' }).fill('800');
+  await inspector.getByRole('button', { name: 'Move selected objects', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('supporting its floor');
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Dismiss error', exact: true }).click();
+  await inspector.getByRole('spinbutton', { name: 'Group X offset' }).fill('872');
+  await inspector.getByRole('button', { name: 'Move selected objects', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const path = testInfo.outputPath('storey-group.ab3d'); await (await download).saveAs(path);
+  const saved = decodeProject(new Uint8Array(await readFile(path))), built = buildPlayableLevel(saved, -1);
+  for (const id of fixture.ids) {
+    expect(saved.sourceObjects!.find(object => object.id === id)).toMatchObject({ room: fixture.to.id, x: 21000 });
+    expect(saved.objects[id]!.upper).toBe(true);
+  }
+  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  await expect(page.getByRole('region', { name: '3D game engine preview' })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
+  for (const id of fixture.ids) expect(await engineObjectState(page, id)).toMatchObject({ x: 21000, zone: built.topology!.sourceCells.get(fixture.to.id)![0], yFixed: saved.objects[id]!.y * 256 });
 });

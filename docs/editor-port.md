@@ -1361,3 +1361,22 @@ fixtures can establish current-format support independently.
   Production builds and all six Chromium/Firefox group/single-object regression
   scenarios pass. The final focused cases also verify zero-snapped gestures do
   not create edits. This checkpoint changes interaction only, not native gameplay.
+
+- Storey-aware placement checkpoint: automatic object destinations now filter
+  room candidates by the object's upper/lower floor before choosing one, retaining
+  the current room when possible. This fixes a shared-boundary case where a
+  one-storey room appeared first and rejected an upper object even though the
+  adjoining two-storey destination was valid. The same resolver serves single
+  source-object dragging and group moves/alignment; explicit room choices retain
+  their normal validation. A source fixture places a single-storey room before
+  the two-storey target on a common edge. Models verify compatible placement,
+  native upper flags and complete rejection inside the single-storey interior.
+  Browser tests check both failure and success, saved room bindings and actual
+  native object zones/positions/heights. This changes editor destination choice,
+  not game mechanics or automatic object heights.
+  Direct native-record moves also enforce upper-floor compatibility, and automatic
+  native-zone selection filters incompatible storeys before choosing a boundary
+  candidate. Focused source-object/model tests cover that separate path.
+  All 697 model tests and production builds pass. Eight Chromium/Firefox
+  group/existing-object scenarios pass, followed by both focused upper-floor
+  checks after the native-record guard was added. Full-editor work remains open.

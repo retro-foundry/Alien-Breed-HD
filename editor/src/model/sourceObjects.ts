@@ -38,6 +38,16 @@ export function objectIsActive(object: EditableObject): boolean {
   return object.room === undefined ? object.zone >= 0 : object.room !== null;
 }
 
+/** Shared boundary points can belong to several outlines. Retain the current
+ * room when possible, then consider only rooms supporting this object's storey.
+ * Explicit room selections still pass through placeSourceObject unchanged. */
+export function objectDestinationRoom(document: LevelDocument, object: EditableObject, position: { x: number; z: number }) {
+  const current = object.room ?? document.roomSource.rooms.find(room => room.originZone === object.zone)?.id;
+  const contains = (room: LevelDocument['roomSource']['rooms'][number]) => pointInRoomOutline(room.vertices, position)
+    && (!object.upper || !!document.zones.find(zone => zone.id === room.recordZone)?.upper.length);
+  return document.roomSource.rooms.find(room => room.id === current && contains(room)) ?? document.roomSource.rooms.find(contains);
+}
+
 export function restoreSourceObjects(value: unknown): readonly SourceObject[] {
   if (!Array.isArray(value) || value.length > 256) throw new Error('The editable object list exceeds the object-table limit.');
   const ids = new Set<number>();
