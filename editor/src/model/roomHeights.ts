@@ -1,5 +1,6 @@
 import { checkedInteger } from './binary';
 import type { LevelDocument, Zone } from './level';
+import type { RoomProperties } from './roomProperties';
 
 /** AMOS DEFHEIGHT/DEFROOFHEIGHT/DEFUPPER* edit independent air boundaries.
  * Current zone headers store 24.8; floor/roof draw records store WORD quarters.
@@ -30,10 +31,10 @@ export function restoreRoomHeights(value: unknown, template: Zone): Readonly<Roo
   return Object.freeze(result);
 }
 
-export function roomSettings(document: Pick<LevelDocument, 'zones'>, room: { recordZone: number; heights?: RoomHeights }): Zone {
+export function roomSettings(document: Pick<LevelDocument, 'zones'>, room: { recordZone: number; heights?: RoomHeights; properties?: RoomProperties }): Zone {
   const template = document.zones.find(zone => zone.id === room.recordZone);
   if (!template) throw new Error('The room height settings have no original template.');
-  return room.heights ? { ...template, ...room.heights } : template;
+  return room.heights || room.properties ? { ...template, ...room.properties, ...room.heights } : template;
 }
 export function airHeightsChanged(document: Pick<LevelDocument, 'zones'>, room: { recordZone: number; heights?: RoomHeights }): boolean {
   const template = document.zones.find(zone => zone.id === room.recordZone)!;

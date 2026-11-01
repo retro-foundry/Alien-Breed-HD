@@ -1,4 +1,18 @@
 import type { Page } from '@playwright/test';
+import type { RoomProperties } from '../src/model/roomProperties';
+
+export async function engineRoomProperties(page: Page, zone: number): Promise<RoomProperties> {
+  return page.evaluate(zone => new Promise((resolve, reject) => {
+    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();
+    const timer = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('Engine room property query timed out')); }, 10000);
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'zone-properties' || event.data.id !== id) return;
+      clearTimeout(timer); window.removeEventListener('message', receive); resolve(event.data.properties);
+    };
+    window.addEventListener('message', receive);
+    frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'zone-properties', id, zone }, location.origin);
+  }), zone);
+}
 
 export interface EngineCamera { zone: number; x: number; z: number; upper: number; angle: number }
 export async function engineMechanismState(page: Page, kind: 'door' | 'lift', index: number): Promise<{ zone: number; current: number; top: number; bottom: number; wallCount: number; plane: number; unsynchronizedWalls: number }> {

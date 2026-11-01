@@ -95,3 +95,18 @@ The 723-test full model run passes, plus the subsequent partial-water/translatio
 focused checks. All 20 focused Chromium/Firefox native-copy, room-group, height
 and sprite cases pass. These checks extend compiler support; they do not expose
 or establish completion of the full room clipboard operation.
+
+Room-source version 4 now supports explicit native property snapshots: water,
+packed lower/upper brightness, control bytes, sky and floor sounds. Template
+edits cannot change a room's captured values. Save/reopen, geometry/height edits,
+native header assembly and Undo retain the snapshot; removing it explicitly
+restores template inheritance. This addresses property ownership needed by room
+copy assembly. Shared material resources remain separate dependencies.
+
+All 727 model tests and four native Chromium/Firefox property-probe cases pass,
+including static/animated words and later template changes. The native probe is
+read-only and returns authored packed words, not evaluated animation intensity.
+The local lighting-inspector experiment and its pixel assertion are still work
+in progress: native property values and reload/Undo are verified, but the chosen
+visual fixture has not demonstrated the expected brightness difference. Do not
+claim that visual behaviour or complete room clipboard authoring is finished.

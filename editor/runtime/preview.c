@@ -208,6 +208,31 @@ static uint8_t *preview_object(int index)
     return g_state.level.object_data + index * OBJECT_SIZE;
 }
 
+/* Read-only authored room properties. Brightness retains its packed animation
+ * word rather than returning the current evaluated animation intensity. */
+EMSCRIPTEN_KEEPALIVE int editor_zone_value(int zone, int field)
+{
+    LevelState *level = &g_state.level;
+    if (!preview_loaded || !level->zone_adds || zone < 0 || zone >= level_zone_slot_count(level)) return field == 0 ? -1 : 0;
+    int32_t offset = obj_l(level->zone_adds + zone * 4);
+    if (offset < 0 || (size_t)offset + 48u > level->data_byte_count) return field == 0 ? -1 : 0;
+    const uint8_t *room = level->data + offset;
+    switch (field) {
+    case 0: return zone;
+    case 1: case 2: {
+        const uint8_t *brightness = room + (field == 1 ? 22 : 24);
+        return level->zone_brightness_le ? (int16_t)((brightness[1] << 8) | brightness[0]) : obj_w(brightness);
+    }
+    case 3: return (int8_t)room[26];
+    case 4: return (int8_t)room[27];
+    case 5: return obj_l(room + 18);
+    case 6: return obj_w(room + 36) != 0;
+    case 7: return obj_w(room + 44);
+    case 8: return obj_w(room + 46);
+    default: return 0;
+    }
+}
+
 /* Read-only record inspection, including positions after native shot-pool
  * expansion. Field 0 is the CID; negative means no such object. */
 EMSCRIPTEN_KEEPALIVE int editor_object_value(int index, int field)

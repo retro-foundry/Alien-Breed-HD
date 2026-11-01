@@ -1667,3 +1667,18 @@ fixtures can establish current-format support independently.
   confirming the earlier tooltip fix; newer compiler changes still need their CI
   results checked. Full room clipboard UI, independent mechanisms and remaining
   editor requirements stay open.
+
+- Room property snapshot checkpoint: room-source v4 retains explicit water,
+  packed lower/upper brightness, control, sky and sound settings independently
+  of later native-template edits. Values are native-range validated, flow through
+  room settings and compiled cell headers, persist through save/reopen and source
+  transforms, and support one-command inheritance reset/Undo. Earlier source
+  versions remain readable; original imports without overrides remain unchanged.
+  All 727 model tests pass. Four Chromium/Firefox cases read every property from
+  the actual engine after template changes, including static and animated packed
+  words. The added host/protocol probe is read-only; gameplay is unchanged.
+  Thirty-two adjacent editor/group/height browser checks also passed. A local
+  lighting-inspector experiment and its pixel test remain uncommitted: native
+  values/reloads are verified but the visual brightness assertion still fails.
+  Investigate that rendering/view fixture before shipping the lighting controls.
+  This checkpoint does not complete room clipboard UI or the broader goal.
