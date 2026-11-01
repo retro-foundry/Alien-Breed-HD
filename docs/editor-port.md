@@ -2449,3 +2449,11 @@ ceiling/upper floor handles. Show ceilings explicitly describes visibility only.
 Absolute positions remain available in a readable two-column layout. This
 addresses the user's reported ceiling confusion while the remaining AMOS and
 R0-R12 requirements continue to apply.
+
+The ceiling usability release passed all 926 model tests, 27 packaged height/
+viewport regressions across Edge, Brave and Firefox, and six focused headroom
+checks against the final package. Four further checks passed on the public
+site in Edge and Brave, including unchanged native player floor height and
+independent upper/lower editing. The final publication is site `75ecf3c`,
+JavaScript `index-Dq_YeS1p.js`, CSS `index-BepOojkE.css`; Pages run `41316825535`
+completed successfully. Native runtime hashes remain unchanged and verified.
