@@ -26,6 +26,9 @@ Opening local files does not upload them anywhere.
   table for exact zone, clip and mask entries. Preview/export share this artifact;
   edits rebuild it, and errors clear outdated overlays. These are conservative
   candidates rather than exact line of sight; both floors share the table.
+  **Frame visibility** fits the inspected area without changing source. Choose a
+  clip target to show its left (blue) and right (pink) boundary points. The table
+  distinguishes saved flags from actual word offsets assigned by the native loader.
 - Add enemies, pickups or scenery with **Add object**. Choose an existing level
   record as the settings template, a destination room and coordinates. Floor
   matching preserves its offset from the floor; turn it off for a manual height

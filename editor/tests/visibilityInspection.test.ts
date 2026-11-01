@@ -8,13 +8,34 @@ import { roomHeightFixture } from './roomHeightFixture';
 it('inspects the actual stored visibility and portal records across all original levels', () => {
   for (let level = 1; level <= 16; level++) {
     const document = openLevel(`Level ${level}`, originalFiles(level)), artifact = buildPlayableLevel(document, -1);
+    const clipData = new DataView(document.files.clips.buffer, document.files.clips.byteOffset, document.files.clips.byteLength);
+    let offset = 0;
     for (const zone of document.zones) {
       const result = visibilityInspection(artifact, undefined, zone.id);
-      expect(result.rows).toBe(zone.visibility);
+      expect(result.rows.map(({ bounds: _bounds, ...row }) => row)).toEqual(zone.visibility);
+      for (const row of result.rows) {
+        if (row.clip < 0) { expect(row.bounds).toBeUndefined(); continue; }
+        const start = offset, left: number[] = [], right: number[] = [];
+        let rightSide = false;
+        for (;;) {
+          const point = clipData.getInt16(offset); offset += 2;
+          if (point === -2) break;
+          if (point === -1) rightSide = true; else (rightSide ? right : left).push(point);
+        }
+        expect(row.bounds).toEqual({ wordOffset: start / 2, left, right });
+      }
       expect(result.portals.map(line => line.id)).toEqual(zone.boundaryIds.filter(id => document.lines[id]!.connect >= 0));
       expect(result.polygons.map(polygon => polygon.id)).toEqual(document.zones.filter(candidate => candidate.id === zone.id || zone.visibility.some(row => row.zone === candidate.id)).map(zone => zone.id));
     }
+    expect(offset).toBe(document.connectTableOffset);
   }
+});
+
+it('rejects malformed clip boundaries rather than drawing misleading points', () => {
+  const document = openLevel('Bad clipping', originalFiles(1)), clips = document.files.clips.slice();
+  new DataView(clips.buffer).setInt16(0, 32767);
+  const source = { ...document, files: { ...document.files, clips } };
+  expect(() => visibilityInspection({ source, document: source }, undefined, 0)).toThrow(/invalid clipping boundary/);
 });
 
 it('maps authored rooms to current compiled cells and excludes disconnected rooms', () => {
@@ -44,6 +65,6 @@ it('inspects each generated convex cell of a concave source room independently',
   for (const id of cells) {
     const result = visibilityInspection(artifact, fixture.from.id, undefined, id);
     expect(result.selected).toBe(id);
-    expect(result.rows).toBe(artifact.document.zones.find(zone => zone.id === id)!.visibility);
+    expect(result.rows.map(({ bounds: _bounds, ...row }) => row)).toEqual(artifact.document.zones.find(zone => zone.id === id)!.visibility);
   }
 });

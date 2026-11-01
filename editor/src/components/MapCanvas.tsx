@@ -168,7 +168,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       }
     }
     context.setLineDash([]);
-    if (visibility.enabled && visibility.inspection) {
+    const drawVisibility = () => { if (visibility.enabled && visibility.inspection) {
       for (const polygon of visibility.inspection.polygons) {
         context.beginPath();
         polygon.vertices.forEach((point, index) => { const pixel = screen(point.x, point.z); if (index) context.lineTo(pixel.x, pixel.y); else context.moveTo(pixel.x, pixel.y); });
@@ -179,7 +179,14 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
         const a = screen(line.x, line.z), b = screen(line.x + line.dx, line.z + line.dz);
         context.beginPath(); context.moveTo(a.x, a.y); context.lineTo(b.x, b.y); context.strokeStyle = '#84e29b'; context.lineWidth = 4; context.stroke();
       }
+      for (const point of visibility.inspection.clipPoints) {
+        const pixel = screen(point.x, point.z);
+        context.beginPath(); context.arc(pixel.x, pixel.y, 5, 0, Math.PI * 2);
+        context.fillStyle = point.side === 'left' ? '#7bbaff' : '#ff9bdf'; context.fill();
+        context.font = '11px monospace'; context.fillText(`${point.side === 'left' ? 'L' : 'R'}${point.id}`, pixel.x + 7, pixel.y - 7);
+      }
     }
+    };
     const outline = (vertices: readonly { x: number; z: number }[], fill: boolean, colour: string) => {
       context.beginPath(); vertices.forEach((point, index) => { const pixel = screen(point.x, point.z); if (index) context.lineTo(pixel.x, pixel.y); else context.moveTo(pixel.x, pixel.y); });
       if (vertices.length >= 3) context.closePath();
@@ -217,6 +224,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
     if (view.scale > 0.3) for (const point of document.points) {
       const pixel = screen(point.x, point.z); context.fillStyle = '#adb6ba'; context.fillRect(pixel.x - 1.5, pixel.y - 1.5, 3, 3);
     }
+    drawVisibility();
     if (showObjects) for (const object of editableObjects(document)) {
       if (!objectIsActive(object) || (layer === 'upper') !== object.upper) continue;
       const moving = ghost?.selection.kind === 'object' && ghost.selection.id === object.id;
@@ -317,7 +325,13 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       onLostPointerCapture={() => { setGhost(null); drag.current = null; cornerDrag.current = null; setCornerGhost(null); }} />
     <div className="map-label"><span className="status-dot" /> ORTHOGRAPHIC <span className="muted">/</span> {layer.toUpperCase()} FLOOR</div>
     <div className="map-compass"><span>N</span><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 6 23-6-5-6 5z" fill="currentColor" /></svg></div>
-    <VisibilityOverlay state={visibility} />
+    <VisibilityOverlay state={visibility} onFrame={() => {
+      const points = visibility.inspection?.polygons.flatMap(polygon => polygon.vertices) ?? [];
+      if (!points.length) return;
+      const xs = points.map(point => point.x), zs = points.map(point => point.z);
+      const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
+      setView({ x: (minX + maxX) / 2, z: (minZ + maxZ) / 2, scale: Math.max(0.02, Math.min(8, (size.width - 100) / Math.max(200, maxX - minX), (size.height - 100) / Math.max(200, maxZ - minZ))) });
+    }} />
     <div id="map-controls" className="map-help">{roomDraft ? <><strong>{roomDraft.vertices.length} corners</strong> · Click corners · Enter or first corner finishes · Backspace removes last · Esc cancels · Alt bypasses snap</> : <><kbd>Space</kbd> drag to pan <span>·</span> wheel to zoom <span>·</span> <kbd>F</kbd> fit <span>·</span> <kbd>?</kbd> controls</>}</div>
     <div className="map-scale"><Icon name="grid" size={14} /> {Math.round(view.scale * 100)}%</div>
   </div>;

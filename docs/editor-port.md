@@ -1293,3 +1293,17 @@ fixtures can establish current-format support independently.
   All 690 model tests, production builds and 14 Chromium/Firefox visibility and
   controls regression scenarios pass. The final memoized inspection also passes
   all four focused browser cases. No native gameplay code changed.
+
+- Clip inspection checkpoint: the visibility table now distinguishes saved
+  reference flags from actual word offsets resolved in `level_assign_clips`
+  stream order. A target selector shows its left/right clipping boundary points,
+  with native point IDs and a legend. Malformed boundary lists fail visibly
+  without crashing the map. Frame visibility fits the current inspected cells
+  without source edits. Visual review caught authored-room fills hiding the
+  diagnostic colours; visibility now draws after those fills and point markers.
+  Browser pixel checks protect the amber/cyan shading, alongside framing, target
+  selection and exact offset display. An independent DataView stream walk checks
+  offsets and both boundary lists across all 16 original maps. All 691 model
+  tests, production builds and four Chromium/Firefox inspection scenarios pass.
+  This is inspection tooling; broader runtime PVS/occlusion validation remains
+  open, along with the other full-editor requirements and final deployment.

@@ -27,7 +27,7 @@ test('visibility inspection shows current compiled cells and exact native table 
   await expect(panel.locator('tbody tr')).toHaveCount(expected.rows.length);
   for (let index = 0; index < expected.rows.length; index++) {
     const row = expected.rows[index]!;
-    await expect(panel.locator('tbody tr').nth(index).locator('td')).toHaveText([String(row.zone), String(row.clip), `0x${(row.mask >>> 0).toString(16)}`]);
+    await expect(panel.locator('tbody tr').nth(index).locator('td')).toHaveText([String(row.zone), String(row.clip), String(row.bounds?.wordOffset ?? '—'), `0x${(row.mask >>> 0).toString(16)}`]);
   }
   await expect(page.locator('.dirty-dot')).toHaveCount(0);
   expect(expected.cells.length).toBeGreaterThan(1);
@@ -35,6 +35,24 @@ test('visibility inspection shows current compiled cells and exact native table 
   const other = visibilityInspection(built, fixture.from.id, undefined, expected.cells.at(-1));
   await expect(panel.getByRole('status')).toHaveText(`${other.rows.length} visibility entries · ${other.portals.length} portals`);
   await expect(panel.locator('tbody tr td:first-child')).toHaveText(other.rows.map(row => String(row.zone)));
+  await expect(panel.getByRole('combobox', { name: 'Visibility clip target' })).toHaveValue(String(other.target));
+  const map = page.locator('canvas[aria-label="Level map"]'), beforeScale = Number(await map.getAttribute('data-world-scale'));
+  await panel.getByRole('button', { name: 'Frame visibility', exact: true }).click();
+  await expect.poll(async () => Number(await map.getAttribute('data-world-scale'))).toBeGreaterThan(beforeScale);
+  const colours = await map.evaluate((node, polygons) => {
+    const canvas = node as HTMLCanvasElement, context = canvas.getContext('2d')!;
+    const scale = Number(canvas.dataset.worldScale), x = Number(canvas.dataset.worldX), z = Number(canvas.dataset.worldZ);
+    return polygons.map(polygon => {
+      const centre = polygon.vertices.reduce((sum, point) => ({ x: sum.x + point.x / polygon.vertices.length, z: sum.z + point.z / polygon.vertices.length }), { x: 0, z: 0 });
+      const px = (canvas.clientWidth / 2 + (centre.x - x) * scale) * canvas.width / canvas.clientWidth;
+      const py = (canvas.clientHeight / 2 - (centre.z - z) * scale) * canvas.height / canvas.clientHeight;
+      return { origin: polygon.origin, rgb: Array.from(context.getImageData(Math.floor(px), Math.floor(py), 1, 1).data) };
+    });
+  }, other.polygons);
+  const amber = colours.find(colour => colour.origin)!.rgb, cyan = colours.find(colour => !colour.origin)!.rgb;
+  expect(amber[0]!).toBeGreaterThan(amber[1]!);
+  expect(cyan[1]! - cyan[0]!).toBeGreaterThan(20);
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
   await page.mouse.move(0, 0);
   await page.screenshot({ path: testInfo.outputPath('visibility-overlay.png'), fullPage: true });
   await toggle.click(); await expect(cell).toHaveCount(0);
