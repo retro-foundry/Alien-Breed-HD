@@ -11,6 +11,7 @@ import { listWorkspaces, saveWorkspace, type SavedWorkspace } from './persistenc
 import { MapCanvas, type Selection } from './components/MapCanvas';
 import { Inspector } from './components/Inspector';
 import { ObjectGroupInspector } from './components/ObjectGroupInspector';
+import { RoomGroupInspector } from './components/RoomGroupInspector';
 import { StairBuilder } from './components/StairBuilder';
 import { ObjectBuilder } from './components/ObjectBuilder';
 import { ObjectPaste } from './components/ObjectPaste';
@@ -64,6 +65,7 @@ export function App() {
   const [status, setStatus] = useState(''), [autosave, setAutosave] = useState('Local workspace');
   const [selection, setSelection] = useState<Selection>(null), [tab, setTab] = useState<'zones' | 'objects' | 'starts'>('zones');
   const [objectIds, setObjectIds] = useState<number[]>([]);
+  const [roomIds, setRoomIds] = useState<string[]>([]);
   const [objectClipboard, setObjectClipboard] = useState<ObjectClipboard | null>(null);
   useEffect(() => setObjectIds([]), [workspace?.id]);
   const [search, setSearch] = useState(''), [tool, setTool] = useState<'select' | 'pan' | 'room' | 'box'>('select');
@@ -85,11 +87,22 @@ export function App() {
   const fileInput = useRef<HTMLInputElement>(null), searchInput = useRef<HTMLInputElement>(null), generation = useRef(0);
   const document = workspace?.history.document;
   const unbuiltRooms = useMemo(() => document ? !sourceMatchesLevel(document) : false, [document]);
-  const selectedRoom = document?.roomSource.rooms.find(room => selectedRoomId ? room.id === selectedRoomId : selection?.kind === 'zone' && room.originZone === selection.id);
+  const selectedRooms = useMemo(() => selectedRoomId ? document?.roomSource.rooms.filter(room => roomIds.includes(room.id)) ?? [] : [], [document?.roomSource, roomIds, selectedRoomId]);
+  const selectedRoom = selectedRooms.length > 1 ? undefined : document?.roomSource.rooms.find(room => selectedRoomId ? room.id === selectedRoomId : selection?.kind === 'zone' && room.originZone === selection.id);
   const template = selectedRoom?.recordZone ?? (document?.zones.some(zone => zone.id === roomTemplate) ? roomTemplate : document?.zones[0]?.id);
   useEffect(() => { if (selectedRoom) setRoomTemplate(selectedRoom.recordZone); }, [selectedRoom?.recordZone]);
-  const select = useCallback((value: Selection) => { setObjectIds([]); setSelection(value); setSelectedRoomId(null); }, []);
-  const selectRoom = useCallback((id: string) => { setObjectIds([]); setSelection(null); setSelectedRoomId(id); setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1 })); }, []);
+  const select = useCallback((value: Selection) => { setObjectIds([]); setRoomIds([]); setSelection(value); setSelectedRoomId(null); }, []);
+  const selectRoom = useCallback((id: string, add = false) => {
+    const source = workspaceRef.current?.history.document;
+    if (!source) return;
+    if (add) {
+      if (!source.roomSource.rooms.some(room => room.id === id)) return;
+      const previous = selectedRooms.length ? selectedRooms.map(room => room.id) : selectedRoom ? [selectedRoom.id] : [];
+      const next = previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id];
+      setRoomIds(next); setSelectedRoomId(next.at(-1) ?? null); setObjectIds([]); setSelection(null); return;
+    }
+    setRoomIds([]); setObjectIds([]); setSelection(null); setSelectedRoomId(id); setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1 }));
+  }, [selectedRooms, selectedRoom]);
   const toggleObject = useCallback((id: number) => {
     const previous = objectIds.length ? objectIds : selection?.kind === 'object' ? [selection.id] : [];
     const next = previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id];
@@ -278,6 +291,13 @@ export function App() {
     else if (ids.length === 1) edit(() => removeObject(source, ids[0]!));
   }, [objectIds, selection, busy, edit]);
 
+  const deleteRoomGroup = useCallback(() => {
+    const source = workspaceRef.current?.history.document;
+    if (!source || busy || selectedRooms.length < 2) return;
+    edit(() => editRoomSource(removeSourceRooms(source.roomSource, selectedRooms.map(room => room.id))));
+    select(null); setTool('select'); setRoomDraft(null);
+  }, [selectedRooms, busy, edit, select]);
+
   const selectAllObjects = useCallback((map = false) => {
     const source = workspaceRef.current?.history.document;
     if (!source || busy) return;
@@ -321,7 +341,7 @@ export function App() {
         event.preventDefault(); if (!roomDraft && !help && !showRecents && !choices.length) selectAllObjects(event.target instanceof HTMLCanvasElement); return;
       }
       if (event.key === 'Delete' && !event.ctrlKey && !event.metaKey && !event.altKey) {
-        if (!event.repeat && !roomDraft && !help && !showRecents && !choices.length) { event.preventDefault(); deleteSelectedObjects(); }
+        if (!event.repeat && !roomDraft && !help && !showRecents && !choices.length) { event.preventDefault(); if (selectedRooms.length > 1) deleteRoomGroup(); else deleteSelectedObjects(); }
         return;
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); if (!event.repeat && !help && !showRecents && !choices.length) duplicateObject(); return; }
@@ -342,7 +362,7 @@ export function App() {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [save, historyAction, roomDraft, finishRoom, select, stairsOpen, objectOpen, pasteOpen, duplicateObject, help, showRecents, choices.length, frameCurrent, deleteSelectedObjects, selectAllObjects, tab, beginBoxSelection, selection, copySelectedObjects, pasteCopiedObjects, objectClipboard, busy]);
+  }, [save, historyAction, roomDraft, finishRoom, select, stairsOpen, objectOpen, pasteOpen, duplicateObject, help, showRecents, choices.length, frameCurrent, deleteSelectedObjects, selectAllObjects, tab, beginBoxSelection, selection, copySelectedObjects, pasteCopiedObjects, objectClipboard, busy, selectedRooms, deleteRoomGroup]);
 
   async function openDocument(next: LevelDocument, id?: string, request = ++generation.current) {
     const current = workspaceRef.current;
@@ -439,8 +459,8 @@ export function App() {
         <div className="contents-list">
           {tab === 'objects' && <button className="small-button" disabled={!selectableIds.length || !!busy} title="Select all active objects matching this search, across both floors. Player avatars are excluded. Shortcut: Ctrl/Command+A outside text fields. On the map the shortcut selects only the displayed floor."
             onClick={() => selectAllObjects(false)}>Select all matching objects</button>}
-          {tab === 'zones' && newRooms.map(room => <button key={room.id} className={`content-row ${selectedRoomId === room.id ? 'selected' : ''}`} title="Select this editable room outline. Game geometry compilation is still in progress." onClick={() => { selectRoom(room.id); setNavigatorOpen(false); }}><Icon name="layers" size={14} /><span>Room {room.id.replace(/^room-/, '')}</span><span className="row-badge">OUTLINE</span></button>)}
-          {tab === 'zones' && filteredZones.map(zone => <button key={zone.id} className={`content-row ${selection?.kind === 'zone' && selection.id === zone.id ? 'selected' : ''}`} title={`Select zone ${zone.id} and centre the map. In 3D inspection, visit this zone.`} onClick={() => { select({ kind: 'zone', id: zone.id }); setFocusZone(current => ({ id: zone.id, request: (current?.request ?? 0) + 1 })); setNavigatorOpen(false); }}><span className={`zone-dot ${document?.mechanisms.some(mechanism => mechanism.zone === zone.id && mechanism.kind === 'door') ? 'door-dot' : zone.water > zone.ceiling && zone.water < zone.floor ? 'water-dot' : ''}`} /><span>Zone {String(zone.id).padStart(3, '0')}</span>{zone.upper.length > 0 && <span className="row-badge">2F</span>}<span className="row-detail">{zone.floor}</span></button>)}
+          {tab === 'zones' && newRooms.map(room => <button key={room.id} className={`content-row ${selectedRoomId === room.id || selectedRooms.some(item => item.id === room.id) ? 'selected' : ''}`} aria-pressed={selectedRoomId === room.id || selectedRooms.some(item => item.id === room.id)} title="Select this room. Shift, Ctrl or Command click to add or remove it from a room group." onClick={event => { selectRoom(room.id, event.shiftKey || event.ctrlKey || event.metaKey); setNavigatorOpen(false); }}><Icon name="layers" size={14} /><span>Room {room.id.replace(/^room-/, '')}</span><span className="row-badge">OUTLINE</span></button>)}
+          {tab === 'zones' && filteredZones.map(zone => <button key={zone.id} className={`content-row ${selection?.kind === 'zone' && selection.id === zone.id || selectedRooms.some(room => room.originZone === zone.id) ? 'selected' : ''}`} aria-pressed={selection?.kind === 'zone' && selection.id === zone.id || selectedRooms.some(room => room.originZone === zone.id)} title={`Select zone ${zone.id} and centre the map. Shift, Ctrl or Command click adds/removes its room from a group. In 3D inspection, visit this zone.`} onClick={event => { if (event.shiftKey || event.ctrlKey || event.metaKey) { const room = document?.roomSource.rooms.find(room => room.originZone === zone.id); if (room) selectRoom(room.id, true); return; } select({ kind: 'zone', id: zone.id }); setFocusZone(current => ({ id: zone.id, request: (current?.request ?? 0) + 1 })); setNavigatorOpen(false); }}><span className={`zone-dot ${document?.mechanisms.some(mechanism => mechanism.zone === zone.id && mechanism.kind === 'door') ? 'door-dot' : zone.water > zone.ceiling && zone.water < zone.floor ? 'water-dot' : ''}`} /><span>Zone {String(zone.id).padStart(3, '0')}</span>{zone.upper.length > 0 && <span className="row-badge">2F</span>}<span className="row-detail">{zone.floor}</span></button>)}
           {tab === 'objects' && filteredObjects.map(object => <button key={object.id} className={`content-row ${groupIds.includes(object.id) || selection?.kind === 'object' && selection.id === object.id ? 'selected' : ''}`} aria-pressed={groupIds.includes(object.id) || selection?.kind === 'object' && selection.id === object.id} title={`Select ${objectName(object.type)} ${object.id}. Shift, Ctrl or Command click to add or remove it from a group. Drag a single object on the map to move it.`} onClick={event => {
             if (event.shiftKey || event.ctrlKey || event.metaKey) { toggleObject(object.id); return; }
             select({ kind: 'object', id: object.id });
@@ -474,7 +494,7 @@ export function App() {
       </div>
         <div className="view-tabs" role="group" aria-label="Viewport layout"><button className="project-toggle" aria-label="Toggle project navigator" title="Show or hide the level picker and map contents. Shortcut / opens search." aria-expanded={navigatorOpen} onClick={() => setNavigatorOpen(open => !open)}><Icon name="layers" size={14} />Project</button>{(['map', 'split', '3d'] as const).map(mode => <button key={mode} aria-pressed={view === mode} className={view === mode ? 'active' : ''} title={mode === 'map' ? 'Edit and inspect the overhead map.' : mode === 'split' ? 'Show the map and actual game renderer together.' : 'Inspect the level in the actual game renderer.'} onClick={() => setView(mode)}>{mode === 'map' ? '2D map' : mode === 'split' ? 'Split view' : '3D view'}</button>)}</div>
         {document ? <CanvasBoundary key={workspace?.id} onExport={save}><div className={`viewports viewports-${view}`}>
-          {view !== '3d' && <MapCanvas document={document} selection={selection} objectIds={groupIds} frameSelection={frameSelection} onObjectToggle={toggleObject} onObjectBoxSelect={selectBoxObjects} onGroupMove={(ids, x, z) => edit(() => editObjectGroup(document, ids, { kind: 'move', x, z }))} onSelect={select} onMove={move} tool={tool} layer={layer} grid={grid} showObjects={showObjects} onCursor={(x, z) => setCursor({ x, z })} fitKey={fitKey} focusZone={focusZone} roomDraft={roomDraft} selectedRoom={selectedRoom} onRoomSelect={selectRoom} onRoomPoint={addRoomPoint} onRoomFinish={finishRoom} onRoomCornerMove={moveRoomCorner} focusRoom={focusRoom} />}
+          {view !== '3d' && <MapCanvas document={document} selection={selection} objectIds={groupIds} frameSelection={frameSelection} onObjectToggle={toggleObject} onObjectBoxSelect={selectBoxObjects} onGroupMove={(ids, x, z) => edit(() => editObjectGroup(document, ids, { kind: 'move', x, z }))} onSelect={select} onMove={move} tool={tool} layer={layer} grid={grid} showObjects={showObjects} onCursor={(x, z) => setCursor({ x, z })} fitKey={fitKey} focusZone={focusZone} roomDraft={roomDraft} selectedRoom={selectedRoom} roomGroup={selectedRooms} onRoomSelect={selectRoom} onRoomPoint={addRoomPoint} onRoomFinish={finishRoom} onRoomCornerMove={moveRoomCorner} focusRoom={focusRoom} />}
           {view !== 'map' && <EnginePreview key={workspace?.id} document={document} selection={selection} sourceRoomId={selectedRoom?.id} layer={layer} onSelectRoom={selectRoom} onSelectZone={id => select({ kind: 'zone', id })} onSlotChange={slot => edit(() => setPlaytestSlot(document, slot))} />}
         </div></CanvasBoundary> : <div className="canvas-error"><Icon name="layers" size={36} /><h2>Open a level to begin</h2><p>Drop a project, level ZIP or the three twolev files here.</p><button className="primary-button" onClick={() => fileInput.current?.click()}>Open files</button></div>}
         {busy && <div className="busy-overlay" role="status"><span className="spinner" />{busy}</div>}
@@ -485,7 +505,7 @@ export function App() {
         {objectOpen && document && <ObjectBuilder document={document} initialObject={objectSeed} room={selectedRoom?.id} cursor={cursor} layer={layer} onCancel={() => setObjectOpen(false)}
           onCreate={proposal => { edit(proposal.command); setObjectOpen(false); setTab('objects'); setShowObjects(true); select({ kind: 'object', id: proposal.id }); }} />}
       </main>
-      {document && (groupIds.length > 1 ? <ObjectGroupInspector document={document} ids={groupIds} edit={edit} frame={frameCurrent} duplicate={duplicateGroup} clear={() => select(null)} /> : <Inspector document={document} selection={selection} edit={edit} sourceRoom={selectedRoom} onObjectDuplicate={duplicateObject} onRoomCorner={editRoomCorner} onRoomRedraw={redrawRoom} onRoomDelete={deleteRoom} onShowDestination={id => { setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1, frame: true })); setView('map'); }} />)}
+      {document && (selectedRooms.length > 1 ? <RoomGroupInspector rooms={selectedRooms} frame={frameCurrent} clear={() => select(null)} remove={deleteRoomGroup} /> : groupIds.length > 1 ? <ObjectGroupInspector document={document} ids={groupIds} edit={edit} frame={frameCurrent} duplicate={duplicateGroup} clear={() => select(null)} /> : <Inspector document={document} selection={selection} edit={edit} sourceRoom={selectedRoom} onObjectDuplicate={duplicateObject} onRoomCorner={editRoomCorner} onRoomRedraw={redrawRoom} onRoomDelete={deleteRoom} onShowDestination={id => { setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1, frame: true })); setView('map'); }} />)}
     </div>
     <footer className="statusbar"><span className="status-dot" /><span>{autosave}</span><span className="status-message" aria-live="polite">{status || 'Choose a zone to start editing'}</span><span>X <strong>{Math.round(cursor.x)}</strong></span><span>Z <strong>{Math.round(cursor.z)}</strong></span><span className="status-size">{document?.points.length ?? 0} points · {document?.zones.length ?? 0} zones</span></footer>
     {(help || showRecents || choices.length > 0) && <div className="modal-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) { setHelp(false); setShowRecents(false); setChoices([]); } }}><section className="modal" role="dialog" aria-modal="true" aria-label={help ? 'Editor help' : choices.length ? 'Choose a level' : 'Recent workspaces'}><button className="modal-close icon-button" aria-label="Close dialog" title="Close this panel. Shortcut: Esc." onClick={() => { setHelp(false); setShowRecents(false); setChoices([]); }}><Icon name="close" /></button>

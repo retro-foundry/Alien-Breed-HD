@@ -19,7 +19,7 @@ interface Props {
   frameSelection: number;
   onMove: (selection: Exclude<Selection, null>, x: number, z: number) => void;
   tool: 'select' | 'pan' | 'room' | 'box'; layer: 'lower' | 'upper'; grid: number; showObjects: boolean;
-  roomDraft: RoomDraft | null; selectedRoom?: SourceRoom; onRoomSelect: (id: string) => void;
+  roomDraft: RoomDraft | null; selectedRoom?: SourceRoom; roomGroup: readonly SourceRoom[]; onRoomSelect: (id: string, add?: boolean) => void;
   onRoomPoint: (x: number, z: number) => void; onRoomFinish: () => void;
   onRoomCornerMove: (index: number, x: number, z: number) => void;
   focusRoom?: { id: string; request: number; frame?: boolean };
@@ -30,7 +30,7 @@ function floorPolygons(zone: Zone, upper: boolean) {
   return (upper ? zone.upper : zone.lower).filter(graphic => [1, 8, 9, 10, 11].includes(graphic.type) && graphic.points.length >= 3);
 }
 
-export function MapCanvas({ document, selection, objectIds, frameSelection, onObjectToggle, onObjectBoxSelect, onGroupMove, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, focusRoom }: Props) {
+export function MapCanvas({ document, selection, objectIds, frameSelection, onObjectToggle, onObjectBoxSelect, onGroupMove, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, roomGroup, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, focusRoom }: Props) {
   const visibility = useVisibilityInspection(document, selectedRoom?.id, selection?.kind === 'zone' ? selection.id : undefined);
   const canvas = useRef<HTMLCanvasElement>(null), holder = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -116,7 +116,8 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
   const lastSelectionFrame = useRef<number | undefined>(undefined);
   useEffect(() => {
     if (!frameSelection || size.width < 120 || size.height < 120 || lastSelectionFrame.current === frameSelection) return;
-    if (selection?.kind === 'object') {
+    if (roomGroup.length > 1) framePoints(roomGroup.flatMap(room => [...room.vertices]));
+    else if (selection?.kind === 'object') {
       const ids = objectIds.length ? objectIds : [selection.id];
       framePoints(editableObjects(document).filter(object => ids.includes(object.id) && objectIsActive(object)));
     } else if (selection?.kind === 'start') framePoints(editableStarts(document).filter(start => start.player === selection.id));
@@ -124,7 +125,7 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
     else if (selection?.kind === 'zone') framePoints(document.zones.find(zone => zone.id === selection.id)?.boundaryIds.map(id => document.lines[id]!) ?? []);
     else if (selection?.kind === 'point') framePoints(document.points.filter(point => point.id === selection.id));
     lastSelectionFrame.current = frameSelection;
-  }, [frameSelection, size, selection, objectIds, document, selectedRoom, framePoints]);
+  }, [frameSelection, size, selection, objectIds, document, selectedRoom, roomGroup, framePoints]);
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
@@ -235,6 +236,7 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
     if (selectedRoom && cornerGhost) try { normaliseRoomOutline(previewVertices(selectedRoom)); } catch { cornerValid = false; }
     for (const room of sourceView.changed) outline(previewVertices(room), true, room.id === selectedRoom?.id ? cornerValid ? '#d0f6a5' : '#e98980' : '#84b99d');
     if (selectedRoom && !sourceView.changed.some(room => room.id === selectedRoom.id)) outline(previewVertices(selectedRoom), false, cornerValid ? '#d0f6a5' : '#e98980');
+    if (roomGroup.length > 1) for (const room of roomGroup) outline(room.vertices, false, '#d0f6a5');
     if (selectedRoom) {
       const teleport = editableTeleport(document, selectedRoom);
       if (teleport.destination !== null) {
@@ -295,7 +297,7 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
       context.fillStyle = '#82caff22'; context.strokeStyle = '#82caff'; context.lineWidth = 1.5; context.setLineDash([5, 3]);
       context.fillRect(a.x, a.y, b.x - a.x, b.y - a.y); context.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y); context.setLineDash([]);
     }
-  }, [document, selection, objectIds, view, size, grid, showObjects, layer, ghost, groupGhost, boxGhost, screen, world, sourceView, roomDraft, selectedRoom, cornerGhost, visibility.enabled, visibility.inspection]);
+  }, [document, selection, objectIds, view, size, grid, showObjects, layer, ghost, groupGhost, boxGhost, screen, world, sourceView, roomDraft, selectedRoom, roomGroup, cornerGhost, visibility.enabled, visibility.inspection]);
 
   function hit(x: number, y: number): Selection {
     for (const start of editableStarts(document)) { const pixel = screen(start.x, start.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 13) return { kind: 'start', id: start.player }; }
@@ -333,7 +335,7 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
           else onRoomPoint(Math.round(point.x / step) * step, Math.round(point.z / step) * step);
           return;
         }
-        if (!panning && tool === 'select' && selectedRoom) {
+        if (!panning && tool === 'select' && selectedRoom && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
           const index = selectedRoom.vertices.findIndex(point => { const pixel = screen(point.x, point.z); return Math.hypot(x - pixel.x, y - pixel.y) < 9; });
           if (index >= 0) {
             const point = selectedRoom.vertices[index]!; cornerDrag.current = { index }; setCornerGhost({ index, x: point.x, z: point.z });
@@ -343,9 +345,13 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
         if (!panning && sourceView.changed.length) {
           const point = world(x, y), room = sourceView.changed.toReversed().find(room => pointInRoomOutline(room.vertices, point));
           const selected = hit(x, y);
-          if (room && (!selected || selected.kind === 'zone')) { onRoomSelect(room.id); event.currentTarget.focus(); return; }
+          if (room && (!selected || selected.kind === 'zone')) { onRoomSelect(room.id, event.shiftKey || event.ctrlKey || event.metaKey); event.currentTarget.focus(); return; }
         }
         const selected = panning ? null : hit(x, y);
+        if (selected?.kind === 'zone' && (event.shiftKey || event.ctrlKey || event.metaKey)) {
+          const room = document.roomSource.rooms.find(room => room.originZone === selected.id);
+          if (room) { onRoomSelect(room.id, true); event.currentTarget.focus(); return; }
+        }
         if (selected?.kind === 'object' && (event.shiftKey || event.ctrlKey || event.metaKey)) { onObjectToggle(selected.id); event.currentTarget.focus(); return; }
         if (selected?.kind === 'object' && objectIds.length > 1 && objectIds.includes(selected.id)) {
           groupDrag.current = [...objectIds]; drag.current = { x, y, view, selection: selected, moved: false };

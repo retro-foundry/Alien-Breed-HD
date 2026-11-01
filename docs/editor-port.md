@@ -1585,3 +1585,20 @@ fixtures can establish current-format support independently.
   cancellation, one-step undo/redo and exact saved positions/heights. This extends
   same-workspace object clipboard authoring; room groups, cross-project resource
   transfer and the other full-editor requirements remain open.
+
+- Room selection checkpoint: Shift/Ctrl/Command clicks now add/remove imported
+  and authored rooms in the navigator and map. Room groups have visible outlines,
+  accessible pressed states, a dedicated inspector and union framing via button
+  or Shift+F. Delete selected rooms / Delete removes the full group in one source
+  command; Undo restores it. Linked starts/objects/teleports remain source data
+  for explicit repair, rather than being silently removed. Escape clears the
+  group without editing. Single-room creation still selects a just-committed room
+  before React updates the workspace reference; only modifier toggles validate
+  against that reference. Tooltips and Help describe grouping and shortcuts.
+  Production builds and all 30 focused Chromium/Firefox cases pass: imported/map
+  toggles, framing, atomic deletion, exact retained starts/native bytes in saves,
+  playable Undo restoration, existing room drawing/corner cancellation/overlap
+  rejection, object groups, clipboard placement and modal containment.
+  Room transforms, room clipboard, cross-project resources and the other
+  full-editor requirements remain open. Windows CI passed on e16eaa3; latest
+  cross-platform CI results still need verification.
