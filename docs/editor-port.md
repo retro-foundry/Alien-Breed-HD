@@ -2344,3 +2344,9 @@ fixtures can establish current-format support independently.
   including the cross-level native class change and asset-failure recovery.
   This release updates the inspector; the separate Add/Duplicate placement
   workflow and original AMOS-only object banks remain follow-up work.
+
+  Published and verified: source 011239f, site 08fd374. The public index loads
+  index-C5kGN_-q.js and index-wazFJgEI.css. All four live installed Edge/Brave
+  checks pass direct named selection, cross-level native class loading, history,
+  saved bytes and library failure/retry. Runtime manifest hashes are unchanged;
+  unrelated site files are untouched.
