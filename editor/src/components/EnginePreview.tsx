@@ -61,11 +61,25 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
       const room = sourceRoomId ?? (selection?.kind === 'zone' ? source.roomSource.rooms.find(room => room.originZone === selection.id)?.id : undefined);
       const cell = built.topology.cells.find(cell => cell.sourceId === room);
       if (!cell) return;
-      const points = cell.vertices.map(id => built.topology!.points[id]!);
-      send('camera', { camera: { zone: cell.id,
-        x: Math.round(points.reduce((sum, point) => sum + point.x, 0) / points.length),
-        z: Math.round(points.reduce((sum, point) => sum + point.z, 0) / points.length),
-        upper: layer === 'upper' && document.zones.find(zone => zone.id === cell.id)!.upper.length > 0 ? 1 : 0, angle: 0 } });
+      const center = (target: typeof cell) => {
+        const points = target.vertices.map(id => built.topology!.points[id]!);
+        return { x: Math.round(points.reduce((sum, point) => sum + point.x, 0) / points.length),
+          z: Math.round(points.reduce((sum, point) => sum + point.z, 0) / points.length) };
+      };
+      let view = cell, angle = 0;
+      const dimensions = document.zones.find(zone => zone.id === cell.id)!;
+      // A closed door has no interior air for an inspection camera. Keep its
+      // inspector selected while looking toward it from an adjoining room.
+      if (layer === 'lower' && dimensions.floor === dimensions.ceiling && source.roomSource.rooms.find(item => item.id === room)?.moving?.kind === 'door') {
+        const adjacent = cell.neighbours.map(id => built.topology!.cells.find(item => item.id === id)).find(item => item && document.zones[item.id]!.floor > document.zones[item.id]!.ceiling);
+        if (adjacent) {
+          view = adjacent;
+          const target = center(cell), origin = center(view);
+          angle = Math.round(Math.atan2(target.x - origin.x, target.z - origin.z) * 8192 / (Math.PI * 2)) & 8191;
+        }
+      }
+      send('camera', { camera: { zone: view.id, ...center(view),
+        upper: layer === 'upper' && document.zones.find(zone => zone.id === view.id)!.upper.length > 0 ? 1 : 0, angle } });
       return;
     }
     const zoneId = selection?.kind === 'zone' ? selection.id : object?.zone ?? start?.zone;

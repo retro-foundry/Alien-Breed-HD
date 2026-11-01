@@ -4,7 +4,7 @@ import { authoredMovingFixture } from '../authoredMovingFixture';
 import { encodeProject, decodeProject } from '../../src/model/project';
 import { buildPlayableLevel } from '../../src/model/playableBuild';
 import { applyCommand, setSourceStart } from '../../src/model/commands';
-import { engineMechanismTrace, engineMechanismState } from '../engineCapture';
+import { engineMechanismTrace, engineMechanismState, enginePlayerState } from '../engineCapture';
 
 for (const kind of ['door', 'lift'] as const) test(`make an editable ${kind}, cancel safely, save, undo, reopen, run native motion and remove`, async ({ page }, info) => {
   test.setTimeout(90000);
@@ -50,6 +50,11 @@ for (const kind of ['door', 'lift'] as const) test(`make an editable ${kind}, ca
   await page.getByRole('button', { name: '3D view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
+  if (kind === 'door') {
+    const outside = built.topology!.cells.find(cell => cell.sourceId === fixture.neighbour.id)!.id;
+    await expect.poll(async () => (await enginePlayerState(page)).zone).toBe(outside);
+    await expect(section.getByRole('heading', { level: 3 })).toHaveText('Authored door');
+  }
   await preview.getByRole('button', { name: 'Build & play', exact: true }).click();
   await expect(preview.getByRole('status')).toHaveText('Playtest running');
   if (kind === 'door') {

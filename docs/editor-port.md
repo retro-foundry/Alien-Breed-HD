@@ -2297,3 +2297,16 @@ fixtures can establish current-format support independently.
   Four installed Edge/Brave cases pass against the exact packaged release.
   Runtime bundle r-ad32e275c8d0e039 remains unchanged. Publication is the next
   release step; this does not close AMOS parity or the full editor goal.
+
+  Publication: source 86bbd09 is deployed in site commit 423e49d. The public
+  index serves index-CgCvR2uB.js, and all four live installed Edge/Brave workflows
+  pass creation, draft cancellation/errors, save, Undo/Redo, reopening, actual
+  Space use/native motion and removal for both doors and lifts.
+
+  A preview refinement follows: selecting a newly authored closed door keeps
+  its inspector selected while moving the inspection camera into an adjoining
+  room and looking toward the door, instead of putting the eye inside its sealed
+  volume. Six exact packaged Edge/Brave/Firefox workflows pass with an explicit
+  assertion that this camera is outside while the door stays selected. Editable
+  data and game starts remain unchanged. The remaining full parity work stays
+  open, including imported-room conversion and grouped moving volumes.
