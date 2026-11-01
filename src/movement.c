@@ -6,6 +6,7 @@
  */
 
 #include "movement.h"
+#include "player_limits.h"
 #include "game_data.h"
 #include "math_tables.h"
 #include "level.h"
@@ -854,7 +855,7 @@ void move_context_init(MoveContext* ctx)
 {
     memset(ctx, 0, sizeof(*ctx));
     ctx->extlen = 40;
-    ctx->step_up_val = 40 * 256;
+    ctx->step_up_val = AB3D_PLAYER_STEP_UP_WORLD * 256;
     ctx->step_down_val = 0x1000000;
     ctx->coll_id = -1;
     ctx->wall_xsize = 0;

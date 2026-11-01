@@ -20,6 +20,11 @@ Opening local files does not upload them anywhere.
 
 ## Current working workflows
 
+- Build a straight stair flight from endpoints, width, count and floor heights.
+  The labelled layout checks overlap, shared boundaries, quarter-unit heights,
+  native climb allowance and room limits before one undoable creation. Choose
+  actual template wall styles and lighting; Escape cancels without saving a
+  partial flight. Build & play verifies clearance and joins in the game.
 - Open any shipped map, a ZIP containing game levels, a saved `.ab3d` project,
   or the three `twolev` files selected together.
 - Pan/zoom the map, inspect lower and upper floors, select zones and objects,

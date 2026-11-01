@@ -7,6 +7,7 @@
  */
 
 #include "player.h"
+#include "player_limits.h"
 #include "game_data.h"
 #include "level.h"
 #include "movement.h"
@@ -71,7 +72,7 @@
  * Use that allowance in both stances so the requested crawl up level_g's
  * flame-spout stairs is possible; the archived ASM's crouched 10*256 override
  * blocks their 16*256 risers. Body height still controls roof clearance. */
-#define PLAYER_STEP_UP      (40 * 256)
+#define PLAYER_STEP_UP      (AB3D_PLAYER_STEP_UP_WORLD * 256)
 #define STEP_DOWN_DEFAULT   0x1000000    /* AB3DI.s step-down */
 #define INSTANT_TRACE_MAX_ITERS 1024
 /* PlayerShoot.s applies projectile bulyspd clamping in PLR1FIREBULLET. */

@@ -63,8 +63,10 @@ Numerical lower/upper floor and ceiling editing, height copy, reset, validation
 and undo now use per-room source overrides. Native header/surface/wall rebuilds
 and browser gameplay verify quarter-unit floor standing and a step transition;
 upper-storey view changes are checked in the actual engine. This advances R6;
-graphical height handles, automatic stair tools and animated-height authoring
-are still required.
+straight stair creation now generates adjoining native rooms as one undoable
+source edit, with a labelled plan, actual material choices, shared climb-limit
+validation and tested walking in both directions. Graphical height handles
+and animated-height authoring are still required.
 
 The actual game engine is now embedded beside the map, with zone visits,
 lighting-edit reloads and isolated playtests. All 16 maps load and draw in both

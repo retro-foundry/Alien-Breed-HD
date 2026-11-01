@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 /** Share native control descriptions with mouse and keyboard users. */
 export function ControlTooltips() {
   const id = useId();
-  const [tip, setTip] = useState<{ text: string; left: number; top: number; above: boolean; width: number } | null>(null);
+  const [tip, setTip] = useState<{ text: string; left: number; top: number; above: boolean; width: number; host: HTMLElement } | null>(null);
   useEffect(() => {
     let active: HTMLElement | null = null, nativeTitle = '';
     const restore = () => {
@@ -25,7 +25,8 @@ export function ControlTooltips() {
       next.setAttribute('title', '');
       next.setAttribute('aria-describedby', `${next.getAttribute('aria-describedby') ?? ''} ${id}`.trim());
       const rect = next.getBoundingClientRect(), width = Math.min(320, window.innerWidth - 16), above = rect.bottom + 90 > window.innerHeight;
-      setTip({ text, width, above, left: Math.max(8, Math.min(window.innerWidth - width - 8, rect.left + (rect.width - width) / 2)), top: above ? rect.top - 8 : rect.bottom + 8 });
+      setTip({ text, width, above, host: next.closest<HTMLElement>('dialog[open]') ?? document.body,
+        left: Math.max(8, Math.min(window.innerWidth - width - 8, rect.left + (rect.width - width) / 2)), top: above ? rect.top - 8 : rect.bottom + 8 });
     };
     const over = (event: PointerEvent) => { if (event.pointerType !== 'touch') show(event.target); };
     const focus = (event: FocusEvent) => show(event.target);
@@ -42,5 +43,5 @@ export function ControlTooltips() {
       window.removeEventListener('scroll', hide, true); window.removeEventListener('resize', hide);
     };
   }, [id]);
-  return tip ? createPortal(<div id={id} role="tooltip" className="control-tooltip" style={{ left: tip.left, top: tip.top, width: tip.width, transform: tip.above ? 'translateY(-100%)' : undefined }}>{tip.text}</div>, document.body) : null;
+  return tip ? createPortal(<div id={id} role="tooltip" className="control-tooltip" style={{ left: tip.left, top: tip.top, width: tip.width, transform: tip.above ? 'translateY(-100%)' : undefined }}>{tip.text}</div>, tip.host) : null;
 }

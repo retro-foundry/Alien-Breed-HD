@@ -145,6 +145,26 @@ export function setDraftCorners(draft: RoomDraft, vertices: readonly Position[])
   return Object.freeze({ ...draft, vertices: Object.freeze(vertices.map(point => Object.freeze({ ...point }))) });
 }
 
+/** Validate a generated group together, without repeatedly rebuilding all existing rooms. */
+export function addSourceRooms(document: RoomRecords, current: RoomSource,
+  drafts: readonly { recordZone: number; vertices: readonly Position[]; heights?: RoomHeights }[]): RoomChange {
+  if (!drafts.length) return { label: 'Create rooms', before: current, after: current };
+  checkedInteger(current.rooms.length + drafts.length, 1, 256, 'Source room count');
+  checkedInteger(current.nextId, 0, Number.MAX_SAFE_INTEGER - drafts.length - 1, 'Next room identity');
+  const added = drafts.map((draft, index) => {
+    const template = document.zones.find(zone => zone.id === draft.recordZone);
+    if (!template) throw new Error('Choose an existing room material template.');
+    const requested = draft.heights ? restoreRoomHeights(draft.heights, template) : undefined;
+    const heights = requested && roomHeightFields.some(field => requested[field] !== template[field]) ? requested : undefined;
+    const room = frozenRoom(`room-${current.nextId + index}`, draft.recordZone, draft.vertices, null, undefined, heights);
+    convexParts(room.vertices);
+    return room;
+  });
+  const rooms = [...current.rooms, ...added];
+  validateRoomInteriors(rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
+  return { label: 'Create rooms', before: current, after: source(rooms, current.nextId + added.length) };
+}
+
 export function commitRoomDraft(current: RoomSource, draft: RoomDraft): RoomChange {
   if (current !== draft.base) throw new Error('The rooms changed while this outline was being drawn. No changes were saved.');
   const existing = draft.roomId === null ? undefined : current.rooms.find(room => room.id === draft.roomId);

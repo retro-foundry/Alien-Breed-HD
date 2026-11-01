@@ -7,9 +7,8 @@ import { roomSettings } from './roomHeights';
 
 export interface RoomAppearance { readonly room: string; readonly lowerWall: number; readonly upperWall: number | null; readonly lightingPoint: number }
 
-export function roomAppearanceChoices(document: LevelDocument, room: SourceRoom) {
+export function roomAppearanceChoices(document: LevelDocument, room: Pick<SourceRoom, 'recordZone' | 'heights'>) {
   const template = roomSettings(document, room);
-  if (!template) throw new Error(`Room ${room.id} has no surface template.`);
   return { template, lower: template.lower.filter(record => record.wall), upper: template.upper.filter(record => record.wall),
     points: [...new Set([...template.lower, ...template.upper].flatMap(record => record.points))] };
 }

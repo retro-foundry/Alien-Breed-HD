@@ -1075,5 +1075,29 @@ fixtures can establish current-format support independently.
   pass, followed by fresh height and workspace-recovery checks in both engines.
   The preceding renderer-budget commit `40dacbd` also completed remote editor
   CI successfully; this height change still needs its own CI result.
-  This does not complete graphical height/stair tools, animated attachments, other editor requirements
-  or deployment.
+  This does not complete graphical height handles, animated attachments, other
+  editor requirements or deployment.
+
+- Automatic straight stair flights now author adjoining source rooms from
+  endpoints, width, step count, starting/final floors and clearance. Cross
+  sections are snapped once and shared by both neighbours; floors use native
+  quarter units. Generated rooms carry independent height overrides and the
+  explicitly chosen original wall styles/lighting. The native player's existing
+  40-unit step allowance is shared through a numeric JSON include between C and
+  TypeScript; movement behavior is unchanged. Strict risers below that allowance
+  are checked in both directions. Invalid dimensions, snapped flat/collapsed
+  steps, overlapping rooms, bad materials and exhausted convex runtime capacity
+  fail before applying source. Batch room insertion validates the group once.
+  The modal shows a labelled plan, local errors and control descriptions.
+  Creation is one undoable source/appearance command; Escape, Cancel and saving
+  a project while drafting cannot commit partial stairs. Tooltips now render
+  inside native dialogs so the top-layer backdrop does not obscure descriptions.
+  All 647 model checks pass, Windows and WebAssembly builds succeed, and twelve
+  Chromium/Firefox control and stair scenarios pass. The stair cases export
+  real native files, preserve original source files, verify undo/redo and
+  cancelled drafts, and walk the player up four risers and back down while
+  checking the actual simulation floor height. Rendered staircase views were
+  inspected. Graphical height handles, moving/controller attachment authoring,
+  other incomplete requirements and final deployment remain open. The requested
+  deployment directory is the sibling website repository's `abhd-ed/` folder;
+  deployment is reserved for the completed editor.
