@@ -1557,3 +1557,17 @@ fixtures can establish current-format support independently.
   after adding whole-batch capacity and exact-record preservation checks. New
   single/group browser/native scenarios await the running baseline suite before
   a fresh production build, together with the modal keyboard regressions.
+
+- Browser verification checkpoint: all 154 baseline cases passed across Chromium
+  and Firefox, including all-map room-renumbering, source-rebuild and visibility
+  frame comparisons. A fresh production build then exercised the modal and
+  clipboard changes plus adjacent controls. This exposed a real tooltip focus
+  regression when the wider toolbar scrolls: pointer enter/leave events generated
+  by scrolling could replace keyboard help and remove its ARIA description.
+  Focused control help now retains priority until blur, dismissal or interaction.
+  Clipboard browser fixtures also now compare the native object type with the
+  actual Health-pickup template instead of an incorrect hard-coded zero.
+  All 22 focused Chromium/Firefox cases pass after those corrections, including
+  single/group clipboard saves, atomic undo/redo, native heights/types, modal
+  containment, tooltip focus, duplication and Select All. Cross-platform CI and
+  the remaining full-editor requirements still need verification/completion.

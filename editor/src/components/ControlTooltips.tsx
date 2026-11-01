@@ -28,9 +28,16 @@ export function ControlTooltips() {
       setTip({ text, width, above, host: next.closest<HTMLElement>('dialog[open]') ?? document.body,
         left: Math.max(8, Math.min(window.innerWidth - width - 8, rect.left + (rect.width - width) / 2)), top: above ? rect.top - 8 : rect.bottom + 8 });
     };
-    const over = (event: PointerEvent) => { if (event.pointerType !== 'touch') show(event.target); };
+    // Focusing an off-screen toolbar control scrolls it into view. Synthetic
+    // pointer enter/leave events from that scroll must not steal its help or
+    // aria-describedby binding from keyboard users.
+    const over = (event: PointerEvent) => {
+      if (active === document.activeElement) return;
+      if (event.pointerType !== 'touch') show(event.target);
+    };
     const focus = (event: FocusEvent) => show(event.target);
-    const leave = (event: PointerEvent | FocusEvent) => { if (active && event.target instanceof Node && active.contains(event.target)
+    const leave = (event: PointerEvent | FocusEvent) => { if (event instanceof PointerEvent && active === document.activeElement) return;
+      if (active && event.target instanceof Node && active.contains(event.target)
       && !(event.relatedTarget instanceof Node && active.contains(event.relatedTarget))) hide(); };
     const reposition = () => {
       const focused = active && document.activeElement === active ? active : null;
