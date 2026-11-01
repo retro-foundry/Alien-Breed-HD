@@ -16,6 +16,7 @@ import { closedPortalEdges, newPortalTarget, unassignedBoundaryEdges } from './p
 import { resolveAnimationRoom } from './animationRooms';
 import { airHeightsChanged } from './roomHeights';
 import { hasNativeWallMaterials } from './roomMaterials';
+import { mechanismDependencies, mechanismsForRoom } from './mechanismDependencies';
 
 export interface SourceBuildOptions {
   /** Resolved game configuration in source room identities; -1 disables exit.
@@ -36,7 +37,11 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
   const source = document.roomSource, topology = compileRoomTopology(document, source);
   const moving = new Set(document.mechanisms.map(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift')));
   for (const room of source.rooms) if (room.originZone === null && hasNativeWallMaterials(room.originZone, room.wallSources)) {
-    if (moving.has(room.recordZone)) throw new Error(`Room ${room.id} copies a moving door or lift. Allocate its independent controller and wall attachments before building; the original controller cannot drive a room copy.`);
+    if (moving.has(room.recordZone)) {
+      const dependencies = mechanismsForRoom(document, room.recordZone).map(item => mechanismDependencies(document, item.kind, item.id));
+      const owners = [...new Set(dependencies.flatMap(item => item.graphicsRooms))].sort((a, b) => a - b);
+      throw new Error(`Room ${room.id} copies a moving door or lift. Allocate its independent controller and wall attachments before building; the original controller cannot drive a room copy. Its live graphics belong to ${owners.map(id => `Zone ${id}`).join(', ')}. Inspect Attachments on the original mechanism to locate its moving walls and trigger boundaries.`);
+    }
     if (document.switches.some(item => item.zone === room.recordZone)) throw new Error(`Room ${room.id} copies a switch. Allocate and link its independent activation record before building.`);
   }
   for (const cell of topology.cells) {

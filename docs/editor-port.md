@@ -1728,3 +1728,17 @@ fixtures can establish current-format support independently.
   Chromium/Firefox water/material cases pass; production build/runtime rebuild
   also pass. Full clipboard, independent moving controllers and final deployment
   requirements remain open; this does not claim complete room-copy authoring.
+
+  Moving-controller inspection now separates the controlled volume, primary
+  surface, each moving graphics owner and each collision-line incidence, plus
+  key/switch requirements. It is grounded in native DoorRoutine/LiftRoutine
+  writes and checked for every original controller in all sixteen maps. The
+  inspector's collapsible attachment table provides room-framing links with
+  keyboard support/tooltips while retaining mechanism selection. Copied moving
+  room diagnostics identify live graphics owners instead of only giving a
+  generic controller error. The inspector now resolves lift slot/file aliases
+  with the same precedence as the compiler/runtime. All 746 model tests and 16
+  Chromium/Firefox attachment/range/motion cases pass, including full door/lift
+  cycles. The production build passes and the attachment layout was inspected.
+  This establishes dependency inspection for R7; independent controller
+  allocation and complete room-copy authoring are still required.

@@ -138,3 +138,20 @@ polygon owner. Existing cross-room relationships are preserved; copying that
 polygon without an explicit room relationship map is rejected before export.
 Independent water authoring, general cross-room mapping, complete clipboard
 assembly and the remaining R7/R9/R11 requirements are still open.
+
+## Moving-controller dependency inspection
+
+`mechanismDependencies.ts` now resolves the controlled volume, primary surface,
+each moving graphics owner, each collision-line incidence, and selected key /
+switch conditions separately. This follows `Anims.s` DoorRoutine/LiftRoutine's
+zone-plane, wall and floorline-flag writes. A graphics owner is not assumed to
+own the associated collision line. All controllers in all sixteen original maps
+resolve against their actual source records. Slot-before-file-alias tests also
+cover the inspector's corrected lift lookup.
+
+The mechanism inspector exposes these relationships in a collapsible attachment
+table, with keyboard-accessible room-framing links and explanatory tooltips.
+Framing keeps the mechanism selected and does not alter source. Moving-room copy
+diagnostics identify the graphics-owning rooms and point to that inspection view.
+This is dependency inspection needed for independent controller allocation, not
+the controller allocation or complete room clipboard operation itself.

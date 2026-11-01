@@ -16,6 +16,8 @@ import { RoomPropertiesInspector } from './RoomPropertiesInspector';
 import { roomSettings } from '../model/roomHeights';
 import { NumberField } from './NumberField';
 import { MechanismRangeInspector } from './MechanismRangeInspector';
+import { MechanismAttachments } from './MechanismAttachments';
+import { mechanismsForRoom } from '../model/mechanismDependencies';
 import { objectTemplates } from '../model/objectAuthoring';
 import { keyColour, keyColours, setKeyColour, ammunitionChoices, ammunitionType, setAmmunitionType, weaponPickupChoices, weaponPickupType, setWeaponPickupType } from '../model/objectSettings';
 
@@ -47,7 +49,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
   const sourceAvatar = object && !sourceMatchesLevel(document) ? objectPlayer(document, object) : undefined;
   const start = selection?.kind === 'start' ? editableStarts(document).find(start => start.player === selection.id) : undefined;
   const point = selection?.kind === 'point' ? document.points[selection.id] : undefined;
-  const mechanisms = zone ? document.mechanisms.filter(mechanism => mechanism.zone === zone.id || mechanism.zone === zone.fileId) : [];
+  const mechanisms = zone ? mechanismsForRoom(document, zone.id) : [];
   const title = zone ? `Zone ${zone.id}` : object ? objectName(object.type) : start ? `Player ${start.player} start` : point ? `Point ${point.id}` : sourceRoom ? `Room ${sourceRoom.id.replace(/^room-/, '')}` : 'Selection';
   return <aside className="inspector">
     <div className="panel-title">INSPECTOR <span className="eyebrow">{selection?.kind.toUpperCase() ?? 'ROOM'}</span></div>
@@ -88,6 +90,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
             {(mechanism.kind === 'door' ? ['Timer expires', 'Never'] : ['Player uses it', 'Player touches it', 'Timer expires', 'Never']).map((label, value) => <option key={value} value={value}>{label}</option>)}
           </select></label>
           <h4>Requires all selected</h4><div className="condition-grid">{Array.from({ length: 12 }, (_, bit) => <label className="check-field" key={bit}><input type="checkbox" title="This requirement must be met along with every other checked key or switch." checked={(mechanism.conditions & (1 << bit)) !== 0} onChange={event => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, event.target.checked ? mechanism.conditions | (1 << bit) : mechanism.conditions & ~(1 << bit), mechanism.openRule, mechanism.closeRule))} />{bit < 4 ? `Key ${bit + 1}` : `Switch ${bit - 3}`}</label>)}</div>
+          <MechanismAttachments document={document} mechanism={mechanism} onShowRoom={onShowDestination} />
         </section>)}
         <section className="property-section"><h3>Visibility</h3><InfoRow label="Visible zones" value={zone.visibleZones.length} /><InfoRow label="Lower graphics" value={zone.lower.length} /><InfoRow label="Upper graphics" value={zone.upper.length} /></section>
       </>}
