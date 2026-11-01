@@ -34,6 +34,14 @@ without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
 
 ## Current working workflows
 
+- In paused 3D view, click a normal floor or ceiling and choose **Paint this surface**.
+  Select any of the original 16 patterns and a texture repeat from 1/32? to 4?.
+  Apply commits one undoable edit; Escape cancels. Lower and upper storeys and
+  copied rooms stay independent. Saving and room copy/paste retain the paint.
+  **Reset surface material** restores the picked surface; **Reset painted room
+  surfaces** clears all surface overrides for that room. Bump mapping, water
+  materials and no-roof/sky authoring are not part of this normal-pattern brush.
+
 - In paused 3D view, click a straight wall and choose **Paint this wall**.
   Choose a native style using the sheet previews, then Apply, or Escape to cancel.
   Paint affects the picked native face or authored boundary and its generated

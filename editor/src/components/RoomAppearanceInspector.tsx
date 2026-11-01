@@ -6,6 +6,7 @@ import { roomAppearanceChoices } from '../model/roomAppearance';
 import type { SourceRoom } from '../model/roomSource';
 import { WallStyleBrowser } from './WallStyleBrowser';
 import { clearRoomWallMaterials } from '../model/wallMaterials';
+import { clearRoomPolygonMaterials } from '../model/polygonMaterials';
 
 export function RoomAppearanceInspector({ document, room, edit }: {
   document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void;
@@ -27,6 +28,9 @@ export function RoomAppearanceInspector({ document, room, edit }: {
   };
   const paintedCount = ((room.wallMaterials?.length ?? 0) + (room.boundaryMaterials?.overrides.length ?? 0));
   return <section className="property-section"><h3>{imported ? 'Wall repair appearance' : 'Room appearance'}</h3>
+    {!!room.polygonMaterials?.length && <div><p className="field-note">{room.polygonMaterials.length} floor/ceiling surfaces have independent patterns and repeat.</p>
+      <button type="button" className="small-button" title="Restore this room's original floor-bank materials, including missing painted surfaces, as one undoable action."
+        onClick={() => edit(() => editRoomSource(clearRoomPolygonMaterials(document, room.id)))}>Reset painted room surfaces</button></div>}
     {!!paintedCount && <div><p className="field-note">{paintedCount} source faces have independent painted materials. Reset removes all paints in this room, including faces no longer drawn after an outline edit.</p>
       <button type="button" className="small-button" title="Restore this room's inherited wall materials as one undoable edit. Repairs missing painted-face dependencies. Other rooms are unchanged."
         onClick={() => edit(() => editRoomSource(clearRoomWallMaterials(document, room.id)))}>Reset painted room walls</button></div>}

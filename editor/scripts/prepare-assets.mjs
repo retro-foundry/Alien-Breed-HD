@@ -48,6 +48,24 @@ for (const [id, entry] of entries.entries()) {
 await writeFile(new URL('catalog.json', wallTarget), `${JSON.stringify({ format: 'alien-breed-wall-catalog', version: 1, walls }, null, 2)}\n`);
 await writeFile(new URL('src/model/nativeWalls.json', root), `${JSON.stringify({ format: 'alien-breed-wall-catalog', version: 1, walls }, null, 2)}\n`);
 console.log(`Prepared ${walls.length} native wall sheets and their runtime catalog.`);
+// io.c's floor bank and FloorPalScaled parser; renderer.c selects 15 palettes.
+const floorTarget = new URL('public/reference/floors/', root);
+await mkdir(floorTarget, { recursive: true });
+const floorTile = await readFile(new URL('../amiga/data/includes/floortile', root));
+const paletteSource = await readFile(new URL('../amiga/data/pal/FloorPalScaled.s', root), 'utf8');
+const floorPalette = Buffer.from(paletteSource.split(/\r?\n/).filter(line => line.trim()).flatMap(line => {
+  const match = /^\s*dc\.b\s+\$([0-9a-f]{2}),\$([0-9a-f]{2})\s*$/i.exec(line);
+  if (!match) throw new Error('Cannot decode the native FloorPalScaled source.');
+  return match.slice(1).map(value => Number.parseInt(value, 16));
+}));
+const renderer = await readFile(new URL('../src/renderer.c', root), 'utf8');
+const paletteLevels = Number(/^#define FLOOR_PAL_LEVEL_COUNT\s+(\d+)/m.exec(renderer)?.[1]);
+if (floorTile.length !== 65536 || !Number.isSafeInteger(paletteLevels) || floorPalette.length !== paletteLevels * 512)
+  throw new Error('Native floor bank and palette sizes do not match the renderer.');
+await writeFile(new URL('floortile', floorTarget), floorTile);
+await writeFile(new URL('palette.bin', floorTarget), floorPalette);
+await writeFile(new URL('src/model/nativeFloor.json', root), `${JSON.stringify({ format: 'alien-breed-floor-bank', version: 1, size: floorTile.length, paletteLevels })}\n`);
+console.log('Prepared native floor-bank materials and original palettes.');
 const gameState = await readFile(new URL('../src/game_state.h', root), 'utf8');
 const objectLimits = {};
 for (const [key, symbol] of [['objects', 'MAX_OBJECTS'], ['sourceShotSlots', 'PLAYER_SHOT_SLOT_COUNT']]) {

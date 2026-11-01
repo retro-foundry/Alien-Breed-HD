@@ -20,6 +20,7 @@ import { mechanismDependencies, mechanismsForRoom } from './mechanismDependencie
 import { compileControllerCopies, validateMovingControllerCopies, type MovingControllerCopy } from './movingControllerCopies';
 import { compileSwitchCopies, validateSwitchCopies, type SwitchCopy } from './switchCopies';
 import { paintCellWalls } from './wallMaterials';
+import { paintCellPolygons } from './polygonMaterials';
 
 export interface SourceBuildOptions {
   /** Resolved game configuration in source room identities; -1 disables exit.
@@ -82,7 +83,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
     if ((cell.originZone !== null && moving.has(cell.originZone)) || (target.originZone !== null && moving.has(target.originZone)))
       throw new Error('A new doorway into a moving door or lift needs synchronized wall animation attachments before building. Choose a static room boundary.');
   });
-  const geometry = paintCellWalls(document, source, buildCellGraphics(document, source, topology, options.newRoomGraphics, options.closingRoomGraphics));
+  const geometry = paintCellPolygons(source, paintCellWalls(document, source, buildCellGraphics(document, source, topology, options.newRoomGraphics, options.closingRoomGraphics)));
   const lighting = buildGeometryLighting(document, source, geometry, options.newRoomLighting);
   const collision = compileCollisionGeometry(lighting.graphics.topology);
   const attachments = buildAnimationAttachments(document, lighting.graphics, collision, controllerCopies, switchCopies);

@@ -42,9 +42,10 @@ export function pasteRooms(document: LevelDocument, clipboard: RoomClipboard, x:
       heights: Object.fromEntries(roomHeightFields.map(field => [field, settings[field]])), properties: captureRoomProperties(settings) };
   });
   const snapshot = roomSourceSnapshot(document.roomSource);
+  const polygons = added.some(room => room.polygonMaterials?.length);
   const boundary = added.some(room => room.boundaryMaterials);
-  const painted = boundary || added.some(room => room.wallMaterials?.length);
-  const roomSource = restoreRoomSource(document, { ...snapshot, version: Math.max(snapshot.version, boundary ? 8 : painted ? 7 : 4),
+  const painted = polygons || boundary || added.some(room => room.wallMaterials?.length);
+  const roomSource = restoreRoomSource(document, { ...snapshot, version: Math.max(snapshot.version, polygons ? 9 : boundary ? 8 : painted ? 7 : 4),
     ...(painted ? { controllerCopies: snapshot.controllerCopies ?? [], switchCopies: snapshot.switchCopies ?? [] } : {}),
     rooms: [...document.roomSource.rooms, ...added], nextId: document.roomSource.nextId + added.length });
   validateRoomInteriors(roomSource.rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));

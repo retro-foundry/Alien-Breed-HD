@@ -18,6 +18,7 @@ LevelEditor v3.03 changelog reference still needs to be located and checked.
 
 | ID | Priority | Required result | Proof needed before completion |
 | --- | --- | --- | --- |
+| R0 | P0 | At least the original AMOS editor's editing capabilities, with modern equivalent workflows and no user-managed winding | Close every original operation and option in `editor-amos-parity.md`, including save/Undo and actual engine proof; published drawing tools alone do not meet this gate |
 | R1 | P0 | Transactional zone creation/edit/delete; changing tools cannot commit a partial room; neighbouring walls and shared edges stay valid | Cancel/switch-tool/point-limit/delete scenarios with undo and actual exported game geometry |
 | R2 | P0 | Automatic winding and portal orientation, convex runtime zones, automatic concave decomposition; duplicate/intersection/acute-corner/disconnection diagnostics | Both gesture directions and rotations produce equivalent playable rooms; partial-edge joins and malformed outlines tested in UI and compiler |
 | R3 | P0 | Correct PVS and clipping generation; overlays and inspection; stale-data detection; full rebuilding after geometry changes | Generated visibility compared with original contracts and independent ray/portal scenarios; closed-door, corridor and occluded-room engine runs; runtime fixes when required |

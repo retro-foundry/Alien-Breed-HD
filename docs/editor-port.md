@@ -2135,3 +2135,23 @@ fixtures can establish current-format support independently.
   The live iframe uses `runtime/r-ad32e275c8d0e039/frame.html`. Room drawing and
   wall/corner editing are now published; this does not close the remaining
   editor-port requirements.
+
+
+- AMOS editing parity is now an explicit P0 minimum (R0), with all 38 original
+  menu operations inventoried in `docs/editor-amos-parity.md`. Imported data
+  preservation does not count as an authoring workflow. Independent controllers,
+  navigation graph editing, original material modes and ambient/echo controls
+  remain open requirements.
+
+  Normal floor/ceiling painting now supports all 16 original patterns and repeat
+  shifts -5 through 2 on lower and upper source surfaces. The picker uses native
+  rendered-surface provenance, thumbnails use the original interleaved floor bank
+  and RGB12 palettes, and compilation changes only texture/scale. Source format
+  v9 retains overrides through saves, room copies and geometry edits; reset and
+  Undo restore original materials. Moving door/lift attachment metadata survives.
+  Water, bump modes and sky ceilings are explicitly outside this normal brush.
+
+  Validation: all 835 model tests and 22 Chromium/Firefox browser regressions
+  pass, including per-surface pixels, lower/upper independent paint, exact Undo,
+  reopening source and synchronized door/lift motion. This advances the full editor
+  goal; it does not establish complete AMOS parity.
