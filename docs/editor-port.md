@@ -2492,7 +2492,11 @@ Site commit `b865ca5` serves JavaScript `index-B71ShpUG.js` and CSS
 hashes remain verified under `runtime/r-ad32e275c8d0e039/`.
 
 
-## Default textured FPS editor and native material banks
+## Default textured FPS editor and native material banks (historical integration)
+
+The embedded-engine default described here was withdrawn after user review.
+The editable geometry correction below supersedes that view integration; native
+material-bank support and runtime line-ending fixes remain in place.
 
 Editor view now opens in 3D perspective using the actual game renderer, original
 textures and lighting. WASD moves the paused inspection camera, right drag looks,
@@ -2524,3 +2528,65 @@ floor/ceiling mode conversions, portable source/history and native-bank palette
 sampling. Six initial packaged Edge viewport scenarios passed, including default
 FPS navigation, native floor click placement and camera preservation on Undo.
 Final cross-browser publication evidence is recorded after deployment below.
+
+The initial spawn camera is cached before any navigation, so painting immediately
+after opening also preserves the view. Returning from a running playtest to the
+perspective editor stops simulation and rebuilds editable inspection. Runtime
+bridge files are pinned to LF in Git: Ubuntu builds the native artifact for both
+CI hosts, and Windows must compare exactly the same bridge bytes rather than
+fail the deliberate stale-runtime guard because of checkout line endings.
+
+
+## Editable textured 3D correction: both storeys and height gestures
+
+Perspective and orthographic again use the editable spatial viewport. The
+perspective editor remains the default; Engine view stays separate and Split
+pairs the two. Native compiled wall/polygon records provide the textured mesh,
+not opaque room-volume boxes: portal openings, partial polygons, source surface
+identity, wall strip endpoints, phase, masks, repeat and saved overrides remain
+available to editing and paint. Original indexed sheets and palette levels
+supply colours. Authored point/wall and room/polygon brightness are shown without
+game-distance darkening so an overview remains readable. This is an authoring
+renderer, not a claim of pixel-identical game rendering.
+
+Both storeys and their objects are visible in both 3D projections. Lower/Upper
+still chooses the active editing layer without filtering the mesh or reframing
+the camera. Selected rooms expose LF/LC/UF/UC handles; shared-height boundaries
+have separate handles. Pointer drags preview validated native heights and commit
+one ordinary command on release; Escape cancels. Alt-drag on an actual boundary
+floor/ceiling is a direct height gesture. Save/Undo retain independent storey
+heights, source corner geometry and controller validation.
+
+Surface picking and Paint room textures operate in the geometry editor. Wall
+and polygon dialogs reuse the same source commands as native playtest/export.
+Paint rebuilds the mesh while retaining the editing camera. Palette objects can
+be placed on either visible storey. Perspective offers Orbit and Walk modes:
+Walk starts from player one inside this same editable mesh, with WASD movement,
+right-drag looking, Q/E vertical movement and Shift acceleration. It does not
+run the game or modify player starts. Objects remain editable markers; animated
+water and curved-wall graphics still require Engine view for exact appearance.
+Texture/GPU failures are explicit and retryable; geometry outlines and axis
+editing remain available. Help and inspector text now describe this workflow.
+
+Initial verification: all 963 model tests pass, including all 16 native meshes
+and independent four-plane source/history checks. Five initial Edge editing
+scenarios proved real textured pixels, both projections, all four height drags,
+Walk placement, and direct wall/floor painting without a game iframe. Final
+cross-browser and publication evidence follows after the release checks.
+
+
+Release verification: all 36 packaged editing/axis regressions passed across
+Edge, Brave and Firefox, including both-storey four-handle pointer drags, direct
+Alt-drag floor/ceiling editing, material-load failure/retry, Walk placement and
+wall/floor painting in the editable mesh. Six further Edge scenarios passed in
+the separate native renderer for lower/upper wall and all floor/ceiling pattern
+painting, saves, cancellation, history and unchanged player positions.
+
+The final package is published as site commit `e2bcd5d`, JavaScript
+`index-Dv4NXA0e.js`, CSS `index-CiVQzSh2.css`. Pages run `41326488319` succeeded.
+All 14 public Edge/Brave scenarios passed, proving that the live default is the
+editable 3D viewport and exercising both-storey heights, direct surface drags,
+paint, Walk object placement and texture retry. The five native runtime hashes
+remain unchanged under `runtime/r-c8b6aa3eff4f5614/`. Source changes are committed
+and pushed; full Windows/Linux editor CI is running separately. This milestone
+does not complete the remaining AMOS and R0-R12 scope.
