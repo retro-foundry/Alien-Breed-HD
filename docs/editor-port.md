@@ -1485,3 +1485,20 @@ fixtures can establish current-format support independently.
   All 708 model tests and four Chromium/Firefox range scenarios pass. The final
   world-unit validation passes the focused model checks and production build.
   The native simulation is unchanged; only read-only editor inspection was added.
+
+- Moving-range runtime verification: native door/lift state inspection now
+  reports attached-wall count, live collision roof/floor and how many attached
+  wall edges differ from the actual controller position. The probes are read-only
+  and follow `door_routine`'s +24 / `lift_routine`'s +20 moving wall fields.
+  Browser scenarios use the existing Timer expires rule with Never at the upper
+  endpoint, change the destination by a quarter-unit fraction and run normal
+  gameplay. Both controllers are observed in transit, with collision plane and
+  every attached wall synchronized, then clamped at the exact edited endpoint.
+  Post-play project checks retain the authored initial position and native zone/
+  wall bytes instead of leaking runtime animation state into editable source.
+  These checks extend R7 motion evidence; controller creation, lower-end/cyclic
+  scenarios, neighbouring moving volumes and synchronized geometry authoring
+  remain open before full-editor completion and deployment.
+  All eight Chromium/Firefox loading/motion scenarios pass. The four focused
+  motion scenarios also pass post-play source-isolation assertions. WebAssembly
+  host rebuilds and production builds pass; the gameplay implementation is unchanged.

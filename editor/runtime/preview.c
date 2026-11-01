@@ -172,6 +172,25 @@ EMSCRIPTEN_KEEPALIVE int editor_mechanism_value(int lift, int index, int field)
     case 1: return obj_l(record + 4);
     case 2: return obj_l(record + 10);
     case 3: return obj_l(record + 14);
+    case 4: case 6: {
+        const uint32_t *offsets = lift ? g_state.level.lift_wall_list_offsets : g_state.level.door_wall_list_offsets;
+        const uint8_t *walls = lift ? g_state.level.lift_wall_list : g_state.level.door_wall_list;
+        if (!offsets || !walls) return field == 4 ? 0 : -1;
+        uint32_t start = offsets[index], end = offsets[index + 1];
+        if (field == 4) return (int)(end - start);
+        int mismatches = 0;
+        for (uint32_t wall = start; wall < end; wall++) {
+            int32_t graphic = obj_l(walls + wall * 10u + 2u);
+            if (!g_state.level.graphics || graphic < 0 || g_state.level.graphics_byte_count < 28u ||
+                (size_t)graphic > g_state.level.graphics_byte_count - 28u ||
+                obj_l(g_state.level.graphics + graphic + (lift ? 20 : 24)) != obj_l(record + 4)) mismatches++;
+        }
+        return mismatches;
+    }
+    case 5: {
+        uint8_t *zone = level_get_zone_data_ptr(&g_state.level, obj_w(record));
+        return zone ? obj_l(zone + (lift ? ZONE_OFF_FLOOR : ZONE_OFF_ROOF)) : 0;
+    }
     default: return 0;
     }
 }

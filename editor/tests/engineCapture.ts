@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 
 export interface EngineCamera { zone: number; x: number; z: number; upper: number; angle: number }
-export async function engineMechanismState(page: Page, kind: 'door' | 'lift', index: number): Promise<{ zone: number; current: number; top: number; bottom: number }> {
+export async function engineMechanismState(page: Page, kind: 'door' | 'lift', index: number): Promise<{ zone: number; current: number; top: number; bottom: number; wallCount: number; plane: number; unsynchronizedWalls: number }> {
   return page.evaluate(({ kind, index }) => new Promise((resolve, reject) => {
     const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();
     const timer = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('Engine mechanism query timed out')); }, 10000);
