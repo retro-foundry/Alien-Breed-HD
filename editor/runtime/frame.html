@@ -148,6 +148,16 @@
         if (value(0) < 0) throw new Error('The inspected room does not exist.');
         send('zone-properties', {id:request.id, properties:{brightness:value(1), upperBrightness:value(2), control:value(3), upperControl:value(4), water:value(5)/256, backdrop:Boolean(value(6)), floorSound:value(7), upperFloorSound:value(8)}});
       }
+      if (loaded && request.type === 'water-state') {
+        if (!Array.isArray(request.entries) || !request.entries.length || request.entries.length > 256) throw new Error('Invalid water inspection entries.');
+        const entries = request.entries.map(entry => {
+          if (!entry || !Number.isInteger(entry.zone) || !Number.isInteger(entry.graphic) || engine._editor_zone_value(entry.zone, 0) < 0) throw new Error('Invalid water inspection room.');
+          const polygon = engine._editor_water_polygon_height(entry.graphic);
+          if (polygon === -2147483648) throw new Error('Invalid water polygon inspection offset.');
+          return {zone:entry.zone, water:engine._editor_zone_value(entry.zone, 5)/256, polygon:polygon/256};
+        });
+        send('water-state', {id:request.id, entries});
+      }
       if (loaded && request.type === 'object-state') {
         const object = request.object;
         if (!Number.isInteger(object) || object < 0) throw new Error('Invalid object inspection index.');

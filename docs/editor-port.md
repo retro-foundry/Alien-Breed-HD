@@ -1716,3 +1716,15 @@ fixtures can establish current-format support independently.
   Production TypeScript/Vite build and all 12 focused Chromium/Firefox mechanism
   cases pass locally after rebuilding the preview runtime. Full CI remains
   required before deployment readiness can be claimed.
+
+  Native water-copy attachments now preserve the shared `DoWaterAnims` group
+  header/phase while allocating distinct generated polygon pointers for copied
+  native-material rooms. Original cross-room water writes remain intact; copying
+  those relationships requires an explicit mapping and is rejected without one.
+  The preview has a read-only bounded polygon-height probe, allowing browser
+  tests to compare actual polygon writes and zone water planes in the same
+  callback. An explicit native-format oscillating fixture is necessary because
+  the original levels do not populate one. All 729 model tests and six focused
+  Chromium/Firefox water/material cases pass; production build/runtime rebuild
+  also pass. Full clipboard, independent moving controllers and final deployment
+  requirements remain open; this does not claim complete room-copy authoring.

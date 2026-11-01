@@ -114,3 +114,27 @@ pixel changes and restoration through Undo/Redo and inheritance reset in both
 browsers. All 40 focused controls/editor/property/height cases pass. The
 inspection-height capture API changes only the paused camera and rejects heights
 outside the room's air band. Full room clipboard authoring remains incomplete.
+
+## Shared water animation attachments
+
+Native-material copies now receive their own generated polygon pointers in the
+source water animation group. `amiga/Anims.s` `DoWaterAnims` and
+`src/objects.c` `do_water_anims` advance one group's 24.8 height and write every
+listed room's water plane plus its polygon's quarter-unit height word. Copying
+that relationship preserves the original group header, range, velocity and phase;
+it does not allocate an invented independent oscillator. Original runtime room
+identities remain unique. Door/lift/switch copies retain their explicit guards.
+
+The original levels do not populate an oscillating group, so verification uses
+an explicitly constructed native-format group with an original water polygon.
+Save/reopen and source compilation prove distinct graphics pointers, translated
+polygon coordinates and unchanged group headers/source bytes. The engine probe
+reads actual polygon and zone water writes in one browser callback; both browsers
+prove multiple changing heights stay equal between original and copy. The probe
+only inspects loaded buffers and rejects invalid polygon offsets.
+
+Native water entries can legally control a room different from the referenced
+polygon owner. Existing cross-room relationships are preserved; copying that
+polygon without an explicit room relationship map is rejected before export.
+Independent water authoring, general cross-room mapping, complete clipboard
+assembly and the remaining R7/R9/R11 requirements are still open.

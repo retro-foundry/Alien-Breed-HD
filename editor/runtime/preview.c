@@ -218,6 +218,15 @@ EMSCRIPTEN_KEEPALIVE int editor_mechanism_value(int lift, int index, int field)
 }
 EMSCRIPTEN_KEEPALIVE int editor_player_x(void) { return preview_loaded ? g_state.plr1.xoff >> 16 : 0; }
 EMSCRIPTEN_KEEPALIVE int editor_player_z(void) { return preview_loaded ? g_state.plr1.zoff >> 16 : 0; }
+/* DoWaterAnims patches the native water polygon's quarter-unit height word.
+ * Inspect that actual write independently of the zone's 24.8 water plane. */
+EMSCRIPTEN_KEEPALIVE int editor_water_polygon_height(int graphic)
+{
+    if (!preview_loaded || !g_state.level.graphics || graphic < 0 || g_state.level.graphics_byte_count < 4u ||
+        (size_t)graphic > g_state.level.graphics_byte_count - 4u || obj_w(g_state.level.graphics + graphic) != 7)
+        return INT32_MIN;
+    return (int32_t)obj_w(g_state.level.graphics + graphic + 2) * 64;
+}
 /* player.c updates the collision target from floor - s_height. Rendering Y
  * includes the view offset/bob, so report the simulation feet for validation. */
 EMSCRIPTEN_KEEPALIVE int editor_player_feet_fixed(void) { return preview_loaded ? g_state.plr1.s_yoff + g_state.plr1.s_height : 0; }

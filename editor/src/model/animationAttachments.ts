@@ -7,6 +7,7 @@ import { readGraphicRecord, type Graphic } from './graphics';
 import type { LevelDocument } from './level';
 import type { PointLightingBinding } from './pointLighting';
 import { resolveAnimationRoom } from './animationRooms';
+import { hasNativeWallMaterials } from './roomMaterials';
 
 const key = (pointer: number, context: AnimationTargetContext) => `${pointer}:${context.kind}:${context.zone}:${context.line ?? ''}`;
 const on = (p: { x: number; z: number }, a: { x: number; z: number }, b: { x: number; z: number }) =>
@@ -38,13 +39,20 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
   const originals = new Map(document.zones.flatMap(zone => [...zone.lower, ...zone.upper].map(record => [record.offset, { record, owner: zone.id }] as const)));
   type Target = GeneratedGraphicsTarget & { record: Graphic };
   const targets = new Map<number, Target[]>();
+  const waterTargets = new Map<number, Target[]>();
+  const sourceRooms = new Map(document.roomSource.rooms.map(room => [room.id, room]));
   for (const cell of topology.cells) {
     const stream = graphics.streams.get(cell.id);
     if (!stream) throw new Error(`Animation attachments have no graphics stream for room ${cell.id}.`);
     for (const [upper, records] of [[false, stream.lower], [true, stream.upper]] as const) records?.forEach((item, index) => {
-      if (item.sourceOffset === undefined || originals.get(item.sourceOffset)?.owner !== cell.originZone) return;
+      if (item.sourceOffset === undefined) return;
+      const owner = originals.get(item.sourceOffset)?.owner;
+      const inheritedWater = owner === cell.recordZone && hasNativeWallMaterials(cell.originZone, sourceRooms.get(cell.sourceId)?.wallSources ?? []);
+      if (owner !== cell.originZone && !inheritedWater) return;
       const record = readGraphicRecord(new BinaryReader(item.bytes, 'animation target'), 0, points.length);
-      targets.set(item.sourceOffset, [...(targets.get(item.sourceOffset) ?? []), { room: cell.id, upper, index, record }]);
+      const target = { room: cell.id, upper, index, record };
+      if (owner === cell.originZone) targets.set(item.sourceOffset, [...(targets.get(item.sourceOffset) ?? []), target]);
+      if (record.type === 7 && inheritedWater) waterTargets.set(item.sourceOffset, [...(waterTargets.get(item.sourceOffset) ?? []), target]);
     });
   }
   const selected = new Map<string, GeneratedGraphicsTarget>();
@@ -54,8 +62,8 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
       throw new Error('Several animation writes need different graphics records with the same attachment identity.');
     selected.set(id, { room: target.room, upper: target.upper, index: target.index });
   };
-  const choose = (pointer: number, context: AnimationTargetContext, offset = 0) => {
-    const candidates = targets.get(pointer - offset) ?? [];
+  const choose = (pointer: number, context: AnimationTargetContext, offset = 0, availableTargets = targets) => {
+    const candidates = availableTargets.get(pointer - offset) ?? [];
     // Runtime IDs can differ from source IDs. A target in the controlled room
     // is unambiguous when available; otherwise preserve unique source ownership.
     const local = candidates.filter(target => target.room === context.zone);
@@ -105,9 +113,21 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
     return { ...record, zone, walls };
   }) ?? null;
   const doors = moving(tables.doors, 'door'), lifts = moving(tables.lifts, 'lift');
-  const water = tables.water.map(group => ({ ...group, entries: group.entries.flatMap(entry => rooms(entry.zone, true).map(zone => {
-    choose(entry.graphic, { kind: 'water', zone }); return { ...entry, zone };
-  })) }));
+  // Anims.s DoWaterAnims writes one shared phase/height to every listed native
+  // polygon and zone header. Material copies need distinct pointer attachments
+  // in that same group, without borrowing the original room's runtime identity.
+  const water = tables.water.map(group => ({ ...group, entries: group.entries.flatMap(entry => {
+    const retained = rooms(entry.zone, true).map(zone => {
+      choose(entry.graphic, { kind: 'water', zone }); return { ...entry, zone };
+    });
+    const source = resolveAnimationRoom(document, entry.zone, true);
+    const copies = (waterTargets.get(entry.graphic) ?? []).filter(target => topology.cells.find(cell => cell.id === target.room)!.originZone === null);
+    if (copies.some(target => topology.cells.find(cell => cell.id === target.room)!.recordZone !== source))
+      throw new Error('Copied water has a cross-room animation attachment. Map its polygon and controlled room together before building.');
+    return [...retained, ...[...new Set(copies.map(target => target.room))].map(zone => {
+      choose(entry.graphic, { kind: 'water', zone }, 0, waterTargets); return { ...entry, zone };
+    })];
+  }) }));
   const switches = tables.switches?.map(record => {
     if (record.zone < 0) return record;
     const zone = singleRoom(record.zone, 'Switch'), target = choose(record.graphic, { kind: 'switch', zone }, 10);

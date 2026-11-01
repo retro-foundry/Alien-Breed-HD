@@ -5,6 +5,7 @@ import { roomAppearanceChoices } from '../src/model/roomAppearance';
 import { buildDataTables, importedDataTables } from '../src/model/dataBuild';
 import { buildGraphicsStreams } from '../src/model/graphicsBuild';
 import { encodePolygonSurface } from '../src/model/surfaces';
+import { importedAnimationTables } from '../src/model/animationBuild';
 
 /** Compiler fixture only: the complete room clipboard/controller authoring UI
  * remains separate work. Preserve wall provenance with a fresh source ID. */
@@ -35,4 +36,22 @@ export function nativePartialRoomCopyFixture() {
   source = openLevel(source.name, { ...source.files, graphics: buildGraphicsStreams(source, undefined, undefined,
     { replacements: new Map([[floor.offset, encodePolygonSurface(polygon)]]) }) });
   return { ...nativeRoomCopyFixture(0, source), source, polygon };
+}
+
+export function nativeWaterRoomCopyFixture() {
+  const original = openLevel('Animated water copy', originalFiles(1), 0, -1);
+  const tables = importedAnimationTables(original).tables;
+  const selected = original.zones.flatMap(zone => [...zone.lower, ...zone.upper].map(record => ({ zone: zone.id, record })))
+    .find(item => item.record.type === 7)!;
+  const group = 0, zone = selected.zone, height = selected.record.height! * 256;
+  // Explicit native DoWaterAnims fixture: the original levels do not populate
+  // an oscillating group. Exercise its documented 24.8 range/phase/velocity
+  // contract with an original water polygon, independently of moving rooms.
+  const header = new Uint8Array(14), view = new DataView(header.buffer);
+  view.setInt32(0, height - 4 * 256); view.setInt32(4, height + 4 * 256);
+  view.setInt32(8, height); view.setInt16(12, 128);
+  const baseline = openLevel(original.name, { ...original.files, graphics: buildGraphicsStreams(original, undefined, undefined,
+    { animations: { ...tables, doors: null, lifts: [], switches: null, water: tables.water.map((item, index) => index ? item
+      : { header, entries: [{ zone, graphic: selected.record.offset }] }) } }) }, original.playtestSlot, -1);
+  return { ...nativeRoomCopyFixture(zone, baseline), group, zone };
 }
