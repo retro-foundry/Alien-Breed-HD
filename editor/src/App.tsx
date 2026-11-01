@@ -16,6 +16,7 @@ import { ObjectBuilder } from './components/ObjectBuilder';
 import { objectTemplates } from './model/objectAuthoring';
 import { editObjectGroup, objectSelectionIds } from './model/objectGroups';
 import { duplicateObjects } from './model/duplicateObjects';
+import { copyObjects, pasteObjects, type ObjectClipboard } from './model/objectClipboard';
 import { Icon } from './components/Icon';
 import { EnginePreview } from './components/EnginePreview';
 import { ControlTooltips } from './components/ControlTooltips';
@@ -62,6 +63,7 @@ export function App() {
   const [status, setStatus] = useState(''), [autosave, setAutosave] = useState('Local workspace');
   const [selection, setSelection] = useState<Selection>(null), [tab, setTab] = useState<'zones' | 'objects' | 'starts'>('zones');
   const [objectIds, setObjectIds] = useState<number[]>([]);
+  const [objectClipboard, setObjectClipboard] = useState<ObjectClipboard | null>(null);
   useEffect(() => setObjectIds([]), [workspace?.id]);
   const [search, setSearch] = useState(''), [tool, setTool] = useState<'select' | 'pan' | 'room' | 'box'>('select');
   const [roomDraft, setRoomDraft] = useState<RoomDraft | null>(null), [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
@@ -246,6 +248,25 @@ export function App() {
     setRoomDraft(null); setTool('select'); setObjectSeed(selection.id); setObjectOpen(true);
   }, [selection, busy, objectIds.length, duplicateGroup]);
 
+  const copySelectedObjects = useCallback(() => {
+    const source = workspaceRef.current?.history.document;
+    if (!source || busy || roomDraft) return;
+    try {
+      const copied = copyObjects(source, objectIds.length ? objectIds : selection?.kind === 'object' ? [selection.id] : []);
+      setObjectClipboard(copied); setStatus(`Copied ${copied.ids.length} objects. Paste keeps their captured settings and positions in this workspace.`);
+    } catch (error) { fail(error); }
+  }, [objectIds, selection, busy, roomDraft, fail]);
+
+  const pasteCopiedObjects = useCallback(() => {
+    const source = workspaceRef.current?.history.document;
+    if (!source || !objectClipboard || busy || roomDraft) return;
+    try {
+      const proposal = pasteObjects(source, objectClipboard);
+      edit(proposal.command); setObjectIds(proposal.ids); setSelection({ kind: 'object', id: proposal.ids.at(-1)! }); setSelectedRoomId(null); setShowObjects(true);
+      setStatus(`Pasted ${proposal.ids.length} objects in place. Drag the selection or use its inspector to move it; Undo removes the whole paste.`);
+    } catch (error) { fail(error); }
+  }, [objectClipboard, busy, roomDraft, edit, fail]);
+
   const deleteSelectedObjects = useCallback(() => {
     const source = workspaceRef.current?.history.document;
     if (!source || busy || selection?.kind !== 'object') return;
@@ -284,6 +305,12 @@ export function App() {
       if (stairsOpen || objectOpen) { if ((event.ctrlKey || event.metaKey) && ['o', 'd'].includes(event.key.toLowerCase())) event.preventDefault(); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); fileInput.current?.click(); return; }
       if (editing) return;
+      if ((event.ctrlKey || event.metaKey) && ['c', 'v'].includes(event.key.toLowerCase())) {
+        if (event.key.toLowerCase() === 'c' && selection?.kind !== 'object') return;
+        event.preventDefault();
+        if (!event.repeat) { if (event.key.toLowerCase() === 'c') copySelectedObjects(); else pasteCopiedObjects(); }
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a' && (tab === 'objects' || event.target instanceof HTMLCanvasElement)) {
         event.preventDefault(); if (!roomDraft && !help && !showRecents && !choices.length) selectAllObjects(event.target instanceof HTMLCanvasElement); return;
       }
@@ -309,7 +336,7 @@ export function App() {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [save, historyAction, roomDraft, finishRoom, select, stairsOpen, objectOpen, duplicateObject, help, showRecents, choices.length, frameCurrent, deleteSelectedObjects, selectAllObjects, tab, beginBoxSelection]);
+  }, [save, historyAction, roomDraft, finishRoom, select, stairsOpen, objectOpen, duplicateObject, help, showRecents, choices.length, frameCurrent, deleteSelectedObjects, selectAllObjects, tab, beginBoxSelection, selection, copySelectedObjects, pasteCopiedObjects]);
 
   async function openDocument(next: LevelDocument, id?: string, request = ++generation.current) {
     const current = workspaceRef.current;
@@ -431,6 +458,8 @@ export function App() {
         <button className="small-button" disabled={!document || template === undefined || !!busy} title="Create adjoining steps from endpoints, width and floor heights. Preview the whole flight and apply it as one undoable edit." onClick={() => { setRoomDraft(null); setTool('select'); setStairsOpen(true); }}>Build stairs</button>
         <button className="small-button" disabled={!document || !!busy} aria-pressed={tool === 'box'} title="Drag a rectangle in either direction to select objects on the displayed floor. Hold Shift to add to the selection. Escape cancels the rectangle. Shortcut: B." onClick={beginBoxSelection}>Box select objects</button>
         <button className="small-button" disabled={!document || !!busy} title="Add an enemy, pickup or scenery object using a source template. Choose its room and position; Escape cancels the draft." onClick={() => { setRoomDraft(null); setTool('select'); setObjectSeed(undefined); setObjectOpen(true); }}>Add object</button>
+        <button className="small-button" disabled={selection?.kind !== 'object' || !!busy || !!roomDraft} title="Capture selected objects and their current settings in the editor clipboard. Shortcut: Ctrl/Command+C. Text fields keep normal copy controls." onClick={copySelectedObjects}>Copy objects</button>
+        <button className="small-button" disabled={!objectClipboard || !document || objectClipboard.source.original !== document.original || !!busy || !!roomDraft} title="Paste captured objects in place as one undoable edit, then drag or use the inspector to move them. Same workspace only; clipboard lasts until reload. Shortcut: Ctrl/Command+V." onClick={pasteCopiedObjects}>Paste objects</button>
         {roomDraft && <><button className="small-button" disabled={roomDraft.vertices.length < 3} title="Validate and commit this whole outline as one undoable edit. Shortcut: Enter on the map." onClick={finishRoom}>Finish room</button><button className="small-button" title="Discard this unfinished outline. No project geometry changes. Shortcut: Escape." onClick={() => { setRoomDraft(null); setTool('select'); }}>Cancel room</button></>}
         <button className="icon-button" aria-label="Undo" title={`Undo ${workspace?.history.past.at(-1)?.label ?? ''} (Ctrl+Z)`} disabled={!workspace?.history.past.length} onClick={() => historyAction('undo')}><Icon name="undo" /></button><button className="icon-button" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled={!workspace?.history.future.length} onClick={() => historyAction('redo')}><Icon name="redo" /></button><span className="toolbar-divider" />
         <div className="layer-toggle"><button className={layer === 'lower' ? 'active' : ''} title="Inspect the lower floor of each zone." onClick={() => setLayer('lower')}>Lower</button><button className={layer === 'upper' ? 'active' : ''} title="Inspect upper-floor geometry where a zone has two floors." onClick={() => setLayer('upper')}>Upper</button></div><span className="toolbar-spacer" />

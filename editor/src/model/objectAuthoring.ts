@@ -34,8 +34,9 @@ export function floorMatchedObjectHeight(document: LevelDocument, template: Leve
 /** Append a real source record/CID, preserving every original slot and reserved
  * pool. Whole-table relocation stays one command; generated room geometry is
  * never written back into the editable source. */
-export function createObject(document: LevelDocument, placement: ObjectPlacement): { id: number; command: EditCommand } {
-  const template = objectTemplates(document).find(object => object.id === placement.template);
+export function createObject(document: LevelDocument, placement: ObjectPlacement, templateSource = document): { id: number; command: EditCommand } {
+  if (templateSource.original !== document.original) throw new Error('This object template belongs to another project. Cross-project resource transfer is not supported yet.');
+  const template = objectTemplates(templateSource).find(object => object.id === placement.template);
   if (!template) throw new Error('Choose an enemy, pickup or scenery template; player and projectile slots cannot be duplicated.');
   if (document.objects.length >= limits.objects) throw new Error(`The native ${limits.objects}-record object table is full, including reserved shot and avatar slots.`);
   const y = checkedInteger(placement.y * 2, -32768, 32767, 'Object height in half units');
@@ -62,7 +63,7 @@ export function createObject(document: LevelDocument, placement: ObjectPlacement
   data.set(reader.bytes.subarray(start, terminator), start + 8);
   for (const object of paddingUsers) view.setInt16(object.offset + 8, objectPoints + 1);
   const record = terminator + 8;
-  data.set(reader.bytes.subarray(template.offset, template.offset + 64), record);
+  data.set(templateSource.files.data.subarray(template.offset, template.offset + 64), record);
   view.setInt16(record, objectPoints); view.setInt16(record + 4, y);
   data[record + 63] = (placement.upper ?? template.upper) ? 1 : 0;
   view.setInt16(record + 12, -1); view.setInt16(record + 26, -1);

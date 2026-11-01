@@ -1541,3 +1541,19 @@ fixtures can establish current-format support independently.
   Undo still works after closing Help and Recent Workspaces. TypeScript checks
   pass; those new browser cases await a fresh build after the running baseline
   suite. The baseline has passed all 77 Chromium cases and is running Firefox.
+
+- Object clipboard checkpoint: Copy objects / Paste objects and Ctrl/Command
+  C/V capture single objects or groups as immutable document snapshots. Later
+  edits, deletion or undo of their originals cannot alter the captured native
+  records. Paste allocates independent collision identities, retains exact
+  positions, heights, storeys and settings, validates the entire batch, and
+  commits one undoable relocation. Capacity and destination errors cannot leave
+  partial copies. Toolbar tooltips and Help explain in-place placement and
+  subsequent dragging/inspector movement; normal text-field shortcuts remain
+  native. Clipboard lifetime is the current editor session and resource identity
+  restricts pasting to the same workspace. Cross-project resource transfer, room
+  clipboard workflows and other R9/R11 requirements remain open.
+  TypeScript and the full 712-test model run pass; all four clipboard tests pass
+  after adding whole-batch capacity and exact-record preservation checks. New
+  single/group browser/native scenarios await the running baseline suite before
+  a fresh production build, together with the modal keyboard regressions.
