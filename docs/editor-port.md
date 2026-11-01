@@ -2221,3 +2221,49 @@ fixtures can establish current-format support independently.
   a room-name/type flag, are the required authoring contract. The older AMOS
   settings/header variant must not be confused with the current 18-byte native
   header followed by 10-byte wall records.
+
+
+- Independent moving-room compiler integration now generates door lintels,
+  lift risers and static pit walls from a newly authored convex room and its
+  actual reverse portal boundaries. Zero-height resting door bands are retained
+  for later movement. Solid sides cover the complete travel envelope. New bands
+  enter the existing wall batch, and exact targets are rebound after subsequent
+  insertions so two controllers sharing a static neighbour keep their own walls.
+  Both collision-line directions refer to the same moving graphic; original
+  controller targets cannot be silently taken over.
+
+  `AuthoredMovingRoom` is explicit compiler input in source-room identity with
+  selected native settings/material. `buildSourceLevel` accepts these plans;
+  `buildPlayableLevel`/editable project source do not yet produce them. This
+  intermediate step is not published as a Make door/Make lift UI. It currently
+  requires a fresh convex lower moving volume and one complete plane; adjacent
+  moving groups, imported conversion and multi-plane grouping remain required.
+  Source-owned settings, starting closed doors, history, save/reopen/copy and
+  creation/removal controls are the next integration work.
+
+  Evidence: `objects.c` DoorRoutine patches room roof, wall bottom and legacy
+  4096-byte texture base with absolute row scrolling; LiftRoutine patches room
+  floor/wall top and `renderer_lift_wall_texture_info_for_gfx_off` consumes packed
+  texture words. The new compiler preserves these distinct decoder contracts.
+  Anims.s DoWaterAnims requires 21 groups after a lift table; authoring the first
+  lift emits empty structural groups with no target writes. Invalid ranges,
+  wrong initial planes, missing portals/targets, duplicate controllers and
+  incompatible decorative ownership fail before emitting a native artifact.
+
+  Native Chromium/Firefox tests compile fresh adjacent rooms (no copied
+  controller/room geometry), open the complete generated level in the actual
+  engine and cycle both new mechanisms. Plane and wall samples stay synchronized;
+  paused endpoint captures give distinct nonzero pixel hashes and show the open
+  versus closed door and raised versus lowered platform. The existing copied
+  mechanism motion checks pass too. The initial lift test incorrectly requested
+  an automatic cycle from a manually-lowered fixture; its rule now explicitly
+  selects native timer lowering. Inspection captures are correctly paused because
+  the native capture API deliberately returns zero during gameplay.
+
+  Final validation: all 859 model tests pass with two workers, TypeScript passes,
+  and eight Chromium/Firefox native motion cases pass (four independently
+  authored, four existing copied mechanisms). The four new cases additionally
+  pass rendered endpoint captures from the adjoining room; these images were
+  inspected to confirm an open corridor/closed door and raised/lowered pit.
+  A separate shared-neighbour two-door model case verifies each final graphic
+  pointer still targets its own portal edge after both wall-band insertions.

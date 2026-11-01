@@ -1,3 +1,4 @@
+import { buildAuthoredMovingRooms, appendAuthoredMovingAnimations, type AuthoredMovingRoom } from './authoredMovingRoom';
 import { buildAnimationAttachments } from './animationAttachments';
 import { checkedInteger } from './binary';
 import { buildCellGraphics, type NewRoomGraphics, type ClosingRoomGraphics } from './cellGraphics';
@@ -33,6 +34,8 @@ export interface SourceBuildOptions {
   closingRoomGraphics?: ReadonlyMap<string, ClosingRoomGraphics>;
   controllerCopies?: readonly MovingControllerCopy[];
   switchCopies?: readonly SwitchCopy[];
+  /** Source-owned settings for independent new lower moving rooms. */
+  authoredControllers?: readonly AuthoredMovingRoom[];
 }
 
 /** Atomic complete-source assembly. The source document/archive remains the
@@ -86,7 +89,9 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
   const geometry = paintCellPolygons(source, paintCellWalls(document, source, buildCellGraphics(document, source, topology, options.newRoomGraphics, options.closingRoomGraphics)));
   const lighting = buildGeometryLighting(document, source, geometry, options.newRoomLighting);
   const collision = compileCollisionGeometry(lighting.graphics.topology);
-  const attachments = buildAnimationAttachments(document, lighting.graphics, collision, controllerCopies, switchCopies);
+  const authored = buildAuthoredMovingRooms(document, lighting.graphics, collision, options.authoredControllers ?? []);
+  const attachments = buildAnimationAttachments(document, authored.graphics, collision, controllerCopies, switchCopies);
+  const animations = appendAuthoredMovingAnimations(attachments.tables, authored.authored);
   const graphics = attachments.graphics;
   const points = buildPointLighting(document, graphics.topology.points, new Map([...lighting.bindings, ...attachments.addedLighting]));
   const previousOrder = new Map(topology.cells.filter(cell => cell.originZone !== null).map(cell => [cell.id,
@@ -98,7 +103,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
     header: references.headers.get(cell.id)!, boundaries: collision.boundaries[index]!, cornerWalls: collision.cornerWalls[index]!,
     ...visibility.rooms.get(cell.id)! })));
   const generated = compileGeneratedGraphics(document, topology.cells.map(cell => ({ id: cell.id, dataOffset: rooms.offsets[cell.id]!,
-    ...graphics.streams.get(cell.id)! })), attachments.tables, attachments.selectTarget);
+    ...graphics.streams.get(cell.id)! })), animations, attachments.selectTarget);
   const originalExit = document.exitZone ?? checkedInteger(options.resolvedExit, -1, document.zones.length - 1, 'Source exit room');
   let exitZone = originalExit;
   if (originalExit >= 0) {
