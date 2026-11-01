@@ -90,12 +90,12 @@ test('inspection dialogs, text fields, stale messages and playtests isolate edit
 });
 
 test('a missing shortcut module gives a recoverable engine error without losing source', async ({ page }) => {
-  await page.route('**/runtime/inspection-shortcuts.mjs', route => route.abort());
+  await page.route('**/inspection-shortcuts.mjs', route => route.abort());
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: '3D view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('alert')).toContainText(/import|module|fetch|load/i, { timeout: 60000 });
-  await page.unroute('**/runtime/inspection-shortcuts.mjs');
+  await page.unroute('**/inspection-shortcuts.mjs');
   await preview.getByRole('button', { name: 'Reload engine' }).click();
   await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');

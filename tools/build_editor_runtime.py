@@ -37,7 +37,7 @@ def main() -> None:
     output = root / 'editor/public/runtime'
     output.mkdir(parents=True, exist_ok=True)
     compiler = [sys.executable, args.emcc] if args.emcc.endswith('.py') else [args.emcc]
-    subprocess.run([*compiler, str(root / 'editor/runtime/preview.c'), *map(str, objects),
+    subprocess.run([*compiler, 'editor/runtime/preview.c', *map(str, objects),
                     '-Isrc', '-Ithird_party', '-DAB3D_NO_THREADS=1', '-O2',
                     '-sUSE_SDL=2', '-sFULL_ES3=1', '-sMIN_WEBGL_VERSION=2', '-sMAX_WEBGL_VERSION=2',
                     '-sALLOW_MEMORY_GROWTH=1', '-sINITIAL_MEMORY=134217728', '-sSHARED_MEMORY=0',
@@ -45,7 +45,7 @@ def main() -> None:
                     '-sEXPORTED_RUNTIME_METHODS=["FS"]',
                     '--pre-js', str(root / 'editor/runtime/storage.js'),
                     '--preload-file', (build / 'em_preload').as_posix() + '@/',
-                    '-o', str(output / 'engine.js')], cwd=root, check=True)
+                    '-o', (output.relative_to(root) / 'engine.js').as_posix()], cwd=root, check=True)
     shutil.copyfile(root / 'editor/runtime/frame.html', output / 'frame.html')
     shutil.copyfile(root / 'editor/runtime/inspection-shortcuts.mjs', output / 'inspection-shortcuts.mjs')
     print('Editor engine preview built in editor/public/runtime/')

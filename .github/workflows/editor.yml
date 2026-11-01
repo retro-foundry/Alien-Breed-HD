@@ -91,6 +91,8 @@ jobs:
   editor:
     name: Editor / ${{ matrix.os }}
     needs: engine
+    env:
+      EDITOR_USE_PACKAGED_BUILD: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -118,7 +120,7 @@ jobs:
       - name: Validate binary contracts and editor commands
         run: npm test
       - name: Build static editor
-        run: npm run build
+        run: npm run build:web
       - name: Install browser engines
         run: npx playwright install --with-deps chromium firefox
       - name: Check graphics startup and recovery

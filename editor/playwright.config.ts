@@ -16,5 +16,7 @@ export default defineConfig({
       firefoxUserPrefs: { 'webgl.force-enabled': true },
     } } },
   ],
-  webServer: { command: 'npm run build && npm run preview -- --port 4174 --strictPort', url: 'http://127.0.0.1:4174', reuseExistingServer: false },
+  webServer: { command: process.env.EDITOR_USE_PACKAGED_BUILD === '1'
+    ? 'npm run preview -- --port 4174 --strictPort' : 'npm run build && npm run preview -- --port 4174 --strictPort',
+    url: 'http://127.0.0.1:4174', reuseExistingServer: false },
 });

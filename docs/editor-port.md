@@ -2100,3 +2100,28 @@ fixtures can establish current-format support independently.
   Broader editor feature work and its full release gates remain open. In
   particular, the newer development runtime's Linux Firefox CI startup probe
   still rejects its graphics environment and needs further investigation.
+
+- Publish the implemented authoring tools: the user explicitly requested room
+  drawing and wall editing on the website. The release now promotes the current
+  authoring UI rather than the earlier read-only-outline preview. Unfinished
+  floor-bank painting remains separate work. Room creation, corner dragging /
+  coordinates, imported-outline redraw, heights, source saves, Undo and compiled
+  gameplay are exercised against the packaged build.
+
+  `npm run build:web` validates the staged bridge against its source, hashes the
+  complete five-file native bundle, builds the UI with that content-versioned
+  runtime path and writes `dist/build-info.json`. Cached earlier pages can retain
+  their runtime while a refreshed authoring editor loads the matching new one.
+  The runtime builder uses relative entry/output paths so local build paths do
+  not enter the published loader. The packaged asset hashes and public-path
+  hygiene checks pass. CI builds this package and serves the existing artifact
+  during browser checks rather than replacing it with an unversioned rebuild.
+
+  A 63-case packaged-build run passes in installed Edge, Brave and Firefox,
+  including drawing, winding-independent creation, corners, redraw, heights,
+  clipboard mechanisms, native gameplay, selection and inspection shortcuts.
+  After rebuilding the loader with relative paths, a final 16-case Edge/Brave
+  run passes creation, corner editing, redraw, save/export and native play.
+  The deployed runtime directory is `runtime/r-ad32e275c8d0e039/`. Live-site
+  verification follows publication; the remaining R1–R12 work and Linux CI
+  graphics-environment issue remain open.

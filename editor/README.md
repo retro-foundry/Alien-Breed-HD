@@ -23,6 +23,15 @@ recovery steps and keeps the map editable and saveable. After enabling browser
 hardware acceleration, updating the graphics driver or changing browsers, use
 **Reload engine** to retry. A failed renderer does not count as a loaded map.
 
+## Publish a static web build
+
+Build the native preview with `tools/build_editor_runtime.py` from the repository
+root, then run `npm run build:web` in `editor`. Deploy `editor/dist` as a whole.
+The package puts the matching native engine and bridge in a content-versioned
+directory, so refreshing an older published editor loads the new runtime too.
+`dist/build-info.json` records its resource hashes. To test that exact package
+without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
+
 ## Current working workflows
 
 - In paused 3D view, click a straight wall and choose **Paint this wall**.
