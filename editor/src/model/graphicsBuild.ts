@@ -11,6 +11,8 @@ export interface GraphicsZoneInput { id: number; lower: readonly Uint8Array[]; u
 export interface GraphicsRecordInput {
   bytes: Uint8Array;
   sourceOffset?: number;
+  /** New height-band wall: keep it beside its inherited native wall in draw order. */
+  insertBefore?: number;
   /** Source outline edge index, before runtime decomposition. */
   boundaryIndex?: number;
   /** Full authored lighting span before cutting a new opening. */

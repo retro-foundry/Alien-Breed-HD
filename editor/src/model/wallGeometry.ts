@@ -1,3 +1,6 @@
+import { BinaryReader } from './binary';
+import { readWallSurface } from './surfaces';
+import { mechanismsForRoom } from './mechanismDependencies';
 import { normaliseRoomOutline, type Position } from './geometry';
 import type { Graphic, LevelDocument } from './level';
 import type { GraphicsRecordInput } from './graphicsBuild';
@@ -5,7 +8,7 @@ import type { RoomSource, SourceRoom } from './roomSource';
 import type { RoomTopology } from './roomTopology';
 import { encodeWallSurface, type WallSurface } from './surfaces';
 import { wallForSpan } from './surfaceGeometry';
-import { changedPortalEdges, hasUpperLayer, newPortalTarget, portalWallSpans, unassignedBoundaryEdges } from './portalWalls';
+import { changedPortalEdges, heightPortalTarget, hasUpperLayer, newPortalTarget, portalWallSpans, unassignedBoundaryEdges } from './portalWalls';
 import { roomSettings } from './roomHeights';
 import { hasNativeWallMaterials } from './roomMaterials';
 import { nativeRoomTranslation, outlineTranslation } from './roomTranslation';
@@ -73,6 +76,14 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
     const dx = translation?.x ?? 0, dz = translation?.z ?? 0;
     const translatedWholeRoom = !!translation && whole?.x === 0 && whole.z === 0;
     const retained = (record: Graphic) => record.points.every(id => points[id]?.x === document.points[id]!.x && points[id]?.z === document.points[id]!.z);
+    // A moving neighbour's static frame surrounds its full swept aperture.
+    // Closing it at its initial plane would permanently seal an animated door.
+    const aperture=(target: typeof cell,original=false)=>{
+      let result=original?document.zones.find(zone=>zone.id===target.recordZone)!:roomSettings(document,target);
+      for(const mechanism of mechanismsForRoom(document,target.recordZone))result={...result,
+        ...(mechanism.kind==='door'?{ceiling:Math.min(result.ceiling,mechanism.top)}:{floor:Math.max(result.floor,mechanism.bottom)})};
+      return result;
+    };
     const layer = (records: readonly Graphic[], selected: readonly WallSurface[] | undefined, upper: boolean): GraphicsRecordInput[] => {
       if (!native) {
         if (!selected) throw new Error(`Room ${room.id} needs explicit wall materials before building.`);
@@ -96,13 +107,23 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
         const original = record.wall!, floor = upper ? 'upperFloor' : 'floor', roof = upper ? 'upperCeiling' : 'ceiling';
         // The draw stream owns the storey. Match that storey's authored air
         // boundaries exactly; other decorative world heights stay authored.
-        const material = { ...original, topFixed: original.topFixed === template[roof] * 256 ? settings[roof] * 256 : original.topFixed,
+        let material = { ...original, topFixed: original.topFixed === template[roof] * 256 ? settings[roof] * 256 : original.topFixed,
           bottomFixed: original.bottomFixed === template[floor] * 256 ? settings[floor] * 256 : original.bottomFixed };
-        const heightChanged = material.topFixed !== original.topFixed || material.bottomFixed !== original.bottomFixed;
+        let heightChanged = material.topFixed !== original.topFixed || material.bottomFixed !== original.bottomFixed;
         const a = document.points[material.points[0]]!, b = document.points[material.points[1]]!;
         const lineId = template.boundaryIds.find(id => {
           const line = document.lines[id]!; return on(a, line, { x: line.x + line.dx, z: line.z + line.dz }) && on(b, line, { x: line.x + line.dx, z: line.z + line.dz });
         });
+        const heightEdge=cell.vertices.findIndex((_,edge)=>cell.sourceLines[edge]===lineId && heightPortalTarget(document,topology,cell,edge));
+        const heightTarget=heightEdge<0?undefined:heightPortalTarget(document,topology,cell,heightEdge);
+        const controlled=document.mechanisms.some(item=>item.walls.some(wall=>wall.graphic===record.offset));
+        if(heightTarget && !controlled){
+          const before=document.zones.find(zone=>zone.id===heightTarget.recordZone)!,after=roomSettings(document,heightTarget);
+          for(const field of ['floor','upperFloor'] as const)if(original.topFixed===before[field]*256 && original.topFixed!==template[roof]*256)material={...material,topFixed:after[field]*256};
+          for(const field of ['ceiling','upperCeiling'] as const)if(original.bottomFixed===before[field]*256 && original.bottomFixed!==template[floor]*256)material={...material,bottomFixed:after[field]*256};
+          if(material.bottomFixed<=material.topFixed)return [];
+          heightChanged=material.topFixed!==original.topFixed||material.bottomFixed!==original.bottomFixed;
+        }
         const opened = cell.vertices.some((_, edge) => cell.sourceLines[edge] === lineId && newPortalTarget(document, topology, cell, edge));
         const changedLine = changed.some(edge => cell.sourceLines[edge] === lineId);
         if (unchanged && retained(record) && !opened && !changedLine && !heightChanged) return [{ sourceOffset: record.offset, bytes: document.files.graphics.slice(record.offset, record.offset + record.size) }];
@@ -130,7 +151,7 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
           uncut.push(bound);
           if (changed.includes(index)) continue;
           const target = newPortalTarget(document, topology, cell, index);
-          const spans = target ? portalWallSpans(document, bound, roomSettings(document, target)) : [bound];
+          const spans = target && !(heightTarget && (controlled || material.type===13)) ? portalWallSpans(document, bound, heightTarget ? aperture(target) : roomSettings(document, target)) : [bound];
           result.push(...spans.map(span => ({ sourceOffset: record.offset, bytes: encodeWallSurface(span) })));
         }
         if ((!opened && !changedLine) || !uncut.length) return result;
@@ -138,6 +159,59 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
         const start = [...starts].filter(id => !ends.has(id)), end = [...ends].filter(id => !starts.has(id));
         if (start.length !== 1 || end.length !== 1) throw new Error(`Room ${room.id} has an ambiguous doorway material-lighting span.`);
         return result.map(item => ({ ...item, lightingSpan: [points[start[0]!]!, points[end[0]!]!] as const }));
+      });
+      const inheritedFills=cell.vertices.flatMap((a,edge)=>{
+        const target=heightPortalTarget(document,topology,cell,edge);if(!target || upper && !hasUpperLayer(document,template))return [];
+        const b=cell.vertices[(edge+1)%cell.vertices.length]!,from=points[a]!,to=points[b]!,length=distance(from,to);
+        const roof=upper?'upperCeiling':'ceiling',floor=upper?'upperFloor':'floor';
+        if(settings[floor]<=settings[roof])return [];
+        const targetTemplate=document.zones.find(zone=>zone.id===target.recordZone)!;
+        const ownRecords=[...records,...(upper?template.lower:template.upper)].filter(record=>record.wall && record.wall.texture!==11);
+        const sourceRecords=ownRecords.length?ownRecords:[...(upper?targetTemplate.upper:targetTemplate.lower),...(upper?targetTemplate.lower:targetTemplate.upper)].filter(record=>record.wall&&record.wall.texture!==11);
+        const translated=(id:number)=>({x:document.points[id]!.x+dx,z:document.points[id]!.z+dz});
+        const along=(p:Position)=>((p.x-from.x)*(to.x-from.x)+(p.z-from.z)*(to.z-from.z))/length;
+        const existing=original.map(item=>readWallSurface(new BinaryReader(item.bytes,'height doorway wall'),0));
+        const divisions=[0,length,...existing.flatMap(wall=>wall.points.map(id=>points[id]!).filter(p=>on(p,from,to)).map(along))].sort((a,b)=>a-b).filter((n,i,list)=>i===0||Math.abs(n-list[i-1]!)>1e-7);
+        const result:GraphicsRecordInput[]=[];
+        for(let i=0;i<divisions.length-1;i++){
+          const start=divisions[i]!,end=divisions[i+1]!;if(end-start<1e-7)continue;
+          const position=(n:number)=>({x:from.x+(to.x-from.x)*n/length,z:from.z+(to.z-from.z)*n/length});
+          const p=position(start),q=position(end),middle=position((start+end)/2);
+          // Prefer this edge's actual band; otherwise continue a wall meeting
+          // its corner. Never choose a random level material or copy a switch.
+          const candidates=sourceRecords.filter(record=>{const x=translated(record.points[0]!),y=translated(record.points[1]!);return on(middle,x,y)||on(x,from,to)||on(y,from,to)||on(from,x,y)||on(to,x,y);});
+          let reference=candidates.find(record=>on(middle,translated(record.points[0]!),translated(record.points[1]!)))
+            ??candidates.find(record=>distance(translated(record.points[1]!),from)<1e-7)??candidates[0];
+          if(!reference){
+            const materialRoom=ownRecords.length?room:source.rooms.find(room=>room.id===target.sourceId)!;
+            const boundary=Math.max(0,sourceBoundaryIndex(materialRoom,from,to));
+            // An open portal can meet other open edges. Follow the same room's
+            // perimeter to its next authored wall instead of guessing a sheet.
+            for(let step=1;step<=materialRoom.vertices.length && !reference;step++){
+              const index=(boundary-step+materialRoom.vertices.length)%materialRoom.vertices.length,x=materialRoom.vertices[index]!,y=materialRoom.vertices[(index+1)%materialRoom.vertices.length]!;
+              reference=sourceRecords.find(record=>on(translated(record.points[0]!),x,y)&&on(translated(record.points[1]!),x,y));
+            }
+          }
+          const shape={topFixed:settings[roof]*256,bottomFixed:settings[floor]*256};
+          let missing=portalWallSpans(document,shape,aperture(target)).map(wall=>({top:wall.topFixed,bottom:wall.bottomFixed}));
+          // Preserve intentional native omissions: add only newly exposed
+          // solid area, not every theoretical wall absent in the original art.
+          const previous=portalWallSpans(document,{topFixed:template[roof]*256,bottomFixed:template[floor]*256},aperture(target,true));
+          for(const wall of previous)missing=missing.flatMap(span=>wall.bottomFixed<=span.top||wall.topFixed>=span.bottom?[span]:[{top:span.top,bottom:Math.min(span.bottom,wall.topFixed)},{top:Math.max(span.top,wall.bottomFixed),bottom:span.bottom}].filter(span=>span.bottom>span.top));
+          for(const wall of existing.filter(wall=>on(middle,points[wall.points[0]]!,points[wall.points[1]]!)))missing=missing.flatMap(span=>wall.bottomFixed<=span.top||wall.topFixed>=span.bottom?[span]:[{top:span.top,bottom:Math.min(span.bottom,wall.topFixed)},{top:Math.max(span.top,wall.bottomFixed),bottom:span.bottom}].filter(span=>span.bottom>span.top));
+          if(!missing.length)continue;
+          if(!reference)throw new Error(`Room ${room.id} has no adjoining authored wall material for its changed height band (${upper?"upper":"lower"}, ${sourceRecords.length} styles).`);
+          const referenceRoom=ownRecords.length?room:source.rooms.find(room=>room.id===target.sourceId)!;
+          const referenceUpper=(ownRecords.length?template:targetTemplate).upper.some(record=>record.offset===reference.offset);
+          const sourceWall=reference.wall!,paint=referenceRoom.wallMaterials?.find(item=>item.record===reference.offset&&item.upper===referenceUpper),material={...sourceWall,...(paint?{texture:paint.texture,verticalMask:paint.verticalMask,verticalShift:paint.verticalShift,horizontalMask:paint.horizontalMask}:{})};
+          const x=translated(sourceWall.points[0]),y=translated(sourceWall.points[1]),referenceLength=distance(x,y),density=(material.stripEnd-material.stripStart)/referenceLength;
+          const offset=on(middle,x,y)?((p.x-x.x)*(y.x-x.x)+(p.z-x.z)*(y.z-x.z))/referenceLength:distance(y,from)<1e-7?referenceLength+start:start;
+          const base={...material,stripStart:material.stripStart+Math.trunc(offset*density),stripEnd:material.stripStart+Math.trunc(offset*density)+(material.stripEnd-material.stripStart)};
+          const pointA=pointId(p),pointB=pointId(q),bound=wallForSpan(base,referenceLength,[pointA,pointB],0,end-start),boundaryIndex=sourceBoundaryIndex(room,points[pointA]!,points[pointB]!);
+          if(boundaryIndex<0)throw new Error(`Room ${room.id} lost its height-band boundary identity.`);
+          result.push(...missing.map(span=>({bytes:encodeWallSurface({...bound,topFixed:span.top,bottomFixed:span.bottom}),insertBefore:records.some(record=>record.offset===reference.offset)?reference.offset:records.find(record=>record.wall||record.polygon)?.offset??-1,boundaryIndex,lightingSpan:[from,to] as const})));
+        }
+        return result;
       });
       const fills = changed.flatMap(edge => (selected ?? []).flatMap(material => {
         const start = document.points[material.points[0]], end = document.points[material.points[1]];
@@ -156,7 +230,7 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
         if (boundaryIndex < 0) throw new Error(`Room ${room.id} lost its repaired boundary identity.`);
         return spans.map(span => ({ bytes: encodeWallSurface(span), lightingPoint: closing!.lightingPoint, boundaryIndex }));
       }));
-      return [...original, ...fills];
+      return [...original, ...inheritedFills, ...fills];
     };
     const selected = native ? closing?.walls : newMaterials.get(room.id);
     walls.set(cell.id, { lower: layer(template.lower, selected?.lower, false), upper: layer(template.upper, selected?.upper ?? (native ? undefined : []), true) });

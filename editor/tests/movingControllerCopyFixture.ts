@@ -33,5 +33,5 @@ export function movingControllerCopyFixture(kind: 'door' | 'lift') {
   copiedView.setInt16(2, (mechanism.top + 8.25) * 4); copiedView.setUint8(16, kind === 'door' ? 4 : 2);
   const copy: MovingControllerCopy = { kind, id: mechanism.id, room: mapping.get(dependencies.room)!, graphicsRooms: mapping,
     collisionRooms: new Map(dependencies.walls.map(wall => [wall.line, mapping.get(wall.collisionRooms[0]!)!])), header: copiedHeader };
-  return { document, copy, mechanism, added };
+  return { document, copy, mechanism, added, baseline };
 }

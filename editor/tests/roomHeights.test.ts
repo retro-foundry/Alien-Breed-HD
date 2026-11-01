@@ -63,7 +63,7 @@ it('rebuilds both sides of an existing imported doorway after its destination he
   const fixture = closedPortalFixture(), template = fixture.baseline.zones[fixture.removed.recordZone]!;
   let source = applyCommand(fixture.baseline, editRoomSource(setRoomHeights(fixture.baseline, fixture.baseline.roomSource, fixture.removed.id,
     { floor: -32, ceiling: -160, upperFloor: template.upperFloor, upperCeiling: template.upperCeiling })));
-  expect(() => buildPlayableLevel(source, -1)).toThrow(/changed doorway needing a wall style/);
+  expect(() => buildPlayableLevel(source, -1)).not.toThrow();
   source = applyCommand(source, editRoomAppearance(source, fixture.appearance));
   const ownWall = source.zones[fixture.removed.recordZone]!.lower.find(record => record.wall)!;
   source = applyCommand(source, editRoomAppearance(source, { room: fixture.removed.id, lowerWall: ownWall.offset, upperWall: null, lightingPoint: ownWall.points[0]! }));

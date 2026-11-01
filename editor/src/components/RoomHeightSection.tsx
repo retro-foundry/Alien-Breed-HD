@@ -3,6 +3,7 @@ import type { Zone } from '../model/level';
 import { restoreRoomHeights, type RoomHeights } from '../model/roomHeights';
 import './RoomHeightSection.css';
 
+const sectionHeight = 400, plotTop = 24, plotHeight = sectionHeight - plotTop * 2;
 const names = { floor: 'Lower floor', ceiling: 'Lower ceiling', upperFloor: 'Upper floor', upperCeiling: 'Upper ceiling' };
 type Plane = keyof RoomHeights;
 interface Gesture { pointer: number; field: Plane; startY: number; startHeight: number; min: number; max: number; next: RoomHeights }
@@ -24,7 +25,7 @@ export function RoomHeightSection({ settings, baseline, onCommit }: { settings: 
   const values = fields.map(field => settings[field]), span = Math.max(16, Math.max(...values) - Math.min(...values));
   const min = gesture.current?.min ?? Math.min(...values) - span * 0.2;
   const max = gesture.current?.max ?? Math.max(...values) + span * 0.2;
-  const y = (height: number) => 24 + (height - min) / (max - min) * 192;
+  const y = (height: number) => plotTop + (height - min) / (max - min) * plotHeight;
   let error = '';
   if (draft) try { restoreRoomHeights(draft, settings); } catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
   const cancel = () => { gesture.current = null; setDraft(null); };
@@ -36,13 +37,13 @@ export function RoomHeightSection({ settings, baseline, onCommit }: { settings: 
   const move = (event: PointerEvent<SVGGElement>) => {
     const active = gesture.current;
     if (!active || active.pointer !== event.pointerId) return;
-    const value = active.startHeight + (pointY(event) - active.startY) * (active.max - active.min) / 192;
+    const value = active.startHeight + (pointY(event) - active.startY) * (active.max - active.min) / plotHeight;
     const bounded = Math.max(-8192, Math.min(8191.75, Math.round(value * 4) / 4));
     const next = { ...original, [active.field]: bounded }; active.next = next; setDraft(next);
   };
   return <div className="room-height-section">
     <p className="field-note" id="height-section-help">Side section: shaded bands are usable room space. Drag a floor or ceiling up/down. Release applies one edit; Escape cancels. Focus a line and use ↑/↓ for quarters, Shift for 4 units. Preview rebuilds after applying.</p>
-    <svg ref={svg} viewBox="0 0 240 240" role="group" aria-label="Room height section" aria-describedby="height-section-help">
+    <svg ref={svg} viewBox={`0 0 240 ${sectionHeight}`} width="240" height={sectionHeight} role="group" aria-label="Room height section" aria-describedby="height-section-help">
       {gap > 0 && <rect className="height-between-storeys" x="12" width="216" y={y(heights.upperFloor)} height={Math.max(0, y(heights.ceiling) - y(heights.upperFloor))} />}
       <rect className="height-air" x="12" width="216" y={y(heights.ceiling)} height={Math.max(0, y(heights.floor) - y(heights.ceiling))} />
       {fields.length === 4 && <rect className="height-air upper" x="12" width="216" y={y(heights.upperCeiling)} height={Math.max(0, y(heights.upperFloor) - y(heights.upperCeiling))} />}

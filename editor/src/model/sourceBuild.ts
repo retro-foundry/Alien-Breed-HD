@@ -14,7 +14,7 @@ import { compileRoomTopology } from './roomTopology';
 import { buildSourceVisibility } from './visibilityTables';
 import { buildZoneRecords } from './zoneBuild';
 import { buildDrawTopology } from './drawTopology';
-import { closedPortalEdges, newPortalTarget, unassignedBoundaryEdges } from './portalWalls';
+import { closedPortalEdges, heightPortalTarget, newPortalTarget, unassignedBoundaryEdges } from './portalWalls';
 import { resolveAnimationRoom } from './animationRooms';
 import { airHeightsChanged } from './roomHeights';
 import { hasNativeWallMaterials } from './roomMaterials';
@@ -84,7 +84,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
     if (neighbour < 0) return;
     const target = topology.cells.find(target => target.id === neighbour)!;
     if (target.sourceId === cell.sourceId) return;
-    if (!newPortalTarget(document, topology, cell, edge)) return;
+    if (!newPortalTarget(document, topology, cell, edge) || heightPortalTarget(document,topology,cell,edge)) return;
     if ((cell.originZone !== null && moving.has(cell.originZone)) || (target.originZone !== null && moving.has(target.originZone)))
       throw new Error('A new doorway into a moving door or lift needs synchronized wall animation attachments before building. Choose a static room boundary.');
   });

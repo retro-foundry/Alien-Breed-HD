@@ -68,14 +68,15 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
     const layer = (records: readonly Graphic[], upper: boolean): GraphicsRecordInput[] => {
       const wallRecords = upper ? wallLayers.upper : wallLayers.lower, polygonRecords = upper ? polygonLayers.upper : polygonLayers.lower;
       const insertion = upper ? selection?.wallInsertion.upper : selection?.wallInsertion.lower;
-      const additions = wallRecords.filter(item => item.sourceOffset === undefined);
-      if ((!native || additions.length > 0) && ((insertion === undefined && wallRecords.length > 0)
+      const additions = wallRecords.filter(item => item.sourceOffset === undefined), explicitAdditions=additions.filter(item=>item.insertBefore===undefined);
+      if ((!native || explicitAdditions.length > 0) && ((insertion === undefined && wallRecords.length > 0)
         || (insertion !== undefined && (!Number.isInteger(insertion) || insertion < 0 || insertion > records.length))))
         throw new Error(`Room ${room.id} needs a valid ${upper ? 'upper' : 'lower'} wall insertion position in its material template.`);
       const result: GraphicsRecordInput[] = [];
       for (let index = 0; index <= records.length; index++) {
-        if (index === insertion) result.push(...additions);
-        const record = records[index]; if (!record) continue;
+        if (index === insertion) result.push(...explicitAdditions);
+        const record = records[index]; if (!record) { result.push(...additions.filter(item=>item.insertBefore===-1)); continue; }
+        result.push(...additions.filter(item=>item.insertBefore===record.offset));
         if (record.wall) {
           if (native) result.push(...wallRecords.filter(item => item.sourceOffset === record.offset));
         } else if (record.polygon) result.push(...polygonRecords.filter(item => item.sourceOffset === record.offset));

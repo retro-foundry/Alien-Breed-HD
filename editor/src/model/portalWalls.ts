@@ -20,6 +20,15 @@ export function newPortalTarget(document: LevelDocument, topology: RoomTopology,
     && !airHeightsChanged(document, cell) && !airHeightsChanged(document, target) ? undefined : target;
 }
 
+/** An existing doorway whose destination identity is unchanged only needs its
+ * air bands updated. It must retain native materials, not demand a new style. */
+export function heightPortalTarget(document: LevelDocument, topology: RoomTopology, cell: CompiledRoomCell, edge: number): CompiledRoomCell | undefined {
+  const target=topology.cells.find(item=>item.id===cell.neighbours[edge]),line=cell.sourceLines[edge];
+  if(!target || target.sourceId===cell.sourceId || line==null || !hasNativeWallMaterials(cell.originZone,cell.sourceLines))return;
+  const origin=target.originZone??(hasNativeWallMaterials(target.originZone,target.sourceLines)?target.recordZone:null);
+  return document.lines[line]!.connect===origin && (airHeightsChanged(document,cell)||airHeightsChanged(document,target)) ? target : undefined;
+}
+
 /** Original portals whose destination no longer shares this generated edge
  * need new solid graphics as well as closed collision geometry. */
 export function closedPortalEdges(document: LevelDocument, cell: CompiledRoomCell): number[] {
@@ -37,7 +46,7 @@ export function changedPortalEdges(document: LevelDocument, topology: RoomTopolo
   return cell.neighbours.flatMap((neighbour, edge) => {
     const line = cell.sourceLines[edge];
     return line != null && document.lines[line]!.connect >= 0
-      && (neighbour < 0 || newPortalTarget(document, topology, cell, edge)) ? [edge] : [];
+      && (neighbour < 0 || newPortalTarget(document, topology, cell, edge) && !heightPortalTarget(document,topology,cell,edge)) ? [edge] : [];
   });
 }
 
@@ -58,7 +67,7 @@ export function hasUpperLayer(document: LevelDocument, zone: Zone): boolean {
  * floor/roof tests. Wall heights use the native signed 24.8 representation.
  * Subtract all destination air bands to leave steps, lintels and the solid
  * band between floors. Preserve every material/sampling/phase field. */
-export function portalWallSpans(document: LevelDocument, material: WallSurface, destination: Zone): WallSurface[] {
+export function portalWallSpans<T extends Pick<WallSurface,'topFixed'|'bottomFixed'>>(document: LevelDocument, material: T, destination: Zone): T[] {
   const upper = hasUpperLayer(document, destination);
   const openings = [{ top: destination.ceiling * 256, bottom: destination.floor * 256 },
     ...(upper ? [{ top: destination.upperCeiling * 256, bottom: destination.upperFloor * 256 }] : [])]
