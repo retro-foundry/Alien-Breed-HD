@@ -29,6 +29,9 @@ Opening local files does not upload them anywhere.
   **Frame visibility** fits the inspected area without changing source. Choose a
   clip target to show its left (blue) and right (pink) boundary points. The table
   distinguishes saved flags from actual word offsets assigned by the native loader.
+  **Hide visibility controls** clears the panel out of the way while keeping its
+  diagnostic drawing. Show controls restores your cell/target choices. Scrolling
+  a long table keeps the map view fixed.
 - Add enemies, pickups or scenery with **Add object**. Choose an existing level
   record as the settings template, a destination room and coordinates. Floor
   matching preserves its offset from the floor; turn it off for a manual height

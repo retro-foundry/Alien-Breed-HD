@@ -1,7 +1,8 @@
 .visibility-overlay { position: absolute; top: 42px; left: 12px; z-index: 3; max-width: min(300px, calc(100% - 24px)); font-size: 11px; }
 .visibility-overlay > button { padding: 5px 9px; background: #202a32; border: 1px solid #697b83; border-radius: 4px; color: #d6e6ed; }
 .visibility-overlay > button[aria-pressed=true] { border-color: #65cad5; color: #a7edf4; }
-.visibility-content { margin-top: 5px; padding: 9px; background: #162028f2; border: 1px solid #4a626e; border-radius: 4px; max-height: min(300px, 45vh); overflow: auto; }
+.visibility-overlay > button + button { margin-left: 4px; }
+.visibility-content { margin-top: 5px; padding: 9px; background: #162028f2; border: 1px solid #4a626e; border-radius: 4px; max-height: min(300px, 45vh); overflow: auto; overscroll-behavior: contain; }
 .visibility-content p { margin: 6px 0; line-height: 1.4; }
 .visibility-content select { margin-left: 8px; }
 .visibility-content summary { cursor: pointer; }

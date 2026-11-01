@@ -52,10 +52,34 @@ test('visibility inspection shows current compiled cells and exact native table 
   const amber = colours.find(colour => colour.origin)!.rgb, cyan = colours.find(colour => !colour.origin)!.rgb;
   expect(amber[0]!).toBeGreaterThan(amber[1]!);
   expect(cyan[1]! - cyan[0]!).toBeGreaterThan(20);
+  const beforeHide = await map.evaluate(node => (node as HTMLCanvasElement).toDataURL());
+  await panel.getByRole('button', { name: 'Hide visibility controls', exact: true }).click();
+  await expect(cell).toBeHidden();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  expect(await map.evaluate(node => (node as HTMLCanvasElement).toDataURL())).toBe(beforeHide);
+  await panel.getByRole('button', { name: 'Show visibility controls', exact: true }).click();
+  await expect(cell).toHaveValue(String(other.selected));
+  await expect(panel.getByRole('combobox', { name: 'Visibility clip target' })).toHaveValue(String(other.target));
   await expect(page.locator('.dirty-dot')).toHaveCount(0);
   await page.mouse.move(0, 0);
   await page.screenshot({ path: testInfo.outputPath('visibility-overlay.png'), fullPage: true });
   await toggle.click(); await expect(cell).toHaveCount(0);
+});
+
+test('scrolling a long visibility table leaves map zoom and centre unchanged', async ({ page }) => {
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.getByRole('button', { name: /^Zone 000(?:\s|$)/ }).click();
+  const panel = page.getByRole('region', { name: 'Visibility inspection' });
+  await panel.getByRole('button', { name: 'Visibility overlay', exact: true }).click();
+  await expect(panel.getByRole('combobox', { name: 'Visibility runtime cell' })).toBeVisible();
+  await panel.getByText('Runtime visibility table', { exact: true }).click();
+  const map = page.locator('canvas[aria-label="Level map"]');
+  const before = await map.evaluate(node => ({ ...((node as HTMLCanvasElement).dataset) }));
+  const content = panel.locator('.visibility-content');
+  await content.hover(); await page.mouse.wheel(0, 600);
+  await expect.poll(() => content.evaluate(node => node.scrollTop)).toBeGreaterThan(0);
+  expect(await map.evaluate(node => ({ ...((node as HTMLCanvasElement).dataset) }))).toEqual(before);
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
 });
 
 test('failed source builds remove old visibility and undo restores a valid inspection', async ({ page }) => {

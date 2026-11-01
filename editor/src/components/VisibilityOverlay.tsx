@@ -28,10 +28,13 @@ export function useVisibilityInspection(document: LevelDocument, room: string | 
 }
 
 export function VisibilityOverlay({ state, onFrame }: { state: ReturnType<typeof useVisibilityInspection>; onFrame: () => void }) {
+  const [controlsOpen, setControlsOpen] = useState(true);
   return <section className="visibility-overlay" aria-label="Visibility inspection">
     <button aria-pressed={state.enabled} title="Inspect the exact visibility tables used by preview and export. Cyan marks potential visibility, amber the selected runtime cell, green its portals. These are conservative candidates, not exact line of sight."
       onClick={state.toggle}>Visibility overlay</button>
-    {state.enabled && <div className="visibility-content">
+    {state.enabled && <button aria-expanded={controlsOpen} aria-controls="visibility-controls" title="Hide or show the inspection controls while keeping the visibility colours, portals and clipping points drawn on the map."
+      onClick={() => setControlsOpen(open => !open)}>{controlsOpen ? 'Hide visibility controls' : 'Show visibility controls'}</button>}
+    {state.enabled && <div id="visibility-controls" className="visibility-content" hidden={!controlsOpen}>
       {state.loading ? <p role="status">Building current visibility…</p> : state.error ? <><p role="alert">{state.error}</p><button onClick={state.retry} title="Retry compiling visibility from the current source. No source edits are made.">Retry visibility</button></>
         : !state.inspection?.cells.length ? <p role="status">Select a room to inspect its visibility.</p> : <>
           <label>Runtime cell <select aria-label="Visibility runtime cell" title="Concave source rooms may compile to several convex cells. Inspect each cell's own visibility table." value={state.inspection.selected} onChange={event => state.setCell(Number(event.target.value))}>

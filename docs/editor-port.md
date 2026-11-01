@@ -1307,3 +1307,10 @@ fixtures can establish current-format support independently.
   tests, production builds and four Chromium/Firefox inspection scenarios pass.
   This is inspection tooling; broader runtime PVS/occlusion validation remains
   open, along with the other full-editor requirements and final deployment.
+
+- Visibility panel interaction checkpoint: controls can now be hidden without
+  disabling diagnostic drawing, with cell and target choices retained when
+  reopened. Long tables contain overscroll. Chromium/Firefox checks confirm
+  scrolling leaves map scale/centre unchanged and hiding controls leaves the
+  actual canvas pixels unchanged. All six focused browser cases and production
+  builds pass. This change touches UI only; remaining full-editor work stays open.
