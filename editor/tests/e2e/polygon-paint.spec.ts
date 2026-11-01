@@ -46,6 +46,7 @@ for (const upper of [false, true]) for (const type of [1, 2]) test(`paint a ${up
   await page.screenshot({ path: testInfo.outputPath('floor-pattern-draft.png'), fullPage: true });
   await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0);
   expect(await captureEngine(page, camera)).toBe(beforeHash);
+  await canvas.click({ position: { x: point.x * rect.width, y: point.y * rect.height } });
   await page.getByRole('button', { name: 'Paint this surface', exact: true }).click();
   await dialog.getByRole('combobox', { name: 'Surface pattern' }).selectOption(String(texture));
   await dialog.getByRole('combobox', { name: 'Surface texture repeat' }).selectOption('-5');
