@@ -15,6 +15,18 @@ export async function engineRoomProperties(page: Page, zone: number): Promise<Ro
 }
 
 export interface EngineCamera { zone: number; x: number; z: number; upper: number; angle: number; height?: number }
+export async function engineSwitchState(page: Page, index: number): Promise<{ zone: number; active: boolean; phase: number; countdown: number }> {
+  return page.evaluate(index => new Promise((resolve, reject) => {
+    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();
+    const timer = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('Engine switch query timed out')); }, 10000);
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'switch-state' || event.data.id !== id) return;
+      clearTimeout(timer); window.removeEventListener('message', receive); resolve(event.data.switch);
+    };
+    window.addEventListener('message', receive);
+    frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'switch-state', id, index }, location.origin);
+  }), index);
+}
 export async function engineWaterState(page: Page, entries: readonly { zone: number; graphic: number }[]): Promise<{ zone: number; water: number; polygon: number }[]> {
   return page.evaluate(entries => new Promise((resolve, reject) => {
     const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();

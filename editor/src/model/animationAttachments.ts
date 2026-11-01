@@ -1,4 +1,4 @@
-import { importedAnimationTables, type AnimationTargetContext, type MovingRoomAnimation } from './animationBuild';
+import { importedAnimationTables, type AnimationTargetContext, type MovingRoomAnimation, type SwitchAnimation } from './animationBuild';
 import { BinaryReader, checkedInteger } from './binary';
 import type { CellGraphics } from './cellGraphics';
 import type { CollisionGeometry } from './collisionBuild';
@@ -9,6 +9,7 @@ import type { PointLightingBinding } from './pointLighting';
 import { resolveAnimationRoom } from './animationRooms';
 import { hasNativeWallMaterials } from './roomMaterials';
 import type { MovingControllerCopy } from './movingControllerCopies';
+import type { SwitchCopy } from './switchCopies';
 
 const key = (pointer: number, context: AnimationTargetContext) => `${pointer}:${context.kind}:${context.zone}:${context.line ?? ''}`;
 const on = (p: { x: number; z: number }, a: { x: number; z: number }, b: { x: number; z: number }) =>
@@ -22,7 +23,7 @@ const on = (p: { x: number; z: number }, a: { x: number; z: number }, b: { x: nu
  * Moving-room and switch controller grouping requires a separate runtime
  * contract, so splitting those controlled volumes is rejected explicitly.
  */
-export function buildAnimationAttachments(document: LevelDocument, graphics: CellGraphics, collision: CollisionGeometry, copies: readonly MovingControllerCopy[] = []) {
+export function buildAnimationAttachments(document: LevelDocument, graphics: CellGraphics, collision: CollisionGeometry, copies: readonly MovingControllerCopy[] = [], switchCopies: readonly SwitchCopy[] = []) {
   const { tables } = importedAnimationTables(document), topology = graphics.topology;
   const points = topology.points.map(point => ({ ...point })), addedLighting = new Map<number, PointLightingBinding>();
   const origins = new Map<number, number[]>();
@@ -160,9 +161,7 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
       choose(entry.graphic, { kind: 'water', zone }, 0, waterTargets); return { ...entry, zone };
     })];
   }) }));
-  const switches = tables.switches?.map(record => {
-    if (record.zone < 0) return record;
-    const zone = singleRoom(record.zone, 'Switch'), target = choose(record.graphic, { kind: 'switch', zone }, 10);
+  const attachSwitch = (record: SwitchAnimation, zone: number, target: Target, independent = false) => {
     const original = originals.get(record.graphic - 10)!.record;
     const [a, b] = original.points.map(id => document.points[id]!), [c, d] = target.record.points.map(id => points[id]!);
     const ox = b!.x - a!.x, oz = b!.z - a!.z, nx = d!.x - c!.x, nz = d!.z - c!.z;
@@ -174,12 +173,28 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
       return { x: checkedInteger(Math.round((c!.x + d!.x) / 2 + cosine * x - sine * z), -32768, 32767, 'Switch activation X'),
         z: checkedInteger(Math.round((c!.z + d!.z) / 2 + sine * x + cosine * z), -32768, 32767, 'Switch activation Z') };
     });
-    if (pair.every((point, index) => point.x === document.points[record.point + index]!.x && point.z === document.points[record.point + index]!.z)) return { ...record, zone };
+    if (!independent && pair.every((point, index) => point.x === document.points[record.point + index]!.x && point.z === document.points[record.point + index]!.z)) return { ...record, zone };
     if (points.length + 2 > 2048) throw new Error('Switch activation pairs exceed the engine limit of 2,048 points.');
     const point = points.length;
     pair.forEach((position, index) => { points.push(position); addedLighting.set(point + index, { kind: 'copy', source: record.point + index }); });
     return { ...record, zone, point };
+  };
+  const switches = tables.switches?.map(record => {
+    if (record.zone < 0) return record;
+    const zone = singleRoom(record.zone, 'Switch'), target = choose(record.graphic, { kind: 'switch', zone }, 10);
+    return attachSwitch(record, zone, target);
   }) ?? null;
+  for (const copy of switchCopies) {
+    const record = tables.switches?.[copy.id];
+    if (!record || !switches || record.zone < 0 || switches[copy.slot]!.zone >= 0) throw new Error('A copied switch lost its active template or unused destination slot.');
+    const cells = topology.cells.filter(cell => cell.sourceId === copy.room);
+    if (cells.length !== 1) throw new Error('A copied switch needs one explicit activation room.');
+    const zone = cells[0]!.id;
+    const targets = (copiedTargets.get(record.graphic - 10) ?? []).filter(target => topology.cells.find(cell => cell.id === target.room)!.sourceId === copy.graphicsRoom);
+    if (targets.length !== 1) throw new Error(`A copied switch needs one independently mapped graphics record; found ${targets.length}. Restore its complete wall before building.`);
+    bind(record.graphic, { kind: 'switch', zone }, targets[0]!);
+    switches[copy.slot] = attachSwitch({ ...record, bytes: copy.bytes?.slice() ?? record.bytes.slice() }, zone, targets[0]!, true);
+  }
   const selectTarget: SelectGraphicsTarget = (pointer, context, candidates) => {
     const target = selected.get(key(pointer, context));
     if (!target || !candidates.some(candidate => candidate.room === target.room && candidate.upper === target.upper && candidate.index === target.index))

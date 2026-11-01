@@ -123,6 +123,12 @@
       if (loaded && request.type === 'mechanism-state') {
         send('mechanism-state', {id:request.id, mechanism:mechanismState(request.kind, request.index)});
       }
+      if (loaded && request.type === 'switch-state') {
+        if (!Number.isInteger(request.index) || request.index < 0 || request.index >= 8) throw new Error('Invalid switch inspection slot.');
+        const value = field => engine._editor_switch_value(request.index, field);
+        if (value(0) < 0 || value(2) === -2147483648) throw new Error('The inspected switch has no active graphics attachment.');
+        send('switch-state', {id:request.id, switch:{zone:value(0), active:Boolean(value(1)), phase:value(2), countdown:value(3)}});
+      }
       if (loaded && request.type === 'mechanism-trace') {
         mechanismState(request.kind, request.index);
         const revision = currentRevision, started = performance.now(), samples = [];

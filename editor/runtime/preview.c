@@ -179,6 +179,22 @@ EMSCRIPTEN_KEEPALIVE void editor_play(int playing)
  * including teleports, rather than the imported header's spawn metadata. */
 EMSCRIPTEN_KEEPALIVE int editor_player_zone(void) { return preview_loaded ? g_state.plr1.zone : -1; }
 EMSCRIPTEN_KEEPALIVE int editor_conditions(void) { return (uint16_t)game_conditions; }
+/* Read-only SwitchRoutine state and its actual wall phase write. */
+EMSCRIPTEN_KEEPALIVE int editor_switch_value(int index, int field)
+{
+    if (!preview_loaded || !g_state.level.switch_data || index < 0 || index >= 8) return field == 0 ? -1 : 0;
+    const uint8_t *record = g_state.level.switch_data + index * 14;
+    if (field == 0) return obj_w(record);
+    if (field == 1) return record[10] != 0;
+    if (field == 3) return (int8_t)record[3];
+    if (field == 2) {
+        int32_t graphic = obj_l(record + 6);
+        if (!g_state.level.graphics || graphic < 0 || g_state.level.graphics_byte_count < 2u ||
+            (size_t)graphic > g_state.level.graphics_byte_count - 2u) return INT32_MIN;
+        return (uint16_t)obj_w(g_state.level.graphics + graphic);
+    }
+    return 0;
+}
 EMSCRIPTEN_KEEPALIVE int editor_ammunition(int gun) { return preview_loaded && gun >= 0 && gun < MAX_GUNS ? g_state.plr1.gun_data[gun].ammo : -1; }
 EMSCRIPTEN_KEEPALIVE int editor_weapon_owned(int gun) { return preview_loaded && gun >= 0 && gun < MAX_GUNS ? g_state.plr1.gun_data[gun].visible != 0 : 0; }
 /* Read-only native moving-room state, after level.c converts quarter-unit

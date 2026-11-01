@@ -1785,3 +1785,19 @@ fixtures can establish current-format support independently.
   All 756 model tests, 26 Chromium/Firefox copied/original motion and controls
   cases, and the production build pass; the copied-control layout was inspected.
   Room-copy/creation UI, switches and broader motion authoring remain required.
+
+  The compiler now allocates independent switch copies into unused native slots,
+  preserving the eight-slot / condition-bit contract. Activation and graphics
+  rooms are mapped separately; copies get fresh point pairs and graphics phase
+  targets while originals remain unchanged. Shared point/wall transformation
+  logic validates both paths. Explicit condition remapping preserves key/external
+  requirements and rejects aliases. The tested native switch doorway needs its
+  adjoining corridor rooms to retain the wall attachment; incomplete mappings
+  remain actionable build errors. A read-only bounded runtime switch probe allows
+  actual Space activation tests to prove the new condition bit/wall phase changes
+  without affecting the original. All 759 model tests, ten focused Chromium/
+  Firefox switch/copy-control/attachment cases and production/runtime builds pass.
+  CI 41277373768 (408c592) and 41277738298 (490e95f) also completed successfully on
+  Windows/Linux; newer changes still need their own full CI evidence. Editable
+  switch-source persistence, ordinary switch/room-copy authoring and remaining
+  full-editor requirements stay open. No gameplay routines were changed.

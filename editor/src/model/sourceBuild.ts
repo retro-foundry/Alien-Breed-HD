@@ -18,6 +18,7 @@ import { airHeightsChanged } from './roomHeights';
 import { hasNativeWallMaterials } from './roomMaterials';
 import { mechanismDependencies, mechanismsForRoom } from './mechanismDependencies';
 import { compileControllerCopies, validateMovingControllerCopies, type MovingControllerCopy } from './movingControllerCopies';
+import { validateSwitchCopies, type SwitchCopy } from './switchCopies';
 
 export interface SourceBuildOptions {
   /** Resolved game configuration in source room identities; -1 disables exit.
@@ -29,6 +30,7 @@ export interface SourceBuildOptions {
   newRoomLighting?: ReadonlyMap<string, PointLightingBinding>;
   closingRoomGraphics?: ReadonlyMap<string, ClosingRoomGraphics>;
   controllerCopies?: readonly MovingControllerCopy[];
+  switchCopies?: readonly SwitchCopy[];
 }
 
 /** Atomic complete-source assembly. The source document/archive remains the
@@ -39,6 +41,8 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
   const source = document.roomSource;
   const controllerCopies = options.controllerCopies ?? compileControllerCopies(source.controllerCopies ?? []);
   validateMovingControllerCopies(document, controllerCopies);
+  const switchCopies = options.switchCopies ?? [];
+  validateSwitchCopies(document, switchCopies);
   const topology = compileRoomTopology(document, source);
   const moving = new Set(document.mechanisms.map(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift')));
   for (const room of source.rooms) if (room.originZone === null && hasNativeWallMaterials(room.originZone, room.wallSources)) {
@@ -48,7 +52,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
       const owners = [...new Set(dependencies.flatMap(item => item.graphicsRooms))].sort((a, b) => a - b);
       throw new Error(`Room ${room.id} copies a moving door or lift. Allocate its independent controller and wall attachments before building; the original controller cannot drive a room copy. Its live graphics belong to ${owners.map(id => `Zone ${id}`).join(', ')}. Inspect Attachments on the original mechanism to locate its moving walls and trigger boundaries.`);
     }
-    if (document.switches.some(item => item.zone === room.recordZone)) throw new Error(`Room ${room.id} copies a switch. Allocate and link its independent activation record before building.`);
+    if (document.switches.some(item => item.zone === room.recordZone && !switchCopies.some(copy => copy.room === room.id && copy.id === item.id))) throw new Error(`Room ${room.id} copies a switch. Allocate and link its independent activation record before building.`);
   }
   for (const copy of controllerCopies) {
     const cells = topology.cells.filter(cell => cell.sourceId === copy.room);
@@ -80,7 +84,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
   const geometry = buildCellGraphics(document, source, topology, options.newRoomGraphics, options.closingRoomGraphics);
   const lighting = buildGeometryLighting(document, source, geometry, options.newRoomLighting);
   const collision = compileCollisionGeometry(lighting.graphics.topology);
-  const attachments = buildAnimationAttachments(document, lighting.graphics, collision, controllerCopies);
+  const attachments = buildAnimationAttachments(document, lighting.graphics, collision, controllerCopies, switchCopies);
   const graphics = attachments.graphics;
   const points = buildPointLighting(document, graphics.topology.points, new Map([...lighting.bindings, ...attachments.addedLighting]));
   const previousOrder = new Map(topology.cells.filter(cell => cell.originZone !== null).map(cell => [cell.id,

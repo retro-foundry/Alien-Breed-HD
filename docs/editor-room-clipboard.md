@@ -238,3 +238,34 @@ Undo, source save and actual native movement to the edited destination while the
 original stays still. Both browsers pass those cases and adjacent imported
 mechanism cycles and keyboard/tooltip checks. Room copying/creation UI, switch
 allocation, broader motion authoring and remaining requirements are still open.
+
+## Independent switch compiler allocation
+
+`SourceBuildOptions.switchCopies` now supplies explicit native template slot,
+unused destination slot, copied activation room and copied graphics room. Native
+`Anims.s` / `objects.c` SwitchRoutine owns exactly eight slots, each controlling
+bit `4 + slot`; the compiler preserves that contract. Slot reuse, shared graphics
+attachments, missing owners and inconsistent whole-room translations are rejected.
+Original slots remain intact and the new slot gets independently allocated
+activation points and a relocated copied wall-phase pointer. Original and copied
+switches share the existing point-pair/wall transformation and point-limit checks.
+
+`remapSwitchConditions` maps explicitly copied internal switch requirements while
+preserving keys and external bits, rejecting condition aliases. Clipboard assembly
+must provide that explicit correspondence; the compiler does not guess which
+external switch relationships the user intended to copy.
+
+The switch fixture retains adjoining native doorway/corridor rooms. Closing the
+tested doorway would remove its switch wall, so a copied switch without its
+complete graphics attachment remains an error. Model checks cover slot/target
+rejection, independent graphics/point identities, native settings, compiled-native
+save/reopen and condition remapping. A bounded read-only runtime probe exposes
+actual switch state and phase writes. In both browsers, pressing Space near the
+copied activation pair sets only its new condition bit and wall phase; the
+original switch stays unchanged. All 759 model tests and ten focused native
+switch/copy-controls/attachment browser cases pass; production/runtime builds pass.
+
+This is compiler allocation and native interaction proof. Switch plans are not
+yet persisted as editable source or exposed through authoring/room-copy controls.
+Full clipboard assembly, source switch snapshots and remaining relationship/UI
+work are still required before R7/R9/R11 completion can be claimed.
