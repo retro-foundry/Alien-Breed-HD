@@ -46,8 +46,8 @@ test('all six axis directions and both editable 3D projections share selection a
   await page.getByRole('button', { name: 'Editor view', exact: true }).click();
   await expect(selector).toHaveValue('orthographic'); await expect(canvas).toBeVisible();
   await selector.selectOption('perspective');
-  await expect(page.getByRole('region', { name: '3D editing view', exact: true })).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
-  await expect(canvas).toHaveCount(0);
+  await expect(canvas).toHaveAttribute('data-view','perspective');
+  await expect(page.locator('canvas[aria-label="Textured 3D geometry"]')).not.toHaveAttribute('data-material-count','0');
 });
 
 test('front height dragging previews without saving, cancels, commits once, and survives Undo and reopening', async ({ page }, testInfo) => {
@@ -115,8 +115,8 @@ test('orthographic upper-floor handles, source corners and orthographic click pl
   await page.getByRole('combobox', { name: 'Editing view', exact: true }).selectOption('orthographic');
   const lowerCamera = await page.locator('canvas[aria-label="Editing viewport"]').getAttribute('data-camera');
   await page.getByRole('button', { name: 'Upper', exact: true }).click();
-  await expect.poll(async () => page.locator('canvas[aria-label="Editing viewport"]').getAttribute('data-camera')).not.toBe(lowerCamera);
-  await page.getByRole('button', { name: 'Drag room floor height', exact: true }).focus(); await page.keyboard.press('ArrowUp');
+  await expect(page.locator('canvas[aria-label="Editing viewport"]')).toHaveAttribute('data-camera',lowerCamera!);
+  await page.getByRole('button', { name: 'Drag upper floor height', exact: true }).focus(); await page.keyboard.press('ArrowUp');
   await expect(page.getByRole('spinbutton', { name: 'Upper floor height', exact: true })).toHaveValue(String(baseline.upperFloor - .25));
   await page.getByRole('combobox', { name: 'Grid spacing' }).selectOption('8');
   await page.getByRole('button', { name: 'Move room corner 1', exact: true }).focus(); await page.keyboard.press('ArrowRight');

@@ -1,3 +1,6 @@
+import { texturedEditorScene } from '../../src/model/texturedEditorScene';
+import { pickSceneFace } from '../../src/model/editorScene';
+import { screenRay,dot,type EditorCamera } from '../../src/model/editorCamera';
 import { expect,test,type Page } from '@playwright/test';
 import { encodeProject,decodeProject } from '../../src/model/project';
 import { readFile } from 'node:fs/promises';
@@ -41,4 +44,28 @@ for(const view of ['perspective','orthographic'])test(`${view} shows both storey
   await expect(canvas).toHaveAttribute('data-camera',camera!);
  }
  await page.screenshot({path:info.outputPath(`${view}-both-storeys.png`)});
+});
+
+test('Alt-drag floor and ceiling surfaces changes the actual room planes',async({page},info)=>{
+ const fixture=roomHeightFixture(twoStoreyHeightTemplate()),mesh=texturedEditorScene(fixture.document),baseline=roomSettings(fixture.document,fixture.from);
+ await page.goto('/?view=top');await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+ await page.locator('input[type=file]').setInputFiles({name:'surface-drag.ab3d',mimeType:'application/zip',buffer:Buffer.from(encodeProject(fixture.document))});
+ await page.getByRole('combobox',{name:'Editing view',exact:true}).selectOption('perspective');await page.getByRole('button',{name:'Walk',exact:true}).click();
+ const canvas=page.locator('canvas[aria-label="Editing viewport"]'),bounds=(await canvas.boundingBox())!;
+ for(const kind of ['floor','ceiling'] as const){
+  if(kind==='ceiling'){await page.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2);await page.mouse.down({button:'right'});await page.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2-90,{steps:5});await page.mouse.up({button:'right'});}
+  const camera=JSON.parse((await canvas.getAttribute('data-camera'))!) as EditorCamera;let point:{x:number;y:number}|undefined;
+  for(let y=.2;y<.9&&!point;y+=.025)for(let x=.2;x<.9&&!point;x+=.025){const ray=screenRay(x*bounds.width,y*bounds.height,camera,bounds.width,bounds.height),hit=pickSceneFace(mesh.faces.filter(f=>dot(f.normal,ray.direction)<0),ray);if(hit?.face.kind===kind && 'boundary' in hit.face && hit.face.boundary)point={x:x*bounds.width,y:y*bounds.height};}
+  expect(point).toBeDefined();await page.keyboard.down('Alt');await page.mouse.move(bounds.x+point!.x,bounds.y+point!.y);await page.mouse.down();await page.mouse.move(bounds.x+point!.x,bounds.y+point!.y+(kind==='floor'?-12:12),{steps:5});await page.mouse.up();await page.keyboard.up('Alt');
+  const download=page.waitForEvent('download');await page.getByRole('button',{name:'Save project',exact:true}).click();const path=info.outputPath(`drag-${kind}.ab3d`);await(await download).saveAs(path);
+  const saved=decodeProject(new Uint8Array(await readFile(path))),settings=roomSettings(saved,saved.roomSource.rooms.find(r=>r.id===fixture.from.id)!);expect(settings[kind]).not.toBe(baseline[kind]);
+  await page.getByRole('button',{name:'Undo',exact:true}).click();
+ }
+});
+
+test('texture load errors keep geometry editable and retry restores the real materials',async({page})=>{
+ await page.route('**/reference/walls/catalog.json',route=>route.fulfill({status:503,body:'unavailable'}));await page.goto('/');
+ await expect(page.getByRole('alert')).toContainText('wall material catalog');await expect(page.locator('canvas[aria-label="Editing viewport"]')).toBeVisible();await expect(page.locator('iframe')).toHaveCount(0);
+ await page.unroute('**/reference/walls/catalog.json');await page.getByRole('button',{name:'Retry 3D materials',exact:true}).click();
+ await expect(page.locator('canvas[aria-label="Textured 3D geometry"]')).not.toHaveAttribute('data-material-count','0');await expect(page.getByRole('alert')).toHaveCount(0);expect((await pixels(page)).colours).toBeGreaterThan(30);
 });

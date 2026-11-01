@@ -135,5 +135,5 @@ export class SpatialRenderer {
       first+=count;
     }
   }
-  dispose(){const gl=this.gl;for(const material of this.materials.values()){gl.deleteTexture(material.pixels);gl.deleteTexture(material.palette);}gl.deleteBuffer(this.buffer);gl.deleteVertexArray(this.vao);gl.deleteProgram(this.program);}
+  dispose(){const gl=this.gl;for(const material of this.materials.values()){gl.deleteTexture(material.pixels);gl.deleteTexture(material.palette);}gl.deleteBuffer(this.buffer);gl.deleteVertexArray(this.vao);gl.deleteProgram(this.program);gl.getExtension('WEBGL_lose_context')?.loseContext();}
 }

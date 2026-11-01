@@ -42,6 +42,7 @@ for (const upper of [false, true]) test(`3D ${upper ? 'upper' : 'lower'} wall pa
   await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
   expect(await captureEngine(page, camera)).toBe(beforeHash);
+  await canvas.click({ position: { x: point.x * rect.width, y: point.y * rect.height } });
   await page.getByRole('button', { name: 'Paint this wall', exact: true }).click();
   await dialog.getByRole('combobox', { name: 'Picked wall material style' }).selectOption(String(style.offset));
   const revision = (await preview.getAttribute('data-revision'))!;

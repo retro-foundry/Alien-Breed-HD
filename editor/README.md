@@ -34,27 +34,36 @@ without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
 
 ## Editing views
 
-**Editor view** opens in textured **3D perspective**, using the actual game
-renderer with its lighting and shading. Click the viewport to select visible
-objects or surfaces. Use **WASD** to move, **right drag** to look, **Q/E** to
-move down/up and **Shift** to move faster. These controls move the inspection
-camera without running enemies or changing the saved player start. Controls
-are shown below the view and in its Controls menu.
+**Editor view** opens in editable **3D perspective**. Perspective and 3D
+orthographic show both storeys together, with the original textures, palette
+shades, source lighting and independently painted surfaces. **Engine view** is
+the separate game renderer/playtest. **Split view** displays both side by side.
 
-Choose Top, Bottom, Front, Back, Left, Right or 3D orthographic beside the
-viewport tabs for geometry handles. **Engine view** provides gameplay testing.
-**Split view** pairs a map or orthographic view with the engine. Opening with
-`?view=top` selects the 2D map; the other view IDs are also accepted. Without
-that query parameter, perspective is the default.
+Right drag orbits; Space/middle drag pans; the wheel zooms. Select a room and
+drag **LF/LC/UF/UC** to change its lower floor/ceiling or upper floor/ceiling.
+Alt-drag a floor/ceiling is another height gesture. Release commits one Undo;
+Escape cancels. Coincident storey boundaries have separate handles. Lower/Upper
+selects the active editing layer without hiding either storey in 3D. Cutaway
+hides outward-facing surfaces; Show ceilings and Wireframe change display only.
 
-In perspective, **Add object** opens the library: choose a type and click a
-visible floor to place it; repeat clicks place more, Escape cancels. Click a
-wall/floor/ceiling and choose **Paint this wall/surface** to change its material.
-Floor and ceiling painting supports normal, chunky bump and smooth bump banks,
-using the original assets and shading. Smooth bump has one native texture.
-Apply rebuilds the preview while preserving a valid editing camera position.
+Choose **Walk** in perspective for first-person inspection inside the same
+editable geometry: WASD moves, right drag looks, Q/E moves down/up, Shift moves
+faster. **Orbit** returns to the overview. Navigation does not run gameplay or
+change saved player starts. Choose Top/Bottom/Front/Back/Left/Right for axis
+editing. `?view=top` and other view IDs select an initial projection explicitly.
 
-The following geometry gestures apply to axis and orthographic views:
+Click a wall/floor/ceiling and choose **Paint this wall/surface**. Paint room
+textures in the inspector frames that room in the geometry editor. Apply
+updates the textured mesh without moving its camera; Cancel and Undo work as
+usual. Normal, chunky bump and smooth bump banks use original assets/palettes.
+Wall sampling keeps native strip endpoints, phase, masks and height mapping;
+material imports use the same saved wall overrides as export and playtest.
+Lighting shows authored palette shades without the game's distance darkening,
+so an overview stays readable. Objects are editable markers. Animated water and
+curved-wall graphics still need Engine view for their exact rendered appearance.
+Unbuildable rooms show an explicit diagnostic and editable geometry outlines.
+
+The following geometry gestures also apply to axis views:
 
 - Click rooms, objects or starts to select them. The inspector, source document
   and history are shared by every view.
@@ -66,7 +75,7 @@ The following geometry gestures apply to axis and orthographic views:
   3D direct drags keep height fixed. Y increases downwards. Starts stay floor-bound.
 - Each release is one Undo; Escape discards a drag. Tab/arrow keys nudge handles;
   Shift increases the increment. Grid snapping applies; Alt uses finer increments.
-- Wheel zooms at the pointer. Space/middle drag pans. Right drag orbits the orthographic view.
+- Wheel zooms at the pointer. Space/middle drag pans. Right drag orbits both 3D editing views.
   F fits the level; Shift+F frames selection. Ceilings/Wireframe affect display.
 - Add/duplicate use click placement in editing views. Top retains room drawing
   and rectangle selection; choosing those tools switches to Top automatically.
