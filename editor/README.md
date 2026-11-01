@@ -156,6 +156,11 @@ Opening local files does not upload them anywhere.
   the Objects list, clearing any navigator search. This also keeps the camera
   still. Object edits use the same Undo as map/list edits. Player avatars remain
   controlled through Starts. Individual surface edits remain in progress.
+  Inspection also supports the editor's Ctrl/Command shortcuts for copy/paste,
+  duplicate, Undo/Redo, save and open, plus Delete, help and search. Ctrl/Command+A
+  selects objects on the current editing floor, even if map markers are hidden.
+  History and saving stay available while the native preview rebuilds. Playtests
+  keep their game controls; editor shortcuts apply to paused inspection.
   Playtests use separate browser storage from the normal game.
 - Choose the target game slot in Project or the 3D toolbar. The choice supports
   undo/redo and is saved in project copies and browser recovery; changing views

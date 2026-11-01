@@ -59,7 +59,33 @@ Generated offsets are ephemeral inspection identities. They must never be used
 as editable-source addresses: compilation relocates streams, decomposes rooms,
 creates portal bands and fans out native templates. Individual surface editing
 still needs stable source ownership/provenance and saved overrides, plus Undo,
-rebuild and native-pixel evidence. Global editing shortcuts still need integration
-across the iframe boundary; inspection currently owns its arrow/Enter controls.
-Graphical edit overlays and broader 3D authoring also remain required for full
-R10 completion.
+rebuild and native-pixel evidence. Graphical edit overlays and broader 3D
+authoring also remain required for full R10 completion.
+
+## Inspection keyboard ownership
+
+`inspection-shortcuts.mjs` is shared by the iframe and React. The build host
+stages the same module beside `frame.html`; a failed import reports an engine
+error and preserves source, with Reload engine able to retry. The matcher accepts
+only supported scalar key/modifier/repeat fields and excludes Alt/composition
+input, camera arrows/Enter and ordinary game keys.
+
+In paused inspection, the iframe prevents the browser default for a matched key
+and posts key intent. The parent validates origin, iframe identity, payload,
+loaded-frame lifetime and play state before calling the existing editor keyboard
+handler. It does not dispatch synthetic DOM events or accept editing commands
+from the payload. Modal/draft/text-field rules stay owned by that handler.
+Playtests retain native game input and cannot mutate editor history through this
+bridge, including delayed shortcut messages.
+
+Copy/paste/duplicate/select-all/Delete require the matching compiled document and
+revision. Undo/Redo, save/open and navigation operate on the current workspace
+even while its native preview rebuilds. The iframe is replaced when changing
+workspace, so old frames cannot target another project's history. This keeps
+rapid Undo and portable backups usable while a real engine completion reply is
+pending, without allowing stale frame-dependent selection commands.
+
+Ctrl/Command+A in inspection selects active objects on the current editing floor,
+independently of the map's marker-visibility toggle and navigator search. The map
+retains its own hidden-marker rule; the object list retains search/all-floor
+selection. Arrow keys and Enter remain native inspection-camera/pick controls.

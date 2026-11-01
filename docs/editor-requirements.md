@@ -73,6 +73,11 @@ undo. Named key, ammunition and weapon pickup settings update related native
 artwork and behaviour fields together. Actual browser gameplay verifies key
 conditions, ammunition grants and weapon ownership. A cross-level object library,
 broader enemy configuration and the other resource classes remain open.
+Paused 3D inspection now shares editor shortcut handling with the map/list,
+including history, save/open, clipboard, duplication, Delete, help and search.
+Modal/text/playtest isolation and delayed-build Undo/save have native-browser
+coverage. Frame-dependent actions reject stale document revisions; inspection
+Select All follows the editing floor without inheriting hidden map markers.
 The current port's per-room/storey graphics command budget is now shared with
 the native renderer and enforced for preview/build/game export, while editable
 oversized files remain saveable. This covers one concrete R12 resource limit;

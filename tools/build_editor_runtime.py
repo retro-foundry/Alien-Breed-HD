@@ -47,6 +47,7 @@ def main() -> None:
                     '--preload-file', (build / 'em_preload').as_posix() + '@/',
                     '-o', str(output / 'engine.js')], cwd=root, check=True)
     shutil.copyfile(root / 'editor/runtime/frame.html', output / 'frame.html')
+    shutil.copyfile(root / 'editor/runtime/inspection-shortcuts.mjs', output / 'inspection-shortcuts.mjs')
     print('Editor engine preview built in editor/public/runtime/')
 
 

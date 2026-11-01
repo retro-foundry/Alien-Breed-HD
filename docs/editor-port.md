@@ -1940,3 +1940,33 @@ fixtures can establish current-format support independently.
   surface edits, iframe integration for global editing shortcuts, graphical edit
   overlays and the remaining full R1–R12 scope
   remain required; deployment is still pending readiness.
+
+  Paused 3D inspection now forwards supported scalar key intent through a shared
+  inspection-shortcuts.mjs policy to the existing editor keyboard handler.
+  There is no synthetic DOM event or separate editing-command implementation.
+  Parent checks cover origin, iframe identity, payload, loaded-frame lifetime,
+  current revision/source for selection commands, and play state. Existing modal,
+  draft and text-field rules remain in the common handler. History/save/open and
+  navigation stay available while preview builds; selection commands require the
+  matching frame. Inspection Select All uses the editing floor independently of
+  map marker visibility, while map/list scopes retain their existing rules.
+  The host stages the shared module with runtime assets; missing-module errors
+  preserve source and can be retried by reloading. Controls help lists the keys.
+
+  All 783 model tests pass. A 34-case Chromium/Firefox run covers inspection
+  shortcuts, all 16 engine maps, startup races, map/list select-all, object
+  clipboard and room placement. A final 28-case run passes after help/feedback
+  changes, covering shortcuts/controls, authored rooms, native picking and object
+  duplication. Portable save/open, paste/Delete history, modal/text/playtest
+  isolation and module-error recovery are exercised. Rapid Undo/save is verified
+  while a real completed engine load reply is held, then released with the final
+  native object height checked.
+
+  Older 6a7d067 CI exposed a real Ctrl+D feedback regression for starts/no object
+  selection: room-copy routing silently skipped the existing object eligibility
+  message. That feedback is restored, and the affected duplication cases pass in
+  both browsers. Its Firefox authored-room/picking failures also pass against the
+  current local host. Full current CI is still pending; this does not claim a
+  green entire matrix. Runtime staging and production builds pass. Individual
+  surface edits, graphical overlays, remaining R1–R12 work and final packaging /
+  deployment remain open.

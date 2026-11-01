@@ -9,11 +9,12 @@ import { preparePlayableLevel, type PlayableLevel } from '../model/playableBuild
 import { wallOverrideFiles } from '../model/wallOverrides';
 import { resolveEngineSurface, type EngineSurfacePick, type NativeSurfacePick } from '../model/engineSurfacePick';
 import { resolveEngineObject, type NativeObjectPick } from '../model/engineObjectPick';
+import { inspectionShortcut, inspectionShortcutScope, type InspectionShortcut } from '../../runtime/inspection-shortcuts.mjs';
 
-interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number; surface?: NativeSurfacePick | null; object?: NativeObjectPick | null }
-interface Props { document: LevelDocument; selection: Selection; sourceRoomId?: string; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSelectRoom: (room: string) => void; onSelectObject: (id: number) => void; onSlotChange: (slot: number) => void }
+interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number; surface?: NativeSurfacePick | null; object?: NativeObjectPick | null; shortcut?: unknown }
+interface Props { document: LevelDocument; selection: Selection; sourceRoomId?: string; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSelectRoom: (room: string) => void; onSelectObject: (id: number) => void; onShortcut: (shortcut: InspectionShortcut) => void; onSlotChange: (slot: number) => void }
 
-export function EnginePreview({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onSlotChange }: Props) {
+export function EnginePreview({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onShortcut, onSlotChange }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false), [loaded, setLoaded] = useState(false);
   const [playing, setPlaying] = useState(false), [starting, setStarting] = useState(false);
@@ -26,13 +27,14 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
   const [actualExit, setActualExit] = useState<number>();
   const [spawnZone, setSpawnZone] = useState<number>();
   const revisionRef = useRef(0), pendingPlay = useRef(false);
+  const hasLoadedFrame = useRef(false);
   const pickedViewTarget = useRef<{ source: LevelDocument; zone?: number; room?: string; object?: number; layer: Props['layer'] } | undefined>(undefined);
   const reloadTimer = useRef<number | undefined>(undefined);
   const failedDocument = useRef<LevelDocument | undefined>(undefined);
   const artifact = useRef<PlayableLevel | undefined>(undefined), previousDocument = useRef(document), readyRef = useRef(ready);
   readyRef.current = ready;
-  const current = useRef({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject });
-  current.current = { document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject };
+  const current = useRef({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onShortcut, inspection: loaded && !playing && !starting, paused: !playing && !starting });
+  current.current = { document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onShortcut, inspection: loaded && !playing && !starting, paused: !playing && !starting };
   const send = (type: string, detail: object = {}) => frame.current?.contentWindow?.postMessage({ source: 'ab3d-editor', type, ...detail }, location.origin);
   function stopInvalidPreview(message: string, notice: string) {
     failedDocument.current = current.current.document;
@@ -100,9 +102,17 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
     const receive = (event: MessageEvent<EngineMessage>) => {
       if (event.origin !== location.origin || event.source !== frame.current?.contentWindow || event.data?.source !== 'ab3d-engine') return;
       const message = event.data;
+      if (message.type === 'shortcut') {
+        const shortcut = inspectionShortcut(message.shortcut), scope = inspectionShortcutScope(shortcut);
+        const currentFrame = message.revision === revisionRef.current && current.current.inspection && artifact.current?.source === current.current.document;
+        if (shortcut && Number.isSafeInteger(message.revision) && message.revision! >= 0 && hasLoadedFrame.current
+          && current.current.paused && (scope === 'workspace' || currentFrame)) current.current.onShortcut(shortcut);
+        return;
+      }
       if (message.revision !== undefined && message.revision >= 0 && message.revision !== revisionRef.current) return;
       if (message.type === 'ready') { setReady(true); setError(''); }
       if (message.type === 'loaded' && message.revision === revisionRef.current && artifact.current?.source === current.current.document) {
+        hasLoadedFrame.current = true;
         setNonblack(message.nonblack ?? 0);
         setActualSlot(message.slot ?? -1);
         setActualExit(message.exitZone);
@@ -183,6 +193,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
 
   function stop() { send('play', { playing: false }); setPlaying(false); setStarting(false); pendingPlay.current = false; }
   function reloadEngine() {
+    hasLoadedFrame.current = false;
     ++revisionRef.current; artifact.current = undefined;
     pendingPlay.current = false; failedDocument.current = undefined;
     setPlaying(false); setStarting(false); setReady(false); setLoaded(false); setError(''); setNotice('Loading the game engine…');

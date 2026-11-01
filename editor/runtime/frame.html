@@ -17,7 +17,7 @@
 <script>
   'use strict';
   const canvas = document.getElementById('canvas'), message = document.getElementById('message');
-  let engine, loaded = false, playing = false, currentRevision = -1;
+  let engine, inspectionShortcut, loaded = false, playing = false, currentRevision = -1;
   let originalWalls;
   function applyWallAssets(files) {
     if (!Array.isArray(files)) throw new Error('Invalid wall asset payload.');
@@ -65,7 +65,7 @@
     return {zone:value(0), current:value(1)/256, top:value(2)/256, bottom:value(3)/256, wallCount:value(4), plane:value(5)/256, unsynchronizedWalls:value(6)};
   }
   const fail = (error, revision = currentRevision) => { message.textContent = 'Engine preview: ' + String(error); send('error', {message:String(error), revision}); };
-  createEditorEngine({
+  Promise.all([import('./inspection-shortcuts.mjs'), createEditorEngine({
     canvas, locateFile: name => new URL(name, location.href).href,
     print: () => {}, printErr: text => console.error('[engine]', text),
     onAbort: reason => fail(reason),
@@ -73,7 +73,7 @@
       if (kind === 1) send('loaded', {revision:currentRevision, zone, zones:value, nonblack:engine._editor_nonblack_pixels(), slot:engine._editor_current_slot(), exitZone:engine._editor_current_exit_zone()});
       if (kind === 2) { playing = false; document.exitPointerLock?.(); send('stopped', {zone, completed:!!value, revision:currentRevision}); }
     }
-  }).then(module => { engine = module; message.textContent = ''; send('ready'); }).catch(fail);
+  })]).then(([shortcuts, module]) => { engine = module; inspectionShortcut = shortcuts.inspectionShortcut; message.textContent = ''; send('ready'); }).catch(fail);
   window.addEventListener('message', event => {
     if (event.source !== parent || event.origin !== location.origin || event.data?.source !== 'ab3d-editor' || !engine) return;
     const request = event.data;
@@ -201,6 +201,8 @@
   });
   canvas.addEventListener('keydown', event => {
     if (playing || !loaded) return;
+    const shortcut = inspectionShortcut(event);
+    if (shortcut) { event.preventDefault(); send('shortcut', {shortcut, revision:currentRevision}); return; }
     if (event.key === 'Enter') { event.preventDefault(); send('pick', pickAt(.5, .5)); return; }
     const controls = {ArrowLeft:[-128,0],ArrowRight:[128,0],ArrowUp:[0,-8],ArrowDown:[0,8]};
     if (controls[event.key]) { event.preventDefault(); engine._editor_turn(...controls[event.key]); send('view-changed', {revision:currentRevision}); }
