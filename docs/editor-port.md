@@ -2391,3 +2391,10 @@ fixtures can establish current-format support independently.
   15 installed Edge/Brave/Firefox cases covering original-room conversion,
   generated-face Edit routing, existing-owner navigation, fresh-room creation,
   archives/history and native movement. The native bundle remains unchanged.
+
+  Publication verified: source 940e363, site 0c6159a, frontend
+  index-Dh0puXrA.js. All six live installed Edge/Brave cases pass conversion,
+  save/history/native motion, moving-face Edit routing and existing-controller
+  navigation. The source worktree is clean, deployment resources match the native
+  manifest, and unrelated site abhd/abhd.zip remains untouched. Full AMOS parity
+  and the remaining R0/R1-R12 editor requirements remain active work.
