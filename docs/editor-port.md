@@ -1408,3 +1408,17 @@ fixtures can establish current-format support independently.
   All 698 model tests and the final production build pass. Fourteen Chromium/
   Firefox group/controls checks pass, followed by four focused group checks after
   the avatar guard. Full-editor requirements and deployment remain open.
+
+- Group duplication checkpoint: the group inspector can now duplicate the
+  selection with explicit X/Z offsets; Ctrl/Command+D copies it in place and
+  selects the complete new batch. Every native record and position identity is
+  independent, preserving complete type-specific bytes, spacing, storey and exact
+  height. Creation is staged in isolated immutable documents and exposed as one
+  source-table relocation command, so invalid destinations, unsupported templates
+  or insufficient capacity cannot append a partial batch. One undo restores all
+  original files and source placements. Keyboard repeat is guarded. Models cover
+  native bytes/CIDs, capacity, upper-floor destinations, saves and undo/redo;
+  browsers check offset/in-place batches, rejection, keyboard repeat and actual
+  native positions/heights/health. Clipboard and room-group workflows remain open.
+  All 702 model tests, the final production build and four Chromium/Firefox
+  single/group duplication scenarios pass. No native simulation changes were made.

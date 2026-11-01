@@ -12,13 +12,14 @@ export function ControlsHelp() {
   return <><span className="eyebrow">CONTROLS & SHORTCUTS</span><h2>Find your way around</h2>
     <p>Open an original level or your project. Click a zone, object or player start to inspect it. Drag objects and starts to move them; positions must stay inside their zone. Hover over a control or focus it with Tab for a tooltip.</p>
     <h3>Objects</h3><p>Choose an enemy, pickup or scenery object, then Duplicate object or Ctrl / Command + D. The placement form copies its settings, room, coordinates, floor and exact height. Change the destination or position and choose Create object for one undoable copy. Escape or Cancel object discards the draft. Floor matching is initially off so a deliberate height offset stays exact; enable it to follow another room's floor. Players and projectile slots cannot be duplicated. Add object starts a separate blank-template draft.</p>
+    <p>For a selected group, Ctrl / Command + D copies the whole group in place and selects the copies. Use the group inspector's X/Z offsets and Duplicate selected objects to copy elsewhere. The batch keeps spacing, settings, floors and exact heights. Any invalid destination or capacity failure cancels the entire batch; one Undo removes it.</p>
     <h3>Map and editing</h3><Keys rows={[
       ['Shift / Ctrl / Command + click object', 'Add or remove an object from the group; move, align or delete using its inspector'],
       ['V', 'Select tool'], ['H / Space + drag', 'Pan the map'], ['Middle / right drag', 'Pan without changing tools'], ['Wheel', 'Zoom around the pointer'],
       ['F', 'Fit the whole map'], ['Alt + drag', 'Bypass grid snapping'], ['/', 'Search map contents'],
       ['Shift + F', 'Frame the selected object group, object, room or player start in the map'],
       ['Delete', 'Delete selected objects as one undoable action; ignored while editing fields or in a dialog'],
-      ['Ctrl / Command + D', 'Duplicate the selected enemy, pickup or scenery into a placement draft'],
+      ['Ctrl / Command + D', 'Duplicate one object into a placement draft, or copy a selected group in place'],
       ['Ctrl / ⌘ + Z', 'Undo'], ['Ctrl / ⌘ + Shift + Z', 'Redo (also Ctrl / ⌘ + Y)'], ['Ctrl / ⌘ + S', 'Download a project copy'],
       ['Ctrl / ⌘ + O', 'Open a project or level'], ['Enter', 'Apply a numeric property'], ['Esc', 'Cancel a numeric edit / clear selection / close help'], ['?', 'Open this help'],
     ]} />

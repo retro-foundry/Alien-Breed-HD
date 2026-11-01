@@ -15,6 +15,7 @@ import { StairBuilder } from './components/StairBuilder';
 import { ObjectBuilder } from './components/ObjectBuilder';
 import { objectTemplates } from './model/objectAuthoring';
 import { editObjectGroup } from './model/objectGroups';
+import { duplicateObjects } from './model/duplicateObjects';
 import { Icon } from './components/Icon';
 import { EnginePreview } from './components/EnginePreview';
 import { ControlTooltips } from './components/ControlTooltips';
@@ -219,15 +220,24 @@ export function App() {
     });
   }, [fail]);
 
+  const duplicateGroup = useCallback((x: number, z: number) => {
+    const source = workspaceRef.current?.history.document;
+    if (!source || busy) return;
+    try {
+      const proposal = duplicateObjects(source, objectIds, x, z);
+      edit(proposal.command); setObjectIds(proposal.ids); setSelection({ kind: 'object', id: proposal.ids.at(-1)! }); setSelectedRoomId(null); setShowObjects(true);
+    } catch (error) { fail(error); }
+  }, [objectIds, busy, edit, fail]);
+
   const duplicateObject = useCallback(() => {
     const source = workspaceRef.current?.history.document;
-    if (objectIds.length > 1) { setStatus('Select one object to duplicate. Use the group inspector to move, align or delete a selection.'); return; }
+    if (objectIds.length > 1) { duplicateGroup(0, 0); return; }
     if (!source || busy || selection?.kind !== 'object' || !objectTemplates(source).some(object => object.id === selection.id)
       || !editableObjects(source).some(object => object.id === selection.id && objectIsActive(object))) {
       setStatus('Select an enemy, pickup or scenery object to duplicate. Player and projectile slots cannot be copied.'); return;
     }
     setRoomDraft(null); setTool('select'); setObjectSeed(selection.id); setObjectOpen(true);
-  }, [selection, busy, objectIds.length]);
+  }, [selection, busy, objectIds.length, duplicateGroup]);
 
   const deleteSelectedObjects = useCallback(() => {
     const source = workspaceRef.current?.history.document;
@@ -249,7 +259,7 @@ export function App() {
         if (!event.repeat && !roomDraft && !help && !showRecents && !choices.length) { event.preventDefault(); deleteSelectedObjects(); }
         return;
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); if (!help && !showRecents && !choices.length) duplicateObject(); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); if (!event.repeat && !help && !showRecents && !choices.length) duplicateObject(); return; }
       if (roomDraft && event.target instanceof HTMLCanvasElement) {
         if (event.key === 'Enter') { event.preventDefault(); finishRoom(); return; }
         if (event.key === 'Backspace' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.shiftKey)) {
@@ -400,7 +410,7 @@ export function App() {
         {objectOpen && document && <ObjectBuilder document={document} initialObject={objectSeed} room={selectedRoom?.id} cursor={cursor} layer={layer} onCancel={() => setObjectOpen(false)}
           onCreate={proposal => { edit(proposal.command); setObjectOpen(false); setTab('objects'); setShowObjects(true); select({ kind: 'object', id: proposal.id }); }} />}
       </main>
-      {document && (groupIds.length > 1 ? <ObjectGroupInspector document={document} ids={groupIds} edit={edit} frame={frameCurrent} clear={() => select(null)} /> : <Inspector document={document} selection={selection} edit={edit} sourceRoom={selectedRoom} onObjectDuplicate={duplicateObject} onRoomCorner={editRoomCorner} onRoomRedraw={redrawRoom} onRoomDelete={deleteRoom} onShowDestination={id => { setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1, frame: true })); setView('map'); }} />)}
+      {document && (groupIds.length > 1 ? <ObjectGroupInspector document={document} ids={groupIds} edit={edit} frame={frameCurrent} duplicate={duplicateGroup} clear={() => select(null)} /> : <Inspector document={document} selection={selection} edit={edit} sourceRoom={selectedRoom} onObjectDuplicate={duplicateObject} onRoomCorner={editRoomCorner} onRoomRedraw={redrawRoom} onRoomDelete={deleteRoom} onShowDestination={id => { setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1, frame: true })); setView('map'); }} />)}
     </div>
     <footer className="statusbar"><span className="status-dot" /><span>{autosave}</span><span className="status-message" aria-live="polite">{status || 'Choose a zone to start editing'}</span><span>X <strong>{Math.round(cursor.x)}</strong></span><span>Z <strong>{Math.round(cursor.z)}</strong></span><span className="status-size">{document?.points.length ?? 0} points · {document?.zones.length ?? 0} zones</span></footer>
     {(help || showRecents || choices.length > 0) && <div className="modal-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) { setHelp(false); setShowRecents(false); setChoices([]); } }}><section className="modal" role="dialog" aria-modal="true" aria-label={help ? 'Editor help' : choices.length ? 'Choose a level' : 'Recent workspaces'}><button className="modal-close icon-button" aria-label="Close dialog" title="Close this panel. Shortcut: Esc." onClick={() => { setHelp(false); setShowRecents(false); setChoices([]); }}><Icon name="close" /></button>

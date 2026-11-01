@@ -38,6 +38,11 @@ Opening local files does not upload them anywhere.
   **Delete** removes selected objects as one undoable action. It is ignored while
   editing a field, drawing a room or using a dialog. Ctrl/Command+Z restores the
   object or complete group.
+  **Duplicate selected objects** uses the group inspector's X/Z offsets to copy
+  the batch. **Ctrl/Command+D** copies a group in place. Copies are selected and
+  retain spacing, settings, floors and exact heights with independent native
+  records. One Undo removes the complete batch; capacity or invalid destinations
+  reject every copy. Hold-to-repeat is disabled for this shortcut.
 - Toggle **Visibility overlay** on the map, then select a room. Amber marks its
   selected runtime cell, cyan its potential visibility and green its portals.
   Concave rooms offer each compiled cell separately. Expand Runtime visibility
