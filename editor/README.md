@@ -34,6 +34,13 @@ without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
 
 ## Current working workflows
 
+- Select an object and use **Object type template ? Apply object type** to
+  replace its complete type/settings from another object in this level. This
+  copies artwork, dimensions, health and behaviour together, retaining the
+  object's identity, position, height, room and floor. Choosing a template is a
+  draft; Apply is one undoable edit. The full original object library remains
+  required; player avatars and reserved projectile slots are protected.
+
 - In paused 3D view, click a normal floor or ceiling and choose **Paint this surface**.
   Select any of the original 16 patterns and a texture repeat from 1/32? to 4?.
   Apply commits one undoable edit; Escape cancels. Lower and upper storeys and

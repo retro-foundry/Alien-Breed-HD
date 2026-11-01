@@ -84,3 +84,19 @@ export function createObject(document: LevelDocument, placement: ObjectPlacement
   return { id, command: { label: `Add object from template ${template.id}`, patches: [], files: { before: document.files, after: files },
     sourceObjects: { before: document.sourceObjects, after: sourceObjects } } };
 }
+
+/** Defs.i / level.c's complete 64-byte source object record. A type owns
+ * artwork, dimensions, health, AI and pickup parameters; changing byte 16
+ * alone leaves the old type's incompatible state behind. Keep the target's
+ * collision identity, height, logical/graphic room and storey binding. */
+export function replaceObjectSettings(document: LevelDocument, id: number, templateId: number): EditCommand {
+  const templates = objectTemplates(document);
+  const object = templates.find(item => item.id === id), template = templates.find(item => item.id === templateId);
+  if (!object || !template) throw new Error('Choose an editable enemy, pickup or scenery object and a supported settings template. Players and reserved projectile slots cannot change type.');
+  if (document.sourceObjects?.find(item => item.id === id)?.room === null || object.zone < 0 && !document.sourceObjects?.some(item => item.id === id && item.room))
+    throw new Error('Restore this removed object before changing its type.');
+  const before = document.files.data.slice(object.offset, object.offset + 64);
+  const after = document.files.data.slice(template.offset, template.offset + 64);
+  for (const [start, end] of [[0, 2], [4, 6], [12, 14], [26, 28], [63, 64]]) after.set(before.subarray(start, end), start);
+  return { label: `Change object ${id} settings from object ${templateId}`, patches: [{ file: 'data', offset: object.offset, before, after }] };
+}

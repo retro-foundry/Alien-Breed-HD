@@ -2165,3 +2165,21 @@ fixtures can establish current-format support independently.
   original bytes through explicit Git attributes. The public URL now serves the new frontend
   (`index-Be-5ouop.js`); both downloaded floor resources match the packaged
   original bytes exactly.
+
+
+- Existing objects now support in-place complete type/settings replacement.
+  The inspector's Object type template / Apply object type workflow copies a
+  real current-level source record's artwork, dimensions, health and behaviour
+  while preserving CID, Y, logical/graphic room and storey. This follows the
+  64-byte object layout in `amiga/includes/Defs.i` and `src/level.c`; changing
+  only the type byte would retain incompatible old parameters. Player avatars,
+  reserved projectile pools and removed targets are protected. Template choice
+  is a draft, and Apply/save/reopen/Undo preserve the object's identity and
+  authored placement. The full original object library and independent door/
+  lift creation remain explicit parity gaps.
+
+  All 852 model tests pass with `vitest run --maxWorkers=2`; the default worker
+  count first caused 13 five-second timeouts in heavy existing geometry tests.
+  Four Chromium/Firefox authoring/duplication checks and two exact packaged
+  installed Edge/Brave type-change checks pass, including native object state.
+  The web build retains the content-versioned native bundle.

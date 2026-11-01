@@ -22,7 +22,7 @@ replace the AB3D I source as the format/behaviour authority.
 | --- | --- | --- |
 | 0 | Add Point | Partial: drawing/redrawing creates corners; independent point insertion and shared-edge splitting still need the complete workflow |
 | 1 | Define New Zone | Implemented: draw/cancel/commit editable rooms, choose appearance, compile/play/save |
-| 2 | Add Object | Partial: current-level templates; the original complete object library and all parameters remain required |
+| 2 | Add Object | Partial: current-level templates and in-place complete type/settings replacement; the original complete object library and all parameters remain required |
 | 3 | Delete Point | Partial: redraw can remove corners; direct safe vertex removal/shared-edge repair remains required |
 | 4 | Toggle Wall/Delete Zone | Partial: undoable room deletion and generated portal repairs; explicit open/close of existing wall edges remains required |
 | 5 | Move Object | Implemented: map drag and numerical position, native floor/room validation and Undo |

@@ -21,6 +21,7 @@ import { MechanismRulesInspector } from './MechanismRulesInspector';
 import { CopiedMechanismInspector } from './CopiedMechanismInspector';
 import { SwitchesInspector } from './SwitchesInspector';
 import { mechanismsForRoom } from '../model/mechanismDependencies';
+import { ObjectTypeInspector } from './ObjectTypeInspector';
 import { objectTemplates } from '../model/objectAuthoring';
 import { keyColour, keyColours, setKeyColour, ammunitionChoices, ammunitionType, setAmmunitionType, weaponPickupChoices, weaponPickupType, setWeaponPickupType } from '../model/objectSettings';
 
@@ -103,7 +104,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
           <NumberField help="Vertical object position in world units, using half-unit steps. Larger values are farther down in the level." label="Height" value={object.y} step={0.5} min={-16384} max={16383.5} onCommit={value => edit({ label: `Change object ${object.id} height`, patches: [numberPatch(document, 'data', object.offset + 4, value * 2, 2)] })} />
           <InfoRow label="Floor" value={object.upper ? 'Upper' : 'Lower'} />
         </section>
-        <section className="property-section"><h3>Object</h3><InfoRow label="Type" value={objectName(object.type)} /><InfoRow label="Collision ID" value={object.cid} />
+        <section className="property-section"><h3>Object</h3><InfoRow label="Type" value={objectName(object.type)} /><InfoRow label="Collision ID" value={object.cid} /><ObjectTypeInspector document={document} id={object.id} edit={edit} />
           {object.type === 3 && <><label className="select-field"><span>Weapon pickup</span><select aria-label="Weapon pickup" value={weaponPickupType(document, object.id) ?? ''}
             title="Choose the weapon granted by this pickup. Updates its artwork, dimensions and grant together, preserving its floor-relative anchor. Undo restores the complete change."
             onChange={event => edit(() => setWeaponPickupType(document, object.id, Number(event.target.value)))}>
