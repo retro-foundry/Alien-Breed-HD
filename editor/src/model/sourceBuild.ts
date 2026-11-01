@@ -18,7 +18,7 @@ import { airHeightsChanged } from './roomHeights';
 import { hasNativeWallMaterials } from './roomMaterials';
 import { mechanismDependencies, mechanismsForRoom } from './mechanismDependencies';
 import { compileControllerCopies, validateMovingControllerCopies, type MovingControllerCopy } from './movingControllerCopies';
-import { validateSwitchCopies, type SwitchCopy } from './switchCopies';
+import { compileSwitchCopies, validateSwitchCopies, type SwitchCopy } from './switchCopies';
 
 export interface SourceBuildOptions {
   /** Resolved game configuration in source room identities; -1 disables exit.
@@ -41,7 +41,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
   const source = document.roomSource;
   const controllerCopies = options.controllerCopies ?? compileControllerCopies(source.controllerCopies ?? []);
   validateMovingControllerCopies(document, controllerCopies);
-  const switchCopies = options.switchCopies ?? [];
+  const switchCopies = options.switchCopies ?? compileSwitchCopies(source.switchCopies ?? []);
   validateSwitchCopies(document, switchCopies);
   const topology = compileRoomTopology(document, source);
   const moving = new Set(document.mechanisms.map(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift')));

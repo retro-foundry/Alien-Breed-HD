@@ -1801,3 +1801,17 @@ fixtures can establish current-format support independently.
   Windows/Linux; newer changes still need their own full CI evidence. Editable
   switch-source persistence, ordinary switch/room-copy authoring and remaining
   full-editor requirements stay open. No gameplay routines were changed.
+
+  Room-source v6 now persists copied switch slots/room relationships and frozen
+  native settings alongside motion plans. Both lists are explicit in v6 and
+  versions 1–5 remain readable. Normal preview/export consumes saved switches
+  automatically; source edits retain both plan types, controller-room deletion
+  removes its switch plan with the same Undo, and template changes do not mutate
+  captured settings. Structural corruption is rejected; geometry dependency
+  problems stay repairable source with build diagnostics. All 763 model tests
+  pass, including combined switch/motion projects through group movement and
+  save/reopen. Fourteen focused Chromium/Firefox source motion/group/switch cases
+  pass, with the two native switch source/save/reopen cases rerun after the final
+  strict v6 contract change. Production builds pass. Switch authoring UI, full
+  room clipboard assembly and remaining R1–R12 requirements are still open;
+  deployment remains pending readiness.

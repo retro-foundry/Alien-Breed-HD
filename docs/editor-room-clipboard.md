@@ -265,7 +265,32 @@ copied activation pair sets only its new condition bit and wall phase; the
 original switch stays unchanged. All 759 model tests and ten focused native
 switch/copy-controls/attachment browser cases pass; production/runtime builds pass.
 
-This is compiler allocation and native interaction proof. Switch plans are not
-yet persisted as editable source or exposed through authoring/room-copy controls.
-Full clipboard assembly, source switch snapshots and remaining relationship/UI
-work are still required before R7/R9/R11 completion can be claimed.
+Editable switch-source integration is recorded below. Full clipboard assembly,
+ordinary switch authoring controls and remaining relationship/UI work are still
+required before R7/R9/R11 completion can be claimed.
+
+## Persisted switch-copy source
+
+Room-source v6 stores copied switch slot/room correspondence and all fourteen
+captured native settings bytes in frozen source records. Both switch and moving
+controller lists are explicit in v6, so dropping a list is diagnosed as damage;
+versions 1–5 remain readable. Native settings, slot bounds, duplicate destinations,
+unexpected fields and malformed records are checked on restoration. Geometry
+dependencies remain separately validated at build time, preserving repairable
+editable projects.
+
+`setRoomSwitchCopies` produces one source/history command; normal preview/export
+automatically consumes the stored plan. Subsequent native template settings do
+not mutate the captured copy. Geometry operations carry both kinds of controller
+plan together. Removing a copied activation room removes its switch plan in the
+same edit, and Undo restores it. A required graphics room removed separately
+still needs attachment repair before building.
+
+All 763 model tests pass, including combined moving/switch plans surviving a
+shared group move and v6 save/reopen, settings independence, normal export,
+deletion/Undo and corruption rejection. Fourteen focused Chromium/Firefox source
+motion, room-group and switch cases pass; the final switch cases were rerun after
+tightening the v6 list contract. Browser tests open actual editable source,
+activate the copied switch, save, reopen the downloaded project and verify its
+authored state resets without changing original files. Production builds pass.
+Switch authoring UI and complete room clipboard assembly remain open.

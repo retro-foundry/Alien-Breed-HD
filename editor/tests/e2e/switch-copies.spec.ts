@@ -1,13 +1,14 @@
 import { expect, test } from '@playwright/test';
 import { switchCopyFixture } from '../switchCopyFixture';
-import { applyCommand, setSourceStart } from '../../src/model/commands';
+import { applyCommand, editRoomSource, setSourceStart } from '../../src/model/commands';
 import { pointInRoomOutline } from '../../src/model/geometry';
-import { buildSourceLevel } from '../../src/model/sourceBuild';
-import { roomAppearanceBuildOptions } from '../../src/model/roomAppearance';
-import { encodeProject } from '../../src/model/project';
+import { buildPlayableLevel } from '../../src/model/playableBuild';
+import { setRoomSwitchCopies } from '../../src/model/switchCopies';
+import { decodeProject, encodeProject } from '../../src/model/project';
+import { readFile } from 'node:fs/promises';
 import { enginePlayerInventory, engineSwitchState } from '../engineCapture';
 
-test('using a copied native switch changes its own condition bit and wall without toggling the original', async ({ page }) => {
+test('using a copied native switch changes its own condition bit and wall without toggling the original', async ({ page }, testInfo) => {
   const fixture = switchCopyFixture(), { switchCopy: copy, source, dx, dz } = fixture;
   const room = fixture.document.roomSource.rooms.find(room => room.id === copy.room)!;
   const a = fixture.document.points[source.point]!, b = fixture.document.points[source.point + 1]!;
@@ -21,11 +22,12 @@ test('using a copied native switch changes its own condition bit and wall withou
   }));
   const position = positions.sort((a, b) => clearance(b) - clearance(a))[0];
   expect(position).toBeDefined();
-  const document = applyCommand(fixture.document, setSourceStart(fixture.document, 1, copy.room, position!.x, position!.z));
-  const built = buildSourceLevel(document, { resolvedExit: -1, ...roomAppearanceBuildOptions(document), switchCopies: [copy] });
+  const captured = applyCommand(fixture.document, editRoomSource(setRoomSwitchCopies(fixture.document, [copy])));
+  const document = applyCommand(captured, setSourceStart(captured, 1, copy.room, position!.x, position!.z));
+  const built = buildPlayableLevel(document, -1);
   await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
-  await page.locator('input[type=file]').setInputFiles({ name: 'switch-copy.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(built.document)) });
-  await expect(page.locator('.project-picker strong')).toHaveText(built.document.name);
+  await page.locator('input[type=file]').setInputFiles({ name: 'switch-copy.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
+  await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: '3D view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
@@ -42,4 +44,15 @@ test('using a copied native switch changes its own condition bit and wall withou
   finally { await page.keyboard.up('Space'); }
   expect(await engineSwitchState(page, copy.slot)).toMatchObject({ active: true, phase: (copied.phase & 0x7c) | 2 });
   expect(await engineSwitchState(page, source.id)).toEqual(original);
+  await preview.getByRole('button', { name: 'Stop', exact: true }).click();
+  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const path = testInfo.outputPath('switch-source-after-play.ab3d'); await (await download).saveAs(path);
+  const saved = decodeProject(new Uint8Array(await readFile(path)));
+  expect(saved.files).toEqual(document.files); expect(saved.sourceStarts).toEqual(document.sourceStarts);
+  expect(saved.roomSource.switchCopies).toEqual(document.roomSource.switchCopies);
+  const oldFrame = await page.locator('iframe[title="Alien Breed game engine"]').elementHandle();
+  await page.locator('input[type=file]').setInputFiles(path);
+  await page.waitForFunction(element => !element!.isConnected, oldFrame);
+  await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
+  expect(await engineSwitchState(page, copy.slot)).toMatchObject({ active: false, zone: built.document.switches[copy.slot]!.zone });
 });

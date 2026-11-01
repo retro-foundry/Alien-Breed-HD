@@ -4,6 +4,7 @@ import { checkedInteger } from './binary';
 import { restoreRoomHeights, roomHeightFields, type RoomHeights } from './roomHeights';
 import { restoreRoomProperties, type RoomProperties } from './roomProperties';
 import { restoreControllerCopies, type SourceControllerCopy } from './movingControllerCopies';
+import { restoreSwitchCopies, type SourceSwitchCopy } from './switchCopies';
 
 /** Editable room identities survive compiler zone renumbering. The imported
  * record remains the authority for materials/mechanisms until those authoring
@@ -17,7 +18,7 @@ export interface SourceRoom {
   readonly heights?: RoomHeights;
   readonly properties?: RoomProperties;
 }
-export interface RoomSource { readonly rooms: readonly SourceRoom[]; readonly nextId: number; readonly controllerCopies?: readonly SourceControllerCopy[] }
+export interface RoomSource { readonly rooms: readonly SourceRoom[]; readonly nextId: number; readonly controllerCopies?: readonly SourceControllerCopy[]; readonly switchCopies?: readonly SourceSwitchCopy[] }
 export interface RoomChange { readonly label: string; readonly before: RoomSource; readonly after: RoomSource }
 export interface RoomHistory { readonly source: RoomSource; readonly past: readonly RoomChange[]; readonly future: readonly RoomChange[] }
 export interface RoomDraft { readonly base: RoomSource; readonly roomId: string | null; readonly recordZone: number; readonly vertices: readonly Position[] }
@@ -49,8 +50,10 @@ function frozenRoom(id: string, recordZone: number, vertices: readonly Position[
   });
   return Object.freeze({ id, recordZone, originZone, vertices: Object.freeze(outline.map(point => Object.freeze(point))), wallSources: Object.freeze(walls), ...(heights ? { heights } : {}), ...(properties ? { properties } : {}) });
 }
-function source(rooms: readonly SourceRoom[], nextId: number, controllerCopies?: readonly SourceControllerCopy[]): RoomSource {
-  return Object.freeze({ rooms: Object.freeze([...rooms]), nextId, ...(controllerCopies?.length ? { controllerCopies } : {}) });
+function source(rooms: readonly SourceRoom[], nextId: number, plans?: Pick<RoomSource, 'controllerCopies' | 'switchCopies'>): RoomSource {
+  return Object.freeze({ rooms: Object.freeze([...rooms]), nextId,
+    ...(plans?.controllerCopies?.length ? { controllerCopies: plans.controllerCopies } : {}),
+    ...(plans?.switchCopies?.length ? { switchCopies: plans.switchCopies } : {}) });
 }
 
 type RoomRecords = Pick<LevelDocument, 'zones' | 'lines'>;
@@ -60,12 +63,13 @@ export function importRoomSource(document: RoomRecords): RoomSource {
 }
 
 export function roomSourceSnapshot(current: RoomSource) {
-  return { format: 'alien-breed-room-source', version: current.controllerCopies?.length ? 5 : current.rooms.some(room => room.properties) ? 4 : current.rooms.some(room => room.heights) ? 3 : 2, nextId: current.nextId, rooms: current.rooms,
-    ...(current.controllerCopies?.length ? { controllerCopies: restoreControllerCopies(current.controllerCopies) } : {}) };
+  return { format: 'alien-breed-room-source', version: current.switchCopies?.length ? 6 : current.controllerCopies?.length ? 5 : current.rooms.some(room => room.properties) ? 4 : current.rooms.some(room => room.heights) ? 3 : 2, nextId: current.nextId, rooms: current.rooms,
+    ...(current.controllerCopies?.length || current.switchCopies?.length ? { controllerCopies: restoreControllerCopies(current.controllerCopies ?? []) } : {}),
+    ...(current.switchCopies?.length ? { switchCopies: restoreSwitchCopies(current.switchCopies) } : {}) };
 }
 
 export function roomSourceMatchesLevel(document: LevelDocument): boolean {
-  return !document.roomSource.controllerCopies?.length && JSON.stringify(document.roomSource.rooms) === JSON.stringify(importRoomSource(document).rooms);
+  return !document.roomSource.controllerCopies?.length && !document.roomSource.switchCopies?.length && JSON.stringify(document.roomSource.rooms) === JSON.stringify(importRoomSource(document).rooms);
 }
 
 /** All editable source must match before using the imported runtime files. */
@@ -78,11 +82,13 @@ export function sourceMatchesLevel(document: LevelDocument): boolean {
  * dependency baseline; missing templates cannot be silently substituted. */
 export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSource {
   if (!value || typeof value !== 'object' || !('format' in value) || value.format !== 'alien-breed-room-source'
-    || !('version' in value) || ![1, 2, 3, 4, 5].includes(value.version as number) || !('rooms' in value) || !Array.isArray(value.rooms)
+    || !('version' in value) || ![1, 2, 3, 4, 5, 6].includes(value.version as number) || !('rooms' in value) || !Array.isArray(value.rooms)
     || !('nextId' in value) || typeof value.nextId !== 'number') throw new Error('Unsupported or damaged room source.');
-  if (Object.keys(value).some(key => !['format', 'version', 'rooms', 'nextId', ...(value.version === 5 ? ['controllerCopies'] : [])].includes(key))) throw new Error('Room source contains unsupported fields; it has not been replaced or discarded.');
-  if (value.version === 5 && !('controllerCopies' in value)) throw new Error('Room source is missing its copied controller records.');
-  const controllerCopies = value.version === 5 && 'controllerCopies' in value ? restoreControllerCopies(value.controllerCopies) : undefined;
+  if (Object.keys(value).some(key => !['format', 'version', 'rooms', 'nextId', ...((value.version as number) >= 5 ? ['controllerCopies'] : []), ...(value.version === 6 ? ['switchCopies'] : [])].includes(key))) throw new Error('Room source contains unsupported fields; it has not been replaced or discarded.');
+  if ((value.version as number) >= 5 && !('controllerCopies' in value)) throw new Error('Room source is missing its copied controller records.');
+  if (value.version === 6 && !('switchCopies' in value)) throw new Error('Room source is missing its copied switch records.');
+  const controllerCopies = (value.version as number) >= 5 && 'controllerCopies' in value ? restoreControllerCopies(value.controllerCopies) : undefined;
+  const switchCopies = value.version === 6 && 'switchCopies' in value ? restoreSwitchCopies(value.switchCopies) : undefined;
   const nextId = checkedInteger(value.nextId, 0, Number.MAX_SAFE_INTEGER - 1, 'Next room identity');
   const records = new Set(document.zones.map(zone => zone.id)), ids = new Set<string>(), origins = new Set<number>();
   const rooms = value.rooms.map((item: unknown) => {
@@ -129,7 +135,7 @@ export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSo
     return frozenRoom(item.id, item.recordZone, vertices, origin, walls, 'heights' in item ? restoreRoomHeights(item.heights, template) : undefined,
       'properties' in item ? restoreRoomProperties(item.properties) : undefined);
   });
-  return source(rooms, nextId, controllerCopies);
+  return source(rooms, nextId, { controllerCopies, switchCopies });
 }
 
 /** Drafts are separate from committed source: Escape/tool changes simply drop
@@ -169,7 +175,7 @@ export function addSourceRooms(document: RoomRecords, current: RoomSource,
   });
   const rooms = [...current.rooms, ...added];
   validateRoomInteriors(rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
-  return { label: 'Create rooms', before: current, after: source(rooms, current.nextId + added.length, current.controllerCopies) };
+  return { label: 'Create rooms', before: current, after: source(rooms, current.nextId + added.length, current) };
 }
 
 export function commitRoomDraft(current: RoomSource, draft: RoomDraft): RoomChange {
@@ -189,7 +195,7 @@ export function commitRoomDraft(current: RoomSource, draft: RoomDraft): RoomChan
   const rooms = existing ? current.rooms.map(value => value.id === id ? room : value) : [...current.rooms, room];
   validateRoomInteriors(rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
   return Object.freeze({ label: existing ? 'Edit room outline' : 'Create room', before: current,
-    after: source(rooms, current.nextId + (existing ? 0 : 1), current.controllerCopies) });
+    after: source(rooms, current.nextId + (existing ? 0 : 1), current) });
 }
 
 /** Original authoring points are shared by adjoining rooms. Move the whole
@@ -213,14 +219,14 @@ export function moveSourceCorner(current: RoomSource, roomId: string, index: num
       boundary.map(edge => sourceWallForEdge(room, edge.start, edge.end)), room.heights, room.properties);
   });
   validateRoomInteriors(rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
-  return Object.freeze({ label: 'Move shared room corner', before: current, after: source(rooms, current.nextId, current.controllerCopies) });
+  return Object.freeze({ label: 'Move shared room corner', before: current, after: source(rooms, current.nextId, current) });
 }
 
 export function removeSourceRooms(current: RoomSource, ids: readonly string[]): RoomChange {
   const selected = new Set(ids);
   if (!selected.size || [...selected].some(id => !current.rooms.some(room => room.id === id))) throw new Error('Select existing rooms to delete.');
   return Object.freeze({ label: 'Delete rooms', before: current, after: source(current.rooms.filter(room => !selected.has(room.id)), current.nextId,
-    current.controllerCopies?.filter(copy => !selected.has(copy.room))) });
+    { controllerCopies: current.controllerCopies?.filter(copy => !selected.has(copy.room)), switchCopies: current.switchCopies?.filter(copy => !selected.has(copy.room)) }) });
 }
 
 /** Translate all selected boundaries simultaneously. Shared portal vertices,
@@ -255,7 +261,7 @@ export function translateSourceRooms(current: RoomSource, ids: readonly string[]
       room.originZone, boundary.map(edge => sourceWallForEdge(room, edge.start, edge.end)), room.heights, room.properties);
   });
   validateRoomInteriors(rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
-  return { label: `Move ${ids.length} rooms`, before: current, after: source(rooms, current.nextId, current.controllerCopies) };
+  return { label: `Move ${ids.length} rooms`, before: current, after: source(rooms, current.nextId, current) };
 }
 
 export function setRoomHeights(document: Pick<LevelDocument, 'zones'>, current: RoomSource, id: string, value: unknown): RoomChange {
@@ -267,7 +273,7 @@ export function setRoomHeights(document: Pick<LevelDocument, 'zones'>, current: 
   if (JSON.stringify(selected) === JSON.stringify(room.heights)) return { label: 'Change room heights', before: current, after: current };
   const { heights: _previous, ...unchanged } = room;
   const updated = Object.freeze({ ...unchanged, ...(selected ? { heights: selected } : {}) });
-  return { label: 'Change room heights', before: current, after: source(current.rooms.map(item => item.id === id ? updated : item), current.nextId, current.controllerCopies) };
+  return { label: 'Change room heights', before: current, after: source(current.rooms.map(item => item.id === id ? updated : item), current.nextId, current) };
 }
 
 export function setRoomProperties(current: RoomSource, id: string, value: unknown | null): RoomChange {
@@ -278,7 +284,7 @@ export function setRoomProperties(current: RoomSource, id: string, value: unknow
   const { properties: _previous, ...unchanged } = room;
   const updated = Object.freeze({ ...unchanged, ...(properties ? { properties } : {}) });
   return { label: properties ? 'Change room properties' : 'Inherit room properties', before: current,
-    after: source(current.rooms.map(item => item.id === id ? updated : item), current.nextId, current.controllerCopies) };
+    after: source(current.rooms.map(item => item.id === id ? updated : item), current.nextId, current) };
 }
 
 export function executeRoomChange(history: RoomHistory, change: RoomChange): RoomHistory {
