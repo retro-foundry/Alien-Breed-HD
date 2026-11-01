@@ -34,6 +34,17 @@ without rebuilding it, set `EDITOR_USE_PACKAGED_BUILD=1` before Playwright.
 
 ## Current working workflows
 
+- Draw a connected room with no inward corners, apply its room appearance, and
+  select **Make door** or **Make lift** in the inspector. Set destinations,
+  starting endpoint and trigger rules, then **Apply mechanism**. Smaller height
+  numbers are higher. Doors initially use the room's ceiling/floor as open and
+  closed destinations and start closed. Lifts need two different destinations.
+  **Browse moving wall materials** changes the moving face style. Space uses a
+  manually triggered mechanism in **Build & play**. Cancel/Escape discards the
+  draft; Apply/Remove each supports Undo. Save project retains the mechanism;
+  room copy automatically includes adjoining rooms and creates independent
+  controllers. Imported-room conversion and grouped moving volumes remain gaps.
+
 - Select an object and use **Object type template ? Apply object type** to
   replace its complete type/settings from another object in this level. This
   copies artwork, dimensions, health and behaviour together, retaining the

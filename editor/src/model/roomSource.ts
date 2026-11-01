@@ -1,3 +1,4 @@
+import { restoreSourceMovingRoom, type SourceMovingRoom } from './sourceMovingRoom';
 import { convexParts, normaliseRoomOutline, validateRoomInteriors, type Position } from './geometry';
 import type { LevelDocument } from './level';
 import { checkedInteger } from './binary';
@@ -21,6 +22,7 @@ export interface SourceRoom {
   readonly wallMaterials?: readonly WallMaterial[];
   readonly polygonMaterials?: readonly PolygonMaterial[];
   readonly boundaryMaterials?: BoundaryMaterials;
+  readonly moving?: SourceMovingRoom;
   readonly heights?: RoomHeights;
   readonly properties?: RoomProperties;
 }
@@ -42,8 +44,8 @@ export function sourceWallForEdge(room: SourceRoom, start: Position, end: Positi
 }
 
 function frozenRoom(id: string, recordZone: number, vertices: readonly Position[], originZone: number | null,
-  wallSources: readonly (number | null)[] = vertices.map(() => null), heights?: RoomHeights, properties?: RoomProperties, materials: Pick<SourceRoom, 'wallMaterials' | 'boundaryMaterials' | 'polygonMaterials'> = {}): SourceRoom {
-  const { wallMaterials, boundaryMaterials, polygonMaterials } = materials;
+  wallSources: readonly (number | null)[] = vertices.map(() => null), heights?: RoomHeights, properties?: RoomProperties, materials: Pick<SourceRoom, 'wallMaterials' | 'boundaryMaterials' | 'polygonMaterials' | 'moving'> = {}): SourceRoom {
+  const { wallMaterials, boundaryMaterials, polygonMaterials, moving } = materials;
   if (wallSources.length !== vertices.length) throw new Error(`Room ${id} has an incomplete wall-source list.`);
   const outline = normaliseRoomOutline(vertices);
   const walls = outline.map((a, i) => {
@@ -57,7 +59,7 @@ function frozenRoom(id: string, recordZone: number, vertices: readonly Position[
   });
   const boundary = boundaryMaterials && remapBoundaryMaterials({ vertices, boundaryMaterials },
     outline.map((start, index) => ({ start, end: outline[(index + 1) % outline.length]! })));
-  return Object.freeze({ id, recordZone, originZone, vertices: Object.freeze(outline.map(point => Object.freeze(point))), wallSources: Object.freeze(walls), ...(heights ? { heights } : {}), ...(properties ? { properties } : {}), ...(wallMaterials?.length ? { wallMaterials: restoreWallMaterials(wallMaterials) } : {}), ...(boundary ? { boundaryMaterials: boundary } : {}), ...(polygonMaterials?.length ? { polygonMaterials: restorePolygonMaterials(polygonMaterials) } : {}) });
+  return Object.freeze({ id, recordZone, originZone, vertices: Object.freeze(outline.map(point => Object.freeze(point))), wallSources: Object.freeze(walls), ...(heights ? { heights } : {}), ...(properties ? { properties } : {}), ...(wallMaterials?.length ? { wallMaterials: restoreWallMaterials(wallMaterials) } : {}), ...(boundary ? { boundaryMaterials: boundary } : {}), ...(polygonMaterials?.length ? { polygonMaterials: restorePolygonMaterials(polygonMaterials) } : {}), ...(moving ? { moving: restoreSourceMovingRoom(moving) } : {}) });
 }
 function source(rooms: readonly SourceRoom[], nextId: number, plans?: Pick<RoomSource, 'controllerCopies' | 'switchCopies'>): RoomSource {
   return Object.freeze({ rooms: Object.freeze([...rooms]), nextId,
@@ -72,10 +74,11 @@ export function importRoomSource(document: RoomRecords): RoomSource {
 }
 
 export function roomSourceSnapshot(current: RoomSource) {
+  const moving = current.rooms.some(room => room.moving);
   const polygons = current.rooms.some(room => room.polygonMaterials?.length);
   const boundary = current.rooms.some(room => room.boundaryMaterials);
-  const painted = polygons || boundary || current.rooms.some(room => room.wallMaterials?.length);
-  return { format: 'alien-breed-room-source', version: polygons ? 9 : boundary ? 8 : painted ? 7 : current.switchCopies?.length ? 6 : current.controllerCopies?.length ? 5 : current.rooms.some(room => room.properties) ? 4 : current.rooms.some(room => room.heights) ? 3 : 2, nextId: current.nextId, rooms: current.rooms,
+  const painted = moving || polygons || boundary || current.rooms.some(room => room.wallMaterials?.length);
+  return { format: 'alien-breed-room-source', version: moving ? 10 : polygons ? 9 : boundary ? 8 : painted ? 7 : current.switchCopies?.length ? 6 : current.controllerCopies?.length ? 5 : current.rooms.some(room => room.properties) ? 4 : current.rooms.some(room => room.heights) ? 3 : 2, nextId: current.nextId, rooms: current.rooms,
     ...(painted || current.controllerCopies?.length || current.switchCopies?.length ? { controllerCopies: restoreControllerCopies(current.controllerCopies ?? []) } : {}),
     ...(painted || current.switchCopies?.length ? { switchCopies: restoreSwitchCopies(current.switchCopies ?? []) } : {}) };
 }
@@ -94,7 +97,7 @@ export function sourceMatchesLevel(document: LevelDocument): boolean {
  * dependency baseline; missing templates cannot be silently substituted. */
 export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSource {
   if (!value || typeof value !== 'object' || !('format' in value) || value.format !== 'alien-breed-room-source'
-    || !('version' in value) || ![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(value.version as number) || !('rooms' in value) || !Array.isArray(value.rooms)
+    || !('version' in value) || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(value.version as number) || !('rooms' in value) || !Array.isArray(value.rooms)
     || !('nextId' in value) || typeof value.nextId !== 'number') throw new Error('Unsupported or damaged room source.');
   if (Object.keys(value).some(key => !['format', 'version', 'rooms', 'nextId', ...((value.version as number) >= 5 ? ['controllerCopies'] : []), ...((value.version as number) >= 6 ? ['switchCopies'] : [])].includes(key))) throw new Error('Room source contains unsupported fields; it has not been replaced or discarded.');
   if ((value.version as number) >= 5 && !('controllerCopies' in value)) throw new Error('Room source is missing its copied controller records.');
@@ -107,13 +110,14 @@ export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSo
     if (!item || typeof item !== 'object' || !('id' in item) || typeof item.id !== 'string' || !item.id || item.id.length > 128 || ids.has(item.id))
       throw new Error('Room source contains an invalid or duplicate room identity.');
     ids.add(item.id);
-    if (Object.keys(item).some(key => !['id', 'recordZone', 'originZone', 'vertices', ...(value.version !== 1 ? ['wallSources'] : []), ...((value.version as number) >= 3 ? ['heights'] : []), ...((value.version as number) >= 4 ? ['properties'] : []), ...((value.version as number) >= 7 ? ['wallMaterials'] : []), ...((value.version as number) >= 8 ? ['boundaryMaterials'] : []), ...((value.version as number) >= 9 ? ['polygonMaterials'] : [])].includes(key))) throw new Error(`Room ${item.id} contains unsupported source fields.`);
+    if (Object.keys(item).some(key => !['id', 'recordZone', 'originZone', 'vertices', ...(value.version !== 1 ? ['wallSources'] : []), ...((value.version as number) >= 3 ? ['heights'] : []), ...((value.version as number) >= 4 ? ['properties'] : []), ...((value.version as number) >= 7 ? ['wallMaterials'] : []), ...((value.version as number) >= 8 ? ['boundaryMaterials'] : []), ...((value.version as number) >= 9 ? ['polygonMaterials'] : []), ...((value.version as number) >= 10 ? ['moving'] : [])].includes(key))) throw new Error(`Room ${item.id} contains unsupported source fields.`);
     const numericId = /^room-(0|[1-9]\d*)$/.exec(item.id)?.[1];
     if (numericId !== undefined && Number(numericId) >= nextId) throw new Error('The next room identity would reuse an existing room.');
     if (!('recordZone' in item) || typeof item.recordZone !== 'number' || !records.has(item.recordZone)) throw new Error(`Room ${item.id} has a missing surface record.`);
     if (!('originZone' in item) || (item.originZone !== null && (typeof item.originZone !== 'number' || !records.has(item.originZone) || origins.has(item.originZone))))
       throw new Error(`Room ${item.id} has a missing or duplicate original-zone reference.`);
     const origin = item.originZone as number | null;
+    if ('moving' in item && origin !== null) throw new Error('Independent moving source settings require a newly authored room.');
     if (origin !== null) origins.add(origin);
     if (!('vertices' in item) || !Array.isArray(item.vertices) || item.vertices.length > 2048) throw new Error(`Room ${item.id} has an invalid corner list.`);
     const vertices = item.vertices.map((point: unknown) => {
@@ -145,7 +149,7 @@ export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSo
       });
     }
     return frozenRoom(item.id, item.recordZone, vertices, origin, walls, 'heights' in item ? restoreRoomHeights(item.heights, template) : undefined,
-      'properties' in item ? restoreRoomProperties(item.properties) : undefined, { wallMaterials: 'wallMaterials' in item ? restoreWallMaterials(item.wallMaterials) : undefined, boundaryMaterials: 'boundaryMaterials' in item ? restoreBoundaryMaterials(item.boundaryMaterials, vertices.length) : undefined, polygonMaterials: 'polygonMaterials' in item ? restorePolygonMaterials(item.polygonMaterials) : undefined });
+      'properties' in item ? restoreRoomProperties(item.properties) : undefined, { wallMaterials: 'wallMaterials' in item ? restoreWallMaterials(item.wallMaterials) : undefined, boundaryMaterials: 'boundaryMaterials' in item ? restoreBoundaryMaterials(item.boundaryMaterials, vertices.length) : undefined, polygonMaterials: 'polygonMaterials' in item ? restorePolygonMaterials(item.polygonMaterials) : undefined, moving: 'moving' in item ? restoreSourceMovingRoom(item.moving) : undefined });
   });
   return source(rooms, nextId, { controllerCopies, switchCopies });
 }

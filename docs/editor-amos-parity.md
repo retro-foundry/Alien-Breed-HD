@@ -34,10 +34,10 @@ replace the AB3D I source as the format/behaviour authority.
 | 11 | Set Player Start / End Zone | Partial: authored starts and exit settings exist; complete new-room/end-zone workflow remains subject to its native/source acceptance cases |
 | 12 | Upper Floor Height | Implemented: independent upper floor, relationship validation and preview |
 | 13 | Upper Floor Point Brightness | Partial: as ID 10 |
-| 14 | Define Door Zone | Partial: imported/copy settings and linked graphics work; create/remove/reassign an independent door on arbitrary valid new geometry remains required |
+| 14 | Define Door Zone | Partial: independent connected convex lower doors can be created/removed, start closed, save/Undo/copy and run natively; imported conversion, reassignment and grouped/multi-plane geometry remain required |
 | 15 | Define Roof Height | Implemented: lower-storey ceiling numerical/graphical editing and native checks |
 | 16 | Lower Roof Point Brightness | Partial: as ID 10 |
-| 17 | Define Lift Zone | Partial: imported/copy settings and native motion work; independent creation/removal/reassignment and full controller grouping remain required |
+| 17 | Define Lift Zone | Partial: independent connected convex lower lifts can be created/removed, save/Undo/copy and run natively; imported conversion/reassignment and full controller grouping remain required |
 | 18 | Define Floor Height | Implemented: lower floor editing, stairs and native standing/crouched collision checks |
 | 19 | Lower Floor Point Brightness | Partial: as ID 10 |
 | 20 | Define Teleporter | Implemented source links/destinations and native teleport checks; retains explicit invalid-link diagnostics |

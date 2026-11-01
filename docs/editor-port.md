@@ -2267,3 +2267,33 @@ fixtures can establish current-format support independently.
   inspected to confirm an open corridor/closed door and raised/lowered pit.
   A separate shared-neighbour two-door model case verifies each final graphic
   pointer still targets its own portal edge after both wall-band insertions.
+
+
+- Make door / Make lift is now an editable authoring workflow for newly drawn,
+  connected convex lower rooms. The room inspector offers destinations, initial
+  endpoint, original trigger/condition rules and a native moving-wall material
+  browser. Apply validates the complete generated artifact before committing
+  one source change; Cancel/Escape discards the draft. Remove restores the static
+  editable room. Imported conversion/reassignment, adjacent moving groups and
+  multi-plane volumes remain parity gaps.
+
+  Room source v10 stores per-room kind, 18 native settings bytes and a stable
+  source material identity. It never saves generated pointers or cell/line IDs.
+  Settings survive constructors, corner moves, archive save/reopen and room
+  clipboard. Copy automatically captures adjoining rooms; internal copied switch
+  conditions remap and existing requirements reserve their native slots.
+  Creation/removal and all settings share normal Undo/Redo.
+
+  Source air clearance remains editable and valid while generated topology
+  receives the initial moving plane. Doors can start fully closed without
+  storing an invalid zero-clearance outline. Missing resting solid walls are
+  generated across the full travel envelope, so opening that initial closed
+  volume reveals complete walls. Lifts can choose either initial endpoint.
+
+  Validation: all 862 model tests pass with two workers and TypeScript passes.
+  Eight Chromium/Firefox browser cases verify new-room native motion and the
+  complete create/cancel/error/save/undo/reopen/remove workflow. The closed-door
+  authoring case uses a real Space press from the adjoining room to open it.
+  Four installed Edge/Brave cases pass against the exact packaged release.
+  Runtime bundle r-ad32e275c8d0e039 remains unchanged. Publication is the next
+  release step; this does not close AMOS parity or the full editor goal.

@@ -1,3 +1,4 @@
+import { AuthoredMechanismInspector } from './AuthoredMechanismInspector';
 import { useEffect, useState } from 'react';
 import { objectName, type LevelDocument } from '../model/level';
 import { moveObject, numberPatch, removeObject, setMechanismRules, setStart, setSourceStart, setSourceObject, setTeleport, setZoneProperty, type EditCommand } from '../model/commands';
@@ -62,6 +63,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
       {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onRedraw={onRoomRedraw} onDelete={onRoomDelete} />}
       {sourceRoom && <RoomAppearanceInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && <RoomHeightInspector document={document} room={sourceRoom} edit={edit} />}
+      {sourceRoom && <AuthoredMechanismInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && <CopiedMechanismInspector document={document} room={sourceRoom} edit={edit} />}
       <SwitchesInspector document={document} room={sourceRoom} zone={zone?.id} edit={edit} frameRoom={onShowDestination} />
       {sourceRoom && (!zone || sourceRoom.properties) && <RoomPropertiesInspector document={document} room={sourceRoom} edit={edit} />}

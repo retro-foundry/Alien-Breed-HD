@@ -31,7 +31,7 @@ it.each(['door', 'lift'] as const)('compiles an independent authored %s with rec
   expect(document.files.graphics).toEqual(source);
   for (const change of [{ header: input.header.slice(0, 17) }, { room: 'missing-room' }])
     expect(() => buildSourceLevel(document, { ...options, authoredControllers: [{ ...input, ...change }] })).toThrow();
-  const wrong = input.header.slice(); new DataView(wrong.buffer).setInt16(4, (mechanism.current + 0.25) * 4);
+  const wrong = input.header.slice(); new DataView(wrong.buffer).setInt16(4, (mechanism.bottom + 0.25) * 4);
   expect(() => buildSourceLevel(document, { ...options, authoredControllers: [{ ...input, header: wrong }] })).toThrow();
   expect(() => buildSourceLevel(document, { ...options, authoredControllers: [input, input] })).toThrow(/one controller/);
   const crossing = input.header.slice(), bounds = new DataView(crossing.buffer);

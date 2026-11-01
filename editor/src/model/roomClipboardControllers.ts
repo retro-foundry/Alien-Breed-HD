@@ -1,3 +1,4 @@
+import { sourceMovingSettings, setSourceMovingRoom } from './sourceMovingRoom';
 import type { LevelDocument } from './level';
 import { importedAnimationTables } from './animationBuild';
 import { mechanismDependencies, mechanismsForRoom } from './mechanismDependencies';
@@ -46,7 +47,9 @@ export function copyRoomControllers(destination: LevelDocument, source: LevelDoc
   }
   const occupied = new Set(destination.roomSource.switchCopies?.map(copy => copy.slot));
   const internalMask = switches.reduce((mask, item) => mask | (1 << (item.previousSlot + 4)), 0);
+  const mappedRooms = new Set(rooms.values());
   const claimed = [...destination.mechanisms.map(item => item.conditions),
+    ...destination.roomSource.rooms.flatMap(room => room.moving ? [sourceMovingSettings(room.moving).conditions & ~(mappedRooms.has(room.id) ? internalMask : 0)] : []),
     ...(destination.roomSource.controllerCopies ?? []).map(copy => copiedMechanismSettings(copy).conditions),
     ...motions.map(copy => new DataView(copy.header!.buffer, copy.header!.byteOffset, copy.header!.byteLength).getUint16(14) & ~internalMask)];
   const free = destination.switches.filter(item => item.zone < 0 && !occupied.has(item.id) && !claimed.some(mask => mask & (1 << (item.id + 4)))).map(item => item.id);
@@ -62,5 +65,12 @@ export function copyRoomControllers(destination: LevelDocument, source: LevelDoc
     [...compileControllerCopies(working.roomSource.controllerCopies ?? []), ...motions])));
   if (switches.length) working = applyCommand(working, editRoomSource(setRoomSwitchCopies(working,
     [...compileSwitchCopies(working.roomSource.switchCopies ?? []), ...switches.map(item => item.copy)])));
+  for (const mapped of rooms.values()) {
+    const room = working.roomSource.rooms.find(room => room.id === mapped)!;
+    if (!room.moving) continue;
+    const header = new Uint8Array(room.moving.header), view = new DataView(header.buffer);
+    view.setUint16(14, remapSwitchConditions(view.getUint16(14), slots));
+    working = applyCommand(working, editRoomSource(setSourceMovingRoom(working, mapped, { ...room.moving, header: [...header] })));
+  }
   return working;
 }

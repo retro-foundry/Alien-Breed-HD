@@ -1,3 +1,4 @@
+import type { RoomTopology } from './roomTopology';
 import { BinaryReader, checkedInteger } from './binary';
 import type { CellGraphics } from './cellGraphics';
 import type { CollisionGeometry } from './collisionBuild';
@@ -17,6 +18,20 @@ export interface AuthoredMovingRoom {
   readonly kind: 'door' | 'lift';
   readonly header: Uint8Array;
   readonly wall: { readonly surface: WallSurface; readonly length: number };
+}
+
+/** Editable air clearance stays valid even when a door initially closes it.
+ * Only the generated topology gets the native initial moving-plane height. */
+export function initialMovingTopology(document: LevelDocument, topology: RoomTopology, plans: readonly AuthoredMovingRoom[]): RoomTopology {
+  if (!plans.length) return topology;
+  return { ...topology, cells: topology.cells.map(cell => {
+    const plan = plans.find(plan => plan.room === cell.sourceId);
+    if (!plan) return cell;
+    if (plan.header.length !== 18) throw new Error('An authored controller needs its complete 18-byte native settings header.');
+    const settings = roomSettings(document, cell), current = new BinaryReader(plan.header, 'initial moving plane').i16(4) / 4;
+    return { ...cell, heights: { floor: settings.floor, ceiling: settings.ceiling, upperFloor: settings.upperFloor, upperCeiling: settings.upperCeiling,
+      [plan.kind === 'door' ? 'ceiling' : 'floor']: current } };
+  }) };
 }
 
 /** Anims.s DoorRoutine/LiftRoutine and objects.c: roofs/wall bottoms move for
@@ -102,6 +117,13 @@ export function attachAuthoredMovingRoom(document: LevelDocument, graphics: Cell
       const pit = makeWall([a, b], adjacent.floor, bottom);
       putBand(cell.id, [a, b], adjacent.floor, current, pit);
     }
+  });
+  cell.neighbours.forEach((neighbour, edge) => {
+    if (neighbour >= 0) return;
+    const points: [number, number] = [cell.vertices[edge]!, cell.vertices[(edge + 1) % cell.vertices.length]!];
+    if (streams.get(cell.id)!.lower.some(item => { const wall = read(item).wall; return wall && wall.points[0] === points[0] && wall.points[1] === points[1]; })) return;
+    const wall = makeWall(points, input.kind === 'door' ? top : settings.ceiling, input.kind === 'lift' ? bottom : settings.floor);
+    putBand(cell.id, points, current, current, wall);
   });
   checkedInteger(links.length, 1, 64, 'Authored moving wall count');
   const walls = links.map(({ line, base, owner, item }) => ({ line, base, graphic: 0, target: { room: owner, upper: false, index: streams.get(owner)!.lower.indexOf(item) } }));

@@ -21,6 +21,7 @@ export function roomCopyDependencies(document: LevelDocument, ids: readonly stri
     const rooms = [original(item.zone), owner ? original(owner.id) : undefined];
     bindings.push({ control: original(item.zone), rooms, portals: rooms, label: `Switch ${item.id + 1}` });
   }
+  for (const room of document.roomSource.rooms) if (room.moving) bindings.push({ control: room.id, rooms: [room.id], portals: [room.id], label: `Authored ${room.moving.kind}` });
   for (const item of document.roomSource.controllerCopies ?? []) bindings.push({ control: item.room, rooms: [item.room, ...item.graphicsRooms.map(pair => pair[1]), ...item.collisionRooms.map(pair => pair[1])], portals: [item.room], label: `Copied ${item.kind}` });
   for (const item of document.roomSource.switchCopies ?? []) bindings.push({ control: item.room, rooms: [item.room, item.graphicsRoom], portals: [item.room, item.graphicsRoom], label: `Copied switch ${item.slot + 1}` });
   const add = (id: string | undefined, label: string) => {
