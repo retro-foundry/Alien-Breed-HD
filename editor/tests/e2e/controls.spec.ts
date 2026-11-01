@@ -4,7 +4,7 @@ test('tooltips explain actions on hover and keyboard focus; help works using the
   await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.getByRole('button', { name: 'Pan tool', exact: true }).hover();
-  await expect(page.getByRole('tooltip')).toContainText('hold Space');
+  await expect(page.getByRole('tooltip')).toContainText('middle/right drag');
   const grid = page.getByRole('combobox', { name: 'Grid spacing' });
   await grid.focus();
   await expect(page.getByRole('tooltip')).toContainText('Hold Alt');

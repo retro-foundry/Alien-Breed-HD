@@ -39,9 +39,9 @@ orthographic show both storeys together, with the original textures, palette
 shades, source lighting and independently painted surfaces. **Engine view** is
 the separate game renderer/playtest. **Split view** displays both side by side.
 
-Right drag orbits; Space/middle drag pans; the wheel zooms. Select a room and
+Right drag orbits; middle drag pans; the wheel zooms. Select a room and
 drag **LF/LC/UF/UC** to change its lower floor/ceiling or upper floor/ceiling.
-Alt-drag a floor/ceiling is another height gesture. Release commits one Undo;
+Release commits one Undo;
 Escape cancels. Coincident storey boundaries have separate handles. Lower/Upper
 selects the active editing layer without hiding either storey in 3D. Cutaway
 hides outward-facing surfaces; Show ceilings and Wireframe change display only.
@@ -71,11 +71,10 @@ The following geometry gestures also apply to axis views:
   lock X. In 3D, corner drags stay on the room's horizontal floor plane.
 - Drag **F** / **C** to change the displayed storey's floor/ceiling. Invalid
   heights show a diagnostic and are rejected atomically. Water stays independent.
-- Selected objects expose X/Y/Z handles. Direct drags use the visible axis plane;
-  3D direct drags keep height fixed. Y increases downwards. Starts stay floor-bound.
+- Selected objects expose X/Y/Z handles. Drag these explicit handles along their axes. Y increases downwards. Starts stay floor-bound.
 - Each release is one Undo; Escape discards a drag. Tab/arrow keys nudge handles;
   Shift increases the increment. Grid snapping applies; Alt uses finer increments.
-- Wheel zooms at the pointer. Space/middle drag pans. Right drag orbits both 3D editing views.
+- Wheel zooms at the pointer. middle drag pans. Right drag orbits both 3D editing views.
   F fits the level; Shift+F frames selection. Ceilings/Wireframe affect display.
 - Add/duplicate use click placement in editing views. Top retains room drawing
   and rectangle selection; choosing those tools switches to Top automatically.
@@ -180,7 +179,7 @@ an explicit Wall repair appearance, just as redrawn boundaries do.
   validates the whole group and is one undoable action. Heights are preserved;
   destinations outside editable rooms reject the complete operation. Clicking an
   unselected object selects it alone; Escape or Clear object selection clears the group.
-  Drag a selected marker to preview moving the whole group. Grid snapping applies
+  Drag the Move selection handle to preview moving the whole group. Grid snapping applies
   to the shared offset, preserving spacing and fractional starting positions.
   Release commits one edit; Escape, pointer cancellation or focus loss discards it.
   Moves keep each object's floor: on shared boundaries, upper-floor objects choose
@@ -268,11 +267,11 @@ an explicit Wall repair appearance, just as redrawn boundaries do.
 - Edit static/animated zone light, teleport destinations, door/lift rules and
   conditions, existing object positions/heights/health, and player starts.
 - Place player starts in edited or newly drawn rooms using the Starts inspector
-  or by dragging their map markers. These source starts survive undo, project
+  or by dragging their Move selection handle. These source starts survive undo, project
   saves and workspace recovery. Preview, Build & play and Export level compile
   the authored source without replacing it with generated runtime cells.
 - Move existing enemies, pickups and scenery into edited/new rooms using the
-  Object room selector or map dragging. Deletion is undoable, decimal coordinates
+  Object room selector or the Move selection handle. Deletion is undoable, decimal coordinates
   are accepted, and project copies/recovery retain the authored positions.
 - Link edited/new teleporter rooms to a destination room and landing point.
   Show destination frames the target and highlights the link on the map.
@@ -474,10 +473,12 @@ broader resource authoring and export profiles remain in progress.
 | Download project copy | Ctrl/Cmd+S |
 | Undo / redo | Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z |
 | Select / pan | V / H |
-| Temporary pan | Space+drag |
+| Select / box select zones | Left click / left drag; Shift adds zones |
 | Zoom | Wheel, anchored at pointer |
 | Frame map | F |
 | Search map contents | / |
 | Move without snapping | Alt+drag |
 | Help | ? |
 | Clear selection / close dialog | Escape |
+
+Left gestures select in Top, orthographic and perspective views without moving the camera or map content. Drag explicit corner, height or object movement handles to edit geometry or position. In Top view, selected objects and starts have a Move selection handle. Middle drag pans; right drag pans in Top and orbits in 3D.

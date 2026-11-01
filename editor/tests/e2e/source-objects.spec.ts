@@ -48,6 +48,8 @@ test('objects move into authored rooms, drag, delete, undo and recover through t
   const view = await canvas.evaluate(node => ({ x: Number(node.dataset.worldX), z: Number(node.dataset.worldZ), scale: Number(node.dataset.worldScale) }));
   const marker = { x: currentBox.x + currentBox.width / 2 + (20128 - view.x) * view.scale,
     y: currentBox.y + currentBox.height / 2 - (20128 - view.z) * view.scale };
+  const handle = (await page.getByRole('button', {name:'Move selection', exact:true}).boundingBox())!;
+  marker.x=handle.x+handle.width/2;marker.y=handle.y+handle.height/2;
   await page.mouse.move(marker.x, marker.y);
   await page.mouse.down(); await page.mouse.move(marker.x + 16 * view.scale, marker.y, { steps: 5 }); await page.mouse.up();
   await expect(page.getByRole('spinbutton', { name: 'Position X' })).toHaveValue('20144');

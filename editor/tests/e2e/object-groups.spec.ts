@@ -33,7 +33,8 @@ test('multi-object selection moves, aligns, rejects partial changes and deletes 
   await map.click({ position: { x: box.width / 2 + (20240 - view.x) * view.scale, y: box.height / 2 - (20192 - view.z) * view.scale }, modifiers: ['Shift'] });
   await expect(inspector).toBeVisible();
   await page.getByRole('combobox', { name: 'Grid spacing' }).selectOption('8');
-  const anchor = { x: box.x + box.width / 2 + (20240 - view.x) * view.scale, y: box.y + box.height / 2 - (20192 - view.z) * view.scale };
+  const handle = (await page.getByRole('button', {name:'Move selection', exact:true}).boundingBox())!;
+  const anchor = {x:handle.x+handle.width/2,y:handle.y+handle.height/2};
   await page.mouse.move(anchor.x, anchor.y); await page.mouse.down();
   await page.mouse.move(anchor.x - 3 * view.scale, anchor.y, { steps: 3 }); await page.mouse.up();
   await expect(page.locator('.dirty-dot')).toHaveCount(0); // A gesture snapping to zero creates no edit.

@@ -1,3 +1,4 @@
+import { mapRoomsInSelectionBox } from '../model/roomSelection';
 import { edgeCornerPoint } from '../model/roomCorners';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { zoneContainsPoint, type LevelDocument, type Zone } from '../model/level';
@@ -8,7 +9,7 @@ import { editableStarts } from '../model/sourceStarts';
 import { editableObjects, objectIsActive } from '../model/sourceObjects';
 import { editableTeleport } from '../model/sourceTeleports';
 import { VisibilityOverlay, useVisibilityInspection } from './VisibilityOverlay';
-import { objectsInRectangle } from '../model/objectGroups';
+import { objectsInRectangle, objectSelectionIds } from '../model/objectGroups';
 import { cornerHandleHalfSize, objectMarkerRadius, selectedObjectRadius, selectedObjectRingRadius, objectMarkerStroke, startLabelFont, startLabelOffset, startMarkerPoints, startMarkerHit } from './mapMarkers';
 
 export type Selection = { kind: 'zone' | 'object' | 'start' | 'point'; id: number } | null;
@@ -22,7 +23,7 @@ interface Props {
   placementLabel?: string; onObjectPlace: (room: string | undefined, x: number, z: number) => void;
   onMove: (selection: Exclude<Selection, null>, x: number, z: number) => void;
   tool: 'select' | 'pan' | 'room' | 'box' | 'object'; layer: 'lower' | 'upper'; grid: number; showObjects: boolean;
-  roomDraft: RoomDraft | null; selectedRoom?: SourceRoom; roomGroup: readonly SourceRoom[]; onRoomSelect: (id: string, add?: boolean) => void;
+  roomDraft: RoomDraft | null; selectedRoom?: SourceRoom; roomGroup: readonly SourceRoom[]; onRoomSelect: (id: string, add?: boolean) => void; onRoomBoxSelect: (ids: readonly string[], add: boolean) => void;
   onRoomPoint: (x: number, z: number) => void; onRoomFinish: () => void;
   onRoomCornerInsert: (edge: number, near?: { x: number; z: number }) => void;
   onRoomCornerMove: (index: number, x: number, z: number) => void;
@@ -34,7 +35,7 @@ function floorPolygons(zone: Zone, upper: boolean) {
   return (upper ? zone.upper : zone.lower).filter(graphic => [1, 8, 9, 10, 11].includes(graphic.type) && graphic.points.length >= 3);
 }
 
-export function MapCanvas({ placementLabel, onObjectPlace, document, selection, objectIds, frameSelection, onObjectToggle, onObjectBoxSelect, onGroupMove, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, roomGroup, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, onRoomCornerInsert, focusRoom }: Props) {
+export function MapCanvas({ placementLabel, onObjectPlace, document, selection, objectIds, frameSelection, onObjectToggle, onObjectBoxSelect, onGroupMove, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, roomGroup, onRoomSelect, onRoomBoxSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, onRoomCornerInsert, focusRoom }: Props) {
   const visibility = useVisibilityInspection(document, selectedRoom?.id, selection?.kind === 'zone' ? selection.id : undefined);
   const canvas = useRef<HTMLCanvasElement>(null), holder = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -43,11 +44,11 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
   const space = useRef(false);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [placementPoint, setPlacementPoint] = useState<{ x: number; z: number } | null>(null);
-  const drag = useRef<{ x: number; y: number; view: MapView; selection: Selection; moved: boolean } | null>(null);
+  const drag = useRef<{ x: number; y: number; view: MapView; selection: Selection; moved: boolean; offset?: {x:number;z:number} } | null>(null);
   const [ghost, setGhost] = useState<{ selection: Exclude<Selection, null>; x: number; z: number } | null>(null);
   const groupDrag = useRef<readonly number[] | null>(null);
   const [groupGhost, setGroupGhost] = useState<{ ids: readonly number[]; x: number; z: number } | null>(null);
-  const boxDrag = useRef<{ start: { x: number; z: number }; end: { x: number; z: number }; add: boolean } | null>(null);
+  const boxDrag = useRef<{ start: { x: number; z: number }; end: { x: number; z: number }; add: boolean; kind: 'rooms' | 'objects' } | null>(null);
   const [boxGhost, setBoxGhost] = useState<typeof boxDrag.current>(null);
   useEffect(() => { boxDrag.current = null; setBoxGhost(null); groupDrag.current = null; setGroupGhost(null); drag.current = null; setGhost(null); }, [document, tool, layer]);
   useEffect(() => {
@@ -331,8 +332,10 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
     return zone ? { kind: 'zone', id: zone.id } : null;
   }
 
+  const moveAnchor=selection?.kind==='object'?editableObjects(document).find(object=>object.id===selection.id&&objectIsActive(object)&&objectSelectionIds(document).includes(object.id)&&object.upper===(layer==='upper')):selection?.kind==='start'&&layer==='lower'?editableStarts(document).find(start=>start.player===selection.id):undefined;
+  const movePixel=moveAnchor?screen(moveAnchor.x,moveAnchor.z):undefined;
   return <div className="map-holder" ref={holder}>
-    <canvas ref={canvas} aria-label="Level map" aria-describedby="map-controls" data-world-x={view.x} data-world-z={view.z} data-world-scale={view.scale} tabIndex={0} style={{ width: size.width, height: size.height, cursor: tool === 'pan' ? 'grab' : tool === 'room' || tool === 'box' || tool === 'object' ? 'crosshair' : 'default' }}
+    <canvas ref={canvas} aria-label="Level map" aria-describedby="map-controls" data-world-x={view.x} data-world-z={view.z} data-world-scale={view.scale} tabIndex={0} style={{ width: size.width, height: size.height, cursor: tool === 'room' || tool === 'box' || tool === 'object' ? 'crosshair' : 'default' }}
       onPointerLeave={() => setPlacementPoint(null)}
       onDoubleClick={event => {
         if (tool !== 'select' || !selectedRoom) return;
@@ -354,7 +357,8 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
       }}
       onPointerDown={event => {
         const rect = event.currentTarget.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
-        const panning = event.button !== 0 || space.current || tool === 'pan';
+        const panning = event.button !== 0;
+        if(panning){boxDrag.current=null;setBoxGhost(null);cornerDrag.current=null;setCornerGhost(null);groupDrag.current=null;setGroupGhost(null);}
         if (!panning && tool === 'object') {
           const point = world(x, y), step = event.altKey || grid === 0 ? 1 : grid;
           const snapped = { x: Math.round(point.x / step) * step, z: Math.round(point.z / step) * step };
@@ -365,7 +369,7 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
           event.currentTarget.focus(); onObjectPlace(room?.id, snapped.x, snapped.z); return;
         }
         if (!panning && tool === 'box') {
-          const point = world(x, y); boxDrag.current = { start: point, end: point, add: event.shiftKey }; setBoxGhost(boxDrag.current);
+          const point = world(x, y); boxDrag.current = { start: point, end: point, add: event.shiftKey, kind:'objects' }; setBoxGhost(boxDrag.current);
           event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId); return;
         }
         if (!panning && tool === 'room' && roomDraft) {
@@ -375,31 +379,18 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
           else onRoomPoint(Math.round(point.x / step) * step, Math.round(point.z / step) * step);
           return;
         }
-        if (!panning && tool === 'select' && selectedRoom && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+        if (!panning && !space.current && tool === 'select' && selectedRoom && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
           const index = selectedRoom.vertices.findIndex(point => { const pixel = screen(point.x, point.z); return Math.abs(x - pixel.x) <= cornerHandleHalfSize && Math.abs(y - pixel.y) <= cornerHandleHalfSize; });
           if (index >= 0) {
             const point = selectedRoom.vertices[index]!; cornerDrag.current = { index }; setCornerGhost({ index, x: point.x, z: point.z });
             event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId); return;
           }
         }
-        if (!panning && sourceView.changed.length) {
-          const point = world(x, y), room = sourceView.changed.toReversed().find(room => pointInRoomOutline(room.vertices, point));
-          const selected = hit(x, y);
-          if (room && (!selected || selected.kind === 'zone')) { onRoomSelect(room.id, event.shiftKey || event.ctrlKey || event.metaKey); event.currentTarget.focus(); return; }
-        }
-        const selected = panning ? null : hit(x, y);
-        if (selected?.kind === 'zone' && (event.shiftKey || event.ctrlKey || event.metaKey)) {
-          const room = document.roomSource.rooms.find(room => room.originZone === selected.id);
-          if (room) { onRoomSelect(room.id, true); event.currentTarget.focus(); return; }
-        }
-        if (selected?.kind === 'object' && (event.shiftKey || event.ctrlKey || event.metaKey)) { onObjectToggle(selected.id); event.currentTarget.focus(); return; }
-        if (selected?.kind === 'object' && objectIds.length > 1 && objectIds.includes(selected.id)) {
-          groupDrag.current = [...objectIds]; drag.current = { x, y, view, selection: selected, moved: false };
-          event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId); return;
-        }
-        if (!panning) onSelect(selected);
-        drag.current = { x, y, view, selection: selected, moved: false };
-        event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
+        if(!panning){
+          const point=world(x,y);boxDrag.current={start:point,end:point,add:event.shiftKey||event.ctrlKey||event.metaKey,kind:'rooms'};setBoxGhost(boxDrag.current);
+        }else drag.current={x,y,view,selection:null,moved:false};
+        event.currentTarget.focus();event.currentTarget.setPointerCapture(event.pointerId);
+
       }}
       onPointerMove={event => {
         const rect = event.currentTarget.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
@@ -421,14 +412,22 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
         if (!current.selection) setView({ ...current.view, x: current.view.x - dx / current.view.scale, z: current.view.z + dy / current.view.scale });
         else if (current.moved && (current.selection.kind === 'object' || current.selection.kind === 'start')) {
           const step = event.altKey || grid === 0 ? 1 : grid;
-          setGhost({ selection: current.selection, x: Math.round(point.x / step) * step, z: Math.round(point.z / step) * step });
+          setGhost({ selection: current.selection, x: Math.round((point.x+(current.offset?.x??0)) / step) * step, z: Math.round((point.z+(current.offset?.z??0)) / step) * step });
         }
       }}
       onPointerUp={event => {
         if (boxDrag.current) {
           const rect = event.currentTarget.getBoundingClientRect(), end = world(event.clientX - rect.left, event.clientY - rect.top), box = boxDrag.current;
           boxDrag.current = null; setBoxGhost(null);
-          onObjectBoxSelect(showObjects ? objectsInRectangle(document, box.start, end, layer === 'upper') : [], box.add);
+          if(box.kind==='objects')onObjectBoxSelect(showObjects?objectsInRectangle(document,box.start,end,layer==='upper'):[],box.add);
+          else if(Math.hypot((end.x-box.start.x)*view.scale,(end.z-box.start.z)*view.scale)>4)onRoomBoxSelect(mapRoomsInSelectionBox(document,box.start,end,layer==='upper'),box.add);
+          else{
+            const pixel=screen(box.start.x,box.start.z),selected=hit(pixel.x,pixel.y),changed=sourceView.changed.toReversed().find(room=>pointInRoomOutline(room.vertices,box.start));
+            const room=changed??(selected?.kind==='zone'?document.roomSource.rooms.find(room=>room.originZone===selected.id):box.add&&selection?.kind!=='object'?document.roomSource.rooms.toReversed().find(room=>pointInRoomOutline(room.vertices,box.start)):undefined);
+            if(room && (!selected || selected.kind==='zone' || box.add && (!!selectedRoom||roomGroup.length>0||selection?.kind!=='object'))){if(box.add||changed)onRoomSelect(room.id,box.add);else onSelect(selected);}
+            else if(selected?.kind==='object'&&box.add)onObjectToggle(selected.id);
+            else if(selected||!box.add)onSelect(selected);
+          }
           if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
           return;
         }
@@ -442,6 +441,14 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
       }}
       onPointerCancel={() => { boxDrag.current = null; setBoxGhost(null); groupDrag.current = null; setGroupGhost(null); setGhost(null); drag.current = null; cornerDrag.current = null; setCornerGhost(null); }}
       onLostPointerCapture={() => { boxDrag.current = null; setBoxGhost(null); groupDrag.current = null; setGroupGhost(null); setGhost(null); drag.current = null; cornerDrag.current = null; setCornerGhost(null); }} />
+    {tool==='select' && moveAnchor && movePixel && movePixel.x>0 && movePixel.x<size.width && movePixel.y>0 && movePixel.y<size.height && <button className="map-move-handle" aria-label="Move selection" title="Drag this handle to move the selected object, object group or player start. Clicking or dragging their markers only selects." style={{left:movePixel.x+20,top:movePixel.y-20}}
+      onPointerDown={event=>{
+        if(event.button!==0 || !selection || (selection.kind!=='object'&&selection.kind!=='start'))return;
+        event.preventDefault();const bounds=canvas.current!.getBoundingClientRect(),x=event.clientX-bounds.left,y=event.clientY-bounds.top,point=world(x,y);
+        groupDrag.current=selection.kind==='object'&&objectIds.length>1&&objectIds.includes(selection.id)?[...objectIds]:null;
+        drag.current={x,y,view,selection,moved:false,offset:{x:moveAnchor.x-point.x,z:moveAnchor.z-point.z}};
+        canvas.current!.focus();canvas.current!.setPointerCapture(event.pointerId);
+      }}>↔</button>}
     {tool === 'select' && !spaceHeld && selectedRoom && selectedRoom.vertices.map((a, edge) => {
       const b = selectedRoom.vertices[(edge + 1) % selectedRoom.vertices.length]!;
       let point, reason = ''; try { point = edgeCornerPoint(a, b); } catch (error) { point = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }; reason = error instanceof Error ? error.message : String(error); }
@@ -452,7 +459,7 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
     <div className="map-label"><span className="status-dot" /> ORTHOGRAPHIC <span className="muted">/</span> {layer.toUpperCase()} FLOOR</div>
     <div className="map-compass"><span>N</span><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 6 23-6-5-6 5z" fill="currentColor" /></svg></div>
     <VisibilityOverlay state={visibility} onFrame={() => framePoints(visibility.inspection?.polygons.flatMap(polygon => polygon.vertices) ?? [])} />
-    <div id="map-controls" className="map-help">{tool === 'object' ? <>Placing {placementLabel} - Click to place - Escape cancels - Alt bypasses snap</> : roomDraft ? <><strong>{roomDraft.vertices.length} corners</strong> · Click corners · Enter or first corner finishes · Backspace removes last · Esc cancels · Alt bypasses snap</> : tool === 'box' ? <>Drag a rectangle · Shift adds objects · Escape cancels · Returns to Select after completion</> : <><kbd>Space</kbd> drag to pan <span>·</span> wheel to zoom <span>·</span> <kbd>F</kbd> fit <span>·</span> <kbd>?</kbd> controls</>}</div>
+    <div id="map-controls" className="map-help">{tool === 'object' ? <>Placing {placementLabel} - Click to place - Escape cancels - Alt bypasses snap</> : roomDraft ? <><strong>{roomDraft.vertices.length} corners</strong> · Click corners · Enter or first corner finishes · Backspace removes last · Esc cancels · Alt bypasses snap</> : tool === 'box' ? <>Drag a rectangle · Shift adds objects · Escape cancels · Returns to Select after completion</> : <>Left drag: select zones; Shift adds. Middle/right drag: pan <span>·</span> wheel to zoom <span>·</span> <kbd>F</kbd> fit <span>·</span> <kbd>?</kbd> controls</>}</div>
     <div className="map-scale"><Icon name="grid" size={14} /> {Math.round(view.scale * 100)}%</div>
   </div>;
 }

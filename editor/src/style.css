@@ -26,3 +26,6 @@
 .room-edge-insert{position:absolute;transform:translate(-50%,-50%);width:20px;height:20px;padding:0;border:1px solid #74966a;border-radius:50%;color:#b2de7a;background:#18251eee;font-size:15px;z-index:2}.room-corner-actions{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px}.room-corner-actions .small-button{font-size:10px;padding:5px 7px}
 
 .room-corner-row .field-grid{grid-template-columns:1fr 1fr}.room-corner-row .number-field{flex-direction:column;align-items:stretch;gap:4px}.room-corner-row .number-field input{width:100%}
+
+.map-move-handle{position:absolute;z-index:4;transform:translate(-50%,-50%);width:24px;height:24px;min-width:24px;padding:0;border:1px solid #b2de7a;background:#17232eee;color:#b2de7a;cursor:move;touch-action:none}
+.zone-selection-box{position:absolute;z-index:5;pointer-events:none;border:1.5px dashed #82caff;background:#82caff22}

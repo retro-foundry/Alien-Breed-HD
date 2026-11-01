@@ -1,3 +1,4 @@
+import {spatialRoomsInSelectionBox} from '../model/roomSelection';
 import { texturedEditorScene, type TexturedFace } from '../model/texturedEditorScene';
 import { SpatialRenderer, loadSpatialMaterials, type IndexedMaterial } from '../model/spatialRenderer';
 import { surfaceMaterialTarget, type SurfaceMaterialTarget } from '../model/wallMaterials';
@@ -17,8 +18,8 @@ import './SpatialViewport.css';
 interface Props {
   document: LevelDocument; view: EditingView; layer: 'lower' | 'upper'; grid: number; showObjects: boolean;
   tool: 'select' | 'pan' | 'room' | 'box' | 'object'; placementLabel?: string;
-  selection: Selection; selectedRoom?: SourceRoom; objectIds: readonly number[];
-  onSelect: (selection: Selection) => void; onRoomSelect: (id: string, add?: boolean) => void;
+  selection: Selection; selectedRoom?: SourceRoom; roomGroup: readonly SourceRoom[]; objectIds: readonly number[];
+  onSelect: (selection: Selection) => void; onRoomSelect: (id: string, add?: boolean) => void; onRoomBoxSelect:(ids:readonly string[],add:boolean)=>void;
   onObjectToggle: (id: number) => void; onEdit: (command: EditCommand) => void; onError: (error: unknown) => void;
   onPlace: (room: string | undefined, x: number, z: number, upper?: boolean) => void;
   onCursor: (x: number, z: number) => void; fitKey: number; frameSelection: number;
@@ -26,7 +27,7 @@ interface Props {
 }
 type Handle = { id: string; label: string; position: Vector3; axis?: Vector3; change: SpatialEdit; colour: string };
 type Drag = { pointer: number; startX: number; startY: number; camera: EditorCamera } &
-  ({ kind: 'pan' } | { kind: 'orbit' } | { kind: 'edit'; change: SpatialEdit; origin: Vector3; axis?: Vector3; normal: Vector3; start: Vector3 | number });
+  ({ kind: 'pan' } | { kind: 'orbit' } | {kind:'select';add:boolean} | { kind: 'edit'; change: SpatialEdit; origin: Vector3; axis?: Vector3; normal: Vector3; start: Vector3 | number });
 const vertical = { x: 0, y: 1, z: 0 };
 const axes = [{ id: 'X', vector: { x: 1, y: 0, z: 0 }, colour: '#f28c83' }, { id: 'Y', vector: { x: 0, y: -1, z: 0 }, colour: '#b2de7a' }, { id: 'Z', vector: { x: 0, y: 0, z: 1 }, colour: '#82bfff' }];
 
@@ -36,6 +37,7 @@ export function SpatialViewport(props: Props) {
   const [size, setSize] = useState({ width: 0, height: 0 }), [camera, setCamera] = useState(() => cameraFor(view));
   const [draft, setDraft] = useState<SpatialEdit | null>(null), [ceilings, setCeilings] = useState(true), [wireframe, setWireframe] = useState(false);
   const [walking,setWalking]=useState(false), movementKeys=useRef(new Set<string>());
+  const [selectionBox,setSelectionBox]=useState<{start:{x:number;y:number};end:{x:number;y:number}}|null>(null);
   const orbit = view === 'orthographic' || view === 'perspective';
   const textureCanvas = useRef<HTMLCanvasElement>(null), renderer = useRef<SpatialRenderer | undefined>(undefined);
   const [cutaway, setCutaway] = useState(true), [materialError, setMaterialError] = useState(''), [rendererError,setRendererError]=useState(''), [retry, setRetry] = useState(0);
@@ -84,7 +86,7 @@ export function SpatialViewport(props: Props) {
   const sourceRoom = preview.document.roomSource.rooms.find(room => room.id === selectedRoom?.id);
   const project = (point: Vector3) => projectPoint(point, camera, size.width, size.height);
   const ray = (x: number, y: number, source = camera) => screenRay(x, y, source, size.width, size.height);
-  const cancel = () => { if (drag.current?.kind === 'pan' || drag.current?.kind === 'orbit') setCamera(drag.current.camera); drag.current = null; setDraft(null); };
+  const cancel = () => { if (drag.current?.kind === 'pan' || drag.current?.kind === 'orbit') setCamera(drag.current.camera); drag.current = null; setDraft(null);setSelectionBox(null); };
   useLayoutEffect(() => {
     const observer = new ResizeObserver(([entry]) => { if (entry) setSize({ width: entry.contentRect.width, height: entry.contentRect.height }); });
     observer.observe(holder.current!); return () => observer.disconnect();
@@ -95,7 +97,7 @@ export function SpatialViewport(props: Props) {
     if (size.width < 100 || size.height < 100 || initialized.current === key) return;
     const projectionChanged = initialized.current.split(':')[0] !== view; initialized.current = key;
     const roomId = selectedRoom?.id ?? selectedMarker?.room;
-    const roomPoints = roomId ? scene.faces.filter(f => f.room === roomId).flatMap(f => [...f.points]) : [];
+    const roomPoints = props.roomGroup.length ? scene.faces.filter(f=>props.roomGroup.some(room=>room.id===f.room)).flatMap(f=>[...f.points]) : roomId ? scene.faces.filter(f => f.room === roomId).flatMap(f => [...f.points]) : [];
     setCamera(current => frameCamera(projectionChanged ? cameraFor(view) : current, roomPoints.length ? [...roomPoints, ...(selectedMarker ? [selectedMarker.position] : [])] : points, size.width, size.height));
   }, [view, layer, size, points, selectedRoom, selectedMarker, scene]);
   const fit = useRef(props.fitKey), framed = useRef(props.frameSelection);
@@ -103,10 +105,10 @@ export function SpatialViewport(props: Props) {
     if (fit.current !== props.fitKey) { fit.current = props.fitKey; setCamera(current => frameCamera(current, points, size.width, size.height)); }
     if (framed.current !== props.frameSelection) {
       framed.current = props.frameSelection;
-      const selected = selectedMarker ? [selectedMarker.position] : sourceRoom ? scene.faces.filter(face => face.room === sourceRoom.id).flatMap(face => [...face.points]) : [];
+      const selected = props.roomGroup.length ? scene.faces.filter(face=>props.roomGroup.some(room=>room.id===face.room)).flatMap(face=>[...face.points]) : selectedMarker ? [selectedMarker.position] : sourceRoom ? scene.faces.filter(face => face.room === sourceRoom.id).flatMap(face => [...face.points]) : [];
       if (selected.length) setCamera(current => frameCamera(current, selected, size.width, size.height));
     }
-  }, [props.fitKey, props.frameSelection, points, size, selectedMarker, sourceRoom, scene]);
+  }, [props.fitKey, props.frameSelection, props.roomGroup, points, size, selectedMarker, sourceRoom, scene]);
   const focused = useRef<{ room?: Props['focusRoom']; zone?: Props['focusZone'] }>({});
   useEffect(() => {
     const roomChanged = focused.current.room !== props.focusRoom;
@@ -119,8 +121,8 @@ export function SpatialViewport(props: Props) {
       return roomChanged && props.focusRoom?.frame ? framed : { ...current, target: framed.target };
     });
   }, [props.focusRoom, props.focusZone, document.roomSource, scene, size, selectedMarker]);
-  useEffect(() => { drag.current = null; setDraft(null); }, [document, tool, view, layer]);
-  useEffect(() => { const blur = () => { space.current = false; drag.current = null; setDraft(null); }; window.addEventListener('blur', blur); return () => window.removeEventListener('blur', blur); }, []);
+  useEffect(() => { drag.current = null; setDraft(null);setSelectionBox(null); }, [document, tool, view, layer]);
+  useEffect(() => { const blur = () => { space.current = false; drag.current = null; setDraft(null);setSelectionBox(null); }; window.addEventListener('blur', blur); return () => window.removeEventListener('blur', blur); }, []);
 
   useEffect(()=>{if(view!=='perspective')setWalking(false);},[view]);
   useEffect(()=>{
@@ -181,7 +183,7 @@ export function SpatialViewport(props: Props) {
     const projected = faces.map(face => ({ face, pixels: clipCameraPolygon(face.points, camera).map(project) })).filter(face => face.pixels.length >= 3);
     projected.sort((a, b) => b.pixels.reduce((s, p) => s + p.depth, 0) / b.pixels.length - a.pixels.reduce((s, p) => s + p.depth, 0) / a.pixels.length);
     for (const { face, pixels } of projected) {
-      const selected = face.room === selectedRoom?.id;
+      const selected = face.room === selectedRoom?.id || props.roomGroup.some(room=>room.id===face.room);
       context.beginPath(); pixels.forEach((point, i) => i ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y)); context.closePath();
       if (!orbit && !wireframe) { context.fillStyle = face.kind === 'wall' ? selected ? '#b2de7a16' : '#718aa008' : selected ? '#344b37' : face.kind === 'ceiling' ? '#3a3b45' : '#263441'; context.fill(); }
       context.strokeStyle = selected ? '#b2de7a88' : face.kind === 'wall' ? '#667d8c60' : '#5c758766'; context.lineWidth = selected ? 1.5 : .7; if ((!orbit && face.kind === 'wall') || wireframe || selected || orbit && (!mesh.scene || materialError || rendererError || !materials)) context.stroke();
@@ -237,7 +239,7 @@ export function SpatialViewport(props: Props) {
     {polygonPaint && <PolygonPaintDialog document={document} target={polygonPaint} onCancel={()=>setPolygonPaint(undefined)} onApply={command=>{onEdit(command);setPolygonPaint(undefined);}} />}
     {orbit && <canvas key={retry} ref={textureCanvas} className="spatial-textures" aria-label="Textured 3D geometry" data-textured-faces={materialReady?mesh.scene?.faces.length:0} data-material-count={materialReady?materials?.size:0} data-storeys="lower upper" style={{width:size.width,height:size.height,visibility:mesh.error||materialError||rendererError||!materialReady?'hidden':'visible'}} />}
     <canvas ref={canvas} aria-label="Editing viewport" aria-describedby="spatial-controls" data-view={view} data-camera={JSON.stringify(camera)} data-size={JSON.stringify(size)} tabIndex={0}
-      style={{ width: size.width, height: size.height, cursor: tool === 'object' ? 'crosshair' : tool === 'pan' ? 'grab' : 'default' }}
+      style={{ width: size.width, height: size.height, cursor: tool === 'object' ? 'crosshair' : 'default' }}
       onContextMenu={event => event.preventDefault()}
       onBlur={()=>movementKeys.current.clear()}
       onKeyDown={event => { if(walking && !event.ctrlKey && !event.metaKey && !event.altKey && ['KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE','ShiftLeft','ShiftRight'].includes(event.code)){event.preventDefault();movementKeys.current.add(event.code);return;} if(event.key==='Escape')movementKeys.current.clear(); if (event.key === ' ') { space.current = true; event.preventDefault(); } if (event.key === 'Escape' && drag.current) { event.preventDefault(); event.stopPropagation(); cancel(); } }}
@@ -245,30 +247,19 @@ export function SpatialViewport(props: Props) {
       onWheel={event => { const p = local(event); setCamera(current => zoomCamera(current, p.x, p.y, Math.exp(Math.max(-1, Math.min(1, event.deltaY * .001))), size.width, size.height)); }}
       onPointerDown={event => {
         event.currentTarget.focus(); const p = local(event);
-        if (event.button !== 0 || space.current || tool === 'pan') { drag.current = { kind: orbit && event.button === 2 && !space.current ? 'orbit' : 'pan', pointer: event.pointerId, startX: p.x, startY: p.y, camera }; event.currentTarget.setPointerCapture(event.pointerId); return; }
+        if (event.button !== 0) { setSelectionBox(null);setDraft(null); drag.current = { kind: orbit && event.button === 2 ? 'orbit' : 'pan', pointer: event.pointerId, startX: p.x, startY: p.y, camera }; event.currentTarget.setPointerCapture(event.pointerId); return; }
         const hit = pickFaces(p.x,p.y,tool === 'object' && (orbit || view === 'bottom'));
         if (tool === 'object') { const step = event.altKey || grid === 0 ? 1 : grid; props.onPlace(hit?.face.room, Math.round((hit?.position.x ?? 0) / step) * step, Math.round((hit?.position.z ?? 0) / step) * step, hit?.face.upper); return; }
-        const marker = markerAt(p.x, p.y);
-        if (marker) {
-          if (marker.kind === 'object' && (event.shiftKey || event.ctrlKey || event.metaKey)) { props.onObjectToggle(marker.id); return; }
-          onSelect({ kind: marker.kind, id: marker.id }); startEdit(event, { kind: 'marker', marker, position: marker.position }); return;
-        }
-        if (hit) {
-          onRoomSelect(hit.face.room,event.shiftKey||event.ctrlKey||event.metaKey);
-          if('graphic' in hit.face) setPicked(hit.face as TexturedFace);
-          if(orbit && event.altKey && hit.face.kind!=='wall' && 'boundary' in hit.face && hit.face.boundary){
-            const field=hit.face.upper ? hit.face.kind==='floor'?'upperFloor':'upperCeiling' : hit.face.kind;
-            startEdit(event,{kind:'height',room:hit.face.room,field,value:hit.position.y},vertical,hit.position);
-          }
-          return;
-        }
-        onSelect(null); drag.current = { kind: orbit ? 'orbit' : 'pan', pointer: event.pointerId, startX: p.x, startY: p.y, camera }; event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current={kind:'select',pointer:event.pointerId,startX:p.x,startY:p.y,camera,add:event.shiftKey||event.ctrlKey||event.metaKey};
+        event.currentTarget.setPointerCapture(event.pointerId);
+
       }}
       onPointerMove={event => {
         const p = local(event), current = drag.current;
         const hit = pickFaces(p.x,p.y); if (hit) props.onCursor(hit.position.x, hit.position.z);
         if (!current) return;
         const dx = p.x - current.startX, dy = p.y - current.startY;
+        if(current.kind==='select'){if(Math.hypot(dx,dy)>4)setSelectionBox({start:{x:current.startX,y:current.startY},end:p});return;}
         if (current.kind === 'orbit') { setCamera(walking ? lookFromEye(current.camera,current.camera.yaw-dx*.008,current.camera.pitch+dy*.008) : { ...current.camera, yaw: current.camera.yaw - dx * .008, pitch: Math.max(-1.5, Math.min(1.5, current.camera.pitch + dy * .008)) }); return; }
         if (current.kind === 'pan') { const basis = cameraBasis(current.camera), scale = current.camera.distance / (Math.min(size.width, size.height) * .9); setCamera({ ...current.camera, target: add(current.camera.target, add(mul(basis.right, -dx * scale), mul(basis.up, dy * scale))) }); return; }
         if (Math.hypot(dx, dy) < 3) return;
@@ -285,10 +276,25 @@ export function SpatialViewport(props: Props) {
       }}
       onPointerUp={event => {
         const current = drag.current; drag.current = null;
+        if(current?.kind==='select'){
+          const p=local(event),start={x:current.startX,y:current.startY};
+          if(Math.hypot(p.x-start.x,p.y-start.y)>4){
+            const eye=cameraBasis(current.camera).eye,visible=faces.filter(face=>!cutaway||!orbit||!('normal' in face)||dot((face as TexturedFace).normal,sub(eye,face.points[0]!))>0);
+            props.onRoomBoxSelect(spatialRoomsInSelectionBox(visible,current.camera,size.width,size.height,start,p),current.add);
+          }else{
+            const hit=pickFaces(start.x,start.y),marker=markerAt(start.x,start.y),zones=current.add&&(!!selectedRoom||props.roomGroup.length>0||selection?.kind!=='object');
+            if(marker && !zones){if(marker.kind==='object'&&current.add)props.onObjectToggle(marker.id);else onSelect({kind:marker.kind,id:marker.id});}
+            else if(hit){onRoomSelect(hit.face.room,current.add);if('graphic' in hit.face)setPicked(hit.face as TexturedFace);}
+            else if(zones&&marker)onRoomSelect(marker.room,true);
+            else if(!current.add)onSelect(null);
+          }
+          setSelectionBox(null);if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);return;
+        }
         if (current?.kind === 'edit' && draft) { try { onEdit(spatialEdit(document, draft)); } catch (error) { onError(error); } }
         setDraft(null); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
       }}
-      onPointerCancel={cancel} onLostPointerCapture={() => { drag.current = null; setDraft(null); }} />
+      onPointerCancel={cancel} onLostPointerCapture={() => { drag.current = null; setDraft(null);setSelectionBox(null); }} />
+    {selectionBox && <div className="zone-selection-box" aria-label="Zone selection rectangle" style={{left:Math.min(selectionBox.start.x,selectionBox.end.x),top:Math.min(selectionBox.start.y,selectionBox.end.y),width:Math.abs(selectionBox.end.x-selectionBox.start.x),height:Math.abs(selectionBox.end.y-selectionBox.start.y)}} />}
     {!faces.length && <div className="spatial-empty" role="status">{layer === 'upper' ? 'No upper-floor rooms are visible. Choose Lower to edit the lower floor.' : 'No rooms yet. Use Draw room in Top view to create one.'}</div>}
     <div className="map-label">EDITING / {view.toUpperCase()} / {orbit ? 'LOWER + UPPER' : layer.toUpperCase()}</div>
     <div className="spatial-options">{view==='perspective' && <><button aria-pressed={!walking} title="Orbit and frame editable geometry; right drag rotates around the selection." onClick={()=>{setWalking(false);setCamera(frameCamera(cameraFor(view),sourceRoom?scene.faces.filter(f=>f.room===sourceRoom.id).flatMap(f=>[...f.points]):points,size.width,size.height));}}>Orbit</button><button aria-pressed={walking} title="Inspect from player one inside this same editable 3D view. WASD moves, right drag looks, Q/E moves down/up and Shift moves faster. Does not run the game." onClick={walkFromStart}>Walk</button></>}{orbit && <label title="Cut away outward-facing surfaces to see inside both storeys without changing the level."><input type="checkbox" checked={cutaway} onChange={event=>setCutaway(event.target.checked)} />Cutaway</label>}<label title="Show ceiling surfaces in this editing view. Hiding them lets you look inside; it does not remove ceilings from the game."><input type="checkbox" checked={ceilings} onChange={event => setCeilings(event.target.checked)} />Show ceilings</label><label title="Show room outlines without filled surfaces."><input type="checkbox" checked={wireframe} onChange={event => setWireframe(event.target.checked)} />Wireframe</label></div>
@@ -296,7 +302,7 @@ export function SpatialViewport(props: Props) {
       style={{ left: p.x, top: p.y, borderColor: handle.colour, color: handle.colour }} onPointerDown={event => { event.preventDefault(); startEdit(event, handle.change, handle.axis); }}
       onKeyDown={event => { if (['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'].includes(event.key)) { event.preventDefault(); event.stopPropagation(); nudge(handle, (event.key === 'ArrowUp' || event.key === 'ArrowRight' ? 1 : -1) * (handle.change.kind === 'height' ? -1 : 1), event.shiftKey); } }}>
       {handle.id.startsWith('axis-') ? handle.id.slice(5) : handle.change.kind === 'height' ? `${handle.change.field.startsWith('upper') ? 'U' : 'L'}${handle.change.field.toLowerCase().endsWith('floor') ? 'F' : 'C'}` : ''}</button> : null; })}
-    <div id="spatial-controls" className="map-help">{tool === 'object' ? `Placing ${props.placementLabel}: click a room; Escape cancels.` : `${walking ? 'WASD: move. Right drag: look. Q/E: down/up. Shift: faster. ' : orbit ? 'Right drag: orbit. ' : ''}${orbit ? 'LF/LC/UF/UC: drag heights. Alt-drag surface: height. ' : ''}Space/middle drag: pan. Wheel: zoom. Click: select. Drag objects/handles: edit. F: fit. Shift+F: selection.`}</div>
+    <div id="spatial-controls" className="map-help">{tool === 'object' ? `Placing ${props.placementLabel}: click a room; Escape cancels.` : `${walking ? 'WASD: move. Right drag: look. Q/E: down/up. Shift: faster. ' : orbit ? 'Right drag: orbit. ' : ''}${orbit ? 'LF/LC/UF/UC: drag heights. ' : ''}Middle drag: pan. Wheel: zoom. Left click/drag: select zones. Shift: add zones. Handles: move/edit. F: fit. Shift+F: selection.`}</div>
     {orbit && (mesh.error || materialError || rendererError) && <div className="spatial-material-error" role="alert">{mesh.error || materialError || rendererError} {mesh.error ? 'Geometry outlines remain editable. Apply the room appearance to enable its texture preview.' : <button onClick={()=>setRetry(n=>n+1)}>Retry 3D materials</button>}</div>}
     {orbit && !mesh.error && !materialError && !rendererError && !materialReady && <div className="spatial-material-error" role="status">Loading original textures and lighting...</div>}
     {orbit && materialReady && <span className="spatial-render-status" role="status">Textured geometry / Lower + Upper{mesh.scene?.unsupported.length ? ` / ${mesh.scene.unsupported.join(', ')}: use Engine view for these animated graphics` : ''}</span>}

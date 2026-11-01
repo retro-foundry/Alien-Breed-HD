@@ -129,7 +129,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
       </>}
       {start && <section className="property-section"><h3>Position</h3>{!sourceMatchesLevel(document)
         ? <SourceStartForm document={document} player={start.player} edit={edit} />
-        : <PositionForm x={start.x} z={start.z} zone={start.zone} onApply={(x, z, zone) => edit(() => setStart(document, start.player, x, z, zone))} />}<p className="field-note">Drag the triangle on the map to place this start. The point must stay inside its room.</p></section>}
+        : <PositionForm x={start.x} z={start.z} zone={start.zone} onApply={(x, z, zone) => edit(() => setStart(document, start.player, x, z, zone))} />}<p className="field-note">Select the triangle, then drag its movement handle to place this start. The point must stay inside its room.</p></section>}
       {point && <section className="property-section"><h3>Coordinates</h3><InfoRow label="X" value={point.x} /><InfoRow label="Z" value={point.z} /></section>}
     </div>
   </aside>;

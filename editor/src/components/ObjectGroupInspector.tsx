@@ -9,7 +9,7 @@ export function ObjectGroupInspector({ document, ids, edit, clear, frame, duplic
   const [height, setHeight] = useState('0');
   return <aside className="inspector" aria-label="Object group inspector">
     <div className="panel-title">INSPECTOR · OBJECT GROUP</div><div className="inspector-scroll">
-      <section className="property-section"><h2>{ids.length} selected objects</h2><p className="field-note">Shift, Ctrl or Command click objects in the map or list to add or remove them. Drag a selected marker to move the group; Escape cancels. Click an unselected object to select it alone.</p>
+      <section className="property-section"><h2>{ids.length} selected objects</h2><p className="field-note">Shift, Ctrl or Command click objects in the map or list to add or remove them. Drag the Move selection handle to move the group; Escape cancels. Click an unselected object to select it alone.</p>
         <p className="field-note">Alignment uses the first selected object ({ids[0]}). Group edits are one undoable action; invalid destinations keep the whole group unchanged.</p>
         <button className="small-button" onClick={frame} title="Fit all selected objects into the map using their current authored coordinates. Shortcut: Shift + F. Changes only the view.">Frame selected objects</button>
         <button className="small-button" onClick={clear} title="Clear the whole object selection. Escape also clears it.">Clear object selection</button></section>

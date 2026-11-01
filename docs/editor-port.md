@@ -2626,3 +2626,22 @@ Published site commit `766af5c` serves JavaScript `index-B5QxB2pK.js` and CSS
 ceiling-drag and native door-motion regressions passed. The five native runtime
 hashes remain unchanged under `runtime/r-c8b6aa3eff4f5614/`. Remaining AMOS and
 R0-R12 scope is still open.
+
+
+## Selection gestures across editable views
+
+Left click selects and left drag draws a crossing zone selection rectangle in
+Top, orthographic and perspective views. Shift adds zones; either rectangle
+direction works. Selection does not edit source, add Undo entries or move the
+camera. Room groups can be framed and remain highlighted in 3D.
+
+Middle drag pans; right drag pans in Top and orbits in 3D (looks in Walk).
+Space-left and Alt-left no longer navigate or adjust heights. Explicit corner,
+LF/LC/UF/UC and object-axis handles remain editable; Top objects, groups and
+player starts have a separate Move selection handle. Object placement, room
+drawing and the dedicated object rectangle tool keep their explicit workflows.
+Help, inspector guidance and tooltips explain the current controls.
+
+The generated doorway-band material picker also retains the compiled native
+wall as its initial style when no explicit room appearance exists (3fb9727).
+This avoids an undefined style when painting geometry exposed by height edits.
