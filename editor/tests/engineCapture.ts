@@ -151,3 +151,17 @@ async function queryPlayerSnapshot(page: Page): Promise<{ zone: number; x: numbe
     frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'player-state', id }, location.origin);
   }));
 }
+
+export async function engineInspectionCamera(page: Page): Promise<{x:number;z:number;y:number;angle:number;look:number}> {
+  return page.evaluate(() => new Promise((resolve, reject) => {
+    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();
+    const timer = setTimeout(() => reject(new Error('Camera query timed out')), 10000);
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow || event.data?.type !== 'camera-state' || event.data.id !== id) return;
+      clearTimeout(timer); window.removeEventListener('message', receive); resolve(event.data.camera);
+    };
+    window.addEventListener('message', receive);
+    frame.contentWindow!.postMessage({source:'ab3d-editor',type:'camera-state',id},location.origin);
+  }));
+}
+
