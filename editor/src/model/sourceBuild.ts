@@ -17,6 +17,7 @@ import { resolveAnimationRoom } from './animationRooms';
 import { airHeightsChanged } from './roomHeights';
 import { hasNativeWallMaterials } from './roomMaterials';
 import { mechanismDependencies, mechanismsForRoom } from './mechanismDependencies';
+import { validateMovingControllerCopies, type MovingControllerCopy } from './movingControllerCopies';
 
 export interface SourceBuildOptions {
   /** Resolved game configuration in source room identities; -1 disables exit.
@@ -27,6 +28,7 @@ export interface SourceBuildOptions {
    * imported rooms. Existing material/corner identities remain authored. */
   newRoomLighting?: ReadonlyMap<string, PointLightingBinding>;
   closingRoomGraphics?: ReadonlyMap<string, ClosingRoomGraphics>;
+  controllerCopies?: readonly MovingControllerCopy[];
 }
 
 /** Atomic complete-source assembly. The source document/archive remains the
@@ -34,15 +36,26 @@ export interface SourceBuildOptions {
  * Every geometry-dependent table is rebuilt before validated openLevel.
  */
 export function buildSourceLevel(document: LevelDocument, options: SourceBuildOptions) {
-  const source = document.roomSource, topology = compileRoomTopology(document, source);
+  const source = document.roomSource;
+  const controllerCopies = options.controllerCopies ?? [];
+  validateMovingControllerCopies(document, controllerCopies);
+  const topology = compileRoomTopology(document, source);
   const moving = new Set(document.mechanisms.map(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift')));
   for (const room of source.rooms) if (room.originZone === null && hasNativeWallMaterials(room.originZone, room.wallSources)) {
-    if (moving.has(room.recordZone)) {
+    if (moving.has(room.recordZone) && mechanismsForRoom(document, room.recordZone).some(mechanism =>
+      !controllerCopies.some(copy => copy.room === room.id && copy.kind === mechanism.kind && copy.id === mechanism.id))) {
       const dependencies = mechanismsForRoom(document, room.recordZone).map(item => mechanismDependencies(document, item.kind, item.id));
       const owners = [...new Set(dependencies.flatMap(item => item.graphicsRooms))].sort((a, b) => a - b);
       throw new Error(`Room ${room.id} copies a moving door or lift. Allocate its independent controller and wall attachments before building; the original controller cannot drive a room copy. Its live graphics belong to ${owners.map(id => `Zone ${id}`).join(', ')}. Inspect Attachments on the original mechanism to locate its moving walls and trigger boundaries.`);
     }
     if (document.switches.some(item => item.zone === room.recordZone)) throw new Error(`Room ${room.id} copies a switch. Allocate and link its independent activation record before building.`);
+  }
+  for (const copy of controllerCopies) {
+    const cells = topology.cells.filter(cell => cell.sourceId === copy.room);
+    if (cells.length !== 1) throw new Error('A copied moving room needs one convex controller volume. Grouped moving cells require explicit synchronization.');
+    const cell = cells[0]!;
+    if (airHeightsChanged(document, cell) || closedPortalEdges(document, cell).length || unassignedBoundaryEdges(topology, cell).length)
+      throw new Error('A copied moving room needs its original heights and boundary attachments. Copy its adjoining doorway rooms together before building.');
   }
   for (const cell of topology.cells) {
     if (!airHeightsChanged(document, cell)) continue;
@@ -67,7 +80,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
   const geometry = buildCellGraphics(document, source, topology, options.newRoomGraphics, options.closingRoomGraphics);
   const lighting = buildGeometryLighting(document, source, geometry, options.newRoomLighting);
   const collision = compileCollisionGeometry(lighting.graphics.topology);
-  const attachments = buildAnimationAttachments(document, lighting.graphics, collision);
+  const attachments = buildAnimationAttachments(document, lighting.graphics, collision, controllerCopies);
   const graphics = attachments.graphics;
   const points = buildPointLighting(document, graphics.topology.points, new Map([...lighting.bindings, ...attachments.addedLighting]));
   const previousOrder = new Map(topology.cells.filter(cell => cell.originZone !== null).map(cell => [cell.id,

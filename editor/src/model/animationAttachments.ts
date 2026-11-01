@@ -8,6 +8,7 @@ import type { LevelDocument } from './level';
 import type { PointLightingBinding } from './pointLighting';
 import { resolveAnimationRoom } from './animationRooms';
 import { hasNativeWallMaterials } from './roomMaterials';
+import type { MovingControllerCopy } from './movingControllerCopies';
 
 const key = (pointer: number, context: AnimationTargetContext) => `${pointer}:${context.kind}:${context.zone}:${context.line ?? ''}`;
 const on = (p: { x: number; z: number }, a: { x: number; z: number }, b: { x: number; z: number }) =>
@@ -21,7 +22,7 @@ const on = (p: { x: number; z: number }, a: { x: number; z: number }, b: { x: nu
  * Moving-room and switch controller grouping requires a separate runtime
  * contract, so splitting those controlled volumes is rejected explicitly.
  */
-export function buildAnimationAttachments(document: LevelDocument, graphics: CellGraphics, collision: CollisionGeometry) {
+export function buildAnimationAttachments(document: LevelDocument, graphics: CellGraphics, collision: CollisionGeometry, copies: readonly MovingControllerCopy[] = []) {
   const { tables } = importedAnimationTables(document), topology = graphics.topology;
   const points = topology.points.map(point => ({ ...point })), addedLighting = new Map<number, PointLightingBinding>();
   const origins = new Map<number, number[]>();
@@ -40,6 +41,7 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
   type Target = GeneratedGraphicsTarget & { record: Graphic };
   const targets = new Map<number, Target[]>();
   const waterTargets = new Map<number, Target[]>();
+  const copiedTargets = new Map<number, Target[]>();
   const sourceRooms = new Map(document.roomSource.rooms.map(room => [room.id, room]));
   for (const cell of topology.cells) {
     const stream = graphics.streams.get(cell.id);
@@ -47,12 +49,13 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
     for (const [upper, records] of [[false, stream.lower], [true, stream.upper]] as const) records?.forEach((item, index) => {
       if (item.sourceOffset === undefined) return;
       const owner = originals.get(item.sourceOffset)?.owner;
-      const inheritedWater = owner === cell.recordZone && hasNativeWallMaterials(cell.originZone, sourceRooms.get(cell.sourceId)?.wallSources ?? []);
-      if (owner !== cell.originZone && !inheritedWater) return;
+      const inheritedMaterials = owner === cell.recordZone && hasNativeWallMaterials(cell.originZone, sourceRooms.get(cell.sourceId)?.wallSources ?? []);
+      if (owner !== cell.originZone && !inheritedMaterials) return;
       const record = readGraphicRecord(new BinaryReader(item.bytes, 'animation target'), 0, points.length);
       const target = { room: cell.id, upper, index, record };
       if (owner === cell.originZone) targets.set(item.sourceOffset, [...(targets.get(item.sourceOffset) ?? []), target]);
-      if (record.type === 7 && inheritedWater) waterTargets.set(item.sourceOffset, [...(waterTargets.get(item.sourceOffset) ?? []), target]);
+      else if (inheritedMaterials) copiedTargets.set(item.sourceOffset, [...(copiedTargets.get(item.sourceOffset) ?? []), target]);
+      if (record.type === 7 && inheritedMaterials) waterTargets.set(item.sourceOffset, [...(waterTargets.get(item.sourceOffset) ?? []), target]);
     });
   }
   const selected = new Map<string, GeneratedGraphicsTarget>();
@@ -72,6 +75,7 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
     bind(pointer, context, available[0]!); return available[0]!;
   };
   const lines = new Map<number, { id: number; a: number; b: number }[]>();
+  const copiedLines = new Map<number, { id: number; a: number; b: number; sourceId: string }[]>();
   const collisionReader = new BinaryReader(collision.bytes, 'compiled animation collision');
   const lineIds = collision.boundaries.flat();
   if (lineIds.length * 16 !== collision.bytes.length || new Set(lineIds).size !== lineIds.length)
@@ -87,32 +91,60 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
         || collisionReader.i16(offset + 8) !== cell.neighbours[edge])
         throw new Error('Compiled collision coordinates or neighbours do not match their animation attachment identities.');
       if (source === null) return;
-      lines.set(source, [...(lines.get(source) ?? []), { id: collision.boundaries[index]![edge]!, a: cell.vertices[edge]!, b: cell.vertices[(edge + 1) % cell.vertices.length]! }]);
+      const line = { id: collision.boundaries[index]![edge]!, a: cell.vertices[edge]!, b: cell.vertices[(edge + 1) % cell.vertices.length]! };
+      if (cell.originZone !== null) lines.set(source, [...(lines.get(source) ?? []), line]);
+      else copiedLines.set(source, [...(copiedLines.get(source) ?? []), { ...line, sourceId: cell.sourceId }]);
     });
   });
-  const moving = (records: readonly MovingRoomAnimation[] | null, kind: 'door' | 'lift') => records?.map(record => {
-    const zone = singleRoom(record.zone, kind, kind === 'lift');
-    choose(record.graphic, { kind, zone });
+  const attachMovingWalls = (record: MovingRoomAnimation, zone: number, subject: string,
+    candidatesFor: (graphic: number) => readonly Target[],
+    boundariesFor: (line: number) => readonly { id: number; a: number; b: number }[]) => {
     const walls = record.walls.flatMap(wall => {
-      const candidates = targets.get(wall.graphic) ?? [], boundaries = lines.get(wall.line) ?? [];
-      if (!candidates.length || !boundaries.length) throw new Error(`${kind} room ${record.zone} lost an animated wall or collision attachment.`);
+      const candidates = candidatesFor(wall.graphic), boundaries = boundariesFor(wall.line);
+      if (!candidates.length || !boundaries.length) throw new Error(`${subject} lost an animated wall or collision attachment.`);
       return candidates.map(target => {
         const [a, b] = target.record.points.map(id => points[id]!);
         const matching = boundaries.filter(line => on(a!, points[line.a]!, points[line.b]!) && on(b!, points[line.a]!, points[line.b]!));
         // A unique authored line/record pair is an explicit relationship even
         // for legacy decorative geometry offset from its collision segment.
         const available = matching.length ? matching : candidates.length === 1 && boundaries.length === 1 ? boundaries : [];
-        if (available.length !== 1) throw new Error(`${kind} room ${record.zone} has an ambiguous animated collision-wall attachment.`);
+        if (available.length !== 1) throw new Error(`${subject} has an ambiguous animated collision-wall attachment.`);
         const line = available[0]!.id; bind(wall.graphic, { kind: 'moving-wall', zone, line }, target);
         return { ...wall, line };
       });
     });
     if (new Set(walls.map(wall => wall.line)).size !== walls.length)
-      throw new Error(`${kind} room ${record.zone} needs grouped graphics writes for a shared animated collision line.`);
+      throw new Error(`${subject} needs grouped graphics writes for a shared animated collision line.`);
     checkedInteger(walls.length, 0, 64, 'Generated moving wall count');
+    return walls;
+  };
+  const moving = (records: readonly MovingRoomAnimation[] | null, kind: 'door' | 'lift') => records?.map(record => {
+    const zone = singleRoom(record.zone, kind, kind === 'lift');
+    choose(record.graphic, { kind, zone });
+    const walls = attachMovingWalls(record, zone, `${kind} room ${record.zone}`, graphic => targets.get(graphic) ?? [], line => lines.get(line) ?? []);
     return { ...record, zone, walls };
   }) ?? null;
-  const doors = moving(tables.doors, 'door'), lifts = moving(tables.lifts, 'lift');
+  const copyMoving = (kind: 'door' | 'lift') => copies.filter(copy => copy.kind === kind).map(copy => {
+    const record = (kind === 'door' ? tables.doors : tables.lifts)?.[copy.id];
+    if (!record) throw new Error('A copied moving controller lost its native template.');
+    const cells = topology.cells.filter(cell => cell.sourceId === copy.room);
+    if (cells.length !== 1) throw new Error('A copied moving controller requires one generated room.');
+    const zone = cells[0]!.id;
+    const mappedTargets = (pointer: number) => {
+      const owner = originals.get(pointer)?.owner;
+      const room = owner === undefined ? undefined : copy.graphicsRooms.get(owner);
+      return (copiedTargets.get(pointer) ?? []).filter(target => topology.cells.find(cell => cell.id === target.room)!.sourceId === room);
+    };
+    const surface = mappedTargets(record.graphic);
+    if (surface.length !== 1) throw new Error('A copied controller needs one explicitly mapped moving surface.');
+    bind(record.graphic, { kind, zone }, surface[0]!);
+    const walls = attachMovingWalls(record, zone, `Copied ${kind} controller`, mappedTargets,
+      source => (copiedLines.get(source) ?? []).filter(line => line.sourceId === copy.collisionRooms.get(source)));
+    return { ...record, header: copy.header?.slice() ?? record.header.slice(), zone, walls };
+  });
+  const append = (original: readonly MovingRoomAnimation[] | null, copies: readonly MovingRoomAnimation[]) => copies.length ? [...(original ?? []), ...copies] : original;
+  const doors = append(moving(tables.doors, 'door'), copyMoving('door'));
+  const lifts = append(moving(tables.lifts, 'lift'), copyMoving('lift'));
   // Anims.s DoWaterAnims writes one shared phase/height to every listed native
   // polygon and zone header. Material copies need distinct pointer attachments
   // in that same group, without borrowing the original room's runtime identity.

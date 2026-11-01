@@ -1742,3 +1742,18 @@ fixtures can establish current-format support independently.
   cycles. The production build passes and the attachment layout was inspected.
   This establishes dependency inspection for R7; independent controller
   allocation and complete room-copy authoring are still required.
+
+  The source compiler now accepts an explicit copied-controller plan with
+  independent graphics-owner and collision-room correspondence. It allocates
+  separate native door/lift entries and generated attachment identities, with
+  independent settings headers. Validation rejects incomplete mappings, mismatched
+  translation groups, duplicate moving-plane controllers, changed initial
+  positions, changed heights and missing doorway neighbours. Original and copy
+  wall matching share the same ambiguity/count checks. Normal builds retain the
+  guard unless this explicit plan is supplied. Both Chromium and Firefox prove
+  original controllers stay still while copies move to different destinations,
+  with every sampled plane/wall synchronized after native initialization. All
+  18 focused motion/range/water browser cases, all 749 model tests and production
+  builds pass. No runtime movement/timing code changed. Editable-source plan
+  persistence, room-copy UI, switch allocation/remapping and broader grouped /
+  transformed moving-volume authoring remain open before R7/R9 are complete.

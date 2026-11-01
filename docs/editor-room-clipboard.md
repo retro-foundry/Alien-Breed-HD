@@ -155,3 +155,38 @@ Framing keeps the mechanism selected and does not alter source. Moving-room copy
 diagnostics identify the graphics-owning rooms and point to that inspection view.
 This is dependency inspection needed for independent controller allocation, not
 the controller allocation or complete room clipboard operation itself.
+
+## Independent moving-controller compiler allocation
+
+`SourceBuildOptions.controllerCopies` now accepts explicit native controller /
+source-room correspondence, separate graphics-owner mappings and collision-line
+room mappings. `movingControllerCopies.ts` validates the complete relationship
+before topology compilation: fresh controlled identities, matching native
+templates, a common exact translation, unique moving-plane controllers, complete
+attachments and valid native header settings. Initial position changes require
+synchronized source geometry and are rejected. Copied moving volumes must retain
+one convex cell, original heights and boundary relationships; missing adjoining
+doorway rooms remain an actionable error.
+
+The animation compiler allocates separate door/lift table entries and binds their
+surface and each wall/trigger line to the explicitly mapped generated copies.
+Original and copied attachment candidates are separate. Both use the same wall
+matching, ambiguity and count validation. Header range/rules/conditions/velocity
+can differ while the native pointer and runtime-room fields are rebuilt. Native
+DoorRoutine/LiftRoutine remain unchanged.
+
+Compiler fixtures copy an original level-1 controller together with its graphics
+owners, collision owners and doorway neighbours. Originals are set to Never;
+copies use Timer and a different destination. Model checks verify distinct
+runtime rooms, graphics pointers and collision lines, settings and compiled-native
+save/reopen, plus atomic rejection of incomplete mappings, mismatched translated
+groups, duplicate controllers and changed initial positions. Native geometry is
+synchronized on the first simulation update, as in the original routines; the
+browser test observes both that initialization and subsequent motion isolation.
+
+This compiler API is not yet persisted in editable source projects or exposed as
+a room-copy command. Source controller snapshots, ordinary authoring controls,
+switch allocation/internal condition remapping, grouped moving cells and broader
+transforms still require implementation before complete room clipboard authoring
+or R7 completion can be claimed. Normal builds keep rejecting moving copies that
+do not provide the explicit controller plan.
