@@ -39,7 +39,7 @@ export async function captureEngine(page: Page, camera: EngineCamera): Promise<n
   }), camera);
 }
 
-export async function enginePlayerState(page: Page): Promise<{ zone: number; x: number; z: number; playing: boolean }> {
+export async function enginePlayerState(page: Page): Promise<{ zone: number; x: number; z: number; conditions: number; playing: boolean }> {
   return page.evaluate(() => new Promise((resolve, reject) => {
     const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!;
     const id = crypto.randomUUID();
@@ -47,7 +47,7 @@ export async function enginePlayerState(page: Page): Promise<{ zone: number; x: 
     const receive = (event: MessageEvent) => {
       if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'player-state' || event.data.id !== id) return;
       clearTimeout(timer); window.removeEventListener('message', receive);
-      const { zone, x, z, playing } = event.data; resolve({ zone, x, z, playing });
+      const { zone, x, z, conditions, playing } = event.data; resolve({ zone, x, z, conditions, playing });
     };
     window.addEventListener('message', receive);
     frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'player-state', id }, location.origin);

@@ -27,6 +27,10 @@ Opening local files does not upload them anywhere.
   edit; Cancel or Escape discards the draft. Players and projectile pools cannot
   be templates. The native 250-record limit includes reserved records. Templates
   currently come from the open level, rather than a cross-level object library.
+- Select a key pickup and choose **Key colour** to change both its artwork and
+  the door requirement it unlocks. Green, red, yellow and blue correspond to
+  Key 1–4 in mechanism requirements. Undo restores both values. Custom artwork
+  or condition combinations are retained until you explicitly choose a colour.
 - Import a PNG in a room's material browser. It resizes to the native sheet,
   matches its existing colours and preserves its lighting palettes. Compare
   fitted/native previews, then Apply PNG as one undoable shared-material edit.

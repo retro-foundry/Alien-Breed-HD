@@ -1233,3 +1233,16 @@ fixtures can establish current-format support independently.
   controls regression scenarios pass.
   A cross-level object library and broader object configuration remain open;
   this checkpoint does not complete the full editor or trigger deployment.
+
+- Key configuration checkpoint: the object inspector now offers colour choices
+  grounded in `leved.amos` KEYPUT/KEYSAVE: green/red/yellow/blue use artwork
+  `5*65536+CO` and condition mask `2^CO`. One command edits both fields; custom
+  artwork/masks are shown explicitly and left intact until a colour is chosen.
+  The native `object_handle_key` pickup routine consumes the resulting mask.
+  Original-level tests check every imported key and all four choices, atomic
+  undo, custom records and portable project saves. Chromium/Firefox gameplay
+  places a new blue key beyond the native pickup radius, walks into it and
+  verifies its removal and condition bit 8, with no other key bits granted.
+  Production builds, all 681 model tests and all four Chromium/Firefox object
+  authoring scenarios pass. The native simulation is unchanged; the preview
+  host exposes a read-only conditions probe for gameplay verification.

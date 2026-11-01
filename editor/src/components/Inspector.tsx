@@ -14,6 +14,7 @@ import { RoomInspector } from './RoomInspector';
 import { RoomHeightInspector } from './RoomHeightInspector';
 import { roomSettings } from '../model/roomHeights';
 import { NumberField } from './NumberField';
+import { keyColour, keyColours, setKeyColour } from '../model/objectSettings';
 
 function PositionForm({ x, z, zone, onApply }: { x: number; z: number; zone: number; onApply: (x: number, z: number, zone: number) => void }) {
   const [draft, setDraft] = useState({ x, z, zone });
@@ -94,6 +95,11 @@ export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner,
           <InfoRow label="Floor" value={object.upper ? 'Upper' : 'Lower'} />
         </section>
         <section className="property-section"><h3>Object</h3><InfoRow label="Type" value={objectName(object.type)} /><InfoRow label="Collision ID" value={object.cid} />
+          {object.type === 4 && <><label className="select-field"><span>Key colour</span><select aria-label="Key colour" value={keyColour(document, object.id) ?? ''}
+            title="Change the key artwork and matching door requirement together. Green is Key 1, Red Key 2, Yellow Key 3 and Blue Key 4. Undo restores both."
+            onChange={event => edit(() => setKeyColour(document, object.id, Number(event.target.value)))}>
+            <option value="" disabled>Custom artwork or condition bits</option>{keyColours.map((colour, index) => <option key={colour} value={index}>{colour} · Key {index + 1}</option>)}
+          </select></label><p className="field-note">Unlocks mechanisms requiring the matching key. Custom records stay unchanged until you choose a colour.</p></>}
           {[0, 6, 7, 8, 12, 13, 14, 15, 17, 18, 19].includes(object.type) && <NumberField label="Health" value={object.health} min={0} max={127} onCommit={value => edit({ label: `Change object ${object.id} health`, patches: [numberPatch(document, 'data', object.offset + 18, value, 1)] })} />}
         </section>
         <section className="property-section"><button className="danger-button" disabled={!objectIsActive(object) || sourceAvatar !== undefined} title={sourceAvatar !== undefined ? 'Player avatars are controlled through Starts in the navigator.' : 'Remove this object. Undo restores it (Ctrl / Command + Z).'} onClick={() => edit(() => removeObject(document, object.id))}>Delete object</button></section>

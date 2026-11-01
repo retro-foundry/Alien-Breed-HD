@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { roomHeightFixture } from '../roomHeightFixture';
 import { objectTemplates } from '../../src/model/objectAuthoring';
 import { decodeProject, encodeProject } from '../../src/model/project';
-import { captureEngine, engineObjectState } from '../engineCapture';
+import { captureEngine, engineObjectState, enginePlayerState } from '../engineCapture';
 
 test('new objects have independent native positions, atomic history and portable saved records', async ({ page }, testInfo) => {
   test.setTimeout(90000);
@@ -48,4 +48,40 @@ test('new objects have independent native positions, atomic history and portable
   await captureEngine(page, { zone: Number(await preview.getAttribute('data-spawn-zone')), x: 20128, z: 20128, upper: 0, angle: 0 });
   expect(await engineObjectState(page, id)).toMatchObject({ type: 0, x: 20128, z: 20192, yFixed: -7.5 * 256 });
   await page.screenshot({ path: testInfo.outputPath('new-object.png'), fullPage: true });
+});
+
+test('a newly placed blue key is collected by native gameplay and grants only its matching condition', async ({ page }, testInfo) => {
+  test.setTimeout(90000);
+  const fixture = roomHeightFixture(), template = objectTemplates(fixture.document).find(object => object.type === 4)!;
+  const id = fixture.document.objects.length;
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.locator('input[type=file]').setInputFiles({ name: 'key.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
+  await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
+  await page.getByRole('button', { name: 'Add object', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add object', exact: true });
+  await dialog.getByRole('combobox', { name: 'New object template' }).selectOption(String(template.id));
+  await dialog.getByRole('combobox', { name: 'New object room' }).selectOption(fixture.from.id);
+  await dialog.getByRole('spinbutton', { name: 'New object X', exact: true }).fill('20128');
+  await dialog.getByRole('spinbutton', { name: 'New object Z', exact: true }).fill('20240');
+  await dialog.getByRole('button', { name: 'Create object' }).click();
+  const colour = page.getByRole('combobox', { name: 'Key colour', exact: true });
+  const before = await colour.inputValue();
+  await colour.selectOption(before === '3' ? '0' : '3');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click(); await expect(colour).toHaveValue(before);
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await colour.selectOption('3');
+  await page.getByRole('button', { name: '3D view', exact: true }).click();
+  const preview = page.getByRole('region', { name: '3D game engine preview' });
+  await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
+  expect(await engineObjectState(page, id)).toMatchObject({ type: 4, x: 20128, z: 20240 });
+  await preview.getByRole('button', { name: 'Build & play', exact: true }).click();
+  await expect(preview.getByRole('status')).toHaveText('Playtest running');
+  expect((await enginePlayerState(page)).conditions).toBe(0);
+  await page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas').focus();
+  await page.keyboard.down('w');
+  try { await expect.poll(async () => (await engineObjectState(page, id)).zone).toBe(-1); }
+  finally { await page.keyboard.up('w'); }
+  expect((await enginePlayerState(page)).conditions).toBe(8);
+  await preview.getByRole('button', { name: 'Stop', exact: true }).click();
+  await page.screenshot({ path: testInfo.outputPath('key-settings.png'), fullPage: true });
 });

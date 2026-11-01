@@ -8,6 +8,7 @@
 #include "level.h"
 #include "renderer.h"
 #include "visibility.h"
+#include "game_data.h"
 
 static GameLoopCtx preview_loop;
 static bool copper_ready;
@@ -155,6 +156,7 @@ EMSCRIPTEN_KEEPALIVE void editor_play(int playing)
 /* Read-only playtest inspection: report the actual simulation position,
  * including teleports, rather than the imported header's spawn metadata. */
 EMSCRIPTEN_KEEPALIVE int editor_player_zone(void) { return preview_loaded ? g_state.plr1.zone : -1; }
+EMSCRIPTEN_KEEPALIVE int editor_conditions(void) { return (uint16_t)game_conditions; }
 EMSCRIPTEN_KEEPALIVE int editor_player_x(void) { return preview_loaded ? g_state.plr1.xoff >> 16 : 0; }
 EMSCRIPTEN_KEEPALIVE int editor_player_z(void) { return preview_loaded ? g_state.plr1.zoff >> 16 : 0; }
 /* player.c updates the collision target from floor - s_height. Rendering Y
