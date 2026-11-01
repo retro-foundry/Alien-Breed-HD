@@ -3,6 +3,7 @@ import { editRoomSource, type EditCommand } from '../model/commands';
 import type { LevelDocument } from '../model/level';
 import { roomHeightFields, roomSettings, type RoomHeights } from '../model/roomHeights';
 import { setRoomHeights, type SourceRoom } from '../model/roomSource';
+import { RoomHeightSection } from './RoomHeightSection';
 
 const labels = { floor: 'Lower floor height', ceiling: 'Lower ceiling height', upperFloor: 'Upper floor height', upperCeiling: 'Upper ceiling height' };
 export function RoomHeightInspector({ document, room, edit }: { document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void }) {
@@ -12,12 +13,16 @@ export function RoomHeightInspector({ document, room, edit }: { document: LevelD
   useEffect(() => { setDraft(values()); setCopy(''); setError(''); }, [room.id, room.heights, document.original.data,
     settings.floor, settings.ceiling, settings.upperFloor, settings.upperCeiling]);
   const fields = upper ? roomHeightFields : roomHeightFields.slice(0, 2);
+  const apply = (heights: RoomHeights) => {
+    try {
+      const command = editRoomSource(setRoomHeights(document, document.roomSource, room.id, heights));
+      setError(''); edit(command);
+    } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+  };
   return <section className="property-section"><h3>Room heights</h3>
     <p className="field-note">Smaller height values are higher. Lower clearance: {settings.floor - settings.ceiling}. Apply all fields together; preview rebuilds automatically. Water keeps its own height.</p>
-    <form onSubmit={event => { event.preventDefault(); try {
-      const command = editRoomSource(setRoomHeights(document, document.roomSource, room.id, Object.fromEntries(roomHeightFields.map(field => [field, Number(draft[field])]))));
-      setError(''); edit(command);
-    } catch (error) { setError(error instanceof Error ? error.message : String(error)); } }}>
+    <RoomHeightSection key={`${room.id}:${room.recordZone}`} settings={settings} baseline={document.original.data} onCommit={apply} />
+    <form onSubmit={event => { event.preventDefault(); apply(Object.fromEntries(roomHeightFields.map(field => [field, Number(draft[field])])) as Record<keyof RoomHeights, number>); }}>
       <div className="field-grid">{fields.map(field => <label className="number-field" key={field}><span>{labels[field]}</span>
         <input type="number" required aria-label={labels[field]} min={-8192} max={8191.75} step={0.25} value={draft[field]}
           title="Native height in quarter units. Enter applies all heights; Escape restores this field. Smaller values are higher. Floor and ceiling must leave positive clearance."

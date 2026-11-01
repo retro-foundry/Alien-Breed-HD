@@ -6,7 +6,7 @@ export function ControlTooltips() {
   const id = useId();
   const [tip, setTip] = useState<{ text: string; left: number; top: number; above: boolean; width: number; host: HTMLElement } | null>(null);
   useEffect(() => {
-    let active: HTMLElement | null = null, nativeTitle = '';
+    let active: Element | null = null, nativeTitle = '';
     const restore = () => {
       if (!active) return;
       if (active.getAttribute('title') === '') active.setAttribute('title', nativeTitle);
@@ -16,13 +16,13 @@ export function ControlTooltips() {
     };
     const hide = () => { restore(); setTip(null); };
     const show = (target: EventTarget | null) => {
-      const next = target instanceof Element ? target.closest<HTMLElement>('.app [title]') : null;
+      const next = target instanceof Element ? target.closest('.app [title], .app [data-control-help]') : null;
       if (next === active) return;
-      const text = next?.getAttribute('title');
+      const text = next?.getAttribute('data-control-help') ?? next?.getAttribute('title');
       hide();
       if (!next || !text || next.tagName === 'IFRAME') return;
-      active = next; nativeTitle = text;
-      next.setAttribute('title', '');
+      active = next; nativeTitle = next.getAttribute('title') ?? '';
+      if (next.hasAttribute('title')) next.setAttribute('title', '');
       next.setAttribute('aria-describedby', `${next.getAttribute('aria-describedby') ?? ''} ${id}`.trim());
       const rect = next.getBoundingClientRect(), width = Math.min(320, window.innerWidth - 16), above = rect.bottom + 90 > window.innerHeight;
       setTip({ text, width, above, host: next.closest<HTMLElement>('dialog[open]') ?? document.body,
@@ -30,17 +30,22 @@ export function ControlTooltips() {
     };
     const over = (event: PointerEvent) => { if (event.pointerType !== 'touch') show(event.target); };
     const focus = (event: FocusEvent) => show(event.target);
-    const leave = (event: PointerEvent | FocusEvent) => { if (active && !(event.relatedTarget instanceof Node && active.contains(event.relatedTarget))) hide(); };
+    const leave = (event: PointerEvent | FocusEvent) => { if (active && event.target instanceof Node && active.contains(event.target)
+      && !(event.relatedTarget instanceof Node && active.contains(event.relatedTarget))) hide(); };
+    const reposition = () => {
+      const focused = active && document.activeElement === active ? active : null;
+      hide(); if (focused) show(focused);
+    };
     const key = (event: KeyboardEvent) => { if (event.key === 'Escape') hide(); };
     document.addEventListener('pointerover', over); document.addEventListener('pointerout', leave);
     document.addEventListener('focusin', focus); document.addEventListener('focusout', leave);
     document.addEventListener('keydown', key); document.addEventListener('pointerdown', hide);
-    window.addEventListener('scroll', hide, true); window.addEventListener('resize', hide);
+    window.addEventListener('scroll', reposition, true); window.addEventListener('resize', reposition);
     return () => {
       restore(); document.removeEventListener('pointerover', over); document.removeEventListener('pointerout', leave);
       document.removeEventListener('focusin', focus); document.removeEventListener('focusout', leave);
       document.removeEventListener('keydown', key); document.removeEventListener('pointerdown', hide);
-      window.removeEventListener('scroll', hide, true); window.removeEventListener('resize', hide);
+      window.removeEventListener('scroll', reposition, true); window.removeEventListener('resize', reposition);
     };
   }, [id]);
   return tip ? createPortal(<div id={id} role="tooltip" className="control-tooltip" style={{ left: tip.left, top: tip.top, width: tip.width, transform: tip.above ? 'translateY(-100%)' : undefined }}>{tip.text}</div>, tip.host) : null;

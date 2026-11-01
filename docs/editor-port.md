@@ -1074,7 +1074,8 @@ fixtures can establish current-format support independently.
   production build pass. Twenty-eight surrounding Chromium/Firefox scenarios
   pass, followed by fresh height and workspace-recovery checks in both engines.
   The preceding renderer-budget commit `40dacbd` also completed remote editor
-  CI successfully; this height change still needs its own CI result.
+  CI successfully; height commit `a5da947` subsequently passed its own complete
+  editor and normal CI workflows.
   This does not complete graphical height handles, animated attachments, other
   editor requirements or deployment.
 
@@ -1101,3 +1102,26 @@ fixtures can establish current-format support independently.
   other incomplete requirements and final deployment remain open. The requested
   deployment directory is the sibling website repository's `abhd-ed/` folder;
   deployment is reserved for the completed editor.
+
+- Graphical lower/upper height handles now show the actual air bands in a
+  section diagram beside the existing numerical height form. This is an editor
+  diagram, not a substitute renderer: Split view continues to use the game
+  engine, which rebuilds after a completed edit. Pointer capture keeps the
+  gesture provisional until release; Escape, cancelled capture or changing
+  rooms discards it. The displayed proposal is committed as one undo command,
+  with quarter-unit values and the existing source/compiler height validation.
+  Invalid crossings show a local explanation and leave source unchanged.
+  Keyboard Up/Down uses quarters, Shift uses four units, and repeated edits
+  retain focus. Original AMOS height routines remain the authority documented
+  above; native rendering and movement code are unchanged in this UI milestone.
+  Shared tooltips now describe SVG controls and reposition focused descriptions
+  when browser focus scrolls a control into view; unrelated pointer-out events
+  no longer clear another control's description. Browser scenarios verify
+  cancelled drags, source-only saves while dragging, atomic undo/redo, independent
+  upper/lower planes, invalid relationships, focus and keyboard descriptions.
+  Real exported game files and actual player simulation verify dragged floor
+  heights, and Split-view rendered changes are compared and visually inspected.
+  The production build and 17 focused height/stair/history model checks pass.
+  Six surrounding numerical-height browser cases pass, followed by sixteen
+  fresh graphical-height, control and stair scenarios in Chromium/Firefox.
+  Animated mechanisms, other open requirements and deployment remain unfinished.

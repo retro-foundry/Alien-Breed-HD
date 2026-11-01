@@ -65,8 +65,11 @@ and browser gameplay verify quarter-unit floor standing and a step transition;
 upper-storey view changes are checked in the actual engine. This advances R6;
 straight stair creation now generates adjoining native rooms as one undoable
 source edit, with a labelled plan, actual material choices, shared climb-limit
-validation and tested walking in both directions. Graphical height handles
-and animated-height authoring are still required.
+validation and tested walking in both directions. A section diagram now adds
+graphical floor/ceiling handles, quarter-unit keyboard adjustments, provisional
+validation, cancellation and one-edit drag commits alongside the actual engine
+preview. Exported collision and native player standing heights are checked for
+dragged floors. Animated-height authoring is still required.
 
 The actual game engine is now embedded beside the map, with zone visits,
 lighting-edit reloads and isolated playtests. All 16 maps load and draw in both

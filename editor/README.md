@@ -20,6 +20,10 @@ Opening local files does not upload them anywhere.
 
 ## Current working workflows
 
+- Drag floor/ceiling handles in a room's section diagram or adjust them with
+  Up/Down (quarters) and Shift (4 units). Release applies one undoable edit;
+  Escape cancels. Invalid air-band crossings leave source unchanged. Split view
+  shows the actual game renderer and rebuilds after applying the height.
 - Build a straight stair flight from endpoints, width, count and floor heights.
   The labelled layout checks overlap, shared boundaries, quarter-unit heights,
   native climb allowance and room limits before one undoable creation. Choose
