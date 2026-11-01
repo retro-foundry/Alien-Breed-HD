@@ -2069,3 +2069,34 @@ fixtures can establish current-format support independently.
   this machine; full CI still needs to verify its per-map budget on runners.
   The production build, TypeScript checks and native Windows build pass.
   Remaining feature requirements and final deployment remain open.
+
+- 2D picking report (Edge and Brave, default published map): the deployed source
+  was still `956397a`, before the primary-outline containment correction. Its
+  secondary collision fences made a Level 1 click at (-482.56, 278.08) select
+  Zone 0 instead of the visible Zone 1. This is reproduced in a browser against
+  that source, then corrected in the focused published-preview branch
+  `fix/published-map-selection` (`66acb46`). The branch retains the published
+  project format and all four runtime files' hashes. Its 121 model tests and
+  complete 30-case Chromium/Firefox suite pass, including all sixteen maps and
+  playtesting. Installed Edge and Brave pass 18 selection cases at device scale
+  factors 1, 1.25 and 2 across three viewport sizes.
+
+  The current development editor also had invisible marker/corner hit margins:
+  start markers captured a 13-pixel circle, small object dots a 9-pixel circle,
+  and six-pixel corner handles a 9-pixel circle. Picking now shares their visible
+  drawing geometry, stroke widths and actual start-label metrics. Visible
+  markers remain selectable and draggable. Room selection is separated from
+  navigation: a map click preserves pan/zoom, while navigator visits and explicit
+  framing still move the view. The new tests reproduce these three captured-zone
+  clicks and the authored-room recentering before the fix. A 40-case interaction
+  run passes room/corner editing, groups, starts, framing and box selection in
+  Chromium/Firefox. Edge/Brave pass 24 development selection cases. A final
+  30-case repeated selection run passes after making the test wait for explicit
+  Fit completion before projecting its click coordinates.
+
+  Site commit `3059e08` deploys the focused preview patch to `abhd-ed`. Pages
+  deployment succeeds; live installed Edge and Brave both load the new hashed
+  bundle, select Zone 1 at the regression point and render the 138-zone 3D map.
+  Broader editor feature work and its full release gates remain open. In
+  particular, the newer development runtime's Linux Firefox CI startup probe
+  still rejects its graphics environment and needs further investigation.

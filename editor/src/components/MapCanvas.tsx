@@ -8,6 +8,7 @@ import { editableObjects, objectIsActive } from '../model/sourceObjects';
 import { editableTeleport } from '../model/sourceTeleports';
 import { VisibilityOverlay, useVisibilityInspection } from './VisibilityOverlay';
 import { objectsInRectangle } from '../model/objectGroups';
+import { cornerHandleHalfSize, objectMarkerRadius, selectedObjectRadius, selectedObjectRingRadius, objectMarkerStroke, startLabelFont, startLabelOffset, startMarkerPoints, startMarkerHit } from './mapMarkers';
 
 export type Selection = { kind: 'zone' | 'object' | 'start' | 'point'; id: number } | null;
 export interface MapView { x: number; z: number; scale: number }
@@ -229,7 +230,7 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
       if (vertices.length >= 3) context.closePath();
       if (fill) { context.fillStyle = '#36483d'; context.fill(); }
       context.strokeStyle = colour; context.lineWidth = 2; context.stroke();
-      for (const point of vertices) { const pixel = screen(point.x, point.z); context.fillStyle = colour; context.fillRect(pixel.x - 3, pixel.y - 3, 6, 6); }
+      for (const point of vertices) { const pixel = screen(point.x, point.z); context.fillStyle = colour; context.fillRect(pixel.x - cornerHandleHalfSize, pixel.y - cornerHandleHalfSize, cornerHandleHalfSize * 2, cornerHandleHalfSize * 2); }
     };
     const previewVertices = (room: SourceRoom) => room.id === selectedRoom?.id && cornerGhost ? room.vertices.map((point, i) => i === cornerGhost.index ? { x: cornerGhost.x, z: cornerGhost.z } : point) : room.vertices;
     let cornerValid = true;
@@ -271,15 +272,15 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
       const selected = objectIds.includes(object.id) || selection?.kind === 'object' && selection.id === object.id;
       const enemy = [0, 6, 7, 8, 12, 13, 14, 15, 17, 18, 19].includes(object.type);
       context.fillStyle = selected ? '#d1f5a5' : enemy ? '#de847c' : object.type === -1 ? '#85929d' : '#efbf6a';
-      context.strokeStyle = '#151a20'; context.lineWidth = 1.5; context.beginPath(); context.arc(pixel.x, pixel.y, selected ? 5 : 3.5, 0, Math.PI * 2); context.fill(); context.stroke();
-      if (selected) { context.strokeStyle = '#d1f5a5'; context.beginPath(); context.arc(pixel.x, pixel.y, 9, 0, Math.PI * 2); context.stroke(); }
+      context.strokeStyle = '#151a20'; context.lineWidth = objectMarkerStroke; context.beginPath(); context.arc(pixel.x, pixel.y, selected ? selectedObjectRadius : objectMarkerRadius, 0, Math.PI * 2); context.fill(); context.stroke();
+      if (selected) { context.strokeStyle = '#d1f5a5'; context.beginPath(); context.arc(pixel.x, pixel.y, selectedObjectRingRadius, 0, Math.PI * 2); context.stroke(); }
     }
     for (const start of editableStarts(document)) {
       const moving = ghost?.selection.kind === 'start' && ghost.selection.id === start.player;
       const pixel = screen(moving ? ghost.x : start.x, moving ? ghost.z : start.z);
       context.fillStyle = start.player === 1 ? '#b2de7a' : '#9ec7f0'; context.strokeStyle = '#161b21'; context.lineWidth = 2;
-      context.beginPath(); context.moveTo(pixel.x, pixel.y - 9); context.lineTo(pixel.x + 7, pixel.y + 6); context.lineTo(pixel.x - 7, pixel.y + 6); context.closePath(); context.fill(); context.stroke();
-      context.font = '10px ui-monospace, monospace'; context.fillText(`P${start.player}`, pixel.x + 10, pixel.y + 4);
+      context.beginPath(); startMarkerPoints(pixel.x, pixel.y).forEach((point, index) => { if (index) context.lineTo(point.x, point.z); else context.moveTo(point.x, point.z); }); context.closePath(); context.fill(); context.stroke();
+      context.font = startLabelFont; context.fillText(`P${start.player}`, pixel.x + startLabelOffset.x, pixel.y + startLabelOffset.y);
     }
     if (selection?.kind === 'zone') {
       const zone = document.zones.find(zone => zone.id === selection.id);
@@ -300,10 +301,17 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
   }, [document, selection, objectIds, view, size, grid, showObjects, layer, ghost, groupGhost, boxGhost, screen, world, sourceView, roomDraft, selectedRoom, roomGroup, cornerGhost, visibility.enabled, visibility.inspection]);
 
   function hit(x: number, y: number): Selection {
-    for (const start of editableStarts(document)) { const pixel = screen(start.x, start.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 13) return { kind: 'start', id: start.player }; }
+    const context = canvas.current!.getContext('2d');
+    if (!context) return null;
+    context.save(); context.font = startLabelFont;
+    const start = editableStarts(document).toReversed().find(start => startMarkerHit(x, y, screen(start.x, start.z), context.measureText(`P${start.player}`)));
+    context.restore();
+    if (start) return { kind: 'start', id: start.player };
     if (showObjects) for (const object of editableObjects(document).toReversed()) {
       if (!objectIsActive(object) || (layer === 'upper') !== object.upper) continue;
-      const pixel = screen(object.x, object.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 9) return { kind: 'object', id: object.id };
+      const selected = objectIds.includes(object.id) || selection?.kind === 'object' && selection.id === object.id;
+      const radius = (selected ? selectedObjectRingRadius : objectMarkerRadius) + objectMarkerStroke / 2;
+      const pixel = screen(object.x, object.z); if (Math.hypot(x - pixel.x, y - pixel.y) <= radius) return { kind: 'object', id: object.id };
     }
     const point = world(x, y);
     const zones = document.zones.filter(zone => !sourceView.hidden.has(zone.id) && zoneContainsPoint(document, zone, point.x, point.z));
@@ -336,7 +344,7 @@ export function MapCanvas({ document, selection, objectIds, frameSelection, onOb
           return;
         }
         if (!panning && tool === 'select' && selectedRoom && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
-          const index = selectedRoom.vertices.findIndex(point => { const pixel = screen(point.x, point.z); return Math.hypot(x - pixel.x, y - pixel.y) < 9; });
+          const index = selectedRoom.vertices.findIndex(point => { const pixel = screen(point.x, point.z); return Math.abs(x - pixel.x) <= cornerHandleHalfSize && Math.abs(y - pixel.y) <= cornerHandleHalfSize; });
           if (index >= 0) {
             const point = selectedRoom.vertices[index]!; cornerDrag.current = { index }; setCornerGhost({ index, x: point.x, z: point.z });
             event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId); return;

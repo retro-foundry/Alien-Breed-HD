@@ -124,8 +124,12 @@ export function App() {
       const next = previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id];
       setRoomIds(next); setSelectedRoomId(next.at(-1) ?? null); setObjectIds([]); setSelection(null); return;
     }
-    setRoomIds([]); setObjectIds([]); setSelection(null); setSelectedRoomId(id); setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1 }));
+    setRoomIds([]); setObjectIds([]); setSelection(null); setSelectedRoomId(id);
   }, [selectedRooms, selectedRoom]);
+  const visitRoom = useCallback((id: string, add = false) => {
+    selectRoom(id, add);
+    if (!add) setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1 }));
+  }, [selectRoom]);
   const toggleObject = useCallback((id: number) => {
     const previous = objectIds.length ? objectIds : selection?.kind === 'object' ? [selection.id] : [];
     const next = previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id];
@@ -211,7 +215,7 @@ export function App() {
     if (!document || !roomDraft) return;
     try {
       const change = commitRoomDraft(document.roomSource, roomDraft);
-      edit(editRoomSource(change)); selectRoom(roomDraft.roomId ?? `room-${document.roomSource.nextId}`);
+      edit(editRoomSource(change)); visitRoom(roomDraft.roomId ?? `room-${document.roomSource.nextId}`);
       setRoomDraft(null); setTool('select');
     } catch (error) { fail(error); }
   }, [document, roomDraft, edit, selectRoom, fail]);
@@ -498,7 +502,7 @@ export function App() {
         <div className="contents-list" ref={contentsList}>
           {tab === 'objects' && <button className="small-button" disabled={!selectableIds.length || !!busy} title="Select all active objects matching this search, across both floors. Player avatars are excluded. Shortcut: Ctrl/Command+A outside text fields. On the map the shortcut selects only the displayed floor."
             onClick={() => selectAllObjects()}>Select all matching objects</button>}
-          {tab === 'zones' && newRooms.map(room => <button key={room.id} className={`content-row ${selectedRoomId === room.id || selectedRooms.some(item => item.id === room.id) ? 'selected' : ''}`} aria-pressed={selectedRoomId === room.id || selectedRooms.some(item => item.id === room.id)} title="Select this room. Shift, Ctrl or Command click to add or remove it from a room group." onClick={event => { selectRoom(room.id, event.shiftKey || event.ctrlKey || event.metaKey); setNavigatorOpen(false); }}><Icon name="layers" size={14} /><span>Room {room.id.replace(/^room-/, '')}</span><span className="row-badge">OUTLINE</span></button>)}
+          {tab === 'zones' && newRooms.map(room => <button key={room.id} className={`content-row ${selectedRoomId === room.id || selectedRooms.some(item => item.id === room.id) ? 'selected' : ''}`} aria-pressed={selectedRoomId === room.id || selectedRooms.some(item => item.id === room.id)} title="Select this room. Shift, Ctrl or Command click to add or remove it from a room group." onClick={event => { visitRoom(room.id, event.shiftKey || event.ctrlKey || event.metaKey); setNavigatorOpen(false); }}><Icon name="layers" size={14} /><span>Room {room.id.replace(/^room-/, '')}</span><span className="row-badge">OUTLINE</span></button>)}
           {tab === 'zones' && filteredZones.map(zone => <button key={zone.id} className={`content-row ${selection?.kind === 'zone' && selection.id === zone.id || selectedRooms.some(room => room.originZone === zone.id) ? 'selected' : ''}`} aria-pressed={selection?.kind === 'zone' && selection.id === zone.id || selectedRooms.some(room => room.originZone === zone.id)} title={`Select zone ${zone.id} and centre the map. Shift, Ctrl or Command click adds/removes its room from a group. In 3D inspection, visit this zone.`} onClick={event => { if (event.shiftKey || event.ctrlKey || event.metaKey) { const room = document?.roomSource.rooms.find(room => room.originZone === zone.id); if (room) selectRoom(room.id, true); return; } select({ kind: 'zone', id: zone.id }); setFocusZone(current => ({ id: zone.id, request: (current?.request ?? 0) + 1 })); setNavigatorOpen(false); }}><span className={`zone-dot ${document?.mechanisms.some(mechanism => mechanism.zone === zone.id && mechanism.kind === 'door') ? 'door-dot' : zone.water > zone.ceiling && zone.water < zone.floor ? 'water-dot' : ''}`} /><span>Zone {String(zone.id).padStart(3, '0')}</span>{zone.upper.length > 0 && <span className="row-badge">2F</span>}<span className="row-detail">{zone.floor}</span></button>)}
           {tab === 'objects' && filteredObjects.map(object => <button key={object.id} data-object-id={object.id} className={`content-row ${groupIds.includes(object.id) || selection?.kind === 'object' && selection.id === object.id ? 'selected' : ''}`} aria-pressed={groupIds.includes(object.id) || selection?.kind === 'object' && selection.id === object.id} title={`Select ${objectName(object.type)} ${object.id}. Shift, Ctrl or Command click to add or remove it from a group. Drag a single object on the map to move it.`} onClick={event => {
             if (event.shiftKey || event.ctrlKey || event.metaKey) { toggleObject(object.id); return; }
@@ -544,7 +548,7 @@ export function App() {
         </div></CanvasBoundary> : <div className="canvas-error"><Icon name="layers" size={36} /><h2>Open a level to begin</h2><p>Drop a project, level ZIP or the three twolev files here.</p><button className="primary-button" onClick={() => fileInput.current?.click()}>Open files</button></div>}
         {busy && <div className="busy-overlay" role="status"><span className="spinner" />{busy}</div>}
         {stairsOpen && document && template !== undefined && <StairBuilder document={document} template={template} selected={selectedRoom} cursor={cursor}
-          onCancel={() => setStairsOpen(false)} onCreate={proposal => { edit(proposal.command); setStairsOpen(false); setTool('select'); setView('map'); selectRoom(proposal.rooms[0]!.id); }} />}
+          onCancel={() => setStairsOpen(false)} onCreate={proposal => { edit(proposal.command); setStairsOpen(false); setTool('select'); setView('map'); visitRoom(proposal.rooms[0]!.id); }} />}
         {pasteOpen && document && objectClipboard && <ObjectPaste document={document} clipboard={objectClipboard} cursor={cursor} onCancel={() => setPasteOpen(false)}
           onPaste={proposal => { edit(proposal.command); setPasteOpen(false); setTool('select'); setTab('objects'); setShowObjects(true); setObjectIds(proposal.ids); setSelection({ kind: 'object', id: proposal.ids.at(-1)! }); setSelectedRoomId(null); }} />}
         {roomPlacement && document && <RoomPaste document={document} clipboard={roomPlacement} cursor={cursor} grid={grid} onCancel={() => setRoomPlacement(null)}
