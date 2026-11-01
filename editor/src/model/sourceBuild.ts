@@ -3,7 +3,7 @@ import { checkedInteger } from './binary';
 import { buildCellGraphics, type NewRoomGraphics, type ClosingRoomGraphics } from './cellGraphics';
 import { compileCollisionGeometry } from './collisionBuild';
 import { buildDataPrefix } from './dataBuild';
-import { buildGeneratedGraphics } from './generatedGraphics';
+import { compileGeneratedGraphics } from './generatedGraphics';
 import { buildGeometryLighting } from './geometryLighting';
 import { openLevel, type LevelDocument } from './level';
 import { buildPointLighting, type PointLightingBinding } from './pointLighting';
@@ -19,6 +19,7 @@ import { hasNativeWallMaterials } from './roomMaterials';
 import { mechanismDependencies, mechanismsForRoom } from './mechanismDependencies';
 import { compileControllerCopies, validateMovingControllerCopies, type MovingControllerCopy } from './movingControllerCopies';
 import { compileSwitchCopies, validateSwitchCopies, type SwitchCopy } from './switchCopies';
+import { paintCellWalls } from './wallMaterials';
 
 export interface SourceBuildOptions {
   /** Resolved game configuration in source room identities; -1 disables exit.
@@ -81,7 +82,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
     if ((cell.originZone !== null && moving.has(cell.originZone)) || (target.originZone !== null && moving.has(target.originZone)))
       throw new Error('A new doorway into a moving door or lift needs synchronized wall animation attachments before building. Choose a static room boundary.');
   });
-  const geometry = buildCellGraphics(document, source, topology, options.newRoomGraphics, options.closingRoomGraphics);
+  const geometry = paintCellWalls(document, source, buildCellGraphics(document, source, topology, options.newRoomGraphics, options.closingRoomGraphics));
   const lighting = buildGeometryLighting(document, source, geometry, options.newRoomLighting);
   const collision = compileCollisionGeometry(lighting.graphics.topology);
   const attachments = buildAnimationAttachments(document, lighting.graphics, collision, controllerCopies, switchCopies);
@@ -95,7 +96,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
   const rooms = buildZoneRecords(references.data, topology.cells.map((cell, index) => ({ id: cell.id,
     header: references.headers.get(cell.id)!, boundaries: collision.boundaries[index]!, cornerWalls: collision.cornerWalls[index]!,
     ...visibility.rooms.get(cell.id)! })));
-  const bytes = buildGeneratedGraphics(document, topology.cells.map(cell => ({ id: cell.id, dataOffset: rooms.offsets[cell.id]!,
+  const generated = compileGeneratedGraphics(document, topology.cells.map(cell => ({ id: cell.id, dataOffset: rooms.offsets[cell.id]!,
     ...graphics.streams.get(cell.id)! })), attachments.tables, attachments.selectTarget);
   const originalExit = document.exitZone ?? checkedInteger(options.resolvedExit, -1, document.zones.length - 1, 'Source exit room');
   let exitZone = originalExit;
@@ -106,7 +107,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
   }
   const owners = buildDrawTopology(source, graphics.topology).owners;
   const groups = topology.cells.map(cell => owners.get(cell.id)!);
-  const compiled = openLevel(`${document.name} compiled`, { data: rooms.data, graphics: bytes, clips: visibility.clips }, document.playtestSlot, exitZone,
+  const compiled = openLevel(`${document.name} compiled`, { data: rooms.data, graphics: generated.bytes, clips: visibility.clips }, document.playtestSlot, exitZone,
     groups.some((group, index) => group !== index) ? groups : undefined);
-  return { document: compiled, topology: graphics.topology, references: references.references };
+  return { document: compiled, topology: graphics.topology, references: references.references, surfaceSources: generated.records };
 }

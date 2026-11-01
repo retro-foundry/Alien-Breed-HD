@@ -1970,3 +1970,25 @@ fixtures can establish current-format support independently.
   green entire matrix. Runtime staging and production builds pass. Individual
   surface edits, graphical overlays, remaining R1–R12 work and final packaging /
   deployment remain open.
+
+- Individual wall-material checkpoint: paused native surface picking now offers
+  Paint this wall for imported/copied straight faces. The dialog has sheet
+  previews, scoped help/tooltips, Cancel/Escape, Apply and Reset; room appearance
+  can reset all face overrides. Source v7 stores per-room native-record and
+  lower/upper identities, independently of generated graphics offsets. Only four
+  sheet/sampling fields change; geometry, phases, brightness, transparency and
+  controller attachments retain their contracts. Switch faces are protected.
+  Compiler provenance follows emitted pieces, copied rooms, clipboard placement,
+  source save/reopen and Undo/Redo. Deleted source-face targets produce a repair
+  diagnostic; saving remains possible. Packed sampling bounds, signed phases,
+  zero-field fallback and lift base phases are checked before preview, without
+  silently changing alignment. New/repaired perimeter faces, curves, floor and
+  ceiling paint and graphical editing handles remain open.
+
+  All 790 model tests and the production build pass. Earlier browser regression
+  runs passed 34 cases covering inspection controls/picking/shortcuts and room
+  placement. The new targeted Chromium/Firefox checks exercise lower/upper wall
+  paint, native pixel changes confined to the chosen face, copied-room
+  independence, portable saves, cancel/reset/history, modal shortcut isolation,
+  and synchronized native door/lift movement. All eight final targeted browser
+  cases pass. Full CI and final deployment remain pending.

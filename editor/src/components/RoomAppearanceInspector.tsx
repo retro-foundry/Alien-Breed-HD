@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { applyCommand, editRoomAppearance, replaceWallAsset, type EditCommand } from '../model/commands';
+import { applyCommand, editRoomAppearance, editRoomSource, replaceWallAsset, type EditCommand } from '../model/commands';
 import { encodeProject } from '../model/project';
 import type { LevelDocument } from '../model/level';
 import { roomAppearanceChoices } from '../model/roomAppearance';
 import type { SourceRoom } from '../model/roomSource';
 import { WallStyleBrowser } from './WallStyleBrowser';
+import { clearRoomWallMaterials } from '../model/wallMaterials';
 
 export function RoomAppearanceInspector({ document, room, edit }: {
   document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void;
@@ -25,6 +26,9 @@ export function RoomAppearanceInspector({ document, room, edit }: {
     edit(command);
   };
   return <section className="property-section"><h3>{imported ? 'Wall repair appearance' : 'Room appearance'}</h3>
+    {!!room.wallMaterials?.length && <div><p className="field-note">{room.wallMaterials.length} source faces have independent painted materials. Reset removes all paints in this room, including faces no longer drawn after an outline edit.</p>
+      <button type="button" className="small-button" title="Restore this room's inherited wall materials as one undoable edit. Repairs missing painted-face dependencies. Other rooms are unchanged."
+        onClick={() => edit(() => editRoomSource(clearRoomWallMaterials(document, room.id)))}>Reset painted room walls</button></div>}
     <p className="field-note">{imported
       ? 'Choose the style and lighting for new boundary walls and changed doorways. Steps and lintels follow the destination heights; other wall styles stay as authored.'
       : "Choose wall styles and template lighting for the new perimeter. Walls fill this room's floor-to-ceiling height."}</p>

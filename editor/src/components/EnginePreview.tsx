@@ -10,16 +10,20 @@ import { wallOverrideFiles } from '../model/wallOverrides';
 import { resolveEngineSurface, type EngineSurfacePick, type NativeSurfacePick } from '../model/engineSurfacePick';
 import { resolveEngineObject, type NativeObjectPick } from '../model/engineObjectPick';
 import { inspectionShortcut, inspectionShortcutScope, type InspectionShortcut } from '../../runtime/inspection-shortcuts.mjs';
+import { wallMaterialTarget, type WallMaterialTarget } from '../model/wallMaterials';
+import type { EditCommand } from '../model/commands';
+import { WallPaintDialog } from './WallPaintDialog';
 
 interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number; surface?: NativeSurfacePick | null; object?: NativeObjectPick | null; shortcut?: unknown }
-interface Props { document: LevelDocument; selection: Selection; sourceRoomId?: string; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSelectRoom: (room: string) => void; onSelectObject: (id: number) => void; onShortcut: (shortcut: InspectionShortcut) => void; onSlotChange: (slot: number) => void }
+interface Props { document: LevelDocument; selection: Selection; sourceRoomId?: string; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSelectRoom: (room: string) => void; onSelectObject: (id: number) => void; onShortcut: (shortcut: InspectionShortcut) => void; onEdit: (command: EditCommand) => void; onSlotChange: (slot: number) => void }
 
-export function EnginePreview({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onShortcut, onSlotChange }: Props) {
+export function EnginePreview({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onShortcut, onEdit, onSlotChange }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false), [loaded, setLoaded] = useState(false);
   const [playing, setPlaying] = useState(false), [starting, setStarting] = useState(false);
   const [error, setError] = useState(''), [notice, setNotice] = useState('Loading the game engine…');
   const [pickedSurface, setPickedSurface] = useState<EngineSurfacePick>();
+  const [wallPaint, setWallPaint] = useState<{ source: LevelDocument; target: WallMaterialTarget }>();
   const slot = document.playtestSlot;
   const [revision, setRevision] = useState(0);
   const [nonblack, setNonblack] = useState(0);
@@ -172,6 +176,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
   useEffect(() => {
     if (previousDocument.current === document) return;
     previousDocument.current = document; ++revisionRef.current; pendingPlay.current = false; artifact.current = undefined;
+    setWallPaint(undefined);
     setPickedSurface(undefined);
     send('play', { playing: false }); setPlaying(false); setStarting(false); setLoaded(false);
     setActualSlot(-1); setActualExit(undefined); setSpawnZone(undefined); setNonblack(0);
@@ -199,7 +204,9 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
     setPlaying(false); setStarting(false); setReady(false); setLoaded(false); setError(''); setNotice('Loading the game engine…');
     frame.current?.contentWindow?.location.reload();
   }
+  const paintTarget = pickedSurface && artifact.current?.source === document ? wallMaterialTarget(artifact.current, pickedSurface.zone, pickedSurface) : undefined;
   return <section className="engine-preview" aria-label="3D game engine preview" data-revision={revision} data-rendered-pixels={nonblack} data-level-slot={actualSlot} data-exit-zone={actualExit} data-spawn-zone={spawnZone}>
+    {wallPaint && wallPaint.source === document && <WallPaintDialog document={document} target={wallPaint.target} onCancel={() => setWallPaint(undefined)} onApply={command => { onEdit(command); setWallPaint(undefined); }} />}
     <div className="engine-toolbar"><span className="eyebrow">3D VIEW</span><span className="engine-status" role="status">{playing ? 'Playtest running' : notice}</span>
       <label className="engine-slot">Slot <select aria-label="Playtest level slot" title="Choose the project's game level slot. Saved with your project and undoable; this controls the game's level-specific setup." value={slot} disabled={playing || starting} onChange={event => onSlotChange(Number(event.target.value))}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>{i + 1}</option>)}</select></label>
       <button title={playing ? 'Stop playing and return to inspection. Your editable map is kept.' : 'Load the latest map into the game and start from player one. Click the game view to capture the mouse.'} disabled={!ready || starting} className={playing ? '' : 'primary-button'} onClick={() => { if (playing) stop(); else load(true); }}>{playing ? 'Stop' : starting ? 'Starting…' : 'Build & play'}</button>
@@ -211,7 +218,9 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
       <strong>{pickedSurface.kind} · {pickedSurface.upper ? 'Upper' : 'Lower'}</strong>
       {pickedSurface.texture !== undefined && <span>Material {pickedSurface.texture}</span>}
       {pickedSurface.height !== undefined && <span>Authored height {pickedSurface.height}</span>}
-      <span>Inspector settings apply to the room.</span>
+      <span>Room settings are in the inspector.</span>
+      {paintTarget && <button type="button" className="small-button" style={{ pointerEvents: 'auto' }} title="Choose a material for this native source face only, including its generated pieces. Other faces keep their materials. Opens a cancellable draft."
+        onClick={() => setWallPaint({ source: document, target: paintTarget })}>Paint this wall</button>}
     </div>}
     </div>
     <div className="engine-controls">{playing ? <span>Click to capture mouse · WASD move · C crouch · Space use · Esc release mouse · Stop returns to editing</span> : <><button disabled={!loaded} aria-label="Turn preview left" title="Turn the inspection camera left. Left Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: -256 })}>←</button><button disabled={!loaded} aria-label="Turn preview right" title="Turn the inspection camera right. Right Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: 256 })}>→</button><button disabled={!loaded} aria-label="Look up in preview" title="Look up. Up Arrow also looks up when the 3D view has focus." onClick={() => send('turn', { look: -12 })}>↑</button><button disabled={!loaded} aria-label="Look down in preview" title="Look down. Down Arrow also looks down when the 3D view has focus." onClick={() => send('turn', { look: 12 })}>↓</button><span>Select a zone to visit · Click an object to edit or a surface to inspect · Arrow keys turn/look · Enter selects at the crosshair</span></>}

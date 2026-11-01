@@ -8,10 +8,10 @@ import { NativeWallAssetEditor } from './NativeWallAssetEditor';
 import { WallSheetImage } from './WallSheetImage';
 import { PngWallImporter } from './PngWallImporter';
 
-interface BrowserProps { records: readonly Graphic[]; value: string; onChange: (value: string) => void; label: string;
+interface BrowserProps { records: readonly Graphic[]; value: string; onChange: (value: string) => void; label: string; description?: string;
   overrides?: readonly WallOverride[]; baseline?: Uint8Array; onAssetChange?: (texture: number, bytes: Uint8Array | null, sourcePng?: Uint8Array) => void }
 
-function Browser({ records, value, onChange, label, overrides, baseline, onAssetChange }: BrowserProps) {
+function Browser({ records, value, onChange, label, description, overrides, baseline, onAssetChange }: BrowserProps) {
   const [loaded, setLoaded] = useState<{ ids: string; map: ReadonlyMap<number, { sheet: WallSheet; texture: WallTexture }> }>();
   const [error, setError] = useState(''), [retry, setRetry] = useState(0), [query, setQuery] = useState(''), [shade, setShade] = useState(16);
   const ids = [...new Set(records.map(record => record.texture))].sort((a, b) => a! - b!).join(',');
@@ -30,7 +30,7 @@ function Browser({ records, value, onChange, label, overrides, baseline, onAsset
   const assets = loaded?.ids === ids ? loaded.map : undefined;
   const chosen = records.find(record => String(record.offset) === value), selected = chosen && assets?.get(chosen.texture!);
   return <div className="wall-browser">
-    <p className="field-note">Whole texture sheets at the chosen preview shade. Each style keeps its authored alignment, sampling and transparency. Choose a tile, then apply the form.</p>
+    <p className="field-note">{description ?? 'Whole texture sheets at the chosen preview shade. Each style keeps its authored alignment, sampling and transparency. Choose a tile, then apply the form.'}</p>
     <label className="select-field"><span>Find material or style</span><input aria-label={`${label} material search`} value={query} title="Filter this template's wall styles by material name, texture number or style number." onChange={event => setQuery(event.target.value)} /></label>
     <label className="select-field"><span>Preview shade {shade}</span><input type="range" min="0" max="31" value={shade} aria-label={`${label} preview shade`} title="Preview the texture's authored brightness palettes. This changes thumbnails only; saved room lighting is chosen separately." onChange={event => setShade(Number(event.target.value))} /></label>
     {error ? <div role="alert"><p>{error}</p><button type="button" title="Retry loading the real material assets. Your selected styles and project are kept." onClick={() => setRetry(value => value + 1)}>Retry materials</button></div>

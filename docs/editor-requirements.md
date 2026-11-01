@@ -33,6 +33,13 @@ LevelEditor v3.03 changelog reference still needs to be located and checked.
 
 ## Current state
 
+R8/R10 now include individual material painting on picked imported/copied
+straight native faces, with previews, Cancel/Apply/Reset, source-persistent
+lower/upper provenance and Undo. Sampling compatibility is checked before native
+preview; switch faces remain protected. Newly authored/repaired perimeter faces,
+curves, floor/ceiling painting and graphical editing handles remain open. See
+`editor-surface-picking.md` for the supported scope and remaining limits.
+
 The binary model, original-file preservation, supported record edits, recovery
 and basic React UI are implemented and tested. They cover parts of R4, R5, R7,
 R9 and R11. The geometry normaliser has unit/source-fixture coverage for part of

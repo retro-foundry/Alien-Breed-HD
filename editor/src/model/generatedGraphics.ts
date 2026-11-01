@@ -9,6 +9,7 @@ import { assertGraphicsRecordBudget } from './renderLimits';
 
 export interface GeneratedGraphicsRoom extends GraphicsStreamInput { id: number; dataOffset: number }
 export interface GeneratedGraphicsTarget { room: number; upper: boolean; index: number }
+export interface GeneratedGraphicIdentity extends GeneratedGraphicsTarget { readonly offset: number; readonly sourceOffset?: number }
 export type SelectGraphicsTarget = (pointer: number, context: AnimationTargetContext,
   candidates: readonly GeneratedGraphicsTarget[]) => GeneratedGraphicsTarget;
 
@@ -19,6 +20,11 @@ export type SelectGraphicsTarget = (pointer: number, context: AnimationTargetCon
  */
 export function buildGeneratedGraphics(document: LevelDocument, rooms: readonly GeneratedGraphicsRoom[],
   animations: AnimationTables, selectTarget?: SelectGraphicsTarget): Uint8Array {
+  return compileGeneratedGraphics(document, rooms, animations, selectTarget).bytes;
+}
+
+export function compileGeneratedGraphics(document: LevelDocument, rooms: readonly GeneratedGraphicsRoom[],
+  animations: AnimationTables, selectTarget?: SelectGraphicsTarget): { bytes: Uint8Array; records: readonly GeneratedGraphicIdentity[] } {
   checkedInteger(rooms.length, 1, 256, 'Generated graphics room count');
   const ids = new Set(rooms.map(room => room.id));
   if (ids.size !== rooms.length || rooms.some(room => !Number.isInteger(room.id) || room.id < 0 || room.id >= rooms.length))
@@ -30,14 +36,15 @@ export function buildGeneratedGraphics(document: LevelDocument, rooms: readonly 
   const output = new BinaryWriter(), table = 16 + rooms.length * 4;
   output.reserve(16 + rooms.length * 12); output.patchLong(12, table);
   const targets: { key: GeneratedGraphicsTarget; start: number; original: Graphic; generated: Graphic }[] = [];
+  const records: GeneratedGraphicIdentity[] = [];
   for (const room of rooms) {
     output.patchLong(16 + room.id * 4, checkedInteger(room.dataOffset, 0, 16 * 1024 * 1024 - 1, 'Generated zone data offset'));
-    for (const [upper, records] of [[false, room.lower], [true, room.upper]] as const) {
-      if (records === undefined) continue;
-      checkedInteger(records.length, 0, 4095, 'Generated graphics record count');
-      assertGraphicsRecordBudget(room.id, upper, records.length);
+    for (const [upper, stream] of [[false, room.lower], [true, room.upper]] as const) {
+      if (stream === undefined) continue;
+      checkedInteger(stream.length, 0, 4095, 'Generated graphics record count');
+      assertGraphicsRecordBudget(room.id, upper, stream.length);
       output.patchLong(table + room.id * 8 + (upper ? 4 : 0), output.offset); output.word(room.id);
-      records.forEach((item, index) => {
+      stream.forEach((item, index) => {
         const generated = readGraphicRecord(new BinaryReader(item.bytes, 'generated graphics record'), 0, 2048);
         if (generated.size !== item.bytes.length) throw new Error('A generated graphics record contains trailing or incomplete data.');
         if (item.sourceOffset !== undefined) {
@@ -45,6 +52,8 @@ export function buildGeneratedGraphics(document: LevelDocument, rooms: readonly 
           if (!original || original.type !== generated.type) throw new Error('A generated graphics identity must name a source record with the same opcode.');
           targets.push({ key: { room: room.id, upper, index }, start: output.offset, original, generated });
         }
+        records.push(Object.freeze({ room: room.id, upper, index, offset: output.offset,
+          ...(item.sourceOffset === undefined ? {} : { sourceOffset: item.sourceOffset }) }));
         output.write(item.bytes);
       });
       output.long(-1);
@@ -66,5 +75,5 @@ export function buildGeneratedGraphics(document: LevelDocument, rooms: readonly 
   const built = buildAnimationTables(animations, output.offset, resolve);
   output.write(built.bytes);
   output.patchLong(0, built.doors); output.patchLong(4, built.lifts); output.patchLong(8, built.switches);
-  return output.finish();
+  return { bytes: output.finish(), records: Object.freeze(records) };
 }
