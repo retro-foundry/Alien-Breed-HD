@@ -16,7 +16,7 @@ export interface WallMaterial {
   readonly verticalMask: number; readonly verticalShift: number; readonly horizontalMask: number;
 }
 export interface WallMaterialTarget { readonly room: string; readonly record: number; readonly upper: boolean }
-export interface BoundaryMaterialTarget { readonly room: string; readonly index: number; readonly upper: boolean }
+export interface BoundaryMaterialTarget { readonly room: string; readonly index: number; readonly upper: boolean; readonly inherited?: WallSurface }
 export type SurfaceMaterialTarget = WallMaterialTarget | BoundaryMaterialTarget;
 // renderer.c SWITCHES_WALL_TEX_ID: control flags and animation use this sheet specially.
 const switchTexture = 11;
@@ -88,7 +88,9 @@ export function surfaceMaterialTarget(built: PlayableLevel, zone: number, pick: 
   const identity = built.surfaceSources?.find(item => item.room === zone && item.upper === pick.upper && item.offset === pick.offset);
   const room = built.source.roomSource.rooms.find(room => room.id === built.topology?.cells.find(cell => cell.id === zone)?.sourceId);
   if (!room || identity?.boundaryIndex === undefined || identity.sourceOffset !== undefined || !room.vertices[identity.boundaryIndex]) return;
-  return Object.freeze({ room: room.id, upper: pick.upper, index: identity.boundaryIndex });
+  const appearance=built.source.roomAppearances?.find(item=>item.room===room.id),style=pick.upper?appearance?.upperWall:appearance?.lowerWall;
+  const inherited=style==null?(pick.upper?built.document.zones[zone]!.upper:built.document.zones[zone]!.lower).find(record=>record.offset===pick.offset)?.wall:undefined;
+  return Object.freeze({ room: room.id, upper: pick.upper, index: identity.boundaryIndex, ...(inherited?{inherited:Object.freeze({...inherited})}:{}) });
 }
 
 export function surfaceMaterialCurrent(document: LevelDocument, target: SurfaceMaterialTarget) {
@@ -100,7 +102,7 @@ export function surfaceMaterialCurrent(document: LevelDocument, target: SurfaceM
   const painted = room.boundaryMaterials?.overrides.find(item => item.edge === edge && item.upper === target.upper);
   const appearance = document.roomAppearances?.find(item => item.room === room.id);
   const record = target.upper ? appearance?.upperWall : appearance?.lowerWall;
-  return painted ?? (target.upper ? template.upper : template.lower).find(item => item.offset === record)?.wall;
+  return painted ?? target.inherited ?? (target.upper ? template.upper : template.lower).find(item => item.offset === record)?.wall;
 }
 
 export function hasSurfaceMaterialOverride(document: LevelDocument, target: SurfaceMaterialTarget): boolean {
@@ -121,7 +123,7 @@ export function setSurfaceMaterial(document: LevelDocument, target: SurfaceMater
     const appearance = document.roomAppearances?.find(item => item.room === room.id);
     const original = document.zones.find(zone => zone.id === room.recordZone);
     const record = target.upper ? appearance?.upperWall : appearance?.lowerWall;
-    const wall = (target.upper ? original?.upper : original?.lower)?.find(item => item.offset === record)?.wall;
+    const wall = target.inherited ?? (target.upper ? original?.upper : original?.lower)?.find(item => item.offset === record)?.wall;
     const selected = wallMaterialChoices(document).find(item => item.offset === style)?.wall;
     if (!wall || !selected) throw new Error('Choose an available boundary appearance and native material style.');
     if (wall.texture === switchTexture) throw new Error('This boundary uses switch graphics. Keep its native material.');

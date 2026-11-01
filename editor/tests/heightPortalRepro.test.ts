@@ -1,3 +1,4 @@
+import {surfaceMaterialCurrent,surfaceMaterialTarget,setSurfaceMaterial,wallMaterialChoices} from '../src/model/wallMaterials';
 import {createHash} from 'node:crypto';
 import {it,expect} from 'vitest';
 import {originalFiles} from './helpers';
@@ -36,4 +37,15 @@ it('an imported portal room in every original level can change ceiling without l
   const changed=applyCommand(document,spatialEdit(document,{kind:'height',room:room.id,field:'ceiling',value:settings.ceiling+4}));
   try{expect(texturedEditorScene(changed).faces.length,`level ${level}`).toBeGreaterThan(0);}catch(error){throw new Error(`Level ${level}: ${String(error)}`);}
  }
+});
+
+it('height-generated bands expose their real material to the picker without a repair appearance',()=>{
+ const original=openLevel('Paint inherited doorway',originalFiles(1)),room=original.roomSource.rooms.find(r=>r.originZone===4)!,settings=roomSettings(original,room);
+ const document=applyCommand(original,editRoomSource(setRoomHeights(original,original.roomSource,room.id,{floor:240,ceiling:-40,upperFloor:settings.upperFloor,upperCeiling:settings.upperCeiling}))),scene=texturedEditorScene(document);
+ const face=scene.faces.find(face=>face.graphic.wall && scene.built.surfaceSources?.some(s=>s.room===face.zone&&s.offset===face.graphic.offset&&s.upper===face.upper&&s.boundaryIndex!==undefined&&s.sourceOffset===undefined))!;
+ expect(face).toBeDefined();const target=surfaceMaterialTarget(scene.built,face.zone,{offset:face.graphic.offset,type:face.graphic.type,upper:face.upper})!;
+ expect(surfaceMaterialCurrent(document,target)).toMatchObject({texture:face.graphic.wall!.texture});
+ const style=wallMaterialChoices(document).find(r=>r.wall!.texture===face.graphic.wall!.texture&&r.wall!.horizontalMask===face.graphic.wall!.horizontalMask&&r.wall!.verticalMask===face.graphic.wall!.verticalMask)!;
+ expect(style).toBeDefined();const command=editRoomSource(setSurfaceMaterial(document,target,style.offset)),painted=applyCommand(document,command);
+ expect(()=>texturedEditorScene(decodeProject(encodeProject(painted)))).not.toThrow();expect(painted.roomAppearances).toBeUndefined();
 });
