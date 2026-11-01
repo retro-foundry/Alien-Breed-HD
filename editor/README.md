@@ -20,6 +20,12 @@ Opening local files does not upload them anywhere.
 
 ## Current working workflows
 
+- Toggle **Visibility overlay** on the map, then select a room. Amber marks its
+  selected runtime cell, cyan its potential visibility and green its portals.
+  Concave rooms offer each compiled cell separately. Expand Runtime visibility
+  table for exact zone, clip and mask entries. Preview/export share this artifact;
+  edits rebuild it, and errors clear outdated overlays. These are conservative
+  candidates rather than exact line of sight; both floors share the table.
 - Add enemies, pickups or scenery with **Add object**. Choose an existing level
   record as the settings template, a destination room and coordinates. Floor
   matching preserves its offset from the floor; turn it off for a manual height

@@ -102,6 +102,12 @@ browsers. Source history and project archives are integrated. Source build
 integration now includes rebuilt visibility in normal supported-geometry
 preview/export. Broader occlusion/gameplay scenes and unrestricted authored
 geometry still need verification.
+The map now offers visibility/portal overlays and a per-runtime-cell table
+inspector backed by the same artifact as preview/export. Concave source rooms
+expose their compiled cells separately. Native zone/clip/mask records are shown
+with a conservative-visibility explanation. Source edits invalidate old results;
+failed builds clear overlays and Undo restores valid inspection. This advances
+R3 inspection, while broader closed-door and occlusion validation remain open.
 
 The remaining compiler/authoring integration, topology/diagnostic tools, PVS
 inspection, heights/stairs, asset pipeline, multiselect/clipboard, full 3D

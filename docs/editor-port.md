@@ -1276,3 +1276,20 @@ fixtures can establish current-format support independently.
   weapon-ownership probe; the game simulation remains unchanged.
   The production build, 686 model tests and eight Chromium/Firefox object
   authoring/gameplay scenarios pass. The full editor remains in progress.
+
+- Visibility inspection checkpoint: a map overlay now reads the exact shared
+  preview/export artifact via preparePlayableLevel. Amber identifies the selected
+  runtime cell, cyan its potentially visible cells and green its actual connected
+  floor-line portals. Concave source rooms expose individual compiled cells;
+  the table shows native zone, clip and ordering-mask records without treating
+  conservative candidates as exact line of sight. Visibility is shared by both
+  storeys, as the native table is. Source identity guards and effect cancellation
+  discard stale builds; a failed source build removes old overlays and exposes
+  the compiler error with retry. Undo restores valid inspection. Model checks
+  compare all original zone entries/portals, disconnected new rooms and concave
+  cell mapping. Browser checks verify exact compiled entries, switching convex
+  cells, keyboard toggling, no source mutation and moving-door failure/undo.
+  Full runtime closed-door/occlusion validation remains required for R3.
+  All 690 model tests, production builds and 14 Chromium/Firefox visibility and
+  controls regression scenarios pass. The final memoized inspection also passes
+  all four focused browser cases. No native gameplay code changed.

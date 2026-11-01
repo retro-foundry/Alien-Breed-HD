@@ -6,6 +6,7 @@ import { importRoomSource, type RoomDraft, type SourceRoom } from '../model/room
 import { editableStarts } from '../model/sourceStarts';
 import { editableObjects, objectIsActive } from '../model/sourceObjects';
 import { editableTeleport } from '../model/sourceTeleports';
+import { VisibilityOverlay, useVisibilityInspection } from './VisibilityOverlay';
 
 export type Selection = { kind: 'zone' | 'object' | 'start' | 'point'; id: number } | null;
 export interface MapView { x: number; z: number; scale: number }
@@ -25,6 +26,7 @@ function floorPolygons(zone: Zone, upper: boolean) {
 }
 
 export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, focusRoom }: Props) {
+  const visibility = useVisibilityInspection(document, selectedRoom?.id, selection?.kind === 'zone' ? selection.id : undefined);
   const canvas = useRef<HTMLCanvasElement>(null), holder = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const lastFit = useRef<{ data: Uint8Array; fit: number } | null>(null);
@@ -166,6 +168,18 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       }
     }
     context.setLineDash([]);
+    if (visibility.enabled && visibility.inspection) {
+      for (const polygon of visibility.inspection.polygons) {
+        context.beginPath();
+        polygon.vertices.forEach((point, index) => { const pixel = screen(point.x, point.z); if (index) context.lineTo(pixel.x, pixel.y); else context.moveTo(pixel.x, pixel.y); });
+        context.closePath(); context.fillStyle = polygon.origin ? '#efba5555' : '#39bfd133'; context.fill();
+        context.strokeStyle = polygon.origin ? '#efba55' : '#39bfd1'; context.lineWidth = polygon.origin ? 2.5 : 1; context.stroke();
+      }
+      for (const line of visibility.inspection.portals) {
+        const a = screen(line.x, line.z), b = screen(line.x + line.dx, line.z + line.dz);
+        context.beginPath(); context.moveTo(a.x, a.y); context.lineTo(b.x, b.y); context.strokeStyle = '#84e29b'; context.lineWidth = 4; context.stroke();
+      }
+    }
     const outline = (vertices: readonly { x: number; z: number }[], fill: boolean, colour: string) => {
       context.beginPath(); vertices.forEach((point, index) => { const pixel = screen(point.x, point.z); if (index) context.lineTo(pixel.x, pixel.y); else context.moveTo(pixel.x, pixel.y); });
       if (vertices.length >= 3) context.closePath();
@@ -231,7 +245,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
         }
       }
     }
-  }, [document, selection, view, size, grid, showObjects, layer, ghost, screen, world, sourceView, roomDraft, selectedRoom, cornerGhost]);
+  }, [document, selection, view, size, grid, showObjects, layer, ghost, screen, world, sourceView, roomDraft, selectedRoom, cornerGhost, visibility.enabled, visibility.inspection]);
 
   function hit(x: number, y: number): Selection {
     for (const start of editableStarts(document)) { const pixel = screen(start.x, start.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 13) return { kind: 'start', id: start.player }; }
@@ -303,6 +317,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       onLostPointerCapture={() => { setGhost(null); drag.current = null; cornerDrag.current = null; setCornerGhost(null); }} />
     <div className="map-label"><span className="status-dot" /> ORTHOGRAPHIC <span className="muted">/</span> {layer.toUpperCase()} FLOOR</div>
     <div className="map-compass"><span>N</span><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 6 23-6-5-6 5z" fill="currentColor" /></svg></div>
+    <VisibilityOverlay state={visibility} />
     <div id="map-controls" className="map-help">{roomDraft ? <><strong>{roomDraft.vertices.length} corners</strong> · Click corners · Enter or first corner finishes · Backspace removes last · Esc cancels · Alt bypasses snap</> : <><kbd>Space</kbd> drag to pan <span>·</span> wheel to zoom <span>·</span> <kbd>F</kbd> fit <span>·</span> <kbd>?</kbd> controls</>}</div>
     <div className="map-scale"><Icon name="grid" size={14} /> {Math.round(view.scale * 100)}%</div>
   </div>;
