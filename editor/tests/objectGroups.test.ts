@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { roomHeightFixture } from './roomHeightFixture';
 import { createObject, objectTemplates } from '../src/model/objectAuthoring';
 import { applyCommand, execute, redo, undo, numberPatch, moveObject } from '../src/model/commands';
-import { editObjectGroup } from '../src/model/objectGroups';
+import { editObjectGroup, objectSelectionIds } from '../src/model/objectGroups';
 import { editableObjects } from '../src/model/sourceObjects';
 import { buildPlayableLevel } from '../src/model/playableBuild';
 import { decodeProject, encodeProject } from '../src/model/project';
@@ -77,4 +77,16 @@ it('also enforces upper-floor compatibility for explicit native object moves', (
   const lines = zone.boundaryIds.map(id => document.lines[id]!);
   const x = lines.reduce((sum, line) => sum + line.x, 0) / lines.length, z = lines.reduce((sum, line) => sum + line.z, 0) / lines.length;
   expect(() => moveObject(document, object.id, x, z, zone.id)).toThrow(/upper floor/);
+});
+
+it('selects active search matches with floor filtering while excluding both player avatars', () => {
+  const fixture = objectStoreyFixture(), document = fixture.document;
+  const upperHealth = objectSelectionIds(document, 'HEALTH', true);
+  expect(fixture.ids.every(id => upperHealth.includes(id))).toBe(true);
+  expect(fixture.ids.some(id => objectSelectionIds(document, 'health', false).includes(id))).toBe(false);
+  expect(objectSelectionIds(document, 'no-such-object')).toEqual([]);
+  const deleted = applyCommand(document, editObjectGroup(document, fixture.ids, { kind: 'delete' }));
+  expect(fixture.ids.some(id => objectSelectionIds(deleted).includes(id))).toBe(false);
+  const reader = new BinaryReader(document.files.data, 'avatars');
+  for (const field of [46, 50]) expect(objectSelectionIds(document)).not.toContain(document.objects.find(object => object.offset === reader.i32(field))!.id);
 });

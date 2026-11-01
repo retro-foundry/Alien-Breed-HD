@@ -1,0 +1,32 @@
+import { expect, test } from '@playwright/test';
+import { objectStoreyFixture } from '../objectStoreyFixture';
+import { encodeProject } from '../../src/model/project';
+import { objectSelectionIds } from '../../src/model/objectGroups';
+
+test('select all follows search or displayed floor without hijacking text input or changing source', async ({ page }) => {
+  const fixture = objectStoreyFixture(), searched = objectSelectionIds(fixture.document, 'Health'), upper = objectSelectionIds(fixture.document, '', true);
+  await page.goto('/'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.locator('input[type=file]').setInputFiles({ name: 'selection.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
+  await expect(page.locator('.project-picker strong')).toHaveText(fixture.document.name);
+  await page.getByRole('tab', { name: 'Objects', exact: true }).click();
+  const search = page.getByRole('textbox', { name: 'Search map contents', exact: true });
+  await search.fill('Health'); await search.press('Control+a');
+  const inspector = page.getByRole('complementary', { name: 'Object group inspector' });
+  await expect(inspector).toHaveCount(0);
+  expect(await search.evaluate(node => (node as HTMLInputElement).selectionEnd! - (node as HTMLInputElement).selectionStart!)).toBe(6);
+  await page.getByRole('button', { name: 'Select all matching objects', exact: true }).click();
+  await expect(inspector.getByRole('heading', { name: `${searched.length} selected objects` })).toBeVisible();
+  await expect(page.locator('.contents-list .content-row[aria-pressed=true]')).toHaveCount(searched.length);
+  await inspector.getByRole('button', { name: 'Clear object selection', exact: true }).click();
+  await page.getByRole('button', { name: 'Select all matching objects', exact: true }).focus(); await page.keyboard.press('Control+a');
+  await expect(inspector.getByRole('heading', { name: `${searched.length} selected objects` })).toBeVisible();
+  await page.getByRole('button', { name: 'Upper', exact: true }).click();
+  const map = page.locator('canvas[aria-label="Level map"]');
+  await map.focus(); await page.keyboard.press('Control+a');
+  await expect(inspector.getByRole('heading', { name: `${upper.length} selected objects` })).toBeVisible();
+  await page.getByRole('button', { name: 'Show objects', exact: true }).click();
+  await map.focus(); await page.keyboard.press('Control+a');
+  await expect(inspector).toHaveCount(0);
+  await expect(page.locator('.status-message')).toContainText('No editable objects match');
+  await expect(page.locator('.dirty-dot')).toHaveCount(0);
+});

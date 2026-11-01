@@ -1,6 +1,12 @@
-import type { LevelDocument } from './level';
+import { objectName, type LevelDocument } from './level';
 import type { EditCommand } from './commands';
 import { editableObjects, objectIsActive, objectPlayer, objectDestinationRoom, placeSourceObject, runtimeObjectPosition } from './sourceObjects';
+
+export function objectSelectionIds(document: LevelDocument, search = '', upper?: boolean): number[] {
+  const query = search.toLowerCase();
+  return editableObjects(document).filter(object => objectIsActive(object) && objectPlayer(document, object) === undefined
+    && (upper === undefined || object.upper === upper) && `${object.id} ${objectName(object.type)}`.toLowerCase().includes(query)).map(object => object.id);
+}
 
 export function selectedObjects(document: LevelDocument, ids: readonly number[]) {
   if (ids.length < 2 || new Set(ids).size !== ids.length) throw new Error('Select at least two different objects.');

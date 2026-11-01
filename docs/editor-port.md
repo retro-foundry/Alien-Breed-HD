@@ -1422,3 +1422,16 @@ fixtures can establish current-format support independently.
   native positions/heights/health. Clipboard and room-group workflows remain open.
   All 702 model tests, the final production build and four Chromium/Firefox
   single/group duplication scenarios pass. No native simulation changes were made.
+
+- Select-all checkpoint: an explicit object-list control selects current active
+  search matches across both floors. Ctrl/Command+A follows that scope outside
+  text fields in the object list, and selects only the displayed floor when the
+  map has focus. Map selection respects Show objects and ignores the list search.
+  Both player avatar records and inactive/deleted placements are excluded by a
+  shared selection model. Text inputs retain native text selection; dialog,
+  drawing and busy guards prevent unintended selection changes. No source or
+  history edits are created. Models check search, floor, deleted objects and
+  avatars; browser checks cover both scopes, text input and hidden markers.
+  Clipboard, room-group and other full-editor workflows remain open.
+  All 703 model tests, production builds and four Chromium/Firefox select-all/
+  group-copy scenarios pass. Native gameplay is unchanged.

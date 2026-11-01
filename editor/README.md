@@ -43,6 +43,11 @@ Opening local files does not upload them anywhere.
   retain spacing, settings, floors and exact heights with independent native
   records. One Undo removes the complete batch; capacity or invalid destinations
   reject every copy. Hold-to-repeat is disabled for this shortcut.
+  **Select all matching objects** selects the active search results across both
+  floors. **Ctrl/Command+A** does the same outside fields in the object list;
+  on the map it selects only the displayed floor and ignores the list search.
+  Hidden objects and player avatars are excluded from map selection. In text
+  fields the shortcut keeps its normal text-selection behaviour.
 - Toggle **Visibility overlay** on the map, then select a room. Amber marks its
   selected runtime cell, cyan its potential visibility and green its portals.
   Concave rooms offer each compiled cell separately. Expand Runtime visibility

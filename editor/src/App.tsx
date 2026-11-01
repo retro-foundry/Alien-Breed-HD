@@ -14,7 +14,7 @@ import { ObjectGroupInspector } from './components/ObjectGroupInspector';
 import { StairBuilder } from './components/StairBuilder';
 import { ObjectBuilder } from './components/ObjectBuilder';
 import { objectTemplates } from './model/objectAuthoring';
-import { editObjectGroup } from './model/objectGroups';
+import { editObjectGroup, objectSelectionIds } from './model/objectGroups';
 import { duplicateObjects } from './model/duplicateObjects';
 import { Icon } from './components/Icon';
 import { EnginePreview } from './components/EnginePreview';
@@ -248,6 +248,14 @@ export function App() {
     else if (ids.length === 1) edit(() => removeObject(source, ids[0]!));
   }, [objectIds, selection, busy, edit]);
 
+  const selectAllObjects = useCallback((map = false) => {
+    const source = workspaceRef.current?.history.document;
+    if (!source || busy) return;
+    const ids = map && !showObjects ? [] : objectSelectionIds(source, map ? '' : search, map ? layer === 'upper' : undefined);
+    setObjectIds(ids); setSelection(ids.length ? { kind: 'object', id: ids.at(-1)! } : null); setSelectedRoomId(null);
+    setStatus(ids.length ? `Selected ${ids.length} objects${map ? ` on the ${layer} floor` : ' matching the current search'}` : 'No editable objects match this selection.');
+  }, [busy, showObjects, search, layer]);
+
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       const editing = event.target instanceof HTMLElement && (event.target.matches('input, textarea, select') || event.target.isContentEditable);
@@ -255,6 +263,9 @@ export function App() {
       if (stairsOpen || objectOpen) { if ((event.ctrlKey || event.metaKey) && ['o', 'd'].includes(event.key.toLowerCase())) event.preventDefault(); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); fileInput.current?.click(); return; }
       if (editing) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a' && (tab === 'objects' || event.target instanceof HTMLCanvasElement)) {
+        event.preventDefault(); if (!roomDraft && !help && !showRecents && !choices.length) selectAllObjects(event.target instanceof HTMLCanvasElement); return;
+      }
       if (event.key === 'Delete' && !event.ctrlKey && !event.metaKey && !event.altKey) {
         if (!event.repeat && !roomDraft && !help && !showRecents && !choices.length) { event.preventDefault(); deleteSelectedObjects(); }
         return;
@@ -276,7 +287,7 @@ export function App() {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [save, historyAction, roomDraft, finishRoom, select, stairsOpen, objectOpen, duplicateObject, help, showRecents, choices.length, frameCurrent, deleteSelectedObjects]);
+  }, [save, historyAction, roomDraft, finishRoom, select, stairsOpen, objectOpen, duplicateObject, help, showRecents, choices.length, frameCurrent, deleteSelectedObjects, selectAllObjects, tab]);
 
   async function openDocument(next: LevelDocument, id?: string, request = ++generation.current) {
     const current = workspaceRef.current;
@@ -352,6 +363,7 @@ export function App() {
   const objects = useMemo(() => document ? editableObjects(document) : [], [document]);
   const groupIds = useMemo(() => objectIds.filter(id => objects.some(object => object.id === id && objectIsActive(object))), [objectIds, objects]);
   const filteredObjects = objects.filter(object => objectIsActive(object) && `${object.id} ${objectName(object.type)}`.toLowerCase().includes(search.toLowerCase()));
+  const selectableIds = useMemo(() => document ? objectSelectionIds(document, search) : [], [document, search]);
   const activeObjects = objects.filter(objectIsActive).length;
   return <div className={`app ${navigatorOpen ? 'navigator-open' : ''}`} onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={event => { event.preventDefault(); if (event.dataTransfer.files.length) void importFiles([...event.dataTransfer.files]); }}>
     <ControlTooltips />
@@ -370,6 +382,8 @@ export function App() {
         <div className="navigator-tabs" role="tablist" aria-label="Map contents">{(['zones', 'objects', 'starts'] as const).map(value => <button key={value} role="tab" title={value === 'starts' ? 'Find and select player starting positions.' : value === 'zones' ? 'Find and select rooms by zone number.' : 'Find enemies, pickups and scenery by name.'} aria-selected={tab === value} className={tab === value ? 'active' : ''} onClick={() => { setTab(value); setSearch(''); }}>{value === 'starts' ? 'Starts' : value[0]?.toUpperCase() + value.slice(1)}</button>)}</div>
         <label className="search-box"><Icon name="search" size={15} /><input ref={searchInput} aria-label="Search map contents" title="Find a zone number or object name. Press / from the map to focus search." value={search} onChange={event => setSearch(event.target.value)} placeholder={tab === 'zones' ? 'Find a zone…' : 'Find an object…'} /><kbd>/</kbd></label>
         <div className="contents-list">
+          {tab === 'objects' && <button className="small-button" disabled={!selectableIds.length || !!busy} title="Select all active objects matching this search, across both floors. Player avatars are excluded. Shortcut: Ctrl/Command+A outside text fields. On the map the shortcut selects only the displayed floor."
+            onClick={() => selectAllObjects(false)}>Select all matching objects</button>}
           {tab === 'zones' && newRooms.map(room => <button key={room.id} className={`content-row ${selectedRoomId === room.id ? 'selected' : ''}`} title="Select this editable room outline. Game geometry compilation is still in progress." onClick={() => { selectRoom(room.id); setNavigatorOpen(false); }}><Icon name="layers" size={14} /><span>Room {room.id.replace(/^room-/, '')}</span><span className="row-badge">OUTLINE</span></button>)}
           {tab === 'zones' && filteredZones.map(zone => <button key={zone.id} className={`content-row ${selection?.kind === 'zone' && selection.id === zone.id ? 'selected' : ''}`} title={`Select zone ${zone.id} and centre the map. In 3D inspection, visit this zone.`} onClick={() => { select({ kind: 'zone', id: zone.id }); setFocusZone(current => ({ id: zone.id, request: (current?.request ?? 0) + 1 })); setNavigatorOpen(false); }}><span className={`zone-dot ${document?.mechanisms.some(mechanism => mechanism.zone === zone.id && mechanism.kind === 'door') ? 'door-dot' : zone.water > zone.ceiling && zone.water < zone.floor ? 'water-dot' : ''}`} /><span>Zone {String(zone.id).padStart(3, '0')}</span>{zone.upper.length > 0 && <span className="row-badge">2F</span>}<span className="row-detail">{zone.floor}</span></button>)}
           {tab === 'objects' && filteredObjects.map(object => <button key={object.id} className={`content-row ${groupIds.includes(object.id) || selection?.kind === 'object' && selection.id === object.id ? 'selected' : ''}`} aria-pressed={groupIds.includes(object.id) || selection?.kind === 'object' && selection.id === object.id} title={`Select ${objectName(object.type)} ${object.id}. Shift, Ctrl or Command click to add or remove it from a group. Drag a single object on the map to move it.`} onClick={event => {
