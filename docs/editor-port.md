@@ -2590,3 +2590,39 @@ paint, Walk object placement and texture retry. The five native runtime hashes
 remain unchanged under `runtime/r-c8b6aa3eff4f5614/`. Source changes are committed
 and pushed; full Windows/Linux editor CI is running separately. This milestone
 does not complete the remaining AMOS and R0-R12 scope.
+
+
+## Fixed-size height diagram and retained doorway materials
+
+The height diagram is now a fixed 400 CSS pixels high. Its SVG uses the same
+400-unit height and a 352-unit plotting area; pointer conversion still uses the
+screen transform and native quarter-unit validation. Both single- and two-storey
+diagrams keep that height as their values change.
+
+The reported ceiling drag exposed a compiler error: height changes made an
+existing doorway look like a new/replaced connection, requiring repair styles
+on neighbouring Room 5 and turning the whole textured editor into outlines.
+Retained native connections now have a separate height-only path. Existing
+bands retain source identities and sampling; newly exposed solid areas inherit
+an actual wall style from the room's perimeter, other storey or adjoining room.
+Switch graphics are not replicated. Intentional original omissions remain;
+new bands have source boundary identities and explicit native stream insertion
+positions rather than being appended after water/object drawing controls.
+Door/lift apertures use their complete authored swept ranges, preserving their
+moving attachments instead of sealing them at their initial position. Real new
+or replaced boundaries still require explicit appearance and controller setup.
+No room-appearance choice or new project schema is required for height edits.
+
+Verification: all 966 model tests passed, including height-only portal edits in
+all 16 original levels and the reported -40 ceiling / 240 floor combination,
+portable saves and Undo/Redo. Eighteen packaged height/headroom checks passed
+across Edge, Brave and Firefox, including the larger diagram, live texture
+retention, actual native door travel with synchronized wall attachments,
+collision/rendering, cancellation and keyboard height edits. Firefox's pointer
+regression scrolls the complete SVG into view before dragging its lower handle.
+
+Published site commit `766af5c` serves JavaScript `index-B5QxB2pK.js` and CSS
+`index-UvzKxj_Z.css`; Pages run `41330535581` succeeded. All four live Edge/Brave
+ceiling-drag and native door-motion regressions passed. The five native runtime
+hashes remain unchanged under `runtime/r-c8b6aa3eff4f5614/`. Remaining AMOS and
+R0-R12 scope is still open.
