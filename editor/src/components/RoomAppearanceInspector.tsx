@@ -25,8 +25,9 @@ export function RoomAppearanceInspector({ document, room, edit }: {
     if (png) encodeProject(applyCommand(document, command));
     edit(command);
   };
+  const paintedCount = ((room.wallMaterials?.length ?? 0) + (room.boundaryMaterials?.overrides.length ?? 0));
   return <section className="property-section"><h3>{imported ? 'Wall repair appearance' : 'Room appearance'}</h3>
-    {!!room.wallMaterials?.length && <div><p className="field-note">{room.wallMaterials.length} source faces have independent painted materials. Reset removes all paints in this room, including faces no longer drawn after an outline edit.</p>
+    {!!paintedCount && <div><p className="field-note">{paintedCount} source faces have independent painted materials. Reset removes all paints in this room, including faces no longer drawn after an outline edit.</p>
       <button type="button" className="small-button" title="Restore this room's inherited wall materials as one undoable edit. Repairs missing painted-face dependencies. Other rooms are unchanged."
         onClick={() => edit(() => editRoomSource(clearRoomWallMaterials(document, room.id)))}>Reset painted room walls</button></div>}
     <p className="field-note">{imported

@@ -1992,3 +1992,40 @@ fixtures can establish current-format support independently.
   independence, portable saves, cancel/reset/history, modal shortcut isolation,
   and synchronized native door/lift movement. All eight final targeted browser
   cases pass. Full CI and final deployment remain pending.
+
+- Authored boundary painting: newly drawn perimeters and repaired doorway fills
+  now use the same native 3D material dialog. Graphics provenance carries a
+  transient source-edge index. On first paint, source v8 allocates persistent
+  room-local edge IDs and lower/upper overrides; generated record offsets are
+  never used as authored edge IDs. Normalization, corner moves, T-junction
+  splitting, decomposition, translation, save/reopen and copied rooms retain
+  these IDs. Split side pieces and step/lintel bands share the source boundary's
+  material. New edges from a redraw receive fresh IDs, and orphaned paints remain
+  saveable with an explicit restore/reset diagnostic before compilation.
+  Reset painted room walls clears both native-face and boundary overrides.
+  Help, tooltips and the editor README explain the supported controls and scope.
+
+  Lower/upper model checks retain geometry, strip span, phases and other faces;
+  doorway repairs, portable v8 saves, independent clipboard copies, reversed
+  winding, normalization rotation and partial-portal splits are covered.
+  A 20-case Chromium/Firefox run passes new boundary paint, existing native face
+  paint, door/lift motion and native picking. The reopen browser test waits for
+  replacement of the previous iframe, avoiding captures sent to a retired frame.
+  The all-map weapon/controller model loops have been parameterized by map to
+  avoid the five-second single-test timeout while retaining their original
+  assertions and explicit nonempty reference coverage.
+
+  Final validation: all 828 model tests in 70 files pass. The production build
+  and a final 16-case Chromium/Firefox run pass boundary painting, native pixel
+  changes confined to the picked boundary, save/reopen, history, controls/help,
+  tooltips and engine-load lifecycle checks. The earlier 20-case regression run
+  also passed retained native face painting, native picking and moving walls.
+
+  CI audit: d9e4e57 Windows ran 226 browser cases, with ten Firefox failures and
+  216 passes. Downloaded traces show WebGL2 context creation denied
+  (`AllowWebgl2:false`), and screenshots show a blank viewport. This explains
+  the missing native picks in that environment; it is not a green release gate.
+  Runtime initialization must surface an actionable renderer-startup failure,
+  and the browser CI rendering environment still needs investigation. Final
+  packaging/deployment, curves and floor/ceiling painting, graphical overlays
+  and the other open R1–R12 requirements remain pending.

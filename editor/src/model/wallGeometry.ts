@@ -9,6 +9,7 @@ import { changedPortalEdges, hasUpperLayer, newPortalTarget, portalWallSpans, un
 import { roomSettings } from './roomHeights';
 import { hasNativeWallMaterials } from './roomMaterials';
 import { nativeRoomTranslation, outlineTranslation } from './roomTranslation';
+import { sourceBoundaryIndex } from './boundaryMaterials';
 
 export interface CellWalls { lower: GraphicsRecordInput[]; upper: GraphicsRecordInput[] }
 export interface NewRoomWallMaterials { lower: readonly WallSurface[]; upper?: readonly WallSurface[] }
@@ -85,7 +86,9 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
             if (!start || !end) throw new Error(`Room ${room.id} has a missing wall material reference endpoint.`);
             const bound = wallForSpan(material, distance(start, end), [a, b], 0, distance(points[a]!, points[b]!));
             const spans = destination ? portalWallSpans(document, bound, roomSettings(document, destination)) : [bound];
-            return spans.map(span => ({ bytes: encodeWallSurface(span) }));
+            const boundaryIndex = sourceBoundaryIndex(room, points[a]!, points[b]!);
+            if (boundaryIndex < 0) throw new Error(`Room ${room.id} lost its source boundary identity.`);
+            return spans.map(span => ({ bytes: encodeWallSurface(span), boundaryIndex }));
           }).flat();
         });
       }
@@ -149,7 +152,9 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
         const bound = wallForSpan(material, distance(start, end), [a, b], offset, offset + distance(points[a]!, points[b]!));
         const target = newPortalTarget(document, topology, cell, edge);
         const spans = target ? portalWallSpans(document, bound, roomSettings(document, target)) : [bound];
-        return spans.map(span => ({ bytes: encodeWallSurface(span), lightingPoint: closing!.lightingPoint }));
+        const boundaryIndex = sourceBoundaryIndex(room, points[a]!, points[b]!);
+        if (boundaryIndex < 0) throw new Error(`Room ${room.id} lost its repaired boundary identity.`);
+        return spans.map(span => ({ bytes: encodeWallSurface(span), lightingPoint: closing!.lightingPoint, boundaryIndex }));
       }));
       return [...original, ...fills];
     };

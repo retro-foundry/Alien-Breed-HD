@@ -9,7 +9,7 @@ import { assertGraphicsRecordBudget } from './renderLimits';
 
 export interface GeneratedGraphicsRoom extends GraphicsStreamInput { id: number; dataOffset: number }
 export interface GeneratedGraphicsTarget { room: number; upper: boolean; index: number }
-export interface GeneratedGraphicIdentity extends GeneratedGraphicsTarget { readonly offset: number; readonly sourceOffset?: number }
+export interface GeneratedGraphicIdentity extends GeneratedGraphicsTarget { readonly offset: number; readonly sourceOffset?: number; readonly boundaryIndex?: number }
 export type SelectGraphicsTarget = (pointer: number, context: AnimationTargetContext,
   candidates: readonly GeneratedGraphicsTarget[]) => GeneratedGraphicsTarget;
 
@@ -53,7 +53,8 @@ export function compileGeneratedGraphics(document: LevelDocument, rooms: readonl
           targets.push({ key: { room: room.id, upper, index }, start: output.offset, original, generated });
         }
         records.push(Object.freeze({ room: room.id, upper, index, offset: output.offset,
-          ...(item.sourceOffset === undefined ? {} : { sourceOffset: item.sourceOffset }) }));
+          ...(item.sourceOffset === undefined ? {} : { sourceOffset: item.sourceOffset }),
+          ...(item.boundaryIndex === undefined ? {} : { boundaryIndex: item.boundaryIndex }) }));
         output.write(item.bytes);
       });
       output.long(-1);

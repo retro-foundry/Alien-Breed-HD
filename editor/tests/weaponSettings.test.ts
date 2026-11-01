@@ -6,28 +6,28 @@ import { applyCommand, execute, numberPatch, redo, undo } from '../src/model/com
 import { weaponPickupChoices, weaponPickupType, setWeaponPickupType } from '../src/model/objectSettings';
 import { decodeProject, encodeProject } from '../src/model/project';
 
-it('updates complete weapon records across original levels with the original floor-anchor formula', () => {
-  let count = 0;
-  for (let level = 1; level <= 16; level++) {
-    const document = openLevel(`Level ${level}`, originalFiles(level)), original = new BinaryReader(document.files.data, 'original');
-    for (const object of document.objects.filter(object => object.type === 3)) {
-      count++;
-      for (const choice of weaponPickupChoices) {
-        const history = execute({ document, past: [], future: [] }, setWeaponPickupType(document, object.id, choice.id));
-        const changed = history.document, data = new BinaryReader(changed.files.data, 'changed');
-        expect(weaponPickupType(changed, object.id)).toBe(choice.id);
-        expect(changed.objects[object.id]!.y + choice.height * 2).toBe(object.y + original.u8(object.offset + 7));
-        expect(data.u8(object.offset + 17)).toBe(choice.id);
-        expect(data.i32(object.offset + 8)).toBe(65536 + choice.frame);
-        if (history.past.length) {
-          const restored = undo(history);
-          expect(Buffer.from(restored.document.files.data).equals(Buffer.from(document.files.data))).toBe(true);
-          expect(weaponPickupType(redo(restored).document, object.id)).toBe(choice.id);
-        }
+it('has original weapon pickups to exercise across the reference maps', () => {
+  expect(Array.from({ length: 16 }, (_, index) => openLevel(`Level ${index + 1}`, originalFiles(index + 1)))
+    .flatMap(document => document.objects).filter(object => object.type === 3).length).toBeGreaterThan(0);
+});
+
+it.each(Array.from({ length: 16 }, (_, index) => index + 1))('updates complete weapon records in original level %i with the original floor-anchor formula', level => {
+  const document = openLevel(`Level ${level}`, originalFiles(level)), original = new BinaryReader(document.files.data, 'original');
+  for (const object of document.objects.filter(object => object.type === 3)) {
+    for (const choice of weaponPickupChoices) {
+      const history = execute({ document, past: [], future: [] }, setWeaponPickupType(document, object.id, choice.id));
+      const changed = history.document, data = new BinaryReader(changed.files.data, 'changed');
+      expect(weaponPickupType(changed, object.id)).toBe(choice.id);
+      expect(changed.objects[object.id]!.y + choice.height * 2).toBe(object.y + original.u8(object.offset + 7));
+      expect(data.u8(object.offset + 17)).toBe(choice.id);
+      expect(data.i32(object.offset + 8)).toBe(65536 + choice.frame);
+      if (history.past.length) {
+        const restored = undo(history);
+        expect(Buffer.from(restored.document.files.data).equals(Buffer.from(document.files.data))).toBe(true);
+        expect(weaponPickupType(redo(restored).document, object.id)).toBe(choice.id);
       }
     }
   }
-  expect(count).toBeGreaterThan(0);
 });
 
 it('retains deliberate height offsets and custom records through saves and undo', () => {

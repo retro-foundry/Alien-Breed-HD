@@ -1,29 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
 import type { LevelDocument } from '../model/level';
 import { editRoomSource, type EditCommand } from '../model/commands';
-import { setWallMaterial, wallMaterialChoices, type WallMaterialTarget } from '../model/wallMaterials';
+import { setSurfaceMaterial, surfaceMaterialCurrent, hasSurfaceMaterialOverride, wallMaterialChoices, type SurfaceMaterialTarget } from '../model/wallMaterials';
 import { WallStyleBrowser } from './WallStyleBrowser';
 import './ObjectBuilder.css';
 
 export function WallPaintDialog({ document, target, onCancel, onApply }: {
-  document: LevelDocument; target: WallMaterialTarget; onCancel: () => void; onApply: (command: EditCommand) => void;
+  document: LevelDocument; target: SurfaceMaterialTarget; onCancel: () => void; onApply: (command: EditCommand) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null), choices = wallMaterialChoices(document);
   const room = document.roomSource.rooms.find(room => room.id === target.room)!;
-  const template = document.zones.find(zone => zone.id === room.recordZone)!;
-  const previous = room.wallMaterials?.find(item => item.upper === target.upper && item.record === target.record);
-  const current = previous ?? (target.upper ? template.upper : template.lower).find(item => item.offset === target.record)!.wall!;
+  const previous = hasSurfaceMaterialOverride(document, target);
+  const current = surfaceMaterialCurrent(document, target)!;
   const [style, setStyle] = useState(String(choices.find(item => item.wall!.texture === current.texture
     && item.wall!.verticalMask === current.verticalMask && item.wall!.verticalShift === current.verticalShift && item.wall!.horizontalMask === current.horizontalMask)?.offset ?? ''));
   const [error, setError] = useState('');
   useEffect(() => { const node = dialog.current!; node.showModal(); return () => node.close(); }, []);
   const apply = (value: number | null) => {
-    try { onApply(editRoomSource(setWallMaterial(document, target, value))); }
+    try { onApply(editRoomSource(setSurfaceMaterial(document, target, value))); }
     catch (error) { setError(error instanceof Error ? error.message : String(error)); }
   };
   return <dialog ref={dialog} className="modal object-builder wall-paint-dialog" aria-label="Paint wall material" onCancel={event => { event.preventDefault(); onCancel(); }}>
     <h2>Paint this {target.upper ? 'upper' : 'lower'} wall</h2>
-    <p>Changes this source face in Room {room.id.replace(/^room-/, '')}, including any pieces made when the room is split or a doorway cuts it. Other rooms and copied faces keep their own materials.</p>
+    <p>Changes this {'index' in target ? 'authored boundary' : 'source face'} in Room {room.id.replace(/^room-/, '')}, including any pieces made when the room is split or a doorway cuts it. Other rooms and copied faces keep their own materials.</p>
     <p className="field-note">Keeps the wall's alignment, strip span, height, brightness, transparency and movement. Switch control graphics keep their native material. Cancel or Escape discards the draft; one Undo restores a committed paint.</p>
     <form onSubmit={event => { event.preventDefault(); if (style) apply(Number(style)); }}>
       <label className="select-field"><span>Wall material style</span><select aria-label="Picked wall material style" value={style}

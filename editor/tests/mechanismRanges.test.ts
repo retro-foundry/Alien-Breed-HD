@@ -5,27 +5,31 @@ import { setMechanismRange } from '../src/model/mechanismRanges';
 import { execute, undo, redo, applyCommand, numberPatch, setMechanismRules } from '../src/model/commands';
 import { decodeProject, encodeProject } from '../src/model/project';
 
-it('changes native quarter-unit movement destinations atomically across all original levels', () => {
-  let checked = 0;
-  for (let level = 1; level <= 16; level++) {
-    const document = openLevel(`Level ${level}`, originalFiles(level));
-    for (const mechanism of document.mechanisms) {
+it('has original controller ranges to exercise across the reference maps', () => {
+  expect(Array.from({ length: 16 }, (_, index) => openLevel(`Level ${index + 1}`, originalFiles(index + 1)))
+    .flatMap(document => document.mechanisms).filter(mechanism => {
       const top = mechanism.direction === 0 && mechanism.current !== mechanism.bottom ? mechanism.current : Math.min(mechanism.top, mechanism.current) - 0.25;
       const bottom = mechanism.direction === 0 && mechanism.current === mechanism.bottom ? mechanism.current : Math.max(mechanism.bottom, mechanism.current) + 0.5;
-      if (top < -8192 || bottom > 8191.75 || bottom === 249.75) continue;
-      checked++;
-      let history = execute({ document, past: [], future: [] }, setMechanismRange(document, mechanism.kind, mechanism.id, top, bottom));
-      expect(history.document.mechanisms.find(item => item.kind === mechanism.kind && item.id === mechanism.id)).toEqual({ ...mechanism, top, bottom });
-      expect(history.document.files.data).toBe(document.files.data);
-      expect(history.document.files.clips).toBe(document.files.clips);
-      const before = document.files.graphics, after = history.document.files.graphics;
-      for (let offset = 0; offset < before.length; offset++) if (offset < mechanism.offset || offset >= mechanism.offset + 4)
-        if (before[offset] !== after[offset]) throw new Error(`Unrelated graphics change at ${offset}`);
-      history = undo(history); expect(Buffer.from(history.document.files.graphics).equals(Buffer.from(before))).toBe(true);
-      history = redo(history); expect(history.document.mechanisms.find(item => item.kind === mechanism.kind && item.id === mechanism.id)!.top).toBe(top);
-    }
+      return top >= -8192 && bottom <= 8191.75 && bottom !== 249.75;
+    }).length).toBeGreaterThan(0);
+});
+
+it.each(Array.from({ length: 16 }, (_, index) => index + 1))('changes native quarter-unit movement destinations atomically in original level %i', level => {
+  const document = openLevel(`Level ${level}`, originalFiles(level));
+  for (const mechanism of document.mechanisms) {
+    const top = mechanism.direction === 0 && mechanism.current !== mechanism.bottom ? mechanism.current : Math.min(mechanism.top, mechanism.current) - 0.25;
+    const bottom = mechanism.direction === 0 && mechanism.current === mechanism.bottom ? mechanism.current : Math.max(mechanism.bottom, mechanism.current) + 0.5;
+    if (top < -8192 || bottom > 8191.75 || bottom === 249.75) continue;
+    let history = execute({ document, past: [], future: [] }, setMechanismRange(document, mechanism.kind, mechanism.id, top, bottom));
+    expect(history.document.mechanisms.find(item => item.kind === mechanism.kind && item.id === mechanism.id)).toEqual({ ...mechanism, top, bottom });
+    expect(history.document.files.data).toBe(document.files.data);
+    expect(history.document.files.clips).toBe(document.files.clips);
+    const before = document.files.graphics, after = history.document.files.graphics;
+    for (let offset = 0; offset < before.length; offset++) if (offset < mechanism.offset || offset >= mechanism.offset + 4)
+      if (before[offset] !== after[offset]) throw new Error(`Unrelated graphics change at ${offset}`);
+    history = undo(history); expect(Buffer.from(history.document.files.graphics).equals(Buffer.from(before))).toBe(true);
+    history = redo(history); expect(history.document.mechanisms.find(item => item.kind === mechanism.kind && item.id === mechanism.id)!.top).toBe(top);
   }
-  expect(checked).toBeGreaterThan(0);
 });
 
 it('rejects stranding a gated idle controller while retaining ungated door and in-transit behaviour', () => {

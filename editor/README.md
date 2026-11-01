@@ -20,6 +20,16 @@ Opening local files does not upload them anywhere.
 
 ## Current working workflows
 
+- In paused 3D view, click a straight wall and choose **Paint this wall**.
+  Choose a native style using the sheet previews, then Apply, or Escape to cancel.
+  Paint affects the picked native face or authored boundary and its generated
+  pieces, including step/lintel bands around openings. Other rooms keep their
+  materials. Alignment, heights, lighting, transparency and movement stay intact;
+  incompatible sampling produces an error. New perimeters and repaired doorways
+  support the same workflow. Save project, room copy/paste and Undo retain paint.
+  **Reset wall material** restores that wall; **Reset painted room walls** in the
+  room appearance inspector also clears missing-face dependencies after redraws.
+
 - Select an existing door/lift room to edit its movement destinations. **Apply
   range** commits both endpoints together; Undo restores them. Values use world
   units in 0.25 steps, with smaller values higher. The range must contain the

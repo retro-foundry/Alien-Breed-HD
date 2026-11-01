@@ -10,7 +10,7 @@ import { wallOverrideFiles } from '../model/wallOverrides';
 import { resolveEngineSurface, type EngineSurfacePick, type NativeSurfacePick } from '../model/engineSurfacePick';
 import { resolveEngineObject, type NativeObjectPick } from '../model/engineObjectPick';
 import { inspectionShortcut, inspectionShortcutScope, type InspectionShortcut } from '../../runtime/inspection-shortcuts.mjs';
-import { wallMaterialTarget, type WallMaterialTarget } from '../model/wallMaterials';
+import { surfaceMaterialTarget, type SurfaceMaterialTarget } from '../model/wallMaterials';
 import type { EditCommand } from '../model/commands';
 import { WallPaintDialog } from './WallPaintDialog';
 
@@ -23,7 +23,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
   const [playing, setPlaying] = useState(false), [starting, setStarting] = useState(false);
   const [error, setError] = useState(''), [notice, setNotice] = useState('Loading the game engine…');
   const [pickedSurface, setPickedSurface] = useState<EngineSurfacePick>();
-  const [wallPaint, setWallPaint] = useState<{ source: LevelDocument; target: WallMaterialTarget }>();
+  const [wallPaint, setWallPaint] = useState<{ source: LevelDocument; target: SurfaceMaterialTarget }>();
   const slot = document.playtestSlot;
   const [revision, setRevision] = useState(0);
   const [nonblack, setNonblack] = useState(0);
@@ -204,7 +204,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
     setPlaying(false); setStarting(false); setReady(false); setLoaded(false); setError(''); setNotice('Loading the game engine…');
     frame.current?.contentWindow?.location.reload();
   }
-  const paintTarget = pickedSurface && artifact.current?.source === document ? wallMaterialTarget(artifact.current, pickedSurface.zone, pickedSurface) : undefined;
+  const paintTarget = pickedSurface && artifact.current?.source === document ? surfaceMaterialTarget(artifact.current, pickedSurface.zone, pickedSurface) : undefined;
   return <section className="engine-preview" aria-label="3D game engine preview" data-revision={revision} data-rendered-pixels={nonblack} data-level-slot={actualSlot} data-exit-zone={actualExit} data-spawn-zone={spawnZone}>
     {wallPaint && wallPaint.source === document && <WallPaintDialog document={document} target={wallPaint.target} onCancel={() => setWallPaint(undefined)} onApply={command => { onEdit(command); setWallPaint(undefined); }} />}
     <div className="engine-toolbar"><span className="eyebrow">3D VIEW</span><span className="engine-status" role="status">{playing ? 'Playtest running' : notice}</span>
@@ -219,7 +219,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
       {pickedSurface.texture !== undefined && <span>Material {pickedSurface.texture}</span>}
       {pickedSurface.height !== undefined && <span>Authored height {pickedSurface.height}</span>}
       <span>Room settings are in the inspector.</span>
-      {paintTarget && <button type="button" className="small-button" style={{ pointerEvents: 'auto' }} title="Choose a material for this native source face only, including its generated pieces. Other faces keep their materials. Opens a cancellable draft."
+      {paintTarget && <button type="button" className="small-button" style={{ pointerEvents: 'auto' }} title="Choose a material for this source wall only, including its generated pieces. Other faces keep their materials. Opens a cancellable draft."
         onClick={() => setWallPaint({ source: document, target: paintTarget })}>Paint this wall</button>}
     </div>}
     </div>

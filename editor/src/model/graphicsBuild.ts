@@ -11,6 +11,8 @@ export interface GraphicsZoneInput { id: number; lower: readonly Uint8Array[]; u
 export interface GraphicsRecordInput {
   bytes: Uint8Array;
   sourceOffset?: number;
+  /** Source outline edge index, before runtime decomposition. */
+  boundaryIndex?: number;
   /** Full authored lighting span before cutting a new opening. */
   lightingSpan?: readonly [Position, Position];
   /** Explicit lighting for newly authored closing walls. */
