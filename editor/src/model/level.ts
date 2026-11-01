@@ -253,8 +253,10 @@ export function openLevel(name: string, encoded: LevelFiles): LevelDocument {
 }
 
 export function zoneContainsPoint(document: LevelDocument, zone: Zone, x: number, z: number): boolean {
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
   let inside = false;
-  for (const id of [...zone.boundaryIds, ...zone.wallIds]) {
+  // Secondary collision fences are not edges of the closed room outline.
+  for (const id of zone.boundaryIds) {
     const line = document.lines[id];
     if (!line) continue;
     const x2 = line.x + line.dx, z2 = line.z + line.dz;

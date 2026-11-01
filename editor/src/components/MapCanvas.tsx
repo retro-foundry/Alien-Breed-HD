@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { zoneContainsPoint, type LevelDocument, type Zone } from '../model/level';
 import { Icon } from './Icon';
+import { objectMarkerRadius, selectedObjectRadius, selectedObjectRingRadius, objectMarkerStroke, startLabelFont, startLabelOffset, startMarkerPoints, startMarkerHit } from './mapMarkers';
 
 export type Selection = { kind: 'zone' | 'object' | 'start' | 'point'; id: number } | null;
 export interface MapView { x: number; z: number; scale: number }
@@ -142,15 +143,15 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
       const selected = selection?.kind === 'object' && selection.id === object.id;
       const enemy = [0, 6, 7, 8, 12, 13, 14, 15, 17, 18, 19].includes(object.type);
       context.fillStyle = selected ? '#d1f5a5' : enemy ? '#de847c' : object.type === -1 ? '#85929d' : '#efbf6a';
-      context.strokeStyle = '#151a20'; context.lineWidth = 1.5; context.beginPath(); context.arc(pixel.x, pixel.y, selected ? 5 : 3.5, 0, Math.PI * 2); context.fill(); context.stroke();
-      if (selected) { context.strokeStyle = '#d1f5a5'; context.beginPath(); context.arc(pixel.x, pixel.y, 9, 0, Math.PI * 2); context.stroke(); }
+      context.strokeStyle = '#151a20'; context.lineWidth = objectMarkerStroke; context.beginPath(); context.arc(pixel.x, pixel.y, selected ? selectedObjectRadius : objectMarkerRadius, 0, Math.PI * 2); context.fill(); context.stroke();
+      if (selected) { context.strokeStyle = '#d1f5a5'; context.beginPath(); context.arc(pixel.x, pixel.y, selectedObjectRingRadius, 0, Math.PI * 2); context.stroke(); }
     }
     for (const start of document.starts) {
       const moving = ghost?.selection.kind === 'start' && ghost.selection.id === start.player;
       const pixel = screen(moving ? ghost.x : start.x, moving ? ghost.z : start.z);
       context.fillStyle = start.player === 1 ? '#b2de7a' : '#9ec7f0'; context.strokeStyle = '#161b21'; context.lineWidth = 2;
-      context.beginPath(); context.moveTo(pixel.x, pixel.y - 9); context.lineTo(pixel.x + 7, pixel.y + 6); context.lineTo(pixel.x - 7, pixel.y + 6); context.closePath(); context.fill(); context.stroke();
-      context.font = '10px ui-monospace, monospace'; context.fillText(`P${start.player}`, pixel.x + 10, pixel.y + 4);
+      context.beginPath(); startMarkerPoints(pixel.x, pixel.y).forEach((point, index) => { if (index) context.lineTo(point.x, point.z); else context.moveTo(point.x, point.z); }); context.closePath(); context.fill(); context.stroke();
+      context.font = startLabelFont; context.fillText(`P${start.player}`, pixel.x + startLabelOffset.x, pixel.y + startLabelOffset.y);
     }
     if (selection?.kind === 'zone') {
       const zone = document.zones.find(zone => zone.id === selection.id);
@@ -166,10 +167,17 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
   }, [document, selection, view, size, grid, showObjects, layer, ghost, screen, world]);
 
   function hit(x: number, y: number): Selection {
-    for (const start of document.starts) { const pixel = screen(start.x, start.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 13) return { kind: 'start', id: start.player }; }
+    const context = canvas.current!.getContext('2d');
+    if (!context) return null;
+    context.save(); context.font = startLabelFont;
+    const start = document.starts.toReversed().find(start => startMarkerHit(x, y, screen(start.x, start.z), context.measureText(`P${start.player}`)));
+    context.restore();
+    if (start) return { kind: 'start', id: start.player };
     if (showObjects) for (const object of document.objects.toReversed()) {
       if (object.zone < 0 || (layer === 'upper') !== object.upper) continue;
-      const pixel = screen(object.x, object.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 9) return { kind: 'object', id: object.id };
+      const selected = selection?.kind === 'object' && selection.id === object.id;
+      const radius = (selected ? selectedObjectRingRadius : objectMarkerRadius) + objectMarkerStroke / 2;
+      const pixel = screen(object.x, object.z); if (Math.hypot(x - pixel.x, y - pixel.y) <= radius) return { kind: 'object', id: object.id };
     }
     const point = world(x, y);
     const zones = document.zones.filter(zone => zoneContainsPoint(document, zone, point.x, point.z));
@@ -178,7 +186,7 @@ export function MapCanvas({ document, selection, onSelect, onMove, tool, layer, 
   }
 
   return <div className="map-holder" ref={holder}>
-    <canvas ref={canvas} aria-label="Level map" aria-describedby="map-controls" tabIndex={0} style={{ width: size.width, height: size.height, cursor: tool === 'pan' ? 'grab' : 'default' }}
+    <canvas ref={canvas} aria-label="Level map" aria-describedby="map-controls" data-world-x={view.x} data-world-z={view.z} data-world-scale={view.scale} tabIndex={0} style={{ width: size.width, height: size.height, cursor: tool === 'pan' ? 'grab' : 'default' }}
       onContextMenu={event => event.preventDefault()}
       onPointerDown={event => {
         const rect = event.currentTarget.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
