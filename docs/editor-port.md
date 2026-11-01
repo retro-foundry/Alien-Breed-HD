@@ -1602,3 +1602,23 @@ fixtures can establish current-format support independently.
   Room transforms, room clipboard, cross-project resources and the other
   full-editor requirements remain open. Windows CI passed on e16eaa3; latest
   cross-platform CI results still need verification.
+
+- Room translation checkpoint: the group inspector now applies whole-unit X/Z
+  offsets to selected room boundaries and their positional dependencies as one
+  immutable source command. Geometry is validated after the simultaneous move,
+  so temporary overlap with another selected room does not reject a valid final
+  arrangement. Shared portal points propagate through their incident room fan,
+  including partial-edge T joins; other neighbour corners stay anchored. Wall
+  identities, room settings and heights are retained. Starts, active non-avatar
+  objects and incoming teleport destinations follow their selected destination
+  rooms, including fractional object positions. Avatars continue to follow the
+  source starts through the existing compiler. Invalid geometry, coordinates or
+  positional links reject the whole command; zero offsets create no history.
+  The existing compiler still governs moving-volume and decorative-geometry
+  limitations; this does not complete unrestricted transforms or R7.
+  All 716 model tests pass, including native compile/save/undo, simultaneous
+  movement and shared T-junction cases. All 20 focused Chromium/Firefox room/
+  object cases pass. Browser/native checks verify moved player/object positions,
+  exact saved inbound teleport coordinates and unchanged original native bytes,
+  rejection without edits, and one-Undo native restoration. Room clipboard,
+  rotations/reflections and remaining full-editor requirements stay open.

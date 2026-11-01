@@ -215,6 +215,41 @@ export function removeSourceRooms(current: RoomSource, ids: readonly string[]): 
   return Object.freeze({ label: 'Delete rooms', before: current, after: source(current.rooms.filter(room => !selected.has(room.id)), current.nextId) });
 }
 
+/** Translate all selected boundaries simultaneously. Shared portal vertices,
+ * including inserted T-junctions, follow through their incident room fan;
+ * unrelated corners of neighbouring rooms remain anchored. */
+export function translateSourceRooms(current: RoomSource, ids: readonly string[], x: number, z: number): RoomChange {
+  const selected = new Set(ids);
+  if (!selected.size || selected.size !== ids.length || ids.some(id => !current.rooms.some(room => room.id === id))) throw new Error('Select different existing rooms to move.');
+  checkedInteger(x, -65535, 65535, 'Room X offset'); checkedInteger(z, -65535, 65535, 'Room Z offset');
+  if (!x && !z) return { label: 'Move rooms', before: current, after: current };
+  const edges = validateRoomInteriors(current.rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
+  const key = (point: Position) => `${point.x},${point.z}`;
+  const moved = new Map<string, Set<string>>();
+  for (const edge of edges) if (selected.has(edge.room)) {
+    const points = moved.get(edge.room) ?? new Set<string>(); points.add(key(edge.start)); points.add(key(edge.end)); moved.set(edge.room, points);
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const edge of edges) if (edge.neighbour !== null) {
+      for (const point of [edge.start, edge.end]) if (moved.get(edge.room)?.has(key(point))) {
+        const points = moved.get(edge.neighbour) ?? new Set<string>();
+        if (!points.has(key(point))) { points.add(key(point)); moved.set(edge.neighbour, points); changed = true; }
+      }
+    }
+  }
+  const rooms = current.rooms.map(room => {
+    const points = moved.get(room.id);
+    if (!points?.size) return room;
+    const boundary = edges.filter(edge => edge.room === room.id);
+    return frozenRoom(room.id, room.recordZone, boundary.map(edge => points.has(key(edge.start)) ? { x: edge.start.x + x, z: edge.start.z + z } : edge.start),
+      room.originZone, boundary.map(edge => sourceWallForEdge(room, edge.start, edge.end)), room.heights);
+  });
+  validateRoomInteriors(rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
+  return { label: `Move ${ids.length} rooms`, before: current, after: source(rooms, current.nextId) };
+}
+
 export function setRoomHeights(document: Pick<LevelDocument, 'zones'>, current: RoomSource, id: string, value: unknown): RoomChange {
   const room = current.rooms.find(room => room.id === id);
   if (!room) throw new Error('Choose an existing room before changing heights.');

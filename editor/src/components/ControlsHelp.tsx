@@ -17,7 +17,7 @@ export function ControlsHelp() {
     <h3>Copy and paste objects</h3><p>Select one object or a group, then use Copy objects or Ctrl / Command + C. Paste objects or Ctrl / Command + V creates independent copies in place, retaining settings, spacing, floors and exact heights as they were when copied. Drag the pasted selection or use its inspector to move it. Each paste is one undoable action; editing, deleting or undoing the originals does not change the captured copy. The editor clipboard lasts until reload and currently works within the same workspace. Cross-project resource transfer is still in progress. Text fields keep their normal copy and paste controls.</p>
     <h3>Map and editing</h3><Keys rows={[
       ['Shift / Ctrl / Command + click object', 'Add or remove an object from the group; move, align or delete using its inspector'],
-      ['Shift / Ctrl / Command + click room', 'Add or remove a room from the group; frame or delete the group using its inspector'],
+      ['Shift / Ctrl / Command + click room', 'Add or remove a room from the group; move, frame or delete the group using its inspector'],
       ['V', 'Select tool'], ['H / Space + drag', 'Pan the map'], ['Middle / right drag', 'Pan without changing tools'], ['Wheel', 'Zoom around the pointer'],
       ['F', 'Fit the whole map'], ['Alt + drag', 'Bypass grid snapping'], ['/', 'Search map contents'],
       ['Shift + F', 'Frame the selected object group, object, room or player start in the map'],
