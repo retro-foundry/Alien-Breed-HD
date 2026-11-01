@@ -2310,3 +2310,10 @@ fixtures can establish current-format support independently.
   assertion that this camera is outside while the door stays selected. Editable
   data and game starts remain unchanged. The remaining full parity work stays
   open, including imported-room conversion and grouped moving volumes.
+
+  Final release verification: source ff8af3d, site 3c64790, frontend
+  index-QE5jBBy9.js. The public URL serves the refined build. Both final live
+  Edge create/save/reopen/play/remove cases pass, including Space use and the
+  closed-door camera/selection assertion. Earlier live Edge/Brave creation cases
+  and all six final packaged Edge/Brave/Firefox workflows pass. Source and site
+  changes are committed and pushed; unrelated site abhd/abhd.zip is untouched.
