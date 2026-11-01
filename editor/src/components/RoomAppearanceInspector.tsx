@@ -28,8 +28,8 @@ export function RoomAppearanceInspector({ document, room, edit, onPaintTextures 
   };
   const paintedCount = ((room.wallMaterials?.length ?? 0) + (room.boundaryMaterials?.overrides.length ?? 0));
   return <section className="property-section"><h3>Textures</h3>
-    <p className="field-note">Paint existing walls, floors and ceilings in Engine view. Click a surface, choose Paint this wall or Paint this surface, pick a material, then Apply. If playtesting, choose Stop first. Undo restores the previous material.</p>
-    <button className="small-button" onClick={onPaintTextures} title="Open this room in the game renderer. Click the wall, floor or ceiling you want to paint; its surface panel opens the material picker.">Paint room textures</button>
+    <p className="field-note">Paint walls, floors and ceilings directly in the textured 3D editing view. Click a surface, choose Paint this wall or Paint this surface, pick a material, then Apply. Undo restores the previous material.</p>
+    <button className="small-button" onClick={onPaintTextures} title="Frame this room in the textured 3D editor. Click the wall, floor or ceiling you want to paint; its surface panel opens the material picker.">Paint room textures</button>
     <h4>{imported ? 'Wall repair appearance' : 'Room appearance'}</h4>
     {!!room.polygonMaterials?.length && <div><p className="field-note">{room.polygonMaterials.length} floor/ceiling surfaces have independent patterns and repeat.</p>
       <button type="button" className="small-button" title="Restore this room's original floor-bank materials, including missing painted surfaces, as one undoable action."

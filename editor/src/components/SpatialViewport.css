@@ -1,3 +1,13 @@
 .spatial-viewport{background:#161c24}.spatial-options{position:absolute;right:12px;top:12px;display:flex;gap:12px;padding:6px 9px;background:#17202bdf;border:1px solid #34424f;border-radius:4px;font-size:10px;color:#a5b7c5}.spatial-options label{display:flex;align-items:center;gap:5px}.spatial-options input{margin:0}.spatial-handle{position:absolute;transform:translate(-50%,-50%);padding:0;min-width:22px;width:22px;height:22px;border:2px solid;border-radius:50%;background:#17232eee;font:11px ui-monospace,monospace;touch-action:none;z-index:2}.spatial-corner{width:10px;height:10px;min-width:10px;border-radius:2px}.spatial-validation{position:absolute;left:16px;right:16px;bottom:55px;padding:10px;color:#f0c2a8;background:#3e2929ee;border:1px solid #9f6961;font-size:11px;pointer-events:none}.spatial-viewport .map-help{max-width:calc(100% - 90px);line-height:1.7;display:block}.editing-view-select{margin-left:auto;font-size:10px;color:#93a4b6;display:flex;align-items:center;gap:8px}.editing-view-select select{font-size:11px;padding:4px 7px;max-width:170px}@media(max-width:620px){.editing-view-select>span{display:none}.editing-view-select select{max-width:125px}.spatial-options{top:35px}}
 
 .spatial-empty{position:absolute;left:20%;right:20%;top:45%;text-align:center;color:#9fafbf;font-size:12px;line-height:1.8;pointer-events:none}
+
+.spatial-viewport .spatial-textures{position:absolute;inset:0;pointer-events:none;z-index:0}
+.spatial-viewport>canvas[aria-label="Editing viewport"]{position:relative;z-index:1;background:transparent}
+.spatial-options,.spatial-viewport .map-help,.spatial-viewport .map-label{z-index:3}
+.spatial-material-error{position:absolute;left:12px;right:12px;bottom:105px;z-index:4;padding:9px;background:#372925ed;border:1px solid #986b55;color:#f0c2a8;font-size:11px}
+.spatial-render-status{position:absolute;left:12px;top:36px;max-width:70%;padding:4px 7px;background:#17202bdc;color:#aabbbf;font-size:10px;z-index:3;pointer-events:none}
+.spatial-picked{position:absolute;bottom:82px;left:12px;display:flex;align-items:center;gap:10px;background:#17202bee;border:1px solid #48594c;padding:7px 10px;z-index:4;font-size:11px}
+.spatial-picked button{font-size:11px;padding:5px 8px}
+.spatial-handle{width:auto;min-width:26px;padding:0 3px}
+.spatial-corner{width:10px;min-width:10px;padding:0}

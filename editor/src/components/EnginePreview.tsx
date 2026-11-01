@@ -1,4 +1,3 @@
-import { pointInRoomOutline } from '../model/geometry';
 import { authoredMovingSurfaceOwner } from '../model/authoredMovingRoom';
 import { useEffect, useRef, useState } from 'react';
 import { type LevelDocument } from '../model/level';
@@ -18,13 +17,11 @@ import { WallPaintDialog } from './WallPaintDialog';
 import { PolygonPaintDialog } from './PolygonPaintDialog';
 import { polygonMaterialTarget, type PolygonMaterialTarget } from '../model/polygonMaterials';
 
-interface NativeEditorCamera { zone: number; x: number; z: number; y: number; angle: number; look: number; upper: boolean }
-interface EngineMessage { camera?: NativeEditorCamera; world?: { x: number; z: number; upper: boolean } | null; source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number; surface?: NativeSurfacePick | null; object?: NativeObjectPick | null; shortcut?: unknown }
-interface Props { editorView?: boolean; placement?: { name: string; place: (room: string | undefined, x: number, z: number, upper?: boolean) => void }; onEngineView?: () => void; document: LevelDocument; selection: Selection; sourceRoomId?: string; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSelectRoom: (room: string) => void; onSelectObject: (id: number) => void; onShortcut: (shortcut: InspectionShortcut) => void; onEdit: (command: EditCommand) => void; onSlotChange: (slot: number) => void }
+interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number; surface?: NativeSurfacePick | null; object?: NativeObjectPick | null; shortcut?: unknown }
+interface Props { document: LevelDocument; selection: Selection; sourceRoomId?: string; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSelectRoom: (room: string) => void; onSelectObject: (id: number) => void; onShortcut: (shortcut: InspectionShortcut) => void; onEdit: (command: EditCommand) => void; onSlotChange: (slot: number) => void }
 
-export function EnginePreview({ editorView = false, placement, onEngineView, document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onShortcut, onEdit, onSlotChange }: Props) {
+export function EnginePreview({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onShortcut, onEdit, onSlotChange }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
-  const editorCamera = useRef<{ camera: NativeEditorCamera; room?: string } | undefined>(undefined);
   const [ready, setReady] = useState(false), [loaded, setLoaded] = useState(false);
   const [playing, setPlaying] = useState(false), [starting, setStarting] = useState(false);
   const [error, setError] = useState(''), [notice, setNotice] = useState('Loading the game engine…');
@@ -44,8 +41,8 @@ export function EnginePreview({ editorView = false, placement, onEngineView, doc
   const failedDocument = useRef<LevelDocument | undefined>(undefined);
   const artifact = useRef<PlayableLevel | undefined>(undefined), previousDocument = useRef(document), readyRef = useRef(ready);
   readyRef.current = ready;
-  const current = useRef({ editorView, placement, document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onShortcut, inspection: loaded && !playing && !starting, paused: !playing && !starting });
-  current.current = { editorView, placement, document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onShortcut, inspection: loaded && !playing && !starting, paused: !playing && !starting };
+  const current = useRef({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onShortcut, inspection: loaded && !playing && !starting, paused: !playing && !starting });
+  current.current = { document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onShortcut, inspection: loaded && !playing && !starting, paused: !playing && !starting };
   const send = (type: string, detail: object = {}) => frame.current?.contentWindow?.postMessage({ source: 'ab3d-editor', type, ...detail }, location.origin);
   function stopInvalidPreview(message: string, notice: string) {
     failedDocument.current = current.current.document;
@@ -144,11 +141,7 @@ export function EnginePreview({ editorView = false, placement, onEngineView, doc
         setSpawnZone(message.zone);
         setLoaded(true); setNotice(`${message.zones} zones loaded · Game engine`);
         if (pendingPlay.current) { pendingPlay.current = false; setPlaying(true); setStarting(false); send('play', { playing: true }); }
-        else if (current.current.editorView && editorCamera.current) {
-          const saved = editorCamera.current, built = artifact.current!, candidates = built.topology?.cells.filter(cell => cell.sourceId === saved.room);
-          const cell = candidates?.find(cell => pointInRoomOutline(cell.vertices.map(id => built.topology!.points[id]!), saved.camera));
-          send('restore-camera', { camera: { ...saved.camera, zone: cell?.id ?? saved.camera.zone } });
-        } else { positionCamera(); if (current.current.editorView) send('camera-state'); }
+        else positionCamera();
       }
       if (message.type === 'error') {
         failedDocument.current = current.current.document; pendingPlay.current = false;
@@ -156,19 +149,8 @@ export function EnginePreview({ editorView = false, placement, onEngineView, doc
         setError(message.message ?? 'The engine preview stopped.'); setStarting(false); setPlaying(false); setLoaded(false);
       }
       if (message.type === 'stopped') { setPlaying(false); setStarting(false); setNotice('Playtest ended. Build and play again to restart.'); }
-      if (message.type === 'view-changed' || message.type === 'camera-state') {
-        const camera = message.camera, built = artifact.current, previous = editorCamera.current?.camera;
-        if (message.type === 'view-changed' && (!camera || !previous || (['zone', 'x', 'z', 'y', 'angle', 'look', 'upper'] as const).some(key => camera[key] !== previous[key]))) setPickedSurface(undefined);
-        if (camera && [camera.zone,camera.x,camera.z,camera.y,camera.angle,camera.look].every(Number.isFinite) && built?.source === current.current.document) editorCamera.current = { camera, room: built.topology?.cells.find(cell => cell.id === camera.zone)?.sourceId ?? built.source.roomSource.rooms.find(room => room.originZone === camera.zone)?.id };
-      }
-      if (message.type === 'camera-invalid') { positionCamera(); setNotice('Camera returned inside the edited room after its geometry changed.'); }
+      if (message.type === 'view-changed') setPickedSurface(undefined);
       if (message.type === 'pick') {
-        if (current.current.placement && current.current.inspection && artifact.current?.source === current.current.document) {
-          const built = artifact.current, world = message.world;
-          const room = built.topology?.cells.find(cell => cell.id === message.zone)?.sourceId ?? built.source.roomSource.rooms.find(room => room.originZone === message.zone)?.id;
-          current.current.placement.place(world && Number.isFinite(world.x) && Number.isFinite(world.z) ? room : undefined, world?.x ?? 0, world?.z ?? 0, world?.upper);
-          return;
-        }
         const built = artifact.current;
         setPickedSurface(built?.source === current.current.document && message.zone !== undefined
           ? resolveEngineSurface(built.document, message.zone, message.surface) : undefined);
@@ -229,12 +211,11 @@ export function EnginePreview({ editorView = false, placement, onEngineView, doc
       || picked.object !== undefined && selection?.kind === 'object' && selection.id === picked.object
       || picked.zone !== undefined && selection?.kind === 'zone' && selection.id === picked.zone)) return;
     if (loaded && !playing) positionCamera();
-  }, [selection, sourceRoomId, layer]);
+  }, [selection, sourceRoomId, layer, loaded]);
   useEffect(() => {
     if (ready) send('instructions', { text: (playing ? playKeys : previewKeys).map(([key, action]) => `${key}: ${action}`).join(' · ') });
   }, [ready, playing]);
 
-  useEffect(() => { if (editorView && (playing || starting)) stop(); }, [editorView, playing, starting]);
   function stop() { send('play', { playing: false }); setPlaying(false); setStarting(false); pendingPlay.current = false; }
   function reloadEngine() {
     hasLoadedFrame.current = false;
@@ -246,13 +227,12 @@ export function EnginePreview({ editorView = false, placement, onEngineView, doc
   const movingOwner = pickedSurface && artifact.current?.source === document ? authoredMovingSurfaceOwner(artifact.current, pickedSurface.zone, pickedSurface) : undefined;
   const paintTarget = pickedSurface && artifact.current?.source === document ? surfaceMaterialTarget(artifact.current, pickedSurface.zone, pickedSurface) : undefined;
   const polygonTarget = pickedSurface && artifact.current?.source === document ? polygonMaterialTarget(artifact.current, pickedSurface.zone, pickedSurface) : undefined;
-  return <section className="engine-preview" aria-label={editorView ? "3D editing view" : "3D game engine preview"} data-revision={revision} data-rendered-pixels={nonblack} data-level-slot={actualSlot} data-exit-zone={actualExit} data-spawn-zone={spawnZone}>
+  return <section className="engine-preview" aria-label="3D game engine preview" data-revision={revision} data-rendered-pixels={nonblack} data-level-slot={actualSlot} data-exit-zone={actualExit} data-spawn-zone={spawnZone}>
     {wallPaint && wallPaint.source === document && <WallPaintDialog document={document} target={wallPaint.target} onCancel={() => setWallPaint(undefined)} onApply={command => { onEdit(command); setWallPaint(undefined); }} />}
     {polygonPaint && polygonPaint.source === document && <PolygonPaintDialog document={document} target={polygonPaint.target} onCancel={() => setPolygonPaint(undefined)} onApply={command => { onEdit(command); setPolygonPaint(undefined); }} />}
-    <div className="engine-toolbar"><span className="eyebrow">{editorView ? "3D EDITOR" : "ENGINE VIEW"}</span><span className="engine-status" role="status">{playing ? 'Playtest running' : notice}</span>
-      {!editorView && <><label className="engine-slot">Slot <select aria-label="Playtest level slot" title="Choose the project's game level slot. Saved with your project and undoable; this controls the game's level-specific setup." value={slot} disabled={playing || starting} onChange={event => onSlotChange(Number(event.target.value))}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>{i + 1}</option>)}</select></label>
-      <button title={playing ? 'Stop playing and return to inspection. Your editable map is kept.' : 'Load the latest map into the game and start from player one. Click the game view to capture the mouse.'} disabled={!ready || starting} className={playing ? '' : 'primary-button'} onClick={() => { if (playing) stop(); else load(true); }}>{playing ? 'Stop' : starting ? 'Starting…' : 'Build & play'}</button></>}
-      {editorView && <button title="Open Engine view for a gameplay test. Editing navigation does not change the saved player start." onClick={onEngineView}>Playtest</button>}
+    <div className="engine-toolbar"><span className="eyebrow">3D VIEW</span><span className="engine-status" role="status">{playing ? 'Playtest running' : notice}</span>
+      <label className="engine-slot">Slot <select aria-label="Playtest level slot" title="Choose the project's game level slot. Saved with your project and undoable; this controls the game's level-specific setup." value={slot} disabled={playing || starting} onChange={event => onSlotChange(Number(event.target.value))}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>{i + 1}</option>)}</select></label>
+      <button title={playing ? 'Stop playing and return to inspection. Your editable map is kept.' : 'Load the latest map into the game and start from player one. Click the game view to capture the mouse.'} disabled={!ready || starting} className={playing ? '' : 'primary-button'} onClick={() => { if (playing) stop(); else load(true); }}>{playing ? 'Stop' : starting ? 'Starting…' : 'Build & play'}</button>
     </div>
     <div className="engine-stage"><iframe ref={frame} title="Alien Breed game engine" src={`${import.meta.env.BASE_URL}${import.meta.env.VITE_EDITOR_RUNTIME_PATH ?? 'runtime/'}frame.html`} allow="autoplay; fullscreen" onError={() => setError('The game preview could not be loaded. Your map is still available. Reload the preview to try again.')} />
       {!playing && loaded && <span className="engine-crosshair" aria-hidden="true">+</span>}
@@ -265,12 +245,12 @@ export function EnginePreview({ editorView = false, placement, onEngineView, doc
       {paintTarget && <button type="button" className="small-button" style={{ pointerEvents: 'auto' }} title="Choose a material for this source wall only, including its generated pieces. Other faces keep their materials. Opens a cancellable draft."
         onClick={() => setWallPaint({ source: document, target: paintTarget })}>Paint this wall</button>}
       {movingOwner && <button type="button" className="small-button" style={{ pointerEvents: 'auto' }} title="Select this mechanism to edit its material and movement settings." onClick={() => onSelectRoom(movingOwner.room)}>Edit {movingOwner.kind}</button>}
-      {polygonTarget && <button type="button" className="small-button" style={{ pointerEvents: 'auto' }} title="Choose a normal, bump or smooth material and its repeat for this source floor or ceiling surface. Opens a cancellable draft."
+      {polygonTarget && <button type="button" className="small-button" style={{ pointerEvents: 'auto' }} title="Choose any original normal floor-bank pattern and its repeat for this source floor or ceiling surface. Opens a cancellable draft."
         onClick={() => setPolygonPaint({ source: document, target: polygonTarget })}>Paint this surface</button>}
       {!paintTarget && !polygonTarget && !movingOwner && artifact.current?.source === document && <span>This special surface has no painting control yet. Straight walls and normal, bump and smooth floor/ceiling materials are supported.</span>}
     </div>}
     </div>
-    <div className="engine-controls">{playing ? <span>Click to capture mouse · WASD move · C crouch · Space use · Esc release mouse · Stop returns to editing</span> : <><button disabled={!loaded} aria-label="Turn preview left" title="Turn the inspection camera left. Left Arrow also turns when Engine view has focus." onClick={() => send('turn', { delta: -256 })}>←</button><button disabled={!loaded} aria-label="Turn preview right" title="Turn the inspection camera right. Right Arrow also turns when Engine view has focus." onClick={() => send('turn', { delta: 256 })}>→</button><button disabled={!loaded} aria-label="Look up in preview" title="Look up. Up Arrow also looks up when Engine view has focus." onClick={() => send('turn', { look: -12 })}>↑</button><button disabled={!loaded} aria-label="Look down in preview" title="Look down. Down Arrow also looks down when Engine view has focus." onClick={() => send('turn', { look: 12 })}>↓</button><span>{placement ? `Placing ${placement.name}: click a floor. Escape cancels.` : "WASD move / Right drag look / Q/E down/up / Shift faster / Click to edit / Controls for more keys"}</span></>}
+    <div className="engine-controls">{playing ? <span>Click to capture mouse · WASD move · C crouch · Space use · Esc release mouse · Stop returns to editing</span> : <><button disabled={!loaded} aria-label="Turn preview left" title="Turn the inspection camera left. Left Arrow also turns when Engine view has focus." onClick={() => send('turn', { delta: -256 })}>←</button><button disabled={!loaded} aria-label="Turn preview right" title="Turn the inspection camera right. Right Arrow also turns when Engine view has focus." onClick={() => send('turn', { delta: 256 })}>→</button><button disabled={!loaded} aria-label="Look up in preview" title="Look up. Up Arrow also looks up when Engine view has focus." onClick={() => send('turn', { look: -12 })}>↑</button><button disabled={!loaded} aria-label="Look down in preview" title="Look down. Down Arrow also looks down when Engine view has focus." onClick={() => send('turn', { look: 12 })}>↓</button><span>Select a zone to visit · Click an object to edit or a surface to inspect · Arrow keys turn/look · Enter selects at the crosshair</span></>}
       <details className="engine-key-help"><summary title="Show the keys for the current 3D mode. Enter or Space opens this list.">Controls</summary><div><strong>{playing ? 'Playtest controls' : '3D inspection controls'}</strong>{(playing ? playKeys : previewKeys).map(([key, action]) => <p key={key}><span>{action}</span><kbd>{key}</kbd></p>)}</div></details>
     </div>
   </section>;

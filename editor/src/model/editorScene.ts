@@ -8,36 +8,37 @@ import { editRoomSource, numberPatch, setSourceObject, setSourceStart, type Edit
 import { moveSourceCorner, setRoomHeights } from './roomSource';
 import { add, mul, rayTriangle, type Ray, type Vector3 } from './editorCamera';
 
-export interface SceneFace { room: string; kind: 'floor' | 'ceiling' | 'wall'; points: readonly Vector3[] }
-export interface SceneMarker { kind: 'object' | 'start'; id: number; room: string; position: Vector3; name: string }
+export interface SceneFace { upper: boolean; room: string; kind: 'floor' | 'ceiling' | 'wall'; points: readonly Vector3[] }
+export interface SceneMarker { upper: boolean; kind: 'object' | 'start'; id: number; room: string; position: Vector3; name: string }
 export interface EditorScene { faces: readonly SceneFace[]; markers: readonly SceneMarker[] }
 /** Editable source volumes, not a reconstruction of the game's decorative
  * graphics. Native roomSettings and actor Y remain the coordinate authority. */
-export function editorScene(document: LevelDocument, upper: boolean): EditorScene {
+export function editorScene(document: LevelDocument, upper: boolean | 'both'): EditorScene {
+  if (upper === 'both') { const lower = editorScene(document, false), higher = editorScene(document, true); return { faces: [...lower.faces, ...higher.faces], markers: [...lower.markers, ...higher.markers] }; }
   const faces: SceneFace[] = [], markers: SceneMarker[] = [];
   const rooms = document.roomSource.rooms.filter(room => !upper || roomSettings(document, room).upper.length > 0 && roomSettings(document, room).upperFloor > roomSettings(document, room).upperCeiling);
   for (const room of rooms) {
     const settings = roomSettings(document, room), floor = settings[upper ? 'upperFloor' : 'floor'], ceiling = settings[upper ? 'upperCeiling' : 'ceiling'];
     for (const part of convexParts(room.vertices)) for (let i = 1; i < part.length - 1; i++) {
       const triangle = [part[0]!, part[i]!, part[i + 1]!];
-      faces.push({ room: room.id, kind: 'floor', points: triangle.map(p => ({ ...p, y: floor })) },
-        { room: room.id, kind: 'ceiling', points: triangle.map(p => ({ ...p, y: ceiling })) });
+      faces.push({ upper, room: room.id, kind: 'floor', points: triangle.map(p => ({ ...p, y: floor })) },
+        { upper, room: room.id, kind: 'ceiling', points: triangle.map(p => ({ ...p, y: ceiling })) });
     }
     room.vertices.forEach((point, i) => {
       const next = room.vertices[(i + 1) % room.vertices.length]!;
-      faces.push({ room: room.id, kind: 'wall', points: [{ ...point, y: floor }, { ...next, y: floor }, { ...next, y: ceiling }, { ...point, y: ceiling }] });
+      faces.push({ upper, room: room.id, kind: 'wall', points: [{ ...point, y: floor }, { ...next, y: floor }, { ...next, y: ceiling }, { ...point, y: ceiling }] });
     });
   }
   const eligible = new Set(objectTemplates(document).map(o => o.id));
   for (const actor of editableObjects(document)) {
     if (!eligible.has(actor.id) || !objectIsActive(actor) || actor.upper !== upper) continue;
     const room = rooms.find(room => actor.room ? room.id === actor.room : room.originZone === actor.zone);
-    if (room) markers.push({ kind: 'object', id: actor.id, room: room.id, position: { x: actor.x, y: actor.y, z: actor.z }, name: `${objectName(actor.type)} ${actor.id}` });
+    if (room) markers.push({ upper, kind: 'object', id: actor.id, room: room.id, position: { x: actor.x, y: actor.y, z: actor.z }, name: `${objectName(actor.type)} ${actor.id}` });
   }
   if (!upper) for (const start of editableStarts(document)) {
     const authored = document.sourceStarts?.find(item => item.player === start.player);
     const room = rooms.find(room => authored ? room.id === authored.room : room.originZone === start.zone);
-    if (room) markers.push({ kind: 'start', id: start.player, room: room.id,
+    if (room) markers.push({ upper: false, kind: 'start', id: start.player, room: room.id,
       position: { x: authored?.x ?? start.x, y: roomSettings(document, room).floor, z: authored?.z ?? start.z }, name: `Player ${start.player} start` });
   }
   return { faces, markers };

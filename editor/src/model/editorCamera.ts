@@ -91,3 +91,16 @@ export function frameCamera(camera: EditorCamera, points: readonly Vector3[], wi
   }
   return { ...camera, target, distance: distance * 1.15 };
 }
+
+/** First-person navigation of the editable geometry camera, independent of the
+ * game simulation and saved starts. Turning keeps the eye fixed. */
+export function lookFromEye(camera: EditorCamera, yaw: number, pitch: number): EditorCamera {
+  const eye=cameraBasis(camera).eye, next={...camera,yaw,pitch:Math.max(-1.5,Math.min(1.5,pitch))};
+  return {...next,target:sub(eye,mul(cameraBasis(next).back,next.distance))};
+}
+export function moveEditingCamera(camera: EditorCamera, forward: number, right: number, vertical: number, seconds: number, fast: boolean): EditorCamera {
+  const length=Math.hypot(forward,right,vertical);if(!length)return camera;
+  const basis=cameraBasis(camera),step=256*(fast?4:1)*Math.min(.05,Math.max(0,seconds))/length;
+  const direction={x:-Math.sin(camera.yaw)*forward+basis.right.x*right,y:vertical,z:Math.cos(camera.yaw)*forward+basis.right.z*right};
+  return {...camera,target:add(camera.target,mul(direction,step))};
+}

@@ -19,7 +19,7 @@ for (const upper of [false, true]) test(`3D ${upper ? 'upper' : 'lower'} wall pa
   await page.locator('input[type=file]').setInputFiles({ name: 'wall-paint.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Room ${copy.id.replace(/^room-/, '')}`) }).click();
-  await page.getByRole('button', { name: 'Paint room textures', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click(); // Native rendering verification; editable 3D painting has its own scenarios.
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
   if (upper) await page.getByRole('button', { name: 'Upper', exact: true }).click();
