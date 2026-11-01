@@ -143,5 +143,6 @@ test('side-view corner keyboard edits move Z and preserve the hidden X coordinat
   const saved = decodeProject(new Uint8Array(await readFile(path))), room = saved.roomSource.rooms.find(r => r.id === fixture.from.id)!;
   expect(room.vertices).toContainEqual({ x: corner.x, z: corner.z + 8 });
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
-  await expect(page.locator('.status-message')).toContainText('Undo');
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Redo', exact: true })).toBeEnabled();
 });
