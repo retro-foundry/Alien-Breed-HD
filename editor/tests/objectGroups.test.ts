@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest';
 import { roomHeightFixture } from './roomHeightFixture';
 import { createObject, objectTemplates } from '../src/model/objectAuthoring';
-import { applyCommand, execute, redo, undo, numberPatch, moveObject } from '../src/model/commands';
-import { editObjectGroup, objectSelectionIds } from '../src/model/objectGroups';
+import { applyCommand, execute, redo, undo, numberPatch, moveObject, setSourceObject } from '../src/model/commands';
+import { editObjectGroup, objectSelectionIds, objectsInRectangle } from '../src/model/objectGroups';
 import { editableObjects } from '../src/model/sourceObjects';
 import { buildPlayableLevel } from '../src/model/playableBuild';
 import { decodeProject, encodeProject } from '../src/model/project';
@@ -89,4 +89,16 @@ it('selects active search matches with floor filtering while excluding both play
   expect(fixture.ids.some(id => objectSelectionIds(deleted).includes(id))).toBe(false);
   const reader = new BinaryReader(document.files.data, 'avatars');
   for (const field of [46, 50]) expect(objectSelectionIds(document)).not.toContain(document.objects.find(object => object.offset === reader.i32(field))!.id);
+});
+
+it('box selection uses authored positions, includes edge points and accepts either drag direction', () => {
+  const fixture = objectStoreyFixture(), document = fixture.document;
+  const a = { x: 20128, z: 20128 }, b = { x: 20129, z: 20192 };
+  expect(objectsInRectangle(document, a, b, true)).toEqual(fixture.ids);
+  expect(objectsInRectangle(document, b, a, true)).toEqual(fixture.ids);
+  expect(objectsInRectangle(document, { x: a.x, z: b.z }, { x: b.x, z: a.z }, true)).toEqual(fixture.ids);
+  expect(objectsInRectangle(document, a, b, false).some(id => fixture.ids.includes(id))).toBe(false);
+  expect(() => objectsInRectangle(document, a, { x: Infinity, z: 0 }, true)).toThrow(/finite/);
+  const moved = applyCommand(document, setSourceObject(document, fixture.ids[0]!, fixture.from.id, 20145.25, 20155.75));
+  expect(objectsInRectangle(moved, { x: 20145, z: 20155 }, { x: 20146, z: 20156 }, true)).toEqual([fixture.ids[0]!]);
 });

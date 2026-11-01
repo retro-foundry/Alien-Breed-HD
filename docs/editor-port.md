@@ -1435,3 +1435,21 @@ fixtures can establish current-format support independently.
   Clipboard, room-group and other full-editor workflows remain open.
   All 703 model tests, production builds and four Chromium/Firefox select-all/
   group-copy scenarios pass. Native gameplay is unchanged.
+
+- Rectangle selection checkpoint: Box select objects / B starts a one-shot
+  selection rectangle using authored coordinates and the displayed floor. Every
+  drag direction is normalized; edges are inclusive, and Shift adds to the prior
+  selection. Hidden markers and player avatars are excluded. Completion returns
+  to Select for immediate group movement. Escape during a pointer edit is handled
+  on the canvas before global selection clearing, preserving the prior selection
+  and preventing a later pointer release from committing a cancelled gesture.
+  Tool/source/storey changes, focus loss and pointer cancellation discard drafts.
+  Review also found toolbar groups could shrink to zero width as tools were added;
+  tool groups now retain their width inside the existing scrolling toolbar.
+  Models check directions, edges, floor filtering and invalid coordinates;
+  browser scenarios cover directions, Shift addition, Escape and hidden markers.
+  Room selection/clipboard and remaining full-editor workflows stay open.
+  All 704 model tests, production builds and 16 Chromium/Firefox rectangle,
+  group-editing and controls cases pass. The focused authored-position model
+  check also passes. Visual review confirms the rectangle preview and floor
+  controls remain usable. No native simulation changes were made.

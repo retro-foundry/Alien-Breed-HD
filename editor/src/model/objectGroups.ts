@@ -8,6 +8,14 @@ export function objectSelectionIds(document: LevelDocument, search = '', upper?:
     && (upper === undefined || object.upper === upper) && `${object.id} ${objectName(object.type)}`.toLowerCase().includes(query)).map(object => object.id);
 }
 
+export function objectsInRectangle(document: LevelDocument, start: { x: number; z: number }, end: { x: number; z: number }, upper: boolean): number[] {
+  if (![start.x, start.z, end.x, end.z].every(Number.isFinite)) throw new Error('Selection rectangle coordinates must be finite.');
+  const eligible = new Set(objectSelectionIds(document, '', upper));
+  return editableObjects(document).filter(object => eligible.has(object.id)
+    && object.x >= Math.min(start.x, end.x) && object.x <= Math.max(start.x, end.x)
+    && object.z >= Math.min(start.z, end.z) && object.z <= Math.max(start.z, end.z)).map(object => object.id);
+}
+
 export function selectedObjects(document: LevelDocument, ids: readonly number[]) {
   if (ids.length < 2 || new Set(ids).size !== ids.length) throw new Error('Select at least two different objects.');
   const objects = editableObjects(document);

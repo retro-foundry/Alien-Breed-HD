@@ -48,6 +48,10 @@ Opening local files does not upload them anywhere.
   on the map it selects only the displayed floor and ignores the list search.
   Hidden objects and player avatars are excluded from map selection. In text
   fields the shortcut keeps its normal text-selection behaviour.
+  **Box select objects** or **B** starts a rectangle on the displayed floor.
+  Drag in any direction; hold Shift to add. Completion returns to Select so the
+  group can be moved immediately. Escape during a gesture cancels it and retains
+  the previous selection. Hidden markers and player avatars are excluded.
 - Toggle **Visibility overlay** on the map, then select a room. Amber marks its
   selected runtime cell, cyan its potential visibility and green its portals.
   Concave rooms offer each compiled cell separately. Expand Runtime visibility

@@ -58,7 +58,9 @@ undo/redo regression.
 R9 now includes object multiselect in the map/list and atomic group translation,
 alignment and deletion, with invalid destinations rejecting the whole edit.
 Browser/native checks cover gestures, source round trips and group undo. Room
-groups, group dragging and clipboard workflows remain open.
+groups and clipboard workflows remain open. Object groups now also support
+snapped/cancellable map dragging, atomic duplication, selection framing,
+keyboard deletion, scoped Select All and rectangle selection in either direction.
 New enemy/pickup/scenery records can now be created from current-level templates
 with independent native positions, floor matching, capacity validation and atomic
 undo. Named key, ammunition and weapon pickup settings update related native
