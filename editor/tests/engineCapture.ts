@@ -15,6 +15,20 @@ export async function engineRoomProperties(page: Page, zone: number): Promise<Ro
 }
 
 export interface EngineCamera { zone: number; x: number; z: number; upper: number; angle: number; height?: number }
+export async function engineMechanismTrace(page: Page, kind: 'door' | 'lift', index: number, cycle: boolean): Promise<Awaited<ReturnType<typeof engineMechanismState>>[]> {
+  return page.evaluate(({ kind, index, cycle }) => new Promise((resolve, reject) => {
+    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();
+    const timer = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('Engine mechanism trace timed out')); }, 45000);
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'mechanism-trace' || event.data.id !== id) return;
+      clearTimeout(timer); window.removeEventListener('message', receive);
+      if (event.data.error) reject(new Error(`${event.data.error} Last state: ${JSON.stringify(event.data.samples.at(-1))}`));
+      else resolve(event.data.samples);
+    };
+    window.addEventListener('message', receive);
+    frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'mechanism-trace', id, kind, index, cycle }, location.origin);
+  }), { kind, index, cycle });
+}
 export async function engineMechanismState(page: Page, kind: 'door' | 'lift', index: number): Promise<{ zone: number; current: number; top: number; bottom: number; wallCount: number; plane: number; unsynchronizedWalls: number }> {
   return page.evaluate(({ kind, index }) => new Promise((resolve, reject) => {
     const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();

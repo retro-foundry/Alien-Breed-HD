@@ -1703,3 +1703,16 @@ fixtures can establish current-format support independently.
   in mechanism-ranges.spec.ts (door/lift). These need investigation; do not infer
   current cross-platform readiness from the older c683627 green run or the local
   lighting checks. The lighting change includes no simulation/renderer edits.
+
+  Mechanism cycle investigation: `game_loop_tick` performs one controller pass
+  per display frame. `door_routine` and `lift_routine` clamp at each destination
+  and can immediately select the reverse velocity, leaving an exact endpoint
+  observable for a single frame. Cross-frame postMessage polling is therefore
+  insufficient to prove continuous automatic travel on a loaded CI runner.
+  The preview host now supports a bounded, read-only animation-frame trace in
+  the engine iframe. Cycle tests consume that trace and still require the exact
+  top followed by exact bottom, in-range positions, synchronized collision plane
+  and every attached wall. No controller or simulation timing was changed.
+  Production TypeScript/Vite build and all 12 focused Chromium/Firefox mechanism
+  cases pass locally after rebuilding the preview runtime. Full CI remains
+  required before deployment readiness can be claimed.

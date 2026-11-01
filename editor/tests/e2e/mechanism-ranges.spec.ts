@@ -4,7 +4,7 @@ import { openLevel } from '../../src/model/level';
 import { originalFiles } from '../helpers';
 import { encodeProject, decodeProject } from '../../src/model/project';
 import { resolveAnimationRoom } from '../../src/model/animationRooms';
-import { engineMechanismState } from '../engineCapture';
+import { engineMechanismState, engineMechanismTrace } from '../engineCapture';
 import { mechanismNeedsEndpoint } from '../../src/model/mechanismRanges';
 
 for (const kind of ['door', 'lift'] as const) test(`${kind} movement range validates, applies atomically and loads native quarter-unit destinations`, async ({ page }, testInfo) => {
@@ -84,11 +84,11 @@ for (const kind of ['door', 'lift'] as const) for (const cycle of [false, true])
     const state = await engineMechanismState(page, kind, mechanism.id);
     return state.current < mechanism.bottom && state.current > top && state.plane === state.current && state.unsynchronizedWalls === 0;
   }, { intervals: [20, 20, 20], timeout: 10000 }).toBe(true);
-  const trace: Awaited<ReturnType<typeof engineMechanismState>>[] = [];
-  const sample = async () => { const state = await engineMechanismState(page, kind, mechanism.id); trace.push(state); return state.current; };
-  await expect.poll(sample, { intervals: [10, 10, 10], timeout: 15000 }).toBe(top);
-  const topAt = trace.length - 1;
-  if (cycle) await expect.poll(sample, { intervals: [10, 10, 10], timeout: 20000 }).toBe(mechanism.bottom);
+  // Sample beside the native display loop: cross-frame postMessage polling can
+  // miss the single frame at which an automatic controller reverses direction.
+  const trace = await engineMechanismTrace(page, kind, mechanism.id, cycle);
+  const topAt = trace.findIndex(state => state.current === top);
+  expect(topAt).toBeGreaterThanOrEqual(0);
   for (const state of trace) {
     expect(state.current).toBeGreaterThanOrEqual(top); expect(state.current).toBeLessThanOrEqual(mechanism.bottom);
     expect(state).toMatchObject({ plane: state.current, unsynchronizedWalls: 0, wallCount: mechanism.walls.length });

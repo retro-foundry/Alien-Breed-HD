@@ -51,6 +51,12 @@
     if (changed) engine._editor_reload_wall_assets();
   }
   const send = (type, detail = {}) => parent.postMessage({source:'ab3d-engine', type, ...detail}, location.origin);
+  function mechanismState(kind, index) {
+    if (!['door', 'lift'].includes(kind) || !Number.isInteger(index) || index < 0) throw new Error('Invalid mechanism inspection.');
+    const value = field => engine._editor_mechanism_value(kind === 'lift' ? 1 : 0, index, field);
+    if (value(0) < 0) throw new Error('The inspected mechanism does not exist.');
+    return {zone:value(0), current:value(1)/256, top:value(2)/256, bottom:value(3)/256, wallCount:value(4), plane:value(5)/256, unsynchronizedWalls:value(6)};
+  }
   const fail = (error, revision = currentRevision) => { message.textContent = 'Engine preview: ' + String(error); send('error', {message:String(error), revision}); };
   createEditorEngine({
     canvas, locateFile: name => new URL(name, location.href).href,
@@ -115,10 +121,22 @@
         send('captured', {id:request.id, checksum:checksum >>> 0});
       }
       if (loaded && request.type === 'mechanism-state') {
-        if (!['door', 'lift'].includes(request.kind) || !Number.isInteger(request.index) || request.index < 0) throw new Error('Invalid mechanism inspection.');
-        const value = field => engine._editor_mechanism_value(request.kind === 'lift' ? 1 : 0, request.index, field);
-        if (value(0) < 0) throw new Error('The inspected mechanism does not exist.');
-        send('mechanism-state', {id:request.id, mechanism:{zone:value(0), current:value(1)/256, top:value(2)/256, bottom:value(3)/256, wallCount:value(4), plane:value(5)/256, unsynchronizedWalls:value(6)}});
+        send('mechanism-state', {id:request.id, mechanism:mechanismState(request.kind, request.index)});
+      }
+      if (loaded && request.type === 'mechanism-trace') {
+        mechanismState(request.kind, request.index);
+        const revision = currentRevision, started = performance.now(), samples = [];
+        let topSeen = false;
+        const sample = () => {
+          if (!playing || revision !== currentRevision) { send('mechanism-trace', {id:request.id, samples, error:'Playtest stopped during mechanism trace.'}); return; }
+          const state = mechanismState(request.kind, request.index);
+          samples.push(state);
+          topSeen ||= state.current === state.top;
+          if (topSeen && (!request.cycle || state.current === state.bottom)) { send('mechanism-trace', {id:request.id, samples}); return; }
+          if (performance.now() - started >= 35000 || samples.length >= 4096) { send('mechanism-trace', {id:request.id, samples, error:'Mechanism did not complete its requested travel.'}); return; }
+          requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
       }
       if (loaded && request.type === 'player-state') {
         send('player-state', {id:request.id, zone:engine._editor_player_zone(), x:engine._editor_player_x(), z:engine._editor_player_z(), feetFixed:engine._editor_player_feet_fixed(), conditions:engine._editor_conditions(), ammunition:Array.from({length:8}, (_, gun) => engine._editor_ammunition(gun)), weapons:Array.from({length:8}, (_, gun) => Boolean(engine._editor_weapon_owned(gun))), playing});
