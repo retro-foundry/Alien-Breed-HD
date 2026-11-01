@@ -18,7 +18,8 @@ test('graphical height gestures cancel cleanly, save committed source only, undo
   const before = await captureEngine(page, camera);
   const handle = page.getByRole('slider', { name: 'Lower floor handle', exact: true });
   const drag = async () => {
-    await handle.scrollIntoViewIfNeeded();
+    await page.getByRole('group', { name: 'Room height section', exact: true }).scrollIntoViewIfNeeded();
+    await expect(handle.locator('circle')).toBeInViewport();
     const bounds = (await handle.locator('circle').boundingBox())!;
     await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
     await page.mouse.down(); await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2 - 24, { steps: 8 });
