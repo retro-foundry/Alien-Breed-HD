@@ -5,6 +5,7 @@ import { originalFiles } from '../helpers';
 import { encodeProject, decodeProject } from '../../src/model/project';
 import { resolveAnimationRoom } from '../../src/model/animationRooms';
 import { engineMechanismState } from '../engineCapture';
+import { mechanismNeedsEndpoint } from '../../src/model/mechanismRanges';
 
 for (const kind of ['door', 'lift'] as const) test(`${kind} movement range validates, applies atomically and loads native quarter-unit destinations`, async ({ page }, testInfo) => {
   test.setTimeout(90000);
@@ -22,6 +23,26 @@ for (const kind of ['door', 'lift'] as const) test(`${kind} movement range valid
   await expect(form.getByRole('alert')).toBeVisible(); await expect(form.getByRole('button', { name: 'Apply range', exact: true })).toBeDisabled();
   await expect(page.locator('.dirty-dot')).toHaveCount(0);
   await top.press('Escape'); await expect(top).toHaveValue(String(mechanism.top));
+  if (kind === 'door' && mechanism.direction === 0 && mechanism.conditions === 0) {
+    await top.fill(String(mechanism.current - 1));
+    await form.getByRole('spinbutton', { name: `${kind} ${mechanism.id} bottom destination` }).fill(String(mechanism.current + 1));
+    await form.getByRole('button', { name: 'Apply range', exact: true }).click();
+    const key = page.locator('.property-section').filter({ has: form }).getByRole('checkbox', { name: 'Key 1', exact: true });
+    await key.click();
+    await expect(page.getByRole('alert')).toContainText('Keep one destination');
+    await expect(key).not.toBeChecked();
+    await page.getByRole('button', { name: 'Dismiss error', exact: true }).click();
+    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  }
+  if (mechanismNeedsEndpoint(mechanism)) {
+    await top.fill(String(mechanism.current - 1));
+    await form.getByRole('spinbutton', { name: `${kind} ${mechanism.id} bottom destination` }).fill(String(mechanism.current + 1));
+    await expect(form.getByRole('alert')).toContainText('Keep one destination');
+    await expect(form.getByRole('button', { name: 'Apply range', exact: true })).toBeDisabled();
+    await form.getByRole('button', { name: 'Reset range draft', exact: true }).click();
+    await expect(page.locator('.dirty-dot')).toHaveCount(0);
+  }
   await form.getByRole('spinbutton', { name: `${kind} ${mechanism.id} ${field} destination` }).fill(String(value));
   await form.getByRole('button', { name: 'Apply range', exact: true }).click();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
@@ -36,7 +57,7 @@ for (const kind of ['door', 'lift'] as const) test(`${kind} movement range valid
   expect(await engineMechanismState(page, kind, mechanism.id)).toMatchObject({ zone, current: mechanism.current, top: changed.top, bottom: changed.bottom });
 });
 
-for (const kind of ['door', 'lift'] as const) test(`${kind} animates to an edited destination with synchronized collision and wall geometry`, async ({ page }, testInfo) => {
+for (const kind of ['door', 'lift'] as const) for (const cycle of [false, true]) test(`${kind} ${cycle ? 'cycles through an edited range' : 'animates to an edited destination'} with synchronized collision and wall geometry`, async ({ page }, testInfo) => {
   test.setTimeout(90000);
   const eligible = (item: ReturnType<typeof openLevel>['mechanisms'][number]) => item.kind === kind && item.current === item.bottom && item.top + 8.25 < item.bottom && item.walls.length > 0 && item.conditions < 4096;
   const document = Array.from({ length: 16 }, (_, index) => openLevel('Animated range', originalFiles(index + 1), index, -1)).find(document => document.mechanisms.some(eligible))!;
@@ -49,7 +70,7 @@ for (const kind of ['door', 'lift'] as const) test(`${kind} animates to an edite
   const section = page.locator('.property-section').filter({ has: page.getByRole('heading', { name: `${kind === 'door' ? 'Door' : 'Lift'} ${mechanism.id}`, exact: true }) });
   while (await section.getByRole('checkbox', { checked: true }).count()) await section.getByRole('checkbox', { checked: true }).first().uncheck();
   await section.getByRole('combobox', { name: `${kind} ${mechanism.id} opening rule` }).selectOption({ label: 'Timer expires' });
-  await section.getByRole('combobox', { name: `${kind} ${mechanism.id} closing rule` }).selectOption({ label: 'Never' });
+  await section.getByRole('combobox', { name: `${kind} ${mechanism.id} closing rule` }).selectOption({ label: cycle ? 'Timer expires' : 'Never' });
   const form = section.getByRole('form', { name: `${kind} ${mechanism.id} movement range` });
   await form.getByRole('spinbutton', { name: `${kind} ${mechanism.id} top destination` }).fill(String(top));
   await form.getByRole('button', { name: 'Apply range', exact: true }).click();
@@ -63,8 +84,16 @@ for (const kind of ['door', 'lift'] as const) test(`${kind} animates to an edite
     const state = await engineMechanismState(page, kind, mechanism.id);
     return state.current < mechanism.bottom && state.current > top && state.plane === state.current && state.unsynchronizedWalls === 0;
   }, { intervals: [20, 20, 20], timeout: 10000 }).toBe(true);
-  await expect.poll(async () => (await engineMechanismState(page, kind, mechanism.id)).current, { intervals: [50, 50, 50], timeout: 15000 }).toBe(top);
-  expect(await engineMechanismState(page, kind, mechanism.id)).toMatchObject({ current: top, plane: top, unsynchronizedWalls: 0, wallCount: mechanism.walls.length });
+  const trace: Awaited<ReturnType<typeof engineMechanismState>>[] = [];
+  const sample = async () => { const state = await engineMechanismState(page, kind, mechanism.id); trace.push(state); return state.current; };
+  await expect.poll(sample, { intervals: [10, 10, 10], timeout: 15000 }).toBe(top);
+  const topAt = trace.length - 1;
+  if (cycle) await expect.poll(sample, { intervals: [10, 10, 10], timeout: 20000 }).toBe(mechanism.bottom);
+  for (const state of trace) {
+    expect(state.current).toBeGreaterThanOrEqual(top); expect(state.current).toBeLessThanOrEqual(mechanism.bottom);
+    expect(state).toMatchObject({ plane: state.current, unsynchronizedWalls: 0, wallCount: mechanism.walls.length });
+  }
+  if (cycle) expect(trace.slice(topAt + 1).some(state => state.current === mechanism.bottom)).toBe(true);
   await page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas').screenshot({ path: testInfo.outputPath(`${kind}-animated.png`) });
   await preview.getByRole('button', { name: 'Stop', exact: true }).click();
   const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();

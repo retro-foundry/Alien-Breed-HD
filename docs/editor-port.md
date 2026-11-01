@@ -1502,3 +1502,23 @@ fixtures can establish current-format support independently.
   All eight Chromium/Firefox loading/motion scenarios pass. The four focused
   motion scenarios also pass post-play source-isolation assertions. WebAssembly
   host rebuilds and production builds pass; the gameplay implementation is unchanged.
+
+- Moving-range cycle checkpoint: timer-driven door and lift scenarios now travel
+  to the edited upper endpoint and return to the lower endpoint. Sampled runtime
+  controller positions stay in range; collision planes and every attached moving
+  wall remain synchronized throughout the observed cycle. Post-play source
+  isolation is checked as before. Tracing endpoint triggers also exposed an
+  authoring trap: a stationary lift or gated door can be stranded by putting its
+  fixed initial position between both endpoints. Range edits now retain an endpoint
+  there for those controllers. Moving starts remain allowed, as does the original
+  `NotGoBackUp` ungated-door occupancy exception; this is not a new gameplay rule.
+  UI guidance and invalid-draft checks explain the constraint without modifying
+  imported source. New controllers, moving-volume geometry and remaining R7/full
+  editor requirements remain open.
+  The shared activation check also rejects adding a gate to an idle intermediate-
+  start ungated door, closing the corresponding rules-editing path. Existing
+  imported bytes are retained until an explicit edit; moving and ungated exceptions
+  have model coverage. No game simulation code is changed by these validations.
+  All 709 model tests and production builds pass. Twelve Chromium/Firefox
+  loading/motion/cycle cases pass; final focused range checks and both gate-edit
+  cases also pass after sharing the activation validation.

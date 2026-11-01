@@ -24,6 +24,9 @@ Opening local files does not upload them anywhere.
   range** commits both endpoints together; Undo restores them. Values use world
   units in 0.25 steps, with smaller values higher. The range must contain the
   fixed initial position. Rules, native speeds and attached graphics stay intact.
+  Stationary lifts and gated doors must keep one endpoint at that initial height
+  so their trigger rules can start movement. Ungated doors retain the original
+  game's player-entry opening behaviour, including intermediate starts.
   Escape restores one draft field; Reset range draft discards both. Creating new
   controllers and synchronizing edits to moving-room geometry remain in progress.
 - Shift/Ctrl/Command click objects in the map or object list to add/remove them

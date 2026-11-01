@@ -6,6 +6,7 @@ import { placeSourceObject, objectPlayer, type SourceObject } from './sourceObje
 import { placeSourceTeleport, type SourceTeleport } from './sourceTeleports';
 import { setRoomAppearance, type RoomAppearance } from './roomAppearance';
 import { nativeWallSheets, restoreWallOverrides, type WallOverride } from './wallOverrides';
+import { assertMechanismActivation } from './mechanismActivation';
 
 export interface BytePatch { file: keyof LevelFiles; offset: number; before: Uint8Array; after: Uint8Array }
 interface Change<T> { before: T; after: T }
@@ -267,6 +268,7 @@ export function setStart(document: LevelDocument, player: 1 | 2, x: number, z: n
 export function setMechanismRules(document: LevelDocument, kind: 'door' | 'lift', id: number, conditions: number, openRule: number, closeRule: number): EditCommand {
   const mechanism = document.mechanisms.find(mechanism => mechanism.kind === kind && mechanism.id === id);
   if (!mechanism) throw new Error('That mechanism no longer exists.');
+  if (mechanism.conditions === 0 && conditions !== 0) assertMechanismActivation({ ...mechanism, conditions });
   return { label: `Change ${kind} ${id} rules`, patches: [
     numberPatch(document, 'graphics', mechanism.offset + 14, conditions, 2, false),
     numberPatch(document, 'graphics', mechanism.offset + 16, openRule, 1, false),

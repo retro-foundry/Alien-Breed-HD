@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { LevelDocument, Mechanism } from '../model/level';
 import type { EditCommand } from '../model/commands';
-import { setMechanismRange } from '../model/mechanismRanges';
+import { setMechanismRange, mechanismNeedsEndpoint } from '../model/mechanismRanges';
 
 export function MechanismRangeInspector({ document, mechanism, edit }: { document: LevelDocument; mechanism: Mechanism; edit: (command: EditCommand | (() => EditCommand)) => void }) {
   const [top, setTop] = useState(String(mechanism.top)), [bottom, setBottom] = useState(String(mechanism.bottom));
@@ -13,10 +13,10 @@ export function MechanismRangeInspector({ document, mechanism, edit }: { documen
   }, [document, mechanism.kind, mechanism.id, top, bottom]);
   const prefix = `${mechanism.kind} ${mechanism.id}`;
   return <form aria-label={`${prefix} movement range`} onSubmit={event => { event.preventDefault(); if (result.command) edit(result.command); }}>
-    <p className="field-note">Movement destinations use quarter units. Smaller values are higher. Initial position: {mechanism.current}.</p>
+    <p className="field-note">Movement destinations use quarter units. Smaller values are higher. Initial position: {mechanism.current}.{mechanismNeedsEndpoint(mechanism) ? ' Keep one endpoint here so trigger rules can start the stationary mechanism.' : ''}</p>
     {(['top', 'bottom'] as const).map(field => <label className="number-field" key={field}><span>{field === 'top' ? mechanism.kind === 'door' ? 'Open height' : 'Top height' : mechanism.kind === 'door' ? 'Closed height' : 'Bottom height'}</span>
       <input type="number" required min={-8192} max={8191.75} step={0.25} aria-label={`${prefix} ${field} destination`} value={field === 'top' ? top : bottom}
-        title="Set a movement destination in world units, in quarter-unit steps. Both destinations must contain the fixed initial position. Apply range commits both together; Escape restores this field."
+        title="Set a movement destination in world units, in quarter-unit steps. The range must contain the fixed initial position; any additional activation constraint is explained above. Apply range commits both together; Escape restores this field."
         onChange={event => (field === 'top' ? setTop : setBottom)(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); (field === 'top' ? setTop : setBottom)(String(mechanism[field])); } }} />
     </label>)}
     {result.error && <p role="alert" className="field-note">{result.error}</p>}
