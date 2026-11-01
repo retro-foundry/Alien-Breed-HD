@@ -30,6 +30,28 @@ test('multi-object selection moves, aligns, rejects partial changes and deletes 
   const view = await map.evaluate(node => ({ x: Number((node as HTMLElement).dataset.worldX), z: Number((node as HTMLElement).dataset.worldZ), scale: Number((node as HTMLElement).dataset.worldScale) }));
   await map.click({ position: { x: box.width / 2 + (20240 - view.x) * view.scale, y: box.height / 2 - (20192 - view.z) * view.scale }, modifiers: ['Shift'] });
   await expect(inspector).toBeVisible();
+  await page.getByRole('combobox', { name: 'Grid spacing' }).selectOption('8');
+  const anchor = { x: box.x + box.width / 2 + (20240 - view.x) * view.scale, y: box.y + box.height / 2 - (20192 - view.z) * view.scale };
+  await page.mouse.move(anchor.x, anchor.y); await page.mouse.down();
+  await page.mouse.move(anchor.x - 3 * view.scale, anchor.y, { steps: 3 }); await page.mouse.up();
+  await expect(page.locator('.dirty-dot')).toHaveCount(0); // A gesture snapping to zero creates no edit.
+  // Release commits one snapped translation; one undo restores the entire group.
+  await page.mouse.move(anchor.x, anchor.y); await page.mouse.down();
+  await page.mouse.move(anchor.x - 16 * view.scale, anchor.y - 8 * view.scale, { steps: 5 }); await page.mouse.up();
+  await expect(inspector).toBeVisible();
+  const draggedDownload = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const draggedPath = testInfo.outputPath('group-drag.ab3d'); await (await draggedDownload).saveAs(draggedPath);
+  const dragged = decodeProject(new Uint8Array(await readFile(draggedPath)));
+  expect(ids.map(id => dragged.sourceObjects!.find(object => object.id === id))).toMatchObject([{ x: 20112, z: 20136 }, { x: 20224, z: 20200 }]);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  // A cancelled drag must not commit when the pointer is subsequently released.
+  await page.mouse.move(anchor.x, anchor.y); await page.mouse.down(); await page.mouse.move(anchor.x - 24 * view.scale, anchor.y, { steps: 5 });
+  await page.keyboard.press('Escape'); await page.mouse.up();
+  await first.click(); await second.click({ modifiers: ['Shift'] });
+  const cancelledDownload = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const cancelledPath = testInfo.outputPath('cancelled-group.ab3d'); await (await cancelledDownload).saveAs(cancelledPath);
+  const cancelled = decodeProject(new Uint8Array(await readFile(cancelledPath)));
+  expect(cancelled.sourceObjects).toEqual(document.sourceObjects);
   await page.screenshot({ path: testInfo.outputPath('object-group.png'), fullPage: true });
   await inspector.getByRole('spinbutton', { name: 'Group X offset' }).fill('32');
   await inspector.getByRole('button', { name: 'Move selected objects' }).click();

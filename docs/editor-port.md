@@ -1347,3 +1347,17 @@ fixtures can establish current-format support independently.
   All 694 model tests, production builds and eight Chromium/Firefox group,
   duplication and existing-object regression scenarios pass. Final map gesture
   checks also pass in both browsers. No native simulation changes were made.
+
+- Group dragging checkpoint: pressing a selected object marker retains the group
+  and previews all selected positions with one shared, grid-snapped translation.
+  Release calls the same atomic group command as the inspector; invalid targets
+  reject the complete movement. Escape, pointer cancel/capture loss, focus loss,
+  tool/source changes or changes to the selection cancel the provisional move.
+  Spacing and fractional starting positions are preserved by snapping the offset
+  rather than snapping each object independently. Tests save a snapped drag,
+  undo it once, cancel another with Escape and release afterward to prove no
+  delayed commit. Existing single-object dragging remains covered. Room groups,
+  clipboard and the other full-editor requirements remain open.
+  Production builds and all six Chromium/Firefox group/single-object regression
+  scenarios pass. The final focused cases also verify zero-snapped gestures do
+  not create edits. This checkpoint changes interaction only, not native gameplay.

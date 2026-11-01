@@ -14,6 +14,7 @@ import { ObjectGroupInspector } from './components/ObjectGroupInspector';
 import { StairBuilder } from './components/StairBuilder';
 import { ObjectBuilder } from './components/ObjectBuilder';
 import { objectTemplates } from './model/objectAuthoring';
+import { editObjectGroup } from './model/objectGroups';
 import { Icon } from './components/Icon';
 import { EnginePreview } from './components/EnginePreview';
 import { ControlTooltips } from './components/ControlTooltips';
@@ -372,7 +373,7 @@ export function App() {
       </div>
         <div className="view-tabs" role="group" aria-label="Viewport layout"><button className="project-toggle" aria-label="Toggle project navigator" title="Show or hide the level picker and map contents. Shortcut / opens search." aria-expanded={navigatorOpen} onClick={() => setNavigatorOpen(open => !open)}><Icon name="layers" size={14} />Project</button>{(['map', 'split', '3d'] as const).map(mode => <button key={mode} aria-pressed={view === mode} className={view === mode ? 'active' : ''} title={mode === 'map' ? 'Edit and inspect the overhead map.' : mode === 'split' ? 'Show the map and actual game renderer together.' : 'Inspect the level in the actual game renderer.'} onClick={() => setView(mode)}>{mode === 'map' ? '2D map' : mode === 'split' ? 'Split view' : '3D view'}</button>)}</div>
         {document ? <CanvasBoundary key={workspace?.id} onExport={save}><div className={`viewports viewports-${view}`}>
-          {view !== '3d' && <MapCanvas document={document} selection={selection} objectIds={groupIds} onObjectToggle={toggleObject} onSelect={select} onMove={move} tool={tool} layer={layer} grid={grid} showObjects={showObjects} onCursor={(x, z) => setCursor({ x, z })} fitKey={fitKey} focusZone={focusZone} roomDraft={roomDraft} selectedRoom={selectedRoom} onRoomSelect={selectRoom} onRoomPoint={addRoomPoint} onRoomFinish={finishRoom} onRoomCornerMove={moveRoomCorner} focusRoom={focusRoom} />}
+          {view !== '3d' && <MapCanvas document={document} selection={selection} objectIds={groupIds} onObjectToggle={toggleObject} onGroupMove={(ids, x, z) => edit(() => editObjectGroup(document, ids, { kind: 'move', x, z }))} onSelect={select} onMove={move} tool={tool} layer={layer} grid={grid} showObjects={showObjects} onCursor={(x, z) => setCursor({ x, z })} fitKey={fitKey} focusZone={focusZone} roomDraft={roomDraft} selectedRoom={selectedRoom} onRoomSelect={selectRoom} onRoomPoint={addRoomPoint} onRoomFinish={finishRoom} onRoomCornerMove={moveRoomCorner} focusRoom={focusRoom} />}
           {view !== 'map' && <EnginePreview key={workspace?.id} document={document} selection={selection} sourceRoomId={selectedRoom?.id} layer={layer} onSelectRoom={selectRoom} onSelectZone={id => select({ kind: 'zone', id })} onSlotChange={slot => edit(() => setPlaytestSlot(document, slot))} />}
         </div></CanvasBoundary> : <div className="canvas-error"><Icon name="layers" size={36} /><h2>Open a level to begin</h2><p>Drop a project, level ZIP or the three twolev files here.</p><button className="primary-button" onClick={() => fileInput.current?.click()}>Open files</button></div>}
         {busy && <div className="busy-overlay" role="status"><span className="spinner" />{busy}</div>}

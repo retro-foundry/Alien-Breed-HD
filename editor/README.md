@@ -24,8 +24,11 @@ Opening local files does not upload them anywhere.
   from a group. The group inspector moves them by X/Z offsets, aligns either
   coordinate to the first selected object, or deletes the selection. Every edit
   validates the whole group and is one undoable action. Heights are preserved;
-  destinations outside editable rooms reject the complete operation. Plain click
-  selects one object; Escape or Clear object selection clears the group.
+  destinations outside editable rooms reject the complete operation. Clicking an
+  unselected object selects it alone; Escape or Clear object selection clears the group.
+  Drag a selected marker to preview moving the whole group. Grid snapping applies
+  to the shared offset, preserving spacing and fractional starting positions.
+  Release commits one edit; Escape, pointer cancellation or focus loss discards it.
 - Toggle **Visibility overlay** on the map, then select a room. Amber marks its
   selected runtime cell, cyan its potential visibility and green its portals.
   Concave rooms offer each compiled cell separately. Expand Runtime visibility

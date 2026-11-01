@@ -13,6 +13,7 @@ export interface MapView { x: number; z: number; scale: number }
 interface Props {
   document: LevelDocument; selection: Selection; onSelect: (selection: Selection) => void;
   objectIds: readonly number[]; onObjectToggle: (id: number) => void;
+  onGroupMove: (ids: readonly number[], x: number, z: number) => void;
   onMove: (selection: Exclude<Selection, null>, x: number, z: number) => void;
   tool: 'select' | 'pan' | 'room'; layer: 'lower' | 'upper'; grid: number; showObjects: boolean;
   roomDraft: RoomDraft | null; selectedRoom?: SourceRoom; onRoomSelect: (id: string) => void;
@@ -26,7 +27,7 @@ function floorPolygons(zone: Zone, upper: boolean) {
   return (upper ? zone.upper : zone.lower).filter(graphic => [1, 8, 9, 10, 11].includes(graphic.type) && graphic.points.length >= 3);
 }
 
-export function MapCanvas({ document, selection, objectIds, onObjectToggle, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, focusRoom }: Props) {
+export function MapCanvas({ document, selection, objectIds, onObjectToggle, onGroupMove, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, onRoomSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, focusRoom }: Props) {
   const visibility = useVisibilityInspection(document, selectedRoom?.id, selection?.kind === 'zone' ? selection.id : undefined);
   const canvas = useRef<HTMLCanvasElement>(null), holder = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -35,6 +36,14 @@ export function MapCanvas({ document, selection, objectIds, onObjectToggle, onSe
   const space = useRef(false);
   const drag = useRef<{ x: number; y: number; view: MapView; selection: Selection; moved: boolean } | null>(null);
   const [ghost, setGhost] = useState<{ selection: Exclude<Selection, null>; x: number; z: number } | null>(null);
+  const groupDrag = useRef<readonly number[] | null>(null);
+  const [groupGhost, setGroupGhost] = useState<{ ids: readonly number[]; x: number; z: number } | null>(null);
+  useEffect(() => { groupDrag.current = null; setGroupGhost(null); drag.current = null; setGhost(null); }, [document, tool]);
+  useEffect(() => {
+    if (groupDrag.current && (groupDrag.current.length !== objectIds.length || groupDrag.current.some((id, index) => id !== objectIds[index]))) {
+      groupDrag.current = null; setGroupGhost(null); drag.current = null;
+    }
+  }, [objectIds]);
   const cornerDrag = useRef<{ index: number } | null>(null);
   const [cornerGhost, setCornerGhost] = useState<{ index: number; x: number; z: number } | null>(null);
   useEffect(() => { cornerDrag.current = null; setCornerGhost(null); }, [selectedRoom?.id, tool, document.roomSource]);
@@ -96,9 +105,10 @@ export function MapCanvas({ document, selection, objectIds, onObjectToggle, onSe
     const down = (event: KeyboardEvent) => {
       const control = event.target instanceof Element && event.target.closest('button, input, textarea, select, summary, a, [contenteditable="true"]');
       if (event.code === 'Space' && !control) { space.current = true; event.preventDefault(); }
+      if (event.key === 'Escape') { groupDrag.current = null; setGroupGhost(null); drag.current = null; setGhost(null); cornerDrag.current = null; setCornerGhost(null); }
     };
     const up = (event: KeyboardEvent) => { if (event.code === 'Space') space.current = false; };
-    const blur = () => { space.current = false; drag.current = null; setGhost(null); cornerDrag.current = null; setCornerGhost(null); };
+    const blur = () => { space.current = false; drag.current = null; setGhost(null); groupDrag.current = null; setGroupGhost(null); cornerDrag.current = null; setCornerGhost(null); };
     window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); };
   }, []);
@@ -229,7 +239,8 @@ export function MapCanvas({ document, selection, objectIds, onObjectToggle, onSe
     if (showObjects) for (const object of editableObjects(document)) {
       if (!objectIsActive(object) || (layer === 'upper') !== object.upper) continue;
       const moving = ghost?.selection.kind === 'object' && ghost.selection.id === object.id;
-      const pixel = screen(moving ? ghost.x : object.x, moving ? ghost.z : object.z);
+      const grouped = groupGhost?.ids.includes(object.id) ? groupGhost : null;
+      const pixel = screen(grouped ? object.x + grouped.x : moving ? ghost.x : object.x, grouped ? object.z + grouped.z : moving ? ghost.z : object.z);
       const selected = objectIds.includes(object.id) || selection?.kind === 'object' && selection.id === object.id;
       const enemy = [0, 6, 7, 8, 12, 13, 14, 15, 17, 18, 19].includes(object.type);
       context.fillStyle = selected ? '#d1f5a5' : enemy ? '#de847c' : object.type === -1 ? '#85929d' : '#efbf6a';
@@ -254,7 +265,7 @@ export function MapCanvas({ document, selection, objectIds, onObjectToggle, onSe
         }
       }
     }
-  }, [document, selection, objectIds, view, size, grid, showObjects, layer, ghost, screen, world, sourceView, roomDraft, selectedRoom, cornerGhost, visibility.enabled, visibility.inspection]);
+  }, [document, selection, objectIds, view, size, grid, showObjects, layer, ghost, groupGhost, screen, world, sourceView, roomDraft, selectedRoom, cornerGhost, visibility.enabled, visibility.inspection]);
 
   function hit(x: number, y: number): Selection {
     for (const start of editableStarts(document)) { const pixel = screen(start.x, start.z); if (Math.hypot(x - pixel.x, y - pixel.y) < 13) return { kind: 'start', id: start.player }; }
@@ -295,6 +306,10 @@ export function MapCanvas({ document, selection, objectIds, onObjectToggle, onSe
         }
         const selected = panning ? null : hit(x, y);
         if (selected?.kind === 'object' && (event.shiftKey || event.ctrlKey || event.metaKey)) { onObjectToggle(selected.id); event.currentTarget.focus(); return; }
+        if (selected?.kind === 'object' && objectIds.length > 1 && objectIds.includes(selected.id)) {
+          groupDrag.current = [...objectIds]; drag.current = { x, y, view, selection: selected, moved: false };
+          event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId); return;
+        }
         if (!panning) onSelect(selected);
         drag.current = { x, y, view, selection: selected, moved: false };
         event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
@@ -310,6 +325,10 @@ export function MapCanvas({ document, selection, objectIds, onObjectToggle, onSe
         if (!current) return;
         const dx = x - current.x, dy = y - current.y;
         if (Math.hypot(dx, dy) > 4) current.moved = true;
+        if (current.moved && groupDrag.current) {
+          const step = event.altKey || grid === 0 ? 1 : grid;
+          setGroupGhost({ ids: groupDrag.current, x: Math.round(dx / current.view.scale / step) * step, z: Math.round(-dy / current.view.scale / step) * step }); return;
+        }
         if (!current.selection) setView({ ...current.view, x: current.view.x - dx / current.view.scale, z: current.view.z + dy / current.view.scale });
         else if (current.moved && (current.selection.kind === 'object' || current.selection.kind === 'start')) {
           const step = event.altKey || grid === 0 ? 1 : grid;
@@ -317,14 +336,16 @@ export function MapCanvas({ document, selection, objectIds, onObjectToggle, onSe
         }
       }}
       onPointerUp={event => {
+        if (groupGhost && groupDrag.current && drag.current?.moved && (groupGhost.x !== 0 || groupGhost.z !== 0)) onGroupMove(groupGhost.ids, groupGhost.x, groupGhost.z);
+        groupDrag.current = null; setGroupGhost(null);
         if (cornerDrag.current && cornerGhost) onRoomCornerMove(cornerGhost.index, cornerGhost.x, cornerGhost.z);
         cornerDrag.current = null; setCornerGhost(null);
         if (ghost && drag.current?.moved) onMove(ghost.selection, ghost.x, ghost.z);
         setGhost(null); drag.current = null;
         if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
       }}
-      onPointerCancel={() => { setGhost(null); drag.current = null; cornerDrag.current = null; setCornerGhost(null); }}
-      onLostPointerCapture={() => { setGhost(null); drag.current = null; cornerDrag.current = null; setCornerGhost(null); }} />
+      onPointerCancel={() => { groupDrag.current = null; setGroupGhost(null); setGhost(null); drag.current = null; cornerDrag.current = null; setCornerGhost(null); }}
+      onLostPointerCapture={() => { groupDrag.current = null; setGroupGhost(null); setGhost(null); drag.current = null; cornerDrag.current = null; setCornerGhost(null); }} />
     <div className="map-label"><span className="status-dot" /> ORTHOGRAPHIC <span className="muted">/</span> {layer.toUpperCase()} FLOOR</div>
     <div className="map-compass"><span>N</span><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 6 23-6-5-6 5z" fill="currentColor" /></svg></div>
     <VisibilityOverlay state={visibility} onFrame={() => {
