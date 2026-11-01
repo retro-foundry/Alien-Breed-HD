@@ -48,3 +48,11 @@ for (const [id, entry] of entries.entries()) {
 await writeFile(new URL('catalog.json', wallTarget), `${JSON.stringify({ format: 'alien-breed-wall-catalog', version: 1, walls }, null, 2)}\n`);
 await writeFile(new URL('src/model/nativeWalls.json', root), `${JSON.stringify({ format: 'alien-breed-wall-catalog', version: 1, walls }, null, 2)}\n`);
 console.log(`Prepared ${walls.length} native wall sheets and their runtime catalog.`);
+const gameState = await readFile(new URL('../src/game_state.h', root), 'utf8');
+const objectLimits = {};
+for (const [key, symbol] of [['objects', 'MAX_OBJECTS'], ['sourceShotSlots', 'PLAYER_SHOT_SLOT_COUNT']]) {
+  const value = Number(new RegExp(`^#define ${symbol}\\s+(\\d+)`, 'm').exec(gameState)?.[1]);
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`Cannot read native ${symbol}.`);
+  objectLimits[key] = value;
+}
+await writeFile(new URL('src/model/objectLimits.json', root), `${JSON.stringify(objectLimits, null, 2)}\n`);

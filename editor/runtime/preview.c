@@ -161,6 +161,34 @@ EMSCRIPTEN_KEEPALIVE int editor_player_z(void) { return preview_loaded ? g_state
  * includes the view offset/bob, so report the simulation feet for validation. */
 EMSCRIPTEN_KEEPALIVE int editor_player_feet_fixed(void) { return preview_loaded ? g_state.plr1.s_yoff + g_state.plr1.s_height : 0; }
 
+static uint8_t *preview_object(int index)
+{
+    if (!preview_loaded || index < 0 || index >= MAX_OBJECTS || !g_state.level.object_data) return NULL;
+    for (int slot = 0; slot <= index; slot++)
+        if (obj_w(g_state.level.object_data + slot * OBJECT_SIZE) < 0) return NULL;
+    return g_state.level.object_data + index * OBJECT_SIZE;
+}
+
+/* Read-only record inspection, including positions after native shot-pool
+ * expansion. Field 0 is the CID; negative means no such object. */
+EMSCRIPTEN_KEEPALIVE int editor_object_value(int index, int field)
+{
+    uint8_t *object = preview_object(index);
+    if (!object) return field == 0 ? -1 : 0;
+    int cid = obj_w(object);
+    switch (field) {
+    case 0: return cid;
+    case 1: return obj_w(object + 12);
+    case 2: return (int8_t)object[16];
+    case 3: case 4:
+        return g_state.level.object_points && cid >= 0 && cid < g_state.level.num_object_points
+            ? obj_l(g_state.level.object_points + cid * 8 + (field == 4 ? 4 : 0)) : 0;
+    case 5: return (int32_t)obj_w(object + 4) * 128;
+    case 6: return object[18];
+    default: return 0;
+    }
+}
+
 static void preview_frame(void)
 {
     if (!preview_loaded) return;

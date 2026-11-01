@@ -90,7 +90,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onRoomCorner,
           ? <RoomPositionForm rooms={document.roomSource.rooms} identity={`object-${object.id}`} room={object.room ?? document.roomSource.rooms.find(room => room.originZone === object.zone)?.id ?? ''} x={object.x} z={object.z} step="any" label="Object room"
             onApply={(room, x, z) => edit(() => setSourceObject(document, object.id, room, x, z))} />
           : <PositionForm x={object.x} z={object.z} zone={object.zone} onApply={(x, z, zone) => edit(() => moveObject(document, object.id, x, z, zone))} />}
-          <NumberField help="Vertical object position. Larger values are farther down in the level." label="Height" value={object.y} step={0.25} min={-8192} max={8191.75} onCommit={value => edit({ label: `Change object ${object.id} height`, patches: [numberPatch(document, 'data', object.offset + 4, value * 4, 2)] })} />
+          <NumberField help="Vertical object position in world units, using half-unit steps. Larger values are farther down in the level." label="Height" value={object.y} step={0.5} min={-16384} max={16383.5} onCommit={value => edit({ label: `Change object ${object.id} height`, patches: [numberPatch(document, 'data', object.offset + 4, value * 2, 2)] })} />
           <InfoRow label="Floor" value={object.upper ? 'Upper' : 'Lower'} />
         </section>
         <section className="property-section"><h3>Object</h3><InfoRow label="Type" value={objectName(object.type)} /><InfoRow label="Collision ID" value={object.cid} />

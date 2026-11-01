@@ -1211,3 +1211,25 @@ fixtures can establish current-format support independently.
   original PNG recovery/downloads. Surrounding material/native-asset and controls
   regressions also pass. New-palette generation, broader material assignment,
   other resource conversions and remaining editor/deployment work remain open.
+
+- New object authoring checkpoint: Add object clones an actual current-level
+  enemy, pickup or scenery record into a fresh source record and position slot.
+  Destination room, coordinates, lower/upper floor and floor-relative or manual
+  height are explicit, labelled controls with tooltips. Cancel/Escape preserves
+  source; Create is one undoable edit. Players and reserved projectile pools are
+  excluded, and the native 250-record capacity is generated from game_state.h.
+  Source-table relocation updates object/pool/avatar and geometry pointers plus
+  graphics room offsets without replacing editable room source. Native header
+  word 20 counts active position slots; its extra trailing padding point moves
+  so native projectile expansion cannot reuse the new actor's position.
+  Object Y now displays the renderer's actual half-world-unit scale (raw word
+  multiplied by 128 in 24.8), correcting the former quarter-unit UI conversion
+  without changing untouched native bytes. Saved projects retain complete new
+  records, source placements, history and native game export. Model validation
+  covers all 16 original prefixes, capacity, stale commands and save/build
+  round trips. Browser validation exercises native position/height probes,
+  invalid drafts, saving during a draft, undo/redo and portable project records.
+  All 677 model checks, the production build and 16 Chromium/Firefox object and
+  controls regression scenarios pass.
+  A cross-level object library and broader object configuration remain open;
+  this checkpoint does not complete the full editor or trigger deployment.

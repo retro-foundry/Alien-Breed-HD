@@ -192,7 +192,7 @@ export function parseLevel(name: string, files: LevelFiles, encoded: LevelFiles 
     const pointOffset = objectPointsOffset + cid * 8;
     objects.push({ id, cid, offset, pointOffset, type: data.i8(offset + 16), zone: data.i16(offset + 12),
       x: data.i32(pointOffset) / 65536, z: data.i32(pointOffset + 4) / 65536,
-      y: data.i16(offset + 4) / 4, health: data.u8(offset + 18), upper: data.u8(offset + 63) !== 0 });
+      y: data.i16(offset + 4) / 2, health: data.u8(offset + 18), upper: data.u8(offset + 63) !== 0 });
   }
   if (!objectTerminated) throw new LevelFormatError('object table has no terminator', data.name, objectOffset);
   const mechanisms = [...mechanismTable(graphics, graphics.i32(0), 'door'), ...mechanismTable(graphics, graphics.i32(4), 'lift')];

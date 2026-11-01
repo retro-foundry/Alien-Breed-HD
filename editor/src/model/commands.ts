@@ -15,6 +15,7 @@ export interface EditCommand {
   sourceStarts?: Change<readonly SourceStart[] | undefined>; sourceObjects?: Change<readonly SourceObject[] | undefined>;
   sourceTeleports?: Change<readonly SourceTeleport[] | undefined>; roomAppearances?: Change<readonly RoomAppearance[] | undefined>;
   wallOverrides?: Change<readonly WallOverride[] | undefined>;
+  files?: Change<LevelFiles>;
 }
 export interface History { document: LevelDocument; past: EditCommand[]; future: EditCommand[] }
 
@@ -79,7 +80,14 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
     if (playtestSlot !== (reverse ? after : before)) throw new Error('The project slot changed before this edit could be applied. No changes were saved.');
     playtestSlot = checkedInteger(reverse ? before : after, 0, 15, 'Game level slot');
   }
-  const files = { ...document.files };
+  let files = { ...document.files };
+  if (command.files) {
+    if (command.patches.length) throw new Error('A table rewrite cannot also contain byte patches.');
+    const expected = reverse ? command.files.after : command.files.before;
+    if ((['data', 'graphics', 'clips'] as const).some(file => !sameBytes(files[file], expected[file])))
+      throw new Error('The level tables changed before this edit. No changes were saved.');
+    files = { ...(reverse ? command.files.before : command.files.after) };
+  }
   const changed = new Set<keyof LevelFiles>();
   for (const patch of command.patches) {
     if (!changed.has(patch.file)) { files[patch.file] = files[patch.file].slice(); changed.add(patch.file); }
@@ -97,7 +105,7 @@ export function applyCommand(document: LevelDocument, command: EditCommand, reve
 }
 
 export function execute(history: History, command: EditCommand): History {
-  const changes = [command.playtestSlot, command.exitZone, command.roomSource, command.sourceStarts, command.sourceObjects, command.sourceTeleports, command.roomAppearances, command.wallOverrides];
+  const changes = [command.playtestSlot, command.exitZone, command.roomSource, command.sourceStarts, command.sourceObjects, command.sourceTeleports, command.roomAppearances, command.wallOverrides, command.files];
   if (command.patches.every(patch => sameBytes(patch.before, patch.after)) && changes.every(change => !change || change.before === change.after)) return history;
   const document = applyCommand(history.document, command);
   return { document, past: [...history.past, command], future: [] };

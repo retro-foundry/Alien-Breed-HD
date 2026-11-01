@@ -15,7 +15,7 @@ export function importedDataTables(document: LevelDocument): DataTableInput {
     collision: document.lines.map(line => ({ start: { x: line.x, z: line.z }, end: { x: line.x + line.dx, z: line.z + line.dz }, neighbour: line.connect })) };
 }
 
-function dataLayout(document: LevelDocument) {
+export function dataLayout(document: LevelDocument) {
   const reader = new BinaryReader(document.files.data, 'twolev.bin');
   const objectPoints = reader.i32(42), objects = reader.i32(30), points = reader.i32(22), collision = reader.i32(26);
   const firstZone = Math.min(...document.zones.map(zone => zone.exitListOffset));

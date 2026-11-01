@@ -20,6 +20,13 @@ Opening local files does not upload them anywhere.
 
 ## Current working workflows
 
+- Add enemies, pickups or scenery with **Add object**. Choose an existing level
+  record as the settings template, a destination room and coordinates. Floor
+  matching preserves its offset from the floor; turn it off for a manual height
+  in native half units. Tooltips explain each control. Create is one undoable
+  edit; Cancel or Escape discards the draft. Players and projectile pools cannot
+  be templates. The native 250-record limit includes reserved records. Templates
+  currently come from the open level, rather than a cross-level object library.
 - Import a PNG in a room's material browser. It resizes to the native sheet,
   matches its existing colours and preserves its lighting palettes. Compare
   fitted/native previews, then Apply PNG as one undoable shared-material edit.
