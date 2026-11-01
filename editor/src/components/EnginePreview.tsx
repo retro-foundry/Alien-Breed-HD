@@ -8,11 +8,12 @@ import { validateAnimationReferences } from '../model/animationBuild';
 import { preparePlayableLevel, type PlayableLevel } from '../model/playableBuild';
 import { wallOverrideFiles } from '../model/wallOverrides';
 import { resolveEngineSurface, type EngineSurfacePick, type NativeSurfacePick } from '../model/engineSurfacePick';
+import { resolveEngineObject, type NativeObjectPick } from '../model/engineObjectPick';
 
-interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number; surface?: NativeSurfacePick | null }
-interface Props { document: LevelDocument; selection: Selection; sourceRoomId?: string; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSelectRoom: (room: string) => void; onSlotChange: (slot: number) => void }
+interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number; surface?: NativeSurfacePick | null; object?: NativeObjectPick | null }
+interface Props { document: LevelDocument; selection: Selection; sourceRoomId?: string; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSelectRoom: (room: string) => void; onSelectObject: (id: number) => void; onSlotChange: (slot: number) => void }
 
-export function EnginePreview({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSlotChange }: Props) {
+export function EnginePreview({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onSlotChange }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false), [loaded, setLoaded] = useState(false);
   const [playing, setPlaying] = useState(false), [starting, setStarting] = useState(false);
@@ -25,13 +26,13 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
   const [actualExit, setActualExit] = useState<number>();
   const [spawnZone, setSpawnZone] = useState<number>();
   const revisionRef = useRef(0), pendingPlay = useRef(false);
-  const pickedViewTarget = useRef<{ source: LevelDocument; zone?: number; room?: string; layer: Props['layer'] } | undefined>(undefined);
+  const pickedViewTarget = useRef<{ source: LevelDocument; zone?: number; room?: string; object?: number; layer: Props['layer'] } | undefined>(undefined);
   const reloadTimer = useRef<number | undefined>(undefined);
   const failedDocument = useRef<LevelDocument | undefined>(undefined);
   const artifact = useRef<PlayableLevel | undefined>(undefined), previousDocument = useRef(document), readyRef = useRef(ready);
   readyRef.current = ready;
-  const current = useRef({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom });
-  current.current = { document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom };
+  const current = useRef({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject });
+  current.current = { document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject };
   const send = (type: string, detail: object = {}) => frame.current?.contentWindow?.postMessage({ source: 'ab3d-editor', type, ...detail }, location.origin);
   function stopInvalidPreview(message: string, notice: string) {
     failedDocument.current = current.current.document;
@@ -120,6 +121,15 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
         const built = artifact.current;
         setPickedSurface(built?.source === current.current.document && message.zone !== undefined
           ? resolveEngineSurface(built.document, message.zone, message.surface) : undefined);
+        if (built?.source === current.current.document && message.object) {
+          const id = resolveEngineObject(built, message.object);
+          if (id !== undefined) {
+            pickedViewTarget.current = { source: built.source, layer: current.current.layer, object: id };
+            current.current.onSelectObject(id);
+          }
+          // Opaque unsupported/runtime records cannot select a room behind them.
+          return;
+        }
       }
       if (message.type === 'pick' && message.zone !== undefined && message.zone >= 0) {
         const built = artifact.current;
@@ -163,6 +173,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
     // list selection still visits its room normally, including the same room.
     if (picked?.source === document && picked.layer === layer && (
       picked.room !== undefined && picked.room === sourceRoomId
+      || picked.object !== undefined && selection?.kind === 'object' && selection.id === picked.object
       || picked.zone !== undefined && selection?.kind === 'zone' && selection.id === picked.zone)) return;
     if (loaded && !playing) positionCamera();
   }, [selection, sourceRoomId, layer, loaded]);
@@ -192,7 +203,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
       <span>Inspector settings apply to the room.</span>
     </div>}
     </div>
-    <div className="engine-controls">{playing ? <span>Click to capture mouse · WASD move · C crouch · Space use · Esc release mouse · Stop returns to editing</span> : <><button disabled={!loaded} aria-label="Turn preview left" title="Turn the inspection camera left. Left Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: -256 })}>←</button><button disabled={!loaded} aria-label="Turn preview right" title="Turn the inspection camera right. Right Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: 256 })}>→</button><button disabled={!loaded} aria-label="Look up in preview" title="Look up. Up Arrow also looks up when the 3D view has focus." onClick={() => send('turn', { look: -12 })}>↑</button><button disabled={!loaded} aria-label="Look down in preview" title="Look down. Down Arrow also looks down when the 3D view has focus." onClick={() => send('turn', { look: 12 })}>↓</button><span>Select a zone to visit · Click a surface to inspect it · Arrow keys turn/look · Enter selects at the crosshair</span></>}
+    <div className="engine-controls">{playing ? <span>Click to capture mouse · WASD move · C crouch · Space use · Esc release mouse · Stop returns to editing</span> : <><button disabled={!loaded} aria-label="Turn preview left" title="Turn the inspection camera left. Left Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: -256 })}>←</button><button disabled={!loaded} aria-label="Turn preview right" title="Turn the inspection camera right. Right Arrow also turns when the 3D view has focus." onClick={() => send('turn', { delta: 256 })}>→</button><button disabled={!loaded} aria-label="Look up in preview" title="Look up. Up Arrow also looks up when the 3D view has focus." onClick={() => send('turn', { look: -12 })}>↑</button><button disabled={!loaded} aria-label="Look down in preview" title="Look down. Down Arrow also looks down when the 3D view has focus." onClick={() => send('turn', { look: 12 })}>↓</button><span>Select a zone to visit · Click an object to edit or a surface to inspect · Arrow keys turn/look · Enter selects at the crosshair</span></>}
       <details className="engine-key-help"><summary title="Show the keys for the current 3D mode. Enter or Space opens this list.">Controls</summary><div><strong>{playing ? 'Playtest controls' : '3D inspection controls'}</strong>{(playing ? playKeys : previewKeys).map(([key, action]) => <p key={key}><span>{action}</span><kbd>{key}</kbd></p>)}</div></details>
     </div>
   </section>;

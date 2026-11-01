@@ -43,10 +43,26 @@ int main(void)
     assert(renderer_get_graphic_pick(1, 0, &offset, &upper));
     assert(renderer_get_graphic_pick(1, 2, &offset, &upper));
     assert(!renderer_get_graphic_pick(3, 1, &offset, &upper));
+    assert(renderer_get_object_pick(1, 1) == -1); /* A surface is not an object. */
+    assert(renderer_encode_object_pick(-1) == UINT32_MAX);
+    assert(renderer_encode_object_pick(INT_MAX) == UINT32_MAX);
+    g_pick_graphic_back_buffer[5] = renderer_encode_object_pick(0);
+    assert(renderer_get_object_pick(1, 1) == 0); /* ID zero remains selectable. */
+    assert(!renderer_get_graphic_pick(1, 1, &offset, &upper) && offset == -1);
+    g_pick_graphic_back_buffer[5] = renderer_encode_object_pick(249);
+    assert(renderer_get_object_pick(1, 1) == 249);
+    assert(renderer_get_object_pick(-1, 1) == -1);
+    assert(renderer_get_object_pick(4, 1) == -1);
+    assert(renderer_get_object_pick(1, -1) == -1);
+    assert(renderer_get_object_pick(1, 3) == -1);
+    g_pick_last_frame_valid = 0;
+    assert(renderer_get_object_pick(1, 1) == -1);
+    g_pick_last_frame_valid = 1;
     g_pick_capture_active = 0; assert(renderer_get_graphic_pick_target() == NULL);
     assert(renderer_set_graphic_picking(0));
     assert(g_pick_graphic_buffer == NULL && g_pick_graphic_back_buffer == NULL);
     assert(!renderer_get_graphic_pick(1, 1, &offset, &upper));
+    assert(renderer_get_object_pick(1, 1) == -1);
     puts("Native graphics picking buffer contracts passed");
     return 0;
 }

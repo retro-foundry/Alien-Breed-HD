@@ -289,6 +289,16 @@ static uint8_t *preview_object(int index)
     return g_state.level.object_data + index * OBJECT_SIZE;
 }
 
+EMSCRIPTEN_KEEPALIVE int editor_pick_object(double x, double y, int field)
+{
+    int px, py;
+    if (!preview_loaded || preview_playing || !display_render_pixel(x, y, &px, &py)) return -1;
+    int index = renderer_get_object_pick(px, py);
+    uint8_t *object = preview_object(index);
+    if (!object) return -1;
+    return field == 0 ? index : field == 1 ? obj_w(object) : -1;
+}
+
 /* Read-only authored room properties. Brightness retains its packed animation
  * word rather than returning the current evaluated animation intensity. */
 EMSCRIPTEN_KEEPALIVE int editor_zone_value(int zone, int field)

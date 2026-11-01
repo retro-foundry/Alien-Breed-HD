@@ -100,6 +100,6 @@ void poly_obj_set_use_object_frame(int enabled);
  *   i.e. y_adjust = ((int32_t)(int16_t)obj[4] << 7) - yoff — no TOPOFROOM/BOTOFROOM path.
  */
 void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameState *state,
-                           int clip_left, int clip_right, int clip_top, int clip_bot);
+                           int clip_left, int clip_right, int clip_top, int clip_bot, uint32_t pick_value);
 
 #endif /* RENDERER_3DOBJ_H */

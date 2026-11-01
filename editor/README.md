@@ -151,8 +151,11 @@ Opening local files does not upload them anywhere.
   Map/list selections still visit their rooms. Picking uses the native captured
   world frame and accounts for viewport scaling and letterboxing. Opaque object
   pixels hide surfaces; transparent gaps keep the surface behind them pickable.
-  Inspector settings apply to the selected room. Individual surface edits and
-  object selection from 3D remain in progress.
+  Surface inspector settings apply to the selected room. Clicking a visible
+  enemy, pickup or scenery object opens that object's settings and reveals it in
+  the Objects list, clearing any navigator search. This also keeps the camera
+  still. Object edits use the same Undo as map/list edits. Player avatars remain
+  controlled through Starts. Individual surface edits remain in progress.
   Playtests use separate browser storage from the normal game.
 - Choose the target game slot in Project or the 3D toolbar. The choice supports
   undo/redo and is saved in project copies and browser recovery; changing views

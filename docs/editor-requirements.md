@@ -111,8 +111,12 @@ views with remapped IDs, viewport resizing and later list navigation are checked
 in both browsers. Native graphics provenance now additionally identifies picked
 walls, floors, ceilings and water, with stream/material/authored-height readouts.
 Actual colour-word comparisons verify opaque sprite/polygon-object coverage and
-transparent gaps. Inspector edits still apply to the room; stable individual
-surface editing, object selection from 3D and graphical edit overlays are pending.
+transparent gaps. Visible sprite and polygon objects now select their own
+authored record in the object inspector, with native record/CID validation and
+camera preservation. Browser checks cover lower/upper objects, independent
+height edits, Undo and selecting through transparent gaps. Surface inspector
+edits still apply to the room; stable individual surface editing and graphical
+edit overlays are pending.
 Original assembly geometry helpers have 330 emulated parity fixtures, and all
 49,797 current ordering masks independently rebuild. The exact portal model
 processes all 16 maps, including concave imports, emits common clip bounds and

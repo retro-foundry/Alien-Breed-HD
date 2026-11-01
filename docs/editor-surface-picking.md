@@ -15,12 +15,17 @@ The added storage is eight bytes per internal raster pixel. Clearing, drawing
 and swapping follow the existing room-pick frame lifecycle. A query requires a
 valid captured frame and in-range coordinates; missing coverage returns none.
 
-Each stored word encodes `graphics record offset << 1 | upper`. UINT32_MAX is
-none. Wall edge-extension pixels carry the same record as their colour writes.
+Surface words encode `graphics record offset << 1 | upper`. The high bit instead
+tags an object record ID, with UINT32_MAX reserved for none. Editor graphics files
+are bounded to 16 MiB, so their offsets never occupy that tag bit. Graphic queries
+reject object tags; object queries reject surface words and invalid frames/bounds.
+Wall edge-extension pixels carry the same record as their colour writes.
 Fast floor-column runs and floor-row spans use the current polygon record.
-Backdrop writes clear provenance. Opaque sprite texels and the filled/textured
-polygon-object pixel writers clear it too; transparent texels/polygon holes keep
-whatever visible surface was already there. This identifies world surfaces;
+Backdrop writes clear provenance. Opaque sprite texels and filled/textured
+polygon-object pixel writers tag their source record ID. Projectiles and
+explosions clear provenance; transparent texels/polygon holes retain whatever
+surface or object was already there. Polygon draw calls carry an immutable tag
+through their local pipeline, without a shared current-object global. This identifies world surfaces/objects;
 frontend HUD overlays are outside the software world's provenance buffers.
 
 `editor_pick_graphic` exposes offset, stream and opcode as read-only data for a
@@ -36,6 +41,17 @@ kind, stream, material when the reader supplies one, and authored height. Floor 
 ceiling heights come from the compiled room header; other polygons retain their
 own stored height. These are authored values, not a live moving-plane monitor.
 The current inspector still edits room settings, and the readout says so.
+Object picks include both record slot and CID. `resolveEngineObject` checks the
+compiled artifact and its source together, rejects missing/deleted/inactive
+records, mismatched point identities and player avatars, and returns the authored
+object ID. Original record slots remain stable through compilation and native
+shot-pool expansion. Runtime-only records cannot select a different source actor
+or a room hidden behind them. Picking opens the object's existing inspector;
+height and other supported edits use normal commands, rebuilds and Undo.
+The Objects list clears its search and scrolls only its own contents to reveal
+the selected row. Inspection clicks explicitly focus the canvas without page
+scrolling, including Firefox where the click alone did not focus it.
+
 Picking preserves the inspection camera. Camera navigation, turns, rebuilds and
 playtest loads discard the previous surface readout.
 
@@ -43,5 +59,7 @@ Generated offsets are ephemeral inspection identities. They must never be used
 as editable-source addresses: compilation relocates streams, decomposes rooms,
 creates portal bands and fans out native templates. Individual surface editing
 still needs stable source ownership/provenance and saved overrides, plus Undo,
-rebuild and native-pixel evidence. Object selection and graphical edit overlays
-also remain required for full R10 completion.
+rebuild and native-pixel evidence. Global editing shortcuts still need integration
+across the iframe boundary; inspection currently owns its arrow/Enter controls.
+Graphical edit overlays and broader 3D authoring also remain required for full
+R10 completion.

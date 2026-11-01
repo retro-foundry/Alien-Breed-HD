@@ -1913,3 +1913,30 @@ fixtures can establish current-format support independently.
   passes. Stable source surface ownership/overrides, individual editing, object
   picking, graphical overlays and the rest of R1–R12 remain required. Deployment
   remains pending full readiness at the requested abhd-ed destination.
+
+  Native 3D object picking now shares the optional provenance buffer with surface
+  capture. Opaque sprite texels and polygon pixels carry tagged source record
+  IDs; transparent gaps retain underlying surface/object identity. Immutable
+  per-draw polygon tags keep worker state separate. Projectiles/explosions have
+  no authored object identity. The host reports record ID plus CID, and the
+  model checks both against the compiled artifact and active editable source,
+  rejecting unknown/deleted records and player avatars. A successful pick opens
+  the object's existing inspector, clears navigator search, selects/reveals its
+  Objects row and keeps camera, page scroll and keyboard focus unchanged.
+  Supported edits use existing commands and Undo; help describes the controls.
+
+  All 779 model tests pass. Twenty-six focused Chromium/Firefox controls,
+  surface/object picking, occlusion and engine cases pass, including all 16
+  original maps in both browsers. Native colour comparisons prove sprite /
+  polygon coverage and transparent gaps; lower/upper-floor objects select their
+  own source record, height edits affect only the copy in the native engine,
+  Undo restores its height, and clicking a gap selects the surface behind it.
+  Twenty-two controls/surface/object cases pass again after adding scoped list
+  scrolling and explicit no-scroll canvas focus for Firefox, including viewport
+  visibility and retained iframe focus/page scroll. Linux native and
+  WebAssembly SAFE_HEAP capture regressions cover object/surface tag separation,
+  object ID zero, bounds, invalid frames and disabled buffers. Windows Release,
+  WebAssembly runtime and production editor builds pass. Stable individual
+  surface edits, iframe integration for global editing shortcuts, graphical edit
+  overlays and the remaining full R1–R12 scope
+  remain required; deployment is still pending readiness.

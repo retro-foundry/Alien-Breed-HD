@@ -288,7 +288,7 @@ static void draw_textured_polygon(const int *sx, const int *sy,
                                   const int16_t *shade_values,
                                   int use_gouraud, int use_holes,
                                   int clip_left, int clip_right,
-                                  int clip_top, int clip_bot);
+                                  int clip_top, int clip_bot, uint32_t pick_value);
 static PolyThreadContext *poly_thread_context_get(void);
 static void poly_thread_context_destroy(void *userdata);
 
@@ -357,7 +357,7 @@ static void trace_edge(int x0, int y0, int x1, int y1,
 static void draw_filled_polygon(const int *sx, const int *sy, int n,
                                 uint32_t color,
                                 int clip_left, int clip_right,
-                                int clip_top, int clip_bot)
+                                int clip_top, int clip_bot, uint32_t pick_value)
 {
     uint32_t *rgb = renderer_get_active_rgb_target();
     RendererPixel *cw = renderer_get_active_cw_target();
@@ -402,7 +402,7 @@ static void draw_filled_polygon(const int *sx, const int *sy, int n,
             if (renderer_get_rgb_raster_expand())
                 row[x] = color;
             poly_cw_store_xy(cw, x, y, W, H, cw_fill);
-            if (pick_graphic) pick_graphic[(size_t)y * W + x] = UINT32_MAX;
+            if (pick_graphic) pick_graphic[(size_t)y * W + x] = pick_value;
         }
     }
 }
@@ -441,7 +441,7 @@ static uint32_t make_poly_color(int slot, uint16_t tex_map_word, int shade_level
  * ObjDraw3.ChipRam.s.
  * ----------------------------------------------------------------------- */
 void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameState *state,
-                           int clip_left, int clip_right, int clip_top, int clip_bot)
+                           int clip_left, int clip_right, int clip_top, int clip_bot, uint32_t pick_value)
 {
     RendererState *r = &g_renderer;
 
@@ -720,11 +720,11 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
                 draw_textured_polygon(sx, sy, sz, su, svt, clipped_n,
                                       tex_map, shade_level,
                                       shade_values, use_gouraud, use_holes,
-                                      clip_l, clip_r, clip_t, clip_b);
+                                      clip_l, clip_r, clip_t, clip_b, pick_value);
             } else {
                 uint32_t color = make_poly_color(vect_num, tex_map, shade_level);
                 draw_filled_polygon(sx, sy, clipped_n, color,
-                                    clip_l, clip_r, clip_t, clip_b);
+                                    clip_l, clip_r, clip_t, clip_b, pick_value);
             }
         }
     }
@@ -789,7 +789,7 @@ static void draw_textured_triangle(const int *sx, const int *sy,
                                    int use_gouraud, int use_holes,
                                    uint16_t tex_map_word, int shade_level,
                                    int clip_left, int clip_right,
-                                   int clip_top, int clip_bot)
+                                   int clip_top, int clip_bot, uint32_t pick_value)
 {
     uint32_t *rgb = renderer_get_active_rgb_target();
     RendererPixel *cw = renderer_get_active_cw_target();
@@ -850,7 +850,7 @@ static void draw_textured_triangle(const int *sx, const int *sy,
             if (renderer_get_rgb_raster_expand())
                 row[x] = amiga12_to_argb_local(pal_cw);
             poly_cw_store_xy(cw, x, y, W, H, pal_cw);
-            if (pick_graphic) pick_graphic[(size_t)y * W + x] = UINT32_MAX;
+            if (pick_graphic) pick_graphic[(size_t)y * W + x] = pick_value;
         }
     }
 }
@@ -862,7 +862,7 @@ static void draw_textured_polygon(const int *sx, const int *sy,
                                   const int16_t *shade_values,
                                   int use_gouraud, int use_holes,
                                   int clip_left, int clip_right,
-                                  int clip_top, int clip_bot)
+                                  int clip_top, int clip_bot, uint32_t pick_value)
 {
     if (n < 3) return;
 
@@ -892,7 +892,7 @@ static void draw_textured_polygon(const int *sx, const int *sy,
         draw_textured_triangle(tsx, tsy, tz, tu, tv,
                                tshade, use_gouraud, use_holes,
                                tex_map_word, shade_level,
-                               clip_left, clip_right, clip_top, clip_bot);
+                               clip_left, clip_right, clip_top, clip_bot, pick_value);
     }
 }
 

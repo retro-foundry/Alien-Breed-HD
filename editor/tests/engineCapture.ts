@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import type { RoomProperties } from '../src/model/roomProperties';
 import type { NativeSurfacePick } from '../src/model/engineSurfacePick';
+import type { NativeObjectPick } from '../src/model/engineObjectPick';
 
 export async function engineRoomProperties(page: Page, zone: number): Promise<RoomProperties> {
   return page.evaluate(zone => new Promise((resolve, reject) => {
@@ -19,7 +20,7 @@ export interface EngineCamera { zone: number; x: number; z: number; upper: numbe
 export async function enginePickSamples(page: Page, points: readonly { x: number; y: number }[]): Promise<number[]> {
   return (await enginePickDetails(page, points)).map(pick => pick.zone);
 }
-export interface EnginePickSample { zone: number; surface: NativeSurfacePick | null; pixel: number }
+export interface EnginePickSample { zone: number; surface: NativeSurfacePick | null; object: NativeObjectPick | null; pixel: number }
 export async function enginePickDetails(page: Page, points: readonly { x: number; y: number }[]): Promise<EnginePickSample[]> {
   return page.evaluate(points => new Promise((resolve, reject) => {
     const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, prefix = crypto.randomUUID();
@@ -28,7 +29,7 @@ export async function enginePickDetails(page: Page, points: readonly { x: number
     const receive = (event: MessageEvent) => {
       if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'pick-sample') return;
       const index = pending.get(event.data.id); if (index === undefined) return;
-      result[index] = { zone: event.data.zone, surface: event.data.surface, pixel: event.data.pixel }; pending.delete(event.data.id);
+      result[index] = { zone: event.data.zone, surface: event.data.surface, object: event.data.object, pixel: event.data.pixel }; pending.delete(event.data.id);
       if (!pending.size) { clearTimeout(timer); window.removeEventListener('message', receive); resolve(result); }
     };
     window.addEventListener('message', receive);

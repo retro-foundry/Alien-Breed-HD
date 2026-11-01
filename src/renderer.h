@@ -373,6 +373,9 @@ void renderer_get_pixel_pick(int x, int y, int16_t *out_zone_id, int *out_player
  * Returns 0 on allocation failure. Record offsets exclude objects/backdrop. */
 int renderer_set_graphic_picking(int enabled);
 int renderer_get_graphic_pick(int x, int y, int32_t *out_offset, int *out_upper);
+/* Object IDs share the optional provenance target; they never decode as graphics. */
+uint32_t renderer_encode_object_pick(int object_id);
+int renderer_get_object_pick(int x, int y);
 /* Row-major active target for polygon-object occlusion; UINT32_MAX means none. */
 uint32_t *renderer_get_graphic_pick_target(void);
 /* Emit one-shot F2 debug summary for the last captured frame (zones/walls/sprites/overdraw). */

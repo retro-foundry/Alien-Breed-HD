@@ -53,7 +53,8 @@
   const send = (type, detail = {}) => parent.postMessage({source:'ab3d-engine', type, ...detail}, location.origin);
   function pickAt(x, y) {
     const offset = engine._editor_pick_graphic(x, y, 0);
-    return {zone:engine._editor_pick_at(x, y), pixel:engine._editor_pixel_at(x, y), surface:offset < 0 ? null : {
+    const object = engine._editor_pick_object(x, y, 0);
+    return {zone:engine._editor_pick_at(x, y), object:object < 0 ? null : {id:object,cid:engine._editor_pick_object(x, y, 1)}, pixel:engine._editor_pixel_at(x, y), surface:offset < 0 ? null : {
       offset, upper:!!engine._editor_pick_graphic(x, y, 1), type:engine._editor_pick_graphic(x, y, 2)
     }, revision:currentRevision};
   }
@@ -193,8 +194,10 @@
   });
   canvas.addEventListener('click', event => {
     const rect = canvas.getBoundingClientRect();
-    if (loaded && !playing && rect.width > 0 && rect.height > 0)
+    if (loaded && !playing && rect.width > 0 && rect.height > 0) {
+      canvas.focus({preventScroll:true});
       send('pick', pickAt((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height));
+    }
   });
   canvas.addEventListener('keydown', event => {
     if (playing || !loaded) return;
