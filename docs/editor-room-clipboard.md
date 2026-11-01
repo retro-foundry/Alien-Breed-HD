@@ -318,3 +318,26 @@ editor CI. The Windows Release game and editor preview runtime build; all 18
 focused Chromium/Firefox switch/copy-control/motion cases pass with that runtime.
 Workflow actionlint also passes. This fixes a port-specific memory write issue;
 it does not complete switch authoring or the room clipboard workflow.
+
+## Switch reset-mode inspector
+
+Original and copied switches now expose a shared After activation control:
+Use again to reset / Automatically resets. Setters follow `Anims.s` backtoend's
+zero/nonzero byte test and preserve existing nonzero values, countdown/state and
+attachment bytes. Original edits patch only their settings byte; copy edits
+change only the selected captured source record. Both participate in Undo/Redo.
+
+Copied sections display their assigned condition number, original template and
+activation room, with a graphics-room framing link. Notes/tooltips explain Space
+activation in Build & play and matching Switch N under a door/lift's Requires all
+selected. Framing preserves selection/source. No invented seconds/duration field
+is offered; the runtime's native timing remains authoritative.
+
+All 765 model tests and 14 Chromium/Firefox reset-mode, source save/reopen and
+controls cases pass. Tests cover original/copy independence, preserving nonzero
+native flags, invalid targets, Undo/Redo, saved bytes and native countdown
+activity after Space activation, without assuming a wall-clock duration. The
+existing native switch regression covers the timer's terminal reset branch.
+The production build passes and the inspector layout was reviewed. Full switch
+creation/placement, automatic clipboard slot/condition allocation and complete
+room clipboard assembly remain open.

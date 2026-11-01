@@ -3,7 +3,9 @@ import { originalFiles } from './helpers';
 import { importedAnimationTables } from '../src/model/animationBuild';
 import { buildGraphicsStreams } from '../src/model/graphicsBuild';
 import { roomAppearanceChoices } from '../src/model/roomAppearance';
-import type { SwitchCopy } from '../src/model/switchCopies';
+import { setRoomSwitchCopies, type SwitchCopy } from '../src/model/switchCopies';
+import { applyCommand, editRoomSource, setSourceStart } from '../src/model/commands';
+import { pointInRoomOutline } from '../src/model/geometry';
 
 export function switchCopyFixture() {
   const original = openLevel('Independent switch copy', originalFiles(1), 0, -1), tables = importedAnimationTables(original).tables;
@@ -30,4 +32,22 @@ export function switchCopyFixture() {
     }) };
   const copy: SwitchCopy = { id: source.id, slot, room: mapping.get(source.zone)!, graphicsRoom: mapping.get(source.zone)! };
   return { document, switchCopy: copy, source: baseline.switches[source.id]!, dx, dz };
+}
+
+export function switchCopyPlayerFixture() {
+  const fixture = switchCopyFixture(), { switchCopy: copy, source, dx, dz } = fixture;
+  const room = fixture.document.roomSource.rooms.find(room => room.id === copy.room)!;
+  const a = fixture.document.points[source.point]!, b = fixture.document.points[source.point + 1]!;
+  const centre = { x: Math.floor((a.x + b.x) / 2) + dx, z: Math.floor((a.z + b.z) / 2) + dz };
+  const positions = Array.from({ length: 13 }, (_, x) => Array.from({ length: 13 }, (_, z) => ({ x: centre.x + (x - 6) * 8, z: centre.z + (z - 6) * 8 }))).flat()
+    .filter(point => Math.hypot(point.x - centre.x, point.z - centre.z) < 55 && pointInRoomOutline(room.vertices, point));
+  const clearance = (point: typeof centre) => Math.min(...room.vertices.map((a, index) => {
+    const b = room.vertices[(index + 1) % room.vertices.length]!, x = b.x - a.x, z = b.z - a.z;
+    const t = Math.max(0, Math.min(1, ((point.x - a.x) * x + (point.z - a.z) * z) / (x * x + z * z)));
+    return Math.hypot(point.x - a.x - t * x, point.z - a.z - t * z);
+  }));
+  const position = positions.sort((a, b) => clearance(b) - clearance(a))[0];
+  if (!position) throw new Error('The original switch fixture has no valid nearby player start.');
+  const captured = applyCommand(fixture.document, editRoomSource(setRoomSwitchCopies(fixture.document, [copy])));
+  return { ...fixture, document: applyCommand(captured, setSourceStart(captured, 1, copy.room, position.x, position.z)) };
 }

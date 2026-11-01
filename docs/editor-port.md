@@ -1829,3 +1829,15 @@ fixtures can establish current-format support independently.
   switch/copy-control/motion cases pass with the rebuilt engine. CI runs the new
   regression, and workflow actionlint passes. Switch authoring and the broader
   editor requirements remain open; deployment is still pending readiness.
+
+  Original and copied switch inspectors now expose independent native reset-mode
+  controls with Undo/Redo. Shared UI and setters preserve countdown/state and
+  attachments, including existing nonzero native reset flags. Copied sections
+  explain assigned Switch N requirements, template/activation rooms, Space use
+  and graphics-room framing; tooltips explain immediate edits and Undo. The
+  native timer is retained without guessed seconds/duration controls. All 765
+  model tests, 14 Chromium/Firefox switch settings/source save/reopen/controls
+  cases and the production build pass; layout was inspected. Native browser
+  checks prove mode changes start countdown activity after actual Space input
+  while the original remains unchanged. Full creation/placement and clipboard
+  switch-slot/condition allocation remain required before R7/R9 completion.

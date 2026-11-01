@@ -19,6 +19,7 @@ import { MechanismRangeInspector } from './MechanismRangeInspector';
 import { MechanismAttachments } from './MechanismAttachments';
 import { MechanismRulesInspector } from './MechanismRulesInspector';
 import { CopiedMechanismInspector } from './CopiedMechanismInspector';
+import { SwitchesInspector } from './SwitchesInspector';
 import { mechanismsForRoom } from '../model/mechanismDependencies';
 import { objectTemplates } from '../model/objectAuthoring';
 import { keyColour, keyColours, setKeyColour, ammunitionChoices, ammunitionType, setAmmunitionType, weaponPickupChoices, weaponPickupType, setWeaponPickupType } from '../model/objectSettings';
@@ -61,6 +62,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
       {sourceRoom && <RoomAppearanceInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && <RoomHeightInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && <CopiedMechanismInspector document={document} room={sourceRoom} edit={edit} />}
+      <SwitchesInspector document={document} room={sourceRoom} zone={zone?.id} edit={edit} frameRoom={onShowDestination} />
       {sourceRoom && (!zone || sourceRoom.properties) && <RoomPropertiesInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && (!zone || !sourceMatchesLevel(document)) && <TeleportInspector document={document} room={sourceRoom} edit={edit} onShowDestination={onShowDestination} />}
       {zone && <>
