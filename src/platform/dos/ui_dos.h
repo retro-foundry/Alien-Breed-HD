@@ -28,6 +28,10 @@ DosUiImage *dos_ui_create_striped_image(int width,int height);
 void dos_ui_texture_upload(DosUiImage *image,const SDL_Rect *rect,const void *pixels,int pitch);
 void dos_ui_texture_destroy(DosUiImage *image);
 void dos_ui_check_images(void);
+SDL_Surface *dos_ui_prepare_grey_image(DosUiImage *image);
+#ifndef AB3D_DOS_INDEXED
+void dos_ui_prepare_blits(DosUiRenderer *renderer);
+#endif
 #ifdef AB3D_DOS_INDEXED
 void dos_ui_check_indexed_images(void);
 #endif

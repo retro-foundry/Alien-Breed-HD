@@ -20,6 +20,19 @@ PAL_FILES = [
 MAX_SPRITE_TYPES = 20
 
 
+def rgb565_words(data: bytes) -> bytes:
+    """Convert original big-endian 0RGB words to native DOS RGB565 words."""
+    native = bytearray(data)
+    for j in range(0, len(data) - 1, 2):
+        color = int.from_bytes(data[j:j + 2], "big")
+        r, g, b = (color >> 8) & 15, (color >> 4) & 15, color & 15
+        pixel = (((r << 1) | (r >> 3)) << 11
+                 | ((g << 2) | (g >> 2)) << 5
+                 | (b << 1) | (b >> 3))
+        native[j:j + 2] = pixel.to_bytes(2, "little")
+    return bytes(native)
+
+
 def find_pal(pal_dir: Path, name: str) -> Path | None:
     stem = Path(name).stem.lower()
     for f in pal_dir.iterdir():
@@ -45,6 +58,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=repo / "src" / "sprite_palettes_data.h",
         help="Output header path",
+    )
+    parser.add_argument(
+        "--native-rgb565",
+        action="store_true",
+        help="Prepare little-endian RGB565 words for the native DOS renderer",
     )
     return parser.parse_args()
 
@@ -97,11 +115,15 @@ def main() -> int:
         "#include <stdint.h>",
         "",
     ]
+    if args.native_rgb565:
+        lines.insert(1, "/* Native DOS shade words: little-endian RGB565; original size/order. */")
 
     for i, (name, size) in enumerate(zip(array_names, sizes)):
         if not name or size == 0:
             continue
         _, data = next(p for p in pal_data if p[0] == i)
+        if args.native_rgb565:
+            data = rgb565_words(data)
         lines.append(f"static const uint8_t {name}[{size}] = {{")
         for j in range(0, len(data), 16):
             chunk = data[j : j + 16]
@@ -128,7 +150,9 @@ def main() -> int:
     lines.append("#endif")
 
     out_header.parent.mkdir(parents=True, exist_ok=True)
-    out_header.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    content = "\n".join(lines) + "\n"
+    if not out_header.exists() or out_header.read_text(encoding="utf-8") != content:
+        out_header.write_text(content, encoding="utf-8")
     print(f"Wrote {len(pal_data)} palette(s) to {out_header}")
     return 0
 

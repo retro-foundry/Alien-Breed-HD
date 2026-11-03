@@ -72,6 +72,8 @@ int display_text_next_page(void);
 void display_dos_check_text_layouts(void);
 void display_dos_check_text_screen(const char *label, int allow_pages);
 void display_dos_check_hud_bounds(GameState *state);
+void display_dos_prepare_gameplay_ui(GameState *state);
+void display_dos_check_gun_frames(GameState *state);
 #endif
 int display_text_line_at_point(int window_x, int window_y, int title_screen,
                                int *out_line);

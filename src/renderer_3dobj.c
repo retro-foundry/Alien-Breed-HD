@@ -39,7 +39,7 @@ static const uint8_t *g_poly_tex_maps = NULL;
 static size_t         g_poly_tex_maps_size = 0;
 static const uint8_t *g_poly_tex_pal = NULL;
 static size_t         g_poly_tex_pal_size = 0;
-#ifdef AB3D_NATIVE_RGB565
+#if defined(AB3D_NATIVE_RGB565) && !defined(AB3D_DOS)
 static uint16_t *g_poly_native_palette;
 #endif
 /* Default in PC port: animated object frame enabled (can be forced static via CLI). */
@@ -52,7 +52,7 @@ void poly_obj_set_texture_assets(const uint8_t *texture_maps, size_t texture_map
     g_poly_tex_maps_size = texture_maps_size;
     g_poly_tex_pal = texture_pal;
     g_poly_tex_pal_size = texture_pal_size;
-#ifdef AB3D_NATIVE_RGB565
+#if defined(AB3D_NATIVE_RGB565) && !defined(AB3D_DOS)
     free(g_poly_native_palette);g_poly_native_palette=NULL;
     if(texture_pal && texture_pal_size) {
         g_poly_native_palette=malloc(texture_pal_size);
@@ -768,7 +768,9 @@ static uint16_t sample_poly_palette_cw(uint8_t pal_idx, int shade_level)
 
     size_t pal_off = (size_t)shade_level * 512u + (size_t)pal_idx * 2u;
     if (pal_off + 1u >= g_poly_tex_pal_size) return 0;
-#ifdef AB3D_NATIVE_RGB565
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    return renderer_pixel_from_palette(g_poly_tex_pal+pal_off);
+#elif defined(AB3D_NATIVE_RGB565)
     return g_poly_native_palette[pal_off/2];
 #endif
     return renderer_pixel_from_be(g_poly_tex_pal+pal_off);

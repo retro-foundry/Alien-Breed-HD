@@ -10,6 +10,7 @@ import struct
 import sys
 import zipfile
 from dos_palette import stage_palettes
+from dos_wall import prepare_wall
 
 
 def main():
@@ -73,6 +74,11 @@ def main():
     source_header = root / 'src/sprite_palettes_data.h'
     if not source_header.exists() or source_header.read_bytes() != palette_header.read_bytes():
         shutil.copy2(palette_header, source_header)
+    # The native renderer reads the authored shade blocks directly. Replace
+    # their representation in the executable, without adding a runtime cache.
+    subprocess.run([sys.executable, str(root / 'tools/pal_to_header.py'),
+                    '--pal-dir', str(palette_dir), '--native-rgb565',
+                    '--output', str(generated / 'sprite_palettes_rgb565_data.h')], check=True)
     unpacker=root/'build/dos-deps/asset-tools/bin/sb_unpack.exe'
     if not unpacker.exists():raise SystemExit('Run tools/setup_dos.ps1 to build the host level unpacker')
     for index,(logical,source) in enumerate(sorted(sources.items())):
@@ -85,6 +91,26 @@ def main():
         if unpacked.stat().st_size!=expected:raise SystemExit(f'Incomplete unpacked level: {source}')
         sources[logical]=unpacked
     stage_palettes(root, generated, sources)
+    # Keep palette selection above based on its existing source inputs. Wall
+    # caches replace only the transported representation, after that selection.
+    for index, (logical, source) in enumerate(sorted(sources.items())):
+        if not logical.startswith('data/includes/walls/') or not logical.endswith('.wad'):
+            continue
+        packed = source.read_bytes()
+        if packed[:4] == b'=SB=':
+            raw = generated / f'wall{index:06d}.raw'
+            if not raw.exists() or raw.stat().st_mtime < max(source.stat().st_mtime, unpacker.stat().st_mtime):
+                subprocess.run([str(unpacker), str(source), str(raw)], check=True)
+            original = raw.read_bytes()
+            if len(original) != int.from_bytes(packed[4:8], 'big'):
+                raise SystemExit(f'Incomplete unpacked wall: {source}')
+        else:
+            original = packed
+        native = generated / f'wall{index:06d}.bin'
+        payload = prepare_wall(original, args.indexed)
+        if not native.exists() or native.read_bytes() != payload:
+            native.write_bytes(payload)
+        sources[logical] = native
     ffmpeg = shutil.which('ffmpeg')
     if not ffmpeg:
         raise SystemExit('ffmpeg is required to render DOS music at the native 8007 Hz mixer rate')
@@ -166,6 +192,8 @@ quicksave_load=1
 '''
     if args.indexed:
         ini = ini.replace('RGB565 VESA output', 'indexed VGA output')
+    else:
+        ini = ini.replace('320x200 rendering', '320x240 rendering').replace('render_height=200', 'render_height=240')
     if not (game / 'AB3D.INI').exists():
         (game / 'AB3D.INI').write_text(ini, encoding='ascii')
     (generated / 'default.ini').write_text(ini, encoding='ascii')
@@ -182,7 +210,7 @@ Requires a 486 with x87 FPU, 4 MB RAM, DOS 5+ and VGA. VESA RGB565 is not
 required by this build. Both the 8-bit and RGB565 builds retain 1:1 pixels.
 The remaining controls and audio instructions below apply to this trial.
 
-''' + readme[readme.index('Unzip'):].replace('native RGB565 pixels', 'native indexed pixels').replace("S3's 320x240\nmode centers the 320x200 view. Other modes also retain 1:1 pixels.", 'The standard 320x200 VGA mode retains 1:1 pixels.')
+''' + readme[readme.index('Unzip'):].replace('Native RGB565 pixels', 'Native indexed pixels')
     (game / 'README.TXT').write_bytes(readme.replace('\n', '\r\n').encode('ascii'))
     print(f'Staged {len(mapping)} source assets under DOS 8.3 names in {game}')
     if args.archive:

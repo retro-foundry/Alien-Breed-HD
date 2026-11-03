@@ -27,6 +27,9 @@
 #include <string.h>
 #include <errno.h>
 #include "logging.h"
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
+#include "raster_dos.h"
+#endif
 #define printf ab3d_log_printf
 #if defined(_WIN32) || defined(_WIN64)
 #include <direct.h>
@@ -998,14 +1001,22 @@ void io_load_walls(void)
         uint8_t *data = NULL;
         size_t size = 0;
         if (sb_load_file(path, &data, &size) == 0 && data) {
+            uint8_t *palette=data;
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
+            palette = dos_load_wall(data, size, &size);
+#endif
             g_wall_data[i] = data;
             g_wall_loaded_size[i] = size;
             /* wall_palettes points to the 2048-byte brightness LUT at the
              * START of the .wad data (ASM: PaletteAddr = walltiles[id]).
              * walltiles points past the LUT to the chunky pixel data
              * (ASM: ChunkAddr = walltiles[id] + 64*32). */
-            g_renderer.wall_palettes[i] = data;
+            g_renderer.wall_palettes[i] = palette;
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
+            g_renderer.walltiles[i] = palette + DOS_WALL_HEADER_BYTES;
+#else
             g_renderer.walltiles[i] = (size > 2048) ? data + 2048 : data;
+#endif
             if (size > 2048) {
                 int pixel_size = (int)(size - 2048);
                 int rows, valshift;
@@ -1105,6 +1116,7 @@ void io_load_floor(void)
                         }
                     }
                     printf("[IO] FloorPalScaled: parsed %d bytes from %s\n", idx, path);
+                    renderer_pixel_prepare_palette(g_floor_pal_data, idx);
                     g_renderer.floor_pal = g_floor_pal_data;
                 }
             } else {
@@ -1112,6 +1124,7 @@ void io_load_floor(void)
                 g_floor_pal_data = (uint8_t *)malloc((size_t)len);
                 if (g_floor_pal_data) {
                     memcpy(g_floor_pal_data, src, (size_t)len);
+                    renderer_pixel_prepare_palette(g_floor_pal_data, (size_t)len);
                     printf("[IO] FloorPalScaled: %ld bytes from %s\n", len, path);
                     g_renderer.floor_pal = g_floor_pal_data;
                 }
@@ -1184,6 +1197,7 @@ void io_load_floor(void)
                 g_bump_pal_data = (uint8_t *)malloc((size_t)len);
                 if (g_bump_pal_data && fread(g_bump_pal_data, 1, (size_t)len, f) == (size_t)len) {
                     g_renderer.bump_pal = g_bump_pal_data;
+                    renderer_pixel_prepare_palette(g_bump_pal_data, (size_t)len);
                     printf("[IO] BumpPalScaled: %ld bytes from %s\n", len, path);
                 } else {
                     free(g_bump_pal_data);
@@ -1209,6 +1223,7 @@ void io_load_floor(void)
                 if (g_smooth_bump_pal_data &&
                     fread(g_smooth_bump_pal_data, 1, (size_t)len, f) == (size_t)len) {
                     g_renderer.smooth_bump_pal = g_smooth_bump_pal_data;
+                    renderer_pixel_prepare_palette(g_smooth_bump_pal_data, (size_t)len);
                     printf("[IO] SmoothBumpPalScaled: %ld bytes from %s\n", len, path);
                 } else {
                     free(g_smooth_bump_pal_data);
@@ -1474,6 +1489,11 @@ static FILE *open_gun_file(const char *subpath, const char *filename, char *path
 
 static void io_release_gun_graphics(void)
 {
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
+    /* The cache depends on shared gun assets, view size, weapon and palette,
+     * not level geometry. Keep it across quickloads; invalidate at its owner. */
+    renderer_dos_release_gun_frames();
+#endif
     io_scene_free((void *)g_renderer.gun_wad);io_scene_free((void *)g_renderer.gun_ptr);io_scene_free((void *)g_renderer.gun_pal);
     g_renderer.gun_wad=g_renderer.gun_ptr=g_renderer.gun_pal=NULL;
     g_renderer.gun_wad_size=g_renderer.gun_ptr_size=0;
@@ -1553,6 +1573,9 @@ void io_load_gun_graphics(void)
     }
 
     if (g_renderer.gun_wad && g_renderer.gun_ptr && g_renderer.gun_pal) {
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
+        renderer_dos_prepare_gun_cache();
+#endif
         printf("[IO] Gun graphics loaded successfully\n");
     } else {
         if (!g_renderer.gun_wad) io_fatal_missing("gun WAD", "data/includes/newgunsinhand.wad");
@@ -1709,17 +1732,20 @@ void io_dump_textures(void)
                 int byte_off = strip_offset + ty * 2;
                 if (byte_off + 2 > pixel_size) break;
 
-                uint16_t word = ((uint16_t)tex[byte_off] << 8) | (uint16_t)tex[byte_off + 1];
-
                 uint8_t texel5;
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
+                texel5 = dos_wall_column(tex,tex_col,rows)[ty];
+#else
+                uint16_t word = ((uint16_t)tex[byte_off] << 8) | (uint16_t)tex[byte_off + 1];
                 switch (pack_mode) {
                 case 0:  texel5 = (uint8_t)(word & 31);         break;
                 case 1:  texel5 = (uint8_t)((word >> 5) & 31);  break;
                 default: texel5 = (uint8_t)((word >> 10) & 31); break;
                 }
+#endif
 
                 int lut_off = lut_block_off + texel5 * 2;
-                uint16_t color_word = ((uint16_t)pal[lut_off] << 8) | pal[lut_off + 1];
+                uint16_t color_word = renderer_pixel_to_c12(renderer_pixel_from_palette(pal + lut_off));
                 argb[ty * cols + tex_col] = amiga12_to_argb(color_word);
             }
         }
@@ -1748,7 +1774,7 @@ void io_dump_textures(void)
                     uint8_t texel = tex[idx];
                     uint32_t c;
                     if (lut) {
-                        uint16_t cw = (uint16_t)((lut[texel * 2] << 8) | lut[texel * 2 + 1]);
+                        uint16_t cw = renderer_pixel_to_c12(renderer_pixel_from_palette(lut + texel * 2));
                         c = amiga12_to_argb(cw);
                     } else {
                         uint32_t g = (uint32_t)texel * 0x010101u;
@@ -2127,6 +2153,9 @@ static void io_load_poly_texture_assets(void)
 
     printf("[IO] 3D poly TextureMaps: %zu bytes from %s\n", g_poly_tex_maps_size, picked_maps);
     printf("[IO] 3D poly TexturePal : %zu bytes from %s\n", g_poly_tex_pal_size, picked_pal);
+    /* DOS owns this palette. Use its storage directly instead of retaining a
+     * second 7,680-byte native copy in the polygon renderer. */
+    renderer_pixel_prepare_palette(g_poly_tex_pal_data, g_poly_tex_pal_size);
     poly_obj_set_texture_assets(g_poly_tex_maps_data, g_poly_tex_maps_size,
                                 g_poly_tex_pal_data, g_poly_tex_pal_size);
 }

@@ -3190,18 +3190,23 @@ static void player_save_state_to_file(GameState *state, const char *subpath,
     if (!player_save_write_exact(f, state->level.workspace, hdr.workspace_bytes)) goto fail;
     if (hdr.automap_seen_bytes > 0) {
         size_t count = (size_t)state->level.automap_seen_count;
-        SaveAutomapSeenWallDisk *tmp = (SaveAutomapSeenWallDisk *)malloc(count * sizeof(SaveAutomapSeenWallDisk));
-        if (!tmp) goto fail;
-        for (size_t i = 0; i < count; i++) {
-            const AutomapSeenWall *w = &state->level.automap_seen_walls[i];
-            tmp[i].gfx_off = w->gfx_off;
-            tmp[i].x1 = w->x1; tmp[i].z1 = w->z1;
-            tmp[i].x2 = w->x2; tmp[i].z2 = w->z2;
-            tmp[i].flags = (uint16_t)((w->is_door ? 1u : 0u) | ((uint16_t)w->door_key_id << 8));
+        /* Stream the same disk records through bounded scratch. Saving a live
+         * DOS scene must not allocate another copy of its discovered map. */
+        SaveAutomapSeenWallDisk block[64];
+        for (size_t first = 0; first < count;) {
+            size_t n = count - first;
+            if (n > 64) n = 64;
+            memset(block, 0, n * sizeof(*block));
+            for (size_t i = 0; i < n; i++) {
+                const AutomapSeenWall *w = &state->level.automap_seen_walls[first + i];
+                block[i].gfx_off = w->gfx_off;
+                block[i].x1 = w->x1; block[i].z1 = w->z1;
+                block[i].x2 = w->x2; block[i].z2 = w->z2;
+                block[i].flags = (uint16_t)((w->is_door ? 1u : 0u) | ((uint16_t)w->door_key_id << 8));
+            }
+            if (!player_save_write_exact(f, block, n * sizeof(*block))) goto fail;
+            first += n;
         }
-        bool ok = player_save_write_exact(f, tmp, count * sizeof(SaveAutomapSeenWallDisk));
-        free(tmp);
-        if (!ok) goto fail;
     }
 
     fclose(f);

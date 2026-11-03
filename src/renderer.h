@@ -202,8 +202,9 @@ typedef struct {
     uint32_t *rgb_buffer;
     uint32_t *rgb_back_buffer;
 
-    /* Color-word framebuffer (double-buffered): Amiga 0RGB on desktop,
-     * native RGB565 on DOS. Water samples this buffer directly. */
+    /* Color-word framebuffer: Amiga 0RGB on desktop, native pixels on DOS.
+     * Desktop uses two buffers. Synchronous DOS aliases both pointers to one
+     * retained canvas; water samples that current canvas directly. */
     RendererPixel *cw_buffer;
     RendererPixel *cw_back_buffer;
 
@@ -222,8 +223,12 @@ typedef struct {
 
     /* Rotated geometry */
     RotatedPoint  rotated[MAX_POINTS];
+#ifdef AB3D_DOS
+    int32_t point_screen_x[MAX_POINTS]; /* Exact pixel X, or INT32_MIN when uncached. */
+#else
     OnScreenPoint on_screen[MAX_POINTS];
-    /* Per-point frame stamp: non-zero when rotated[]/on_screen[] for that
+#endif
+    /* Per-point frame stamp: non-zero when rotated[] and projection data for that
      * index were produced in rotate_stamp frame. */
     uint32_t      rotated_stamp[MAX_POINTS];
     uint32_t      rotate_stamp;
@@ -258,7 +263,8 @@ typedef struct {
      *
      * sprite_wad[vect] = raw .wad pixel data
      * sprite_ptr[vect] = column pointer table (.ptr file)
-     * sprite_pal_data[vect] = brightness palette (.pal file) */
+     * sprite_pal_data[vect] = brightness palette (.pal file; native RGB565
+     * words in the DOS RGB565 build, original big-endian 0RGB elsewhere) */
     const uint8_t *sprite_wad[MAX_SPRITE_TYPES];
     size_t         sprite_wad_size[MAX_SPRITE_TYPES];
     const uint8_t *sprite_ptr[MAX_SPRITE_TYPES];
@@ -442,7 +448,11 @@ void renderer_draw_sprite(int16_t screen_x, int16_t screen_y,
                           int32_t clip_top_sy, int32_t clip_bot_sy);
 void renderer_draw_gun(GameState *state);
 #if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
-void renderer_dos_check_gun_frames(GameState *state);
+void renderer_dos_release_gun_frames(void);
+void renderer_dos_prepare_gun_cache(void);
+void renderer_key_sprite_condition_frames(const GameState *state,int frames[4]);
+void renderer_dos_check_gun_frames(GameState *state, RendererPixel *expected, int pitch_pixels);
+void renderer_dos_check_projection_cache(void);
 #endif
 
 /* GL weapon/tint post-pass support.

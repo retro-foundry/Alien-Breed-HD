@@ -32,8 +32,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_dos.ps1
 ```
 
 The cache is cloned without hard links; the reference project is not modified.
-The build command stages assets, regenerates the same sprite palette header as
-the desktop build, compiles `ABHD.EXE`, sets a 128 KB stack, and creates
+The build command stages assets, regenerates the desktop sprite palette header
+and a private native RGB565 version for DOS, compiles `ABHD.EXE`, sets a 128 KB stack, and creates
 `build/dos/ABHD-DOS.zip`. The archive includes CWSDPMI, its redistribution notice,
 SDL's license, game data, music, `AB3D.INI`, `README.TXT` and `ABHD.BAT`.
 Only the distribution manifest is archived, excluding local saves, logs and tests.
@@ -48,9 +48,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_dos.ps1 -BuildDi
 ```
 
 Its package is `build/dos-indexed/ABHD-DOS.zip`. This version uses native
-320x200 indexed VGA through SDL, with the same 1:1 world resolution and UI
-sizes. It needs no RGB565 VESA mode. The two color buffers each occupy 64,000
-bytes rather than 128,000. The game writes indices directly; there is no
+320x200 indexed VGA through SDL, with 1:1 world pixels and native UI sizes.
+It needs no RGB565 VESA mode. The retained drawing canvas occupies 64,000 bytes;
+the default RGB565 canvas uses 153,600 bytes at 320x240. SDL owns a separate
+presentation surface. There is no
 full-frame color conversion. Gameplay and source texture sampling are unchanged.
 
 `tools/dos_palette.py` builds the menu and 16 level palettes offline. It uses
@@ -63,21 +64,22 @@ underwater tint decode palette representatives through the original color
 tables and map their results back to indices.
 
 World palette caches use the native pixel type. Weapon and UI cutouts remain
-exact. UI source images retain their RGB565 pixels and acquire indexed SDL
+exact. UI source images retain their RGB565 pixels (or an exact grey palette
+for disabled images) and acquire indexed SDL
 caches when first used under a new palette. Palette changes invalidate weapon,
 water, sky and UI caches; no UI quantization runs during steady-state blits.
 
 Under the 128-frame level-1 comparison settings below, the 8-bit trial measures
 5.27 FPS at 20,000 cycles and 10.57 FPS at 40,000, versus 4.82/9.67 FPS for the
-current RGB565 build: about 9% faster in this starting view. Both builds run
+then-current RGB565 build: about 9% faster in this starting view. Both builds run
 with 4 MB; the performance comparison itself uses 16 MB consistently.
 
 All 16 indexed level starts pass the 4 MB runner. RGB565 captures still match
 the original reference byte-for-byte. The indexed world comparison checks
 43,400 central world pixels per level against those RGB565 colors transformed
-by the packaged palette map. It excludes HUD regions because the native
-200-line VGA and 240-line VESA modes place UI differently. Run both variants
-and compare with:
+by the packaged palette map. Both comparisons request the same 320x240 mode;
+the standard indexed package still defaults to 320x200 VGA. The comparison
+excludes HUD regions. Run both variants and compare with:
 
 ```powershell
 python tools/check_dos_indexed.py --dosbox <path-to-dosbox.exe>
@@ -120,15 +122,17 @@ Tab opens the map, F5/F9 save/load. DOS menus default to keyboard input.
 mouse in-game; Esc releases it for menus. This path was smoke-tested with DOSBox's
 mouse driver, but mouse accuracy needs real-hardware testing.
 
-The smallest RGB565 mode of at least 320x200 is selected. S3 in DOSBox selects
-320x240, with a centered 320x200 game viewport. A BIOS exposing only larger
-RGB565 modes uses that larger mode while retaining a centered 1:1 viewport.
-Plain 256-color VGA output is not supported:
+The smallest RGB565 mode meeting the configured minimum size is selected.
+The world fills that entire mode behind the keys and HUD, with 1:1 pixels and
+no border. S3 in DOSBox uses 320x240. An existing INI requesting 320x200 also
+fills its selected 320x240 mode. Larger native modes cost more CPU and RAM;
+4 MB is validated at 320x240 RGB565 and 320x200 indexed VGA.
+Plain 256-color VGA output requires the optional indexed build:
 RGB565 retains every distinct original 12-bit color without inventing a palette.
 DOS always uses the hardware full screen; the desktop window preference has no
 effect. Errors and diagnostics are written beside the executable in `AB3D.LOG`.
 
-`AB3D.INI` defaults to true 320x200 world rendering, presented 1:1 without
+`AB3D.INI` defaults to true 320x240 RGB565 world rendering, presented 1:1 without
 enlargement, one rendering thread and normal game rules. DOS requires
 `supersampling=1`. Menus, HUD, fonts and the map draw at native pixel sizes
 with SDL; weapons continue scaling to the game view. Long level text wraps
@@ -143,13 +147,14 @@ INI preserves local edits during rebuilds; the ZIP always contains clean default
 
 ## Performance decisions
 
-- Engine and SDL use `-march=i386 -mtune=i486`, size optimization and LTO;
+- Engine uses `-march=i486 -mtune=i486`; the SDL dependency remains i386-safe.
+  Engine code uses whole-program `-O3` and LTO, without fast-math;
   unused sections are discarded. SDL SIMD assembly is disabled.
   The DOS CPUID probe is disabled because an EFLAGS.ID probe under DPMI can
   falsely report support on a 486. The executable runs with a 486 instruction set.
 - The desktop renderer's 32 MB RGB-to-Amiga lookup is omitted. Existing small
-  tables calculate the same 12-bit values. Initial buffers use the requested
-  resolution directly, and aligned allocation has a DJGPP implementation.
+  tables calculate the same 12-bit values. Buffers are allocated after selecting
+  the native video mode, and aligned allocation has a DJGPP implementation.
 - The zone-offset lookup uses sorted offset/slot triples on DOS, retaining
   first-slot behavior for duplicate offsets. This replaces the desktop table
   that occupies twice the level-data size. Diagnostics compare against the
@@ -158,7 +163,7 @@ INI preserves local edits during rebuilds; the ZIP always contains clean default
   262,144 walls (about 6 MB including the hash). Existing dynamic growth retains
   discovered segments. Allocation failures stop with an error.
 - DOS palette caches and framebuffers hold native RGB565, in row-major order.
-  SDL surfaces borrow the two renderer buffers and blit directly in the same
+  One retained renderer canvas copies to SDL's presentation surface in the same
   format. There is no full-frame color conversion, transpose, texture upload or
   automatic scaling. The DOS framebuffer backend copies the result to VESA.
   Desktop ARGB, diagnostic pick buffers and byte-sized pixel tag buffers are
@@ -171,15 +176,18 @@ INI preserves local edits during rebuilds; the ZIP always contains clean default
   Large debug snapshots allocate only when explicitly requested on desktop.
   Alpha LUTs use a small exact cache and division instead of 320 KB of tables.
   Cache reservations start small and grow with actual sky/map content. DJGPP's
-  allocator receives a contiguous 1.5 MiB heap up front to reduce wasted 64 KB
+  allocator receives a contiguous 1.25 MiB heap up front to reduce wasted 64 KB
   DPMI-zone padding. Separately allocated shot/point arrays are freed using the
   exact level-data extent, fixing leaks on reload and level transitions.
 - Weapons retain their original scale and sampling. Each sampled animation
-  frame is cached in a native SDL surface, using RLE and a color key outside
+  frame is cached in a native SDL surface, using a color key outside
   the 4096 source colors. Empty margins are cropped and only the selected
   weapon is retained. It decodes directly from the original PTR/WAD/palette
-  without a temporary RGBA image. This skips transparent runs instead of resampling
-  thousands of empty pixels every frame. The former opaque weapon tag runs and
+  without a temporary RGBA image. One buffer, sized from the largest authored
+  frame, is reserved before loading a level and reused on animation changes.
+  At 320x240 it occupies 15,312 bytes. Original 32-color weapon indices convert
+  exactly to RGB565 through SDL; no color quantization is introduced. SDL's
+  additional RLE copy is omitted. The former opaque weapon tag runs and
   their cache are omitted; the SDL surface already retains the cutout mask.
 - UI draws synchronously with SDL3 surface fills/blits, without an SDL renderer
   queue or OpenGL. PNG fonts are converted offline to native RGB565 with their
@@ -189,9 +197,17 @@ INI preserves local edits during rebuilds; the ZIP always contains clean default
   The original planar title streams a plane at a time into its final surface
   and is released before a level loads. Its native SDL strips avoid requiring
   a contiguous 160 KB allocation when returning to the menu. Opaque
-  color-key/RLE blits preserve their cutout shapes without alpha blending.
+  color-key blits preserve their cutout shapes without alpha blending. UI
+  source bitmaps omit SDL's duplicate RLE storage to leave room for live caches.
   Uncollected keys and disabled labels use cached grey images; collected keys
-  retain their colors. HUD backgrounds and map lines use solid colors. Menus
+  retain their colors. Grey images store the original dim transform exactly
+  in a one-byte image with one shared immutable grey palette, index 255 reserved
+  for cutouts and no RLE duplicate. This leaves room for the full-height view
+  during level-4 reloads.
+  HUD fonts, strips and all four key images are prepared before loading a
+  level; bitmap invalidation follows sprite assets rather than key ownership.
+  Key-to-frame lookup shares one authored object-table scan per HUD draw.
+  HUD backgrounds and map lines use solid colors. Menus
   and transitions use solid fills, and damage feedback uses a red border.
 - Original `LoadFromDisk.s SFX_NAMES` samples mix at 8007 Hz with integer math.
   Voice selection, sample mapping and `SoundPlayer.s MakeSomeNoise` distance
@@ -204,8 +220,8 @@ INI preserves local edits during rebuilds; the ZIP always contains clean default
   IRQ-ring underruns. Music is converted offline to mono 8-bit 8007 Hz WAVs
   and streamed in 4 KB blocks rather than decoded as tracker modules on a 486.
 - Assets use deterministic `DATA/Axxxxxx.BIN` names, with a generated logical
-  path table. Original world/sprite/sample formats are retained; UI images and
-  music have the offline derivatives described above. Shared marine sprites and
+  path table. Original geometry/sprite/sample formats are retained; walls, UI
+  images and music have offline derivatives. Shared marine sprites and
   the in-hand/pickup gun bank reuse one allocation with explicit ownership. The supplied binary FloorPalScaled
   is checked byte-for-byte against its assembly before packaging, avoiding slow
   assembly text parsing at startup. Rotated saves use `AUTO1.BIN`..`AUTO4.BIN`.
@@ -221,14 +237,20 @@ is not needed on the DOS PC.
 
 DOS full-save loading first validates the entire payload with a 4 KB buffer,
 keeps the file open, then reads chunks directly into the reloaded level. This
-preserves the existing v2/v3 format without holding two complete levels in RAM.
+preserves the existing full-save versions without holding two complete levels in RAM.
 Truncated payloads are rejected before the live state changes. Desktop/web
 continue to stage their saves in memory.
+Saving discovered map walls also streams the existing disk records through a
+64-record stack buffer, avoiding another live map allocation.
 
 The runner defaults to `memsize=4`, `ems=false`, `umb=false` and `CWSDPMI -s-`.
 `[DOSMEM]` reports XMS pages; that figure excludes conventional banks and is
 not a whole-machine RAM measurement. The emulator's 4 MB configuration is the
 whole-machine limit. The 128 KB stack is included. This is not a 2 MB build.
+DOS retains one drawing canvas and a separate SDL presentation surface. The
+two renderer color pointers alias that canvas; water samples the active image.
+Weapon comparisons borrow SDL's independent pixels after capture, rather than
+retaining another complete world buffer solely for diagnostics.
 
 ## Reproduce the checks
 
@@ -248,6 +270,12 @@ python tools/check_dos.py --dosbox ../GloomAmiga/build/dos-toolchain/dosbox-stag
 The runner creates isolated trees under `build/dos/checks`. Each contains its
 exact emulator config, startup log and a real, nonblank `FRAME.BMP`. It checks
 the requested map, frame count, successful teardown and zero audio underruns.
+The emulator window is hidden by default on Windows, and host mouse capture is
+disabled for repeatable benchmarks. `--mouse` still exercises the guest mouse
+driver each frame. Use `--visible` for interactive checks. The default height
+comes from the packaged INI; `--height` requests a minimum video height.
+Full-surface builds must report a 1:1 viewport at (0,0), with renderer and
+capture dimensions equal to the selected video mode.
 `--exercise` additionally checks aligned allocation, navigates New Game through
 SDL key events, streams title music, captures `MENU.BMP`, writes/reads all five
 autosave headers and the quicksave, restores full saves eight times before and eight times after
@@ -256,7 +284,8 @@ and mixes shotgun/flame effects. It captures
 the map, numeric HUD, grey/collected keys and options screen, verifies native UI blit dimensions
 and exact cutout masks in opaque grey images,
 checks all 16 level narratives for lost glyphs, and compares cached scaled
-weapon color pixels against the original CPU draw routine and verifies that
+weapon color pixels against the original CPU draw routine, both with the level
+still resident and after returning to menus, and verifies that
 both DOS tag buffer pointers remain null. Save tests
 write only inside that isolated test directory.
 Screen-fit diagnostics check every narrative page and the main, options,
@@ -266,11 +295,19 @@ keys and their underlines, the four-digit FPS counter, crosshair and map;
 every UI image and fill is checked against the output bounds. `HUD200.BMP`,
 `BAR200.BMP` and their 240-line counterparts capture those layouts.
 
-The pixel oracle runs the production pipeline with 4 MB and builds the original v1.0.2 renderer from commit
+For performance-only pixel parity, preserve a separate native build from
+before the optimization, then compare both at the same native dimensions:
+
+```powershell
+python tools/check_dos_pixels.py --dosbox <dosbox.exe> --reference-build <preserved-native-build> --height 240
+```
+
+The historical pixel oracle instead builds the original v1.0.2 renderer from commit
 `487c1aae41ae3443b8ea118b4d14550647597c61` in an ignored snapshot, with only
 DOS memory/API adaptations, and compares complete captures against the native
 pipeline using a 16 MB reference profile. Its color conversion exists only in
-that test snapshot:
+that test snapshot. This is a historical behavior comparison and currently
+differs from the unmodified native baseline as described below:
 
 ```powershell
 python tools/check_dos_pixels.py --dosbox ../GloomAmiga/build/dos-toolchain/dosbox-staging/dosbox-staging-v0.82.2/dosbox.exe
@@ -335,8 +372,8 @@ The arithmetic/setup pass gains about 3%, and removing DOS pixel tags adds
 about 5%, for about 8% overall in this view. Tag removal also saves 125 KiB of
 framebuffer allocations plus the weapon tag cache. A substantial gap to Duke's
 starting view remains.
-Optimizing the renderer translation units with `-O2` increased executable size
-without improving this scene, so the size flags remain unchanged.
+At that stage, optimizing the renderer translation units with `-O2` increased
+executable size without improving this scene, so the size flags were retained.
 The DOS frontend diagnostic compares the hardware division against the former
 64-bit expression at signed column boundaries and near-plane extremes.
 Validation: 312 arithmetic cases passed on the DOS path; all 16 deterministic
@@ -378,3 +415,463 @@ Both DOS packages were rebuilt. All 16 RGB565 captures remain byte-identical
 to the original reference, and all 16 indexed center-world comparisons match
 the same palette mapping. Both 4 MB sound/mouse exercises pass saves, menus
 and weapon checks with zero audio underruns; Windows Release also builds.
+
+### Performance target and initial renderer pass
+
+The requested target is approximately **3x the pre-change FPS**, preserving
+the existing visuals on a 486 DX2/DX4. **That target remains open.** This pass
+initially improved level 1 by about 23%; it did not establish acceptable hardware speed.
+
+The comparison baseline is the native DOS executable built from `de9d543`,
+preserved before editing. Both builds use DOSBox Staging 0.82.2, normal 486
+core, fixed cycles, 4 MB, EMS/UMB/swapping disabled, 320x200 at 1:1, SB16 sound
+effects and mouse enabled, music off, and real-time logic ticks. Runs are
+sequential. These figures use the final normal build, without detailed
+renderer instrumentation:
+
+| Cycles | Level | Frames | Before FPS | After FPS | Before p95 | After p95 |
+|---|---|---:|---:|---:|---:|---:|
+| 20,000 | 1 | 128 | 4.69 | 5.79 | 213.00 ms | 172.30 ms |
+| 40,000 | 1 | 128 | 9.41 | 11.60 | 106.21 ms | 86.04 ms |
+| 40,000 | 6 | 64 | 9.25 | 10.74 | 110.14 ms | 94.94 ms |
+| 40,000 | 15 | 64 | 14.99 | 17.54 | 70.65 ms | 60.41 ms |
+
+At 40,000 cycles, rendering falls from 95.70 to 75.70 ms/frame; presentation
+remains 6.86 ms. The corresponding 3x target is 28.23 FPS, or 35.42 ms for the
+entire frame. Substantial world-rendering work remains before that is met.
+The stationary views remain short comparisons, not a moving/combat playthrough
+or real-hardware measurement.
+
+Retained changes preserve `WallRoutine3.ChipMem.s ScreenWallstripdraw`,
+`AB3DI.s pastfloorbright` and `ObjDraw3.ChipRam.s ObjDraw` sampling/order:
+
+- DOS already renders in screen order with `AB3D_CW_COL_MAJOR=0`. There is no
+  OpenGL rotation or transpose in its presentation path.
+- RGB565 wall/floor palettes are prepared in their owned RAM at load time.
+  Drawing reads native shade tables directly; all 4096 source colors remain
+  distinct. Indexed palettes retain their existing per-level mapping.
+- Wall words expand once from three packed five-bit texels into three byte
+  indices. Word order is retained because level-authored VALSHIFT values can
+  interpret the same asset at different column heights. This costs 73,840
+  extra heap bytes for the supplied wall set; disk assets remain unchanged.
+- Constant-depth RGB565 walls draw in horizontal rows, including exact side
+  and cap extensions and original column-clip registration order. Repeated
+  sampled rows use a copy. Perspective-varying walls use a small column kernel.
+- DOS floor kernels retain full wrapping 16.16 UVs and Gouraud levels. Exact
+  axis-aligned spans avoid the constant UV coordinate's per-pixel work. Visible
+  edge walks use 32 bits only after proving their endpoints and step fit;
+  wider projections retain the existing 64-bit walk.
+- Exact 64/32 projection/interpolation division uses 386 DIV, including a
+  high-word step for wide quotients. Per-frame object candidates retain the
+  original slot order while sharing camera/point rejects between rooms.
+
+A 128 KiB shaded-column cache was slower (11.51 FPS in its matched level-1
+trial) and was removed. Whole-program `-O3` also failed that pass's 4 MB startup
+check, so it retained size optimization. The retained-canvas change below
+allows the stronger optimization in the current build. No resolution, shading, texture
+sampling, input cadence or gameplay timing cuts were introduced.
+
+All 16 RGB565 starts match the preserved native baseline byte-for-byte, and
+all 16 indexed center-world comparisons match the same source palette map.
+Both variants pass the 4 MB SB16/mouse exercises on levels 1 and 4, including
+save reloads, menus, original weapon-color comparisons and zero audio
+underruns. Windows Release and `tools/check_feedback.py` pass.
+
+The historical v1.0.2 whole-frame oracle is not the current renderer baseline:
+the unmodified `de9d543` executable also differs in 810 central level-1
+pixels. Its frozen vector-object header now stays paired with its source,
+fixing a reference-build API mismatch; the historical image difference remains.
+Use a separately preserved native build to check performance-only changes:
+
+```powershell
+python tools/check_dos_pixels.py --dosbox <dosbox.exe> --reference-build <preserved-native-build>
+python tools/check_dos_indexed.py --dosbox <dosbox.exe>
+python tools/check_dos_raster.py --dosbox <dosbox.exe>
+```
+
+The full-surface performance acceptance command below remains unmet.
+`--min-fps` rejects fixed diagnostic ticks and fails below the supplied real-time average.
+`--render-profile` separately reports wall, floor, sprite, object-pass and
+backdrop costs; its counter/statistics overhead must not be included in the
+before/after FPS comparison.
+
+The standalone 4 MB raster check exercises the actual DJGPP/i486 kernels:
+4,215 signed division cases, all 4096 prepared palette colors, 8,192 floor
+spans, 4,096 edge walks, every packed wall word and 192 wall row/column rasters.
+
+### Further DOS renderer work
+
+The follow-up keeps exact colors, texture samples, clipping and object order.
+The approximately 3x target remains open. DOS still draws directly in screen
+order; no rotated framebuffer or OpenGL transpose is introduced.
+
+- RGB565 wall columns, wall rows and floor spans use small 486 assembly loops.
+  Axis-aligned floor spans process eight pixels per iteration with exact tails;
+  general UVs retain their full 32-bit wrapping. Gouraud shade runs stop at
+  exact fixed-point boundaries.
+- Native floor spans use the prepared palette directly, avoiding the desktop
+  cache setup. Floor and sky edge arrays initialize only their clipped row
+  band. Empty edges skip division; reversed edges reuse the same exact slope.
+- Wall clipping handles an empty or overlapping first span directly while
+  retaining the original two-span merge and replacement policy.
+- Sky source-column offsets are shared across spans, keyed by the view's pan,
+  projection and asset layout. Sampling and endian conversion remain exact.
+- Per-frame room masks select objects by their authored draw groups and exact
+  adjacent source zones. Original slot order, billboard spill, polygon rejects
+  and equal-depth sorting remain intact. Both live projectile lists are built
+  once per frame instead of scanning 120 slots for every room.
+- In that pass, only `renderer.c` used `-O2`; the rest retained `-Os` and LTO. Reserving
+  1.25 MiB rather than 1.5 MiB leaves space for the larger optimized text in
+  the same 4 MB runtime budget. A floor-row math cache gave less than 1% and
+  was removed.
+
+`tools/check_dos.py --turn` holds the real right-turn key through the normal
+input path and verifies that the camera moves. For exact moving-view parity,
+use the same diagnostic in the preserved original build and fixed ticks:
+
+```powershell
+python tools/check_dos_pixels.py --dosbox <dosbox.exe> --reference-build <original-with-turn-diagnostic> --levels 1 4 6 15 --frames 48 --turn
+```
+
+These comparisons use the original `de9d543` renderer with only the camera
+diagnostic added to `main.c`. They compare complete captures after 48 frames
+with fixed logic ticks, including oblique sampling and changed room visibility.
+Real-time turning profiles also work, but faster builds advance farther in
+the same frame count, so their views and elapsed game time differ.
+
+Before the full-surface change, measurements used the same normal-486, 4 MB, RGB565,
+sound/mouse-on settings as the native `de9d543` baseline above. These runs
+were sequential, with detailed instrumentation off:
+
+| Cycles | Level | Frames | Original FPS | Initial pass FPS | Current FPS | Original p95 | Current p95 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 20,000 | 1 | 128 | 4.69 | 5.79 | 8.29 | 213.00 ms | 117.91 ms |
+| 40,000 | 1 | 128 | 9.41 | 11.60 | 16.61 | 106.21 ms | 58.86 ms |
+| 40,000 | 6 | 64 | 9.25 | 10.74 | 15.25 | 110.14 ms | 64.74 ms |
+| 40,000 | 15 | 64 | 14.99 | 17.54 | 23.51 | 70.65 ms | 42.30 ms |
+
+Level 1 gains about 77% over the original, or 43% over the initial pass.
+Normal rendering falls from 95.70 to 48.75 ms/frame. The complete frame is
+60.20 ms, leaving another 24.78 ms to remove for the 35.42 ms / 28.23 FPS
+target. The real-time `--min-fps 28.23` acceptance check **still fails**.
+In a separate instrumented run, walls take 23.8 ms (13.9 ms in pixel kernels),
+floor spans 10.3 ms, floor geometry 3.4 ms, object passes 5.8 ms including
+sprites, and backdrop work 1.9 ms. Instrumented costs include counter overhead.
+
+Validation on the final packages: all 16 complete RGB565 level-start captures
+are byte-identical to the original native baseline; four 48-frame turning
+captures also match exactly. All 16 indexed center-world comparisons pass.
+Both packages pass the 4 MB SB16/mouse exercises on levels 1 and 4, including
+eight quickloads, menus, weapon frames and zero audio underruns. The DJGPP
+raster/object tests, Windows Release build and feedback regression suite pass.
+The raster tests also cover signed projection half-pixel boundaries, clipped
+edge initialization canaries and 2,048 room object lists with both shot pools.
+This remains emulator evidence; real 486 hardware has not been measured.
+
+### Full native view and latest measurements
+
+The DOS renderer now initializes after video-mode selection and draws the
+entire native surface behind the HUD and keys. A 320x200 request on S3 still
+selects 320x240 RGB565, but now renders all 240 rows instead of centering a
+200-row image. Presentation neither clears a border nor rotates or scales
+the image. Indexed VGA similarly fills its native 320x200 surface.
+
+Additional exact wall work shares a palette across flat wall rows, unrolls
+eight row samples at a time and addresses eight vertical samples directly in
+320-pixel modes. Mixed-palette rows, other widths and remaining samples keep
+their exact paths. A bounded native projection loop retains full 64-bit
+interpolants; repeated projection factors are cached by their actual inputs.
+No texture samples, shading, game ticks or input polls are omitted.
+
+The comparison below renders **320x240 in every build**, at 40,000 fixed
+cycles, normal 486 core, 4 MB, SB16 and guest mouse enabled, 128 real-time
+frames on level 1. Runs are sequential, with detailed profiling disabled.
+
+| Build | FPS | Render time | Average frame | p95 frame |
+|---|---:|---:|---:|---:|
+| Original `de9d543` | 8.60 | 105.00 ms | 116.23 ms | 116.21 ms |
+| Previous renderer pass | 15.37 | 52.98 ms | 65.06 ms | 63.74 ms |
+| Full native view, wall loops and prepared UI | 17.04 | 48.33 ms | 58.69 ms | 58.66 ms |
+| Exact floor reuse, native palettes and prepared UI blits | 17.97 | 45.34 ms | 55.65 ms | 55.98 ms |
+| Retained canvas, contiguous wall streams and `-O3` | 18.87 | 43.05 ms | 53.00 ms | 53.31 ms |
+| Exact wall wrapping | 19.10 | 42.40 ms | 52.35 ms | 52.65 ms |
+| Shared projections and contiguous presentation copy | 20.66 | 41.43 ms | 48.40 ms | 49.03 ms |
+| Repeated automap wall updates | 20.97 | 40.73 ms | 47.70 ms | 48.31 ms |
+
+This is a 2.44x increase over the original at the same rendering size.
+The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
+per frame, for this full-height baseline. The earlier 28.23 FPS target and
+320x200 tables above describe the earlier, smaller view.
+
+```powershell
+python tools/check_dos.py --dosbox <dosbox.exe> --height 240 --cycles 40000 --frames 128 --mouse --min-fps 25.80
+```
+
+The raster regression covers both native and general wall pitches, zero-length
+columns, all eight unroll tails, mixed palettes and widths 1..33. Grey UI checks
+also verify each opaque palette color against the original dim transform.
+Diagnostic BMP captures stream through bounded stack row/file buffers, so a
+live 4 MB scene does not need additional heap space merely to save its image.
+HUD diagnostic state also uses the reserved stack. Weapon cache invalidation
+follows shared gun assets, view dimensions, animation and palette changes;
+level geometry reloads retain it. All 24 weapon frames are checked with the
+level still loaded, including the larger level 4.
+
+Final package captures match the preserved original byte-for-byte on all 16
+level starts and four 48-frame turning views. An old 320x200 INI produces the
+same complete native capture as 320x240, including projection and aiming after
+the shared-asset settings reload. All 16 indexed sampling comparisons pass.
+The 4 MB memory exercises pass on native levels 1, 4 and 15 and indexed levels
+1 and 4; these repeat full saves/quickloads before and after gameplay, test all
+24 weapons while the level remains loaded, then check menus and palette changes.
+The level-4 native real-time exercise also passes at 40,000 cycles with zero
+audio underruns. Additional memory checks use 200,000 cycles and fixed logic
+ticks to shorten validation; their diagnostic FPS is not a performance result.
+Windows Release, the feedback suite, DJGPP raster/object checks and ZIP CRC,
+executable and default-INI checks pass. Real hardware remains unmeasured.
+
+### Conversion and shading within 4 MB
+
+RGB565 sprite shade tables are now prepared during packaging. The executable
+contains the same 17,280 bytes of authored shades, in native word order;
+sprites select those blocks directly instead of rebuilding a 32-color table
+on each draw. The raster check compares all 8,640 words with their original
+`.pal` values. Sky words also acquire native byte order during the existing
+in-place load conversion. The polygon renderer uses its owned palette
+directly, removing a duplicate 7,680-byte allocation.
+
+Wall and floor shades already use the original asset tables in native format.
+A general 4096-color x 64-shade x 2-byte table would cost 512 KiB and is not
+needed for these paths. A tested sixteen-block sprite cache added 1,088 bytes
+without a measurable improvement; direct preconversion replaces it.
+Weapon and disabled-UI images retain compact source indices with small SDL
+palette maps, preserving the live-level 4 MB budget.
+
+The larger speed gain in this pass comes from exact floor sampling. Equal
+Gouraud endpoints dispatch directly to the constant shade path. Axis spans
+stepping at most half a texel reuse the current color until the original
+16.16 coordinate carries or borrows into the next texel. Every output pixel,
+UV wrap and shade transition is retained. Other steps keep the original
+sampling path. The standalone regression covers both signs and axes, the
+half-texel threshold and all eight unroll tails.
+
+With the same 320x240, 40,000-cycle, 4 MB SB16/mouse settings, 64-frame
+real-time runs improve level 6 from 15.45 to 16.45 FPS and level 15 from
+24.47 to 25.87 FPS. Level 1 improves from 17.04 to 17.97 FPS over 128 frames.
+Palette preconversion itself has a small effect in these views; most of the
+gain comes from floor reuse and eight-sample wall/floor loops.
+
+The DOS test runners set DOSBox `nosound=true`, muting host output while
+retaining guest Sound Blaster emulation, game mixing and underrun checks.
+SDL's small UI palette-to-RGB565 blit tables are also prepared with the HUD,
+before loading a level. This avoids first-use allocation failures in a full,
+fragmented heap. The warm-up restores the target pixel and clip rectangle.
+
+The local GloomAmiga DOS renderer is a useful comparison: it defaults to
+320x200 INDEX8, pre-shades complete floor/roof and opaque wall texture banks,
+and removes ray hits hidden by an opaque wall. Its two 128x128 flat banks
+alone use 512 KiB for sixteen shades; its build script sets an 8 MiB stack
+reservation (`minstack=8M`). This port's native 320x240 RGB565 frame
+contains 153,600 bytes versus Gloom's 64,000-byte indexed frame. Copying its
+complete shaded-bank strategy would compete with the 4 MB live-level budget.
+Before UI blit warm-up, a 4,480-byte shaded-row trial preserved samples but slowed
+levels 1/6/15 to 17.11/15.51/24.29 FPS versus 17.86/16.24/25.59; it was removed.
+The palette preconversions above remain independent of that trial.
+
+### Retained DOS canvas and prepared wall streams
+
+DOS now draws into the retained native image directly. The previous path
+copied the last complete image into a second color buffer before every frame.
+All world and water background reads use the active image, and presentation is
+synchronous, so retaining that image preserves the same initial pixels and
+draw order. The change removes one full-frame copy and a 150 KiB allocation at
+320x240 (62.5 KiB at indexed 320x200). Desktop buffering remains separate.
+
+The original-versus-cached weapon comparison now uses SDL's independent display
+pixels as scratch. It compares every row, respects surface pitch and rejects
+aliased scratch. All 24 weapon frames are still tested with a live level.
+
+`tools/dos_wall.py` prepares the original `WallRoutine3.ChipMem.s` three five-bit
+streams into contiguous byte planes during packaging. Each plane retains the
+original word order, so every level-authored VALSHIFT continues to address the
+same texel. Vertical kernels no longer multiply the sample index by three.
+The 73,840 extra texel bytes from the earlier unpacking remain unchanged; the
+fourteen walls add 168 metadata bytes. Original Amiga files are untouched.
+DOS neither decompresses nor expands walls at startup. RGB565 wall palettes
+are also prepared offline; indexed caches keep their original palette words.
+The versioned ABW1 cache records its format and plane length, which the loader
+validates before exposing the palette and texels. Update the executable and
+DATA together. The DJGPP regression tests the generated cache against all
+65,536 packed words and checks the host palette converter on all 4,096 colors.
+
+The canvas saving permits whole-program `-O3` with the existing i486 target,
+LTO and 128 KiB stack. No fast-math option is enabled. The larger code consumes
+part of the recovered memory; both packages still pass the 4 MB no-swap
+exercises. Renderer-only `-O3` measured 18.76/17.11/27.13 FPS on levels 1/6/15;
+whole-program `-O2` with that renderer measured 18.77/17.02/27.19. The selected
+whole-program `-O3` build measures 18.87/17.11/27.56, using 128/64/64 real-time
+frames at the common 320x240, 40,000-cycle, SB16/mouse-on settings.
+
+All sixteen native starts and six 48-frame turns (levels 1, 2, 4, 6, 15 and 16)
+match the preserved original captures. All sixteen complete indexed 320x200
+starts also match the prior indexed build. The separate indexed 320x240
+sampling comparison checks the original per-level color mapping. Native 4 MB
+exercises pass on levels 1, 4 and 15; indexed exercises pass on levels 1 and 4.
+Tests remain muted at the host while retaining guest audio emulation.
+
+An adjacent-column copy trial was correct but slower (18.13/16.55/26.17 versus
+18.25/16.59/26.32 for contiguous streams alone) and was removed. A separate
+gprof sampling experiment produced no samples, then hit a DOSBox page fault
+when instrumenting startup. Its executable is confined to an ignored build;
+the normal packages use the existing frame and renderer timers.
+
+### Unrotated floor loop and repeated object projections
+
+The main thread and workers now reserve column-floor scratch only when that
+renderer is enabled and the framebuffer is column-major. DOS's row-major
+path never used these allocations. At 320x200/240, omitting the row records,
+column bounds and column walk tables removes 24,588 requested heap bytes.
+
+A 6,392-byte DOS billboard cache stores each object/shot's world dimensions,
+screen X and estimated width for the current frame. Connected-room passes
+reuse those values while retaining each room's original clipping and draw
+order. Validity resets after rotating object points, before drawing any room;
+level changes, moving objects and camera turns cannot reuse an older frame.
+The final billboard draw also reuses the dimensions and screen X. Its room
+projection, shading and actual draw-size calculations remain unchanged.
+
+Native floor spans with both UV steps nonzero now process eight pixels per
+iteration, as the axis-aligned loops already did. Every sample still uses the
+original 32-bit wrapping accumulators. This adds no texture or shade bank.
+The standalone DJGPP regression checks all unrolled tails against the original
+expressions within its 8,192 floor-span cases.
+
+At the same 40,000-cycle normal 486, 4 MB, SB16/mouse-on settings, the final
+package measures 18.87 FPS on level 1, 17.32 on level 6 and 27.60 on level 15
+(128/64/64 real-time frames). The earlier canvas build measured
+18.87/17.11/27.56. A separate 128-frame level-one turning run improves from
+24.80 before these changes to 25.28 FPS. Different views have different work;
+this turning result does not meet the stationary baseline's 25.80 FPS target.
+Level one remains 2.19x the original full-height baseline.
+
+All sixteen native starts and six 48-frame turns match the original native
+captures. All sixteen complete indexed 320x200 starts match the preserved
+indexed build. Both packages pass full 4 MB exercises on levels 1 and 4,
+including all 24 weapon frames with a live level. Native level 4 also passes
+the full exercise at 40,000 cycles. Windows Release, feedback and DOS raster
+checks pass. Host output remains muted with guest audio active. Final package
+hashes and measurements are in `build/dos/gloom-comparison-performance.json`.
+
+### Exact wall wrapping without a per-pixel mask
+
+The native 320-pixel wall column loop now shifts the authored wrapping bits
+to the top of a 32-bit accumulator. For masks 15/31/63/127/255, each sample
+needs one right shift instead of a right shift followed by a memory-operand
+AND. Shifting the initial coordinate and step preserves unsigned wrapping
+after every addition, including negative steps and texture phase. Eight-pixel
+groups and their tails use that representation. Other masks retain an
+unrolled general loop; other pitches and short columns keep the general path.
+No texture or working buffers are added, and no palette samples change.
+
+The same native package now measures 19.10/17.47/28.08 FPS on levels 1/6/15,
+versus 18.87/17.32/27.60 before this pass. The separate level-one turning run
+improves from 25.28 to 26.25 FPS. These are 128/64/64/128 real-time frames at
+the established 40,000-cycle normal 486, 4 MB, SB16/mouse-on settings. The
+stationary level-one result is 2.22x the original 8.60 FPS; its 25.80 FPS
+target remains unmet. Measurements, package hashes and validation records
+are in `build/dos/wall-wrap-performance.json`.
+
+The DOS raster regression now includes 16-row walls, noncanonical masks and
+additional signed fractional floor steps. Complete native captures on all
+sixteen starts and the six 48-frame turns remain the fidelity checks. Native
+4 MB exercises cover levels 1, 4 and 15, including all 24 live-level weapon
+frames; level 4 is also exercised at the normal 40,000 cycles. The indexed
+executable is byte-identical to the previously validated package.
+
+Exact floor-run fills and solid-shade classification trials were slower and
+were removed. An isolated flat profiler started successfully after level
+loading, but delivered zero SIGPROF callbacks despite an expired timer; its
+histogram is not used as performance evidence. Release builds contain none
+of that profiler setup. All emulator runs remain muted at the host.
+
+### Shared projections and contiguous presentation copy
+
+DOS reuses the unused 8,192-byte legacy 96-column projection array for exact
+screen X coordinates. Shared level vertices reuse their projection within the
+current rotation frame. Inactive, unrotated or stale entries use the original
+calculation; near-clipped endpoints also retain it. Projections beyond signed
+32-bit range remain fully 64-bit and uncached. The live-level diagnostic checks
+432 input/validity combinations, including cache hits, stale entries and wide
+results. No additional per-vertex allocation is required.
+
+A single-entry Y quotient cache retains the full numerator and depth, with the
+screen centre applied afterwards. Water projection cancels equal coordinate
+scales before dividing, and vertical refraction cancels a common factor before
+its division. These preserve the original signed rounding. The DJGPP raster
+check compares 35,169 water projection/refraction cases with the original
+expanded expressions, and checks changes to both Y-cache inputs.
+
+Floor setup no longer clears unused brightness rows. Every valid edge bound
+writes its brightness at the same time, and invalid spans are rejected before
+reading it. Left/right bounds still initialize normally. Polygon edge loops
+also advance their final vertex without a variable remainder operation.
+
+The largest gain comes from presentation. For a complete, unclipped RGB565
+view with contiguous SDL pitch, DOS locks the surface and copies the image in
+one `memcpy`, replacing SDL's row-by-row blit. Other sizes, pitches and clip
+rectangles retain the SDL path. Presentation falls from 6.77 to 3.81 ms in the
+level-one run. The retained world canvas and separate UI surface still preserve
+water background reads and HUD layering.
+
+Fresh public-package timings are 20.66/18.92/31.01 FPS on levels 1/6/15 and
+28.68 FPS while turning on level 1, using the same 128/64/64/128 real-time
+frames, 40,000 cycles, 4 MB and SB16/mouse settings. The stationary level-one
+result is 2.40x the original 8.60 FPS; the 25.80 FPS target remains unmet.
+Measurements, package hashes and validation records are in
+`build/dos/projection-performance.json`.
+
+All sixteen native starts and six 48-frame turns match the original captures.
+All sixteen indexed starts and the same six turns match the preserved indexed
+package. Native 4 MB exercises pass on levels 1, 4 and 15; indexed exercises
+pass on levels 1 and 4. They include the projection diagnostic, all 24 live-level
+weapon frames, menus, save/load and zero audio underruns. Native level 4 also
+passes at 40,000 cycles. An old 200-line INI produces the same full 240-line
+native capture. Windows Release, feedback and DOS raster checks pass. All DOS
+test output remains muted at the host, with guest audio emulation enabled.
+
+Extending the X cache into wall endpoints was slightly slower in the matched
+views and was removed. Full-frame pixels and authored shade values remain
+unchanged; this pass adds no texture or shade bank.
+
+### Repeated automap wall updates
+
+DOS keeps a 1 KiB table of recently used automap hash buckets. Each hit reads
+the current bucket and verifies the graphics offset and both complete
+endpoints, accepting either drawing direction. A different segment, empty
+bucket, rebuilt table or invalid index uses the existing hash lookup. The
+cache retains indices rather than pointers into reallocatable wall storage.
+Door/key colors, zone hints and internal-line metadata still refresh through
+the same function on every discovered-wall update. Discovery order, hash keys
+and the save format remain unchanged.
+
+On levels 1 and 4, complete map captures and all six saves' level/map payloads
+match the preserved build before this cache. The binary comparison excludes
+the GameState snapshot, which contains runtime pointers; the existing
+save/load diagnostics check its restoration. Save headers, complete level
+chunks and discovered-wall records match exactly.
+The comparison records are in `build/dos/automap-save-parity.json`.
+
+Final public-package timings are 20.97/19.14/31.25 FPS on levels 1/6/15 and
+28.95 FPS while turning on level 1, at the established 40,000-cycle, 4 MB,
+SB16/mouse-on settings with 128/64/64/128 real-time frames. The stationary
+result is 2.44x the original; the 25.80 FPS target remains unmet. Measurements
+and package hashes are in `build/dos/automap-performance.json`.
+
+Both final packages pass all sixteen level-start comparisons and six
+48-frame turning comparisons. Native 4 MB exercises pass on levels 1, 4 and
+15; indexed exercises pass on levels 1 and 4. Native level 4 also passes at
+40,000 cycles. Windows Release and feedback checks pass. The raster kernels
+are byte-identical to those covered by the preceding DOS raster regression.
+Host test output remains muted with guest audio active. A short-row copy
+experiment made no meaningful FPS difference and was removed; the isolated
+automap timing probe is also absent from the final sources.

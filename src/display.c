@@ -18,6 +18,7 @@
 #include "display.h"
 #ifdef AB3D_DOS
 #include "platform_dos.h"
+#include <errno.h>
 #endif
 #include "renderer.h"
 #include "game_data.h"
@@ -202,7 +203,7 @@ static unsigned char *g_dos_map_scratch;
 static int g_dos_map_capacity;
 
 /* Renderer output already matches SDL and VESA: native RGB565, row-major.
- * Surface descriptors borrow the two engine buffers. No conversion or scaling. */
+ * Fallback surface descriptors borrow the engine image. No conversion or scaling. */
 static void display_dos_copy_cw(const RendererPixel *src,int w,int h,const SDL_Rect *rect)
 {
     SDL_Surface *surface=SDL_GetWindowSurface(g_window);
@@ -212,6 +213,21 @@ static void display_dos_copy_cw(const RendererPixel *src,int w,int h,const SDL_R
     if(rect->w!=w || rect->h!=h || w>surface->w || h>surface->h) {
         fprintf(stderr,"DOS requires a 1:1 framebuffer fitting the VESA mode\n");exit(1);
     }
+#ifdef AB3D_NATIVE_RGB565
+    /* SDL_BlitCopy copies one row at a time. The complete native view is
+     * contiguous in both buffers, so copy it as one block when unclipped. */
+    SDL_Rect clip;
+    if (!rect->x && !rect->y && w == surface->w && h == surface->h &&
+        surface->pitch == w * DOS_PIXEL_BYTES && SDL_GetSurfaceClipRect(surface, &clip) &&
+        !clip.x && !clip.y && clip.w == w && clip.h == h) {
+        if (!SDL_LockSurface(surface)) {
+            fprintf(stderr, "DOS native framebuffer lock failed: %s\n", SDL_GetError()); exit(1);
+        }
+        memcpy(surface->pixels, src, (size_t)w * h * DOS_PIXEL_BYTES);
+        SDL_UnlockSurface(surface);
+        return;
+    }
+#endif
     int slot;
     if(g_dos_frame_pixels[0]==src)slot=0;
     else if(g_dos_frame_pixels[1]==src)slot=1;
@@ -1729,7 +1745,7 @@ static SDL_Texture *display_load_ui_image_asset(const char *rel_path, int *out_w
         fprintf(stderr,"Truncated DOS UI image: %s\n",rel_path);exit(1);
     }
     if(fgetc(file)!=EOF || ferror(file) || !SDL_SetSurfaceColorKey(image->normal,flags!=0,key) ||
-       !SDL_SetSurfaceBlendMode(image->normal,SDL_BLENDMODE_NONE) || !SDL_SetSurfaceRLE(image->normal,true)) {
+       !SDL_SetSurfaceBlendMode(image->normal,SDL_BLENDMODE_NONE) || !SDL_SetSurfaceRLE(image->normal,false)) {
         fprintf(stderr,"DOS UI image format/setup failed: %s\n",rel_path);exit(1);
     }
     fclose(file);if(out_w)*out_w=w;if(out_h)*out_h=h;return image;
@@ -2907,6 +2923,9 @@ static void display_update_letterbox(int win_w, int win_h)
 
 #ifdef AB3D_DOS
     int dw=rw,dh=rh;
+    if(rw!=win_w || rh!=win_h) {
+        fprintf(stderr,"DOS world %dx%d must cover native surface %dx%d\n",rw,rh,win_w,win_h);exit(1);
+    }
     printf("[DOS VIDEO] render %dx%d; native %s SDL surface; 1:1 viewport\n",rw,rh,
 #ifdef AB3D_DOS_INDEXED
         "INDEX8"
@@ -3311,7 +3330,9 @@ void display_init(GameState *state)
 #endif
     }
 
+#ifndef AB3D_DOS
     renderer_init(rw, rh);
+#endif
 
     const char *driver_override = SDL_getenv("AB3D_RENDER_DRIVER");
     /* Set AB3D_DISABLE_GL_UNPACK=1 to force D3D + SDL texture (CPU blit path). Otherwise prefer GL_R16UI. */
@@ -3392,6 +3413,18 @@ void display_init(GameState *state)
         return;
     }
     SDL_GetWindowSize(g_window, &window_w, &window_h);
+#ifdef AB3D_DOS
+    /* Render the entire selected video mode behind the HUD, as requested.
+     * Choose it before allocating buffers; no centered 200-line subview. */
+    if(window_w>RENDER_INTERNAL_MAX_DIM || window_h>RENDER_INTERNAL_MAX_DIM) {
+        fprintf(stderr,"DOS native mode %dx%d exceeds renderer limit %d\n",window_w,window_h,RENDER_INTERNAL_MAX_DIM);exit(1);
+    }
+    rw=window_w;rh=window_h;
+    g_internal_w=rw;g_internal_h=rh;
+    if(state){state->cfg_render_width=(int16_t)rw;state->cfg_render_height=(int16_t)rh;}
+    renderer_init(rw,rh);
+    printf("[DOS VIDEO] full-surface world %dx%d\n",rw,rh);
+#endif
 
     {
         const char *driver_try[4];
@@ -4667,6 +4700,9 @@ static void display_key_hud_sdl_overlay(const GameState *state)
         { 64, 220, 96 },
         { 64, 140, 255 },
     };
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
+    int frames[4];renderer_key_sprite_condition_frames(state,frames);
+#endif
 
     for (int i = 0; i < 4; i++) {
         uint8_t bit = (uint8_t)(1u << i);
@@ -4677,7 +4713,11 @@ static void display_key_hud_sdl_overlay(const GameState *state)
         alpha = collected ? 255 : 128;
 #endif
 
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
+        int frame=frames[i];
+#else
         int frame = renderer_key_sprite_frame_for_condition_bit(state, i);
+#endif
         if (frame < 0) frame = 0;
         if (frame > 3) frame = 3;
 
@@ -5015,6 +5055,42 @@ static void display_automap_sdl_overlay(GameState *state)
 }
 #endif
 
+#ifdef AB3D_DOS
+void display_dos_check_gun_frames(GameState *state)
+{
+    /* The display's independent native pixels are diagnostic scratch after
+     * capture. No second world canvas is needed just to compare weapons. */
+    SDL_Surface *surface=SDL_GetWindowSurface(g_window);
+    if(!surface || surface->format!=DOS_PIXEL_FORMAT ||
+       surface->w<renderer_get_width() || surface->h<renderer_get_height() ||
+       !SDL_LockSurface(surface)) {
+        fprintf(stderr,"DOS weapon comparison surface unavailable: %s\n",SDL_GetError());exit(1);
+    }
+    renderer_dos_check_gun_frames(state,surface->pixels,surface->pitch/DOS_PIXEL_BYTES);
+    SDL_UnlockSurface(surface);
+}
+
+void display_dos_prepare_gameplay_ui(GameState *state)
+{
+    /* Allocate persistent HUD pixels before level data, so first use and
+     * quickloads need neither asset reads nor large UI allocations. */
+    display_ascii_font_ensure_loaded();
+    display_hud_digits_ensure_loaded();
+    display_bar_hud_texture(0);display_bar_hud_texture(1);
+    if(g_ascii_font_tex)dos_ui_prepare_grey_image(g_ascii_font_tex);
+    display_key_hud_free_textures();
+    g_key_hud_tex_tag=renderer_key_sprite_hud_cache_tag(state);
+    for(int i=0;i<4;i++) {
+        SDL_Texture *key=display_key_hud_texture_for_frame(i);
+        if(!key){fprintf(stderr,"DOS key frame %d preparation failed: %s\n",i,SDL_GetError());exit(1);}
+        dos_ui_prepare_grey_image(key);
+    }
+#ifndef AB3D_DOS_INDEXED
+    dos_ui_prepare_blits(g_sdl_ren);
+#endif
+}
+#endif
+
 static void display_present_cw_frame(GameState *state)
 {
     if (!g_sdl_ren) return;
@@ -5065,9 +5141,7 @@ static void display_present_cw_frame(GameState *state)
             display_sdl_resync_after_raw_gl();
     } else {
 #ifdef AB3D_DOS
-        SDL_SetRenderDrawColor(g_sdl_ren,0,0,0,255);
-        SDL_RenderClear(g_sdl_ren);
-        SDL_RenderFlush(g_sdl_ren);
+        /* The world covers the native surface, including the area behind HUD. */
         display_dos_copy_cw(src,w,h,&g_present_dst_rect);
 #else
         if (!g_texture) return;
@@ -5386,9 +5460,9 @@ void display_dos_check_text_screen(const char *label, int allow_pages)
 
 void display_dos_check_hud_bounds(GameState *state)
 {
-    GameState *test=malloc(sizeof(*test));
-    if(!test){fprintf(stderr,"DOS HUD diagnostic allocation failed\n");exit(1);}
-    memcpy(test,state,sizeof(*test));
+    /* Diagnostic scratch belongs in the reserved stack, not the live heap. */
+    GameState test_state=*state;
+    GameState *test=&test_state;
     int saved_w=g_present_width,saved_h=g_present_height;
     SDL_Rect saved_rect=g_present_dst_rect;
     int16_t conditions=game_conditions;game_conditions|=15;
@@ -5423,7 +5497,6 @@ void display_dos_check_hud_bounds(GameState *state)
     }
     game_conditions=conditions;
     g_present_width=saved_w;g_present_height=saved_h;g_present_dst_rect=saved_rect;
-    free(test);
     printf("[DOSCHECK] HUD bars/numbers, four keys/underlines, 9999 FPS, crosshair and map fit 320x200/240\n");
 }
 
@@ -5486,8 +5559,15 @@ void dos_capture_frame(const char *filename) {
     unsigned stride=(surface->w*3+3)&~3u,size=54+stride*surface->h;
     unsigned char header[54]={0};header[0]='B';header[1]='M';header[10]=54;header[14]=40;header[26]=1;header[28]=24;
     for(int i=0;i<4;i++){header[2+i]=(unsigned char)(size>>(8*i));header[18+i]=(unsigned char)(surface->w>>(8*i));header[22+i]=(unsigned char)(surface->h>>(8*i));}
-    FILE *f=fopen(filename,"wb");unsigned char *row=calloc(1,stride);
-    if(!f || !row || fwrite(header,1,54,f)!=54){fprintf(stderr,"DOS frame file allocation/write failed\n");exit(1);}
+    /* Capturing a live 4 MB scene must not grow the heap for row/stdio buffers. */
+    unsigned char row[RENDER_INTERNAL_MAX_DIM*3+3]={0};
+    char file_buffer[4096];
+    if(stride>sizeof(row)){fprintf(stderr,"DOS capture row %u exceeds %u bytes\n",stride,(unsigned)sizeof(row));exit(1);}
+    FILE *f=fopen(filename,"wb");
+    if(!f){fprintf(stderr,"DOS capture open %s failed: %s\n",filename,strerror(errno));exit(1);}
+    if(setvbuf(f,file_buffer,_IOFBF,sizeof(file_buffer)) || fwrite(header,1,54,f)!=54) {
+        fprintf(stderr,"DOS capture header %s failed: %s\n",filename,strerror(errno));exit(1);
+    }
     for(int y=surface->h-1;y>=0;y--) {
         for(int x=0;x<surface->w;x++) {
             Uint32 pixel=0;Uint8 r,g,b,a;
@@ -5495,8 +5575,8 @@ void dos_capture_frame(const char *filename) {
             SDL_GetRGBA(pixel,fmt,SDL_GetSurfacePalette(surface),&r,&g,&b,&a);
             row[x*3]=b;row[x*3+1]=g;row[x*3+2]=r;
         }
-        if(fwrite(row,1,stride,f)!=stride){fprintf(stderr,"DOS frame write failed\n");exit(1);}
+        if(fwrite(row,1,stride,f)!=stride){fprintf(stderr,"DOS capture row %s failed: %s\n",filename,strerror(errno));exit(1);}
     }
-    fclose(f);free(row);
+    if(fclose(f)){fprintf(stderr,"DOS capture close %s failed: %s\n",filename,strerror(errno));exit(1);}
 }
 #endif

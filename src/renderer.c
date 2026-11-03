@@ -32,6 +32,8 @@
 #include "renderer_fixed.h"
 #ifdef AB3D_DOS
 #include "platform_dos.h"
+#include "raster_dos.h"
+#include "objects_dos.h"
 #endif
 #include "renderer_alloc.h"
 #include "renderer_3dobj.h"
@@ -238,23 +240,39 @@ static int g_renderer_rgb_raster_expand = 0;
 static int s_weapon_post_gl_active = 0;
 #if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
 static SDL_Surface *g_dos_gun_frames[32],*g_dos_gun_targets[2];
+#ifdef AB3D_NATIVE_RGB565
+static SDL_Palette *g_dos_gun_palette;
+#define DOS_GUN_CACHE_KEY 0
+#else
+#define DOS_GUN_CACHE_KEY DOS_PIXEL_KEY
+#endif
 static SDL_Rect g_dos_gun_crops[32];
+static uint8_t *g_dos_gun_pixels;
 static unsigned char g_dos_gun_empty[32];
 static RendererPixel *g_dos_gun_target_pixels[2];
-static int g_dos_gun_width,g_dos_gun_height,g_dos_gun_next_target,g_dos_gun_cached_weapon=-1;
-static void renderer_dos_release_gun_frames(void)
+static int g_dos_gun_width,g_dos_gun_height,g_dos_gun_next_target,g_dos_gun_cached_slot=-1;
+static void renderer_dos_clear_gun_surfaces(void)
 {
     for(int i=0;i<32;i++) {
         if(g_dos_gun_frames[i])SDL_DestroySurface(g_dos_gun_frames[i]);
         g_dos_gun_frames[i]=NULL;
-        g_dos_gun_empty[i]=0;g_dos_gun_crops[i]=(SDL_Rect){0};
     }
+    g_dos_gun_cached_slot=-1;
+}
+void renderer_dos_release_gun_frames(void)
+{
+    renderer_dos_clear_gun_surfaces();
     for(int i=0;i<2;i++) {
         if(g_dos_gun_targets[i])SDL_DestroySurface(g_dos_gun_targets[i]);
         g_dos_gun_targets[i]=NULL;g_dos_gun_target_pixels[i]=NULL;
     }
-    g_dos_gun_width=g_dos_gun_height=g_dos_gun_next_target=0;
-    g_dos_gun_cached_weapon=-1;
+#ifdef AB3D_NATIVE_RGB565
+    SDL_DestroyPalette(g_dos_gun_palette);g_dos_gun_palette=NULL;
+#endif
+    g_dos_gun_next_target=0;
+    free(g_dos_gun_pixels);g_dos_gun_pixels=NULL;
+    g_dos_gun_width=g_dos_gun_height=0;
+    memset(g_dos_gun_empty,0,sizeof(g_dos_gun_empty));
 }
 #endif
 static int s_gl_water_tint_post_active = 0;
@@ -346,13 +364,22 @@ static inline int renderer_proj_effective_base_width_from_dims(int w, int h)
 {
     if (w < 1) w = 1;
     if (h < 1) h = 1;
+#ifdef AB3D_DOS
+    static int cached_w = -1, cached_h = -1, cached_base;
+    if (w == cached_w && h == cached_h) return cached_base;
+    cached_w = w; cached_h = h;
+#endif
     {
-        int64_t scaled = ((int64_t)w * (int64_t)RENDER_DEFAULT_HEIGHT + (int64_t)h / 2) / (int64_t)h;
+        int64_t scaled = renderer_divide_i64_i32((int64_t)w * RENDER_DEFAULT_HEIGHT + h / 2, h);
         if (scaled < 1) scaled = 1;
         if (scaled > INT_MAX) scaled = INT_MAX;
         w = (int)scaled;
     }
-    return renderer_clamp_base_width(w);
+    w = renderer_clamp_base_width(w);
+#ifdef AB3D_DOS
+    cached_base = w;
+#endif
+    return w;
 }
 
 static inline int renderer_proj_effective_base_width_from_state(const GameState *state)
@@ -372,9 +399,16 @@ static inline int renderer_proj_x_scale_px_for_state(const RendererState *r, con
     if (state) base_w = renderer_proj_effective_base_width_from_state(state);
     else base_w = renderer_clamp_base_width(g_proj_base_width);
     int cur_w = (r && r->width > 0) ? r->width : base_w;
-    int64_t s = ((int64_t)RENDER_SCALE * (int64_t)cur_w + (int64_t)base_w / 2) / (int64_t)base_w;
+#ifdef AB3D_DOS
+    static int cached_w = -1, cached_base = -1, cached_scale;
+    if (cur_w == cached_w && base_w == cached_base) return cached_scale;
+#endif
+    int64_t s = renderer_divide_i64_i32((int64_t)RENDER_SCALE * cur_w + base_w / 2, base_w);
     if (s < 1) s = 1;
     if (s > INT_MAX) s = INT_MAX;
+#ifdef AB3D_DOS
+    cached_w = cur_w; cached_base = base_w; cached_scale = (int)s;
+#endif
     return (int)s;
 }
 
@@ -384,8 +418,16 @@ static inline int64_t renderer_proj_x_scale_fp16_for_state(const RendererState *
     if (state) base_w = renderer_proj_effective_base_width_from_state(state);
     else base_w = renderer_clamp_base_width(g_proj_base_width);
     int cur_w = (r && r->width > 0) ? r->width : base_w;
-    int64_t s = (((int64_t)RENDER_SCALE * (int64_t)cur_w) << 16) / (int64_t)base_w;
+#ifdef AB3D_DOS
+    static int cached_w = -1, cached_base = -1;
+    static int64_t cached_scale;
+    if (cur_w == cached_w && base_w == cached_base) return cached_scale;
+#endif
+    int64_t s = renderer_divide_i64_i32((int64_t)RENDER_SCALE * cur_w * 65536, base_w);
     if (s < (1LL << 16)) s = (1LL << 16);
+#ifdef AB3D_DOS
+    cached_w = cur_w; cached_base = base_w; cached_scale = s;
+#endif
     return s;
 }
 
@@ -445,6 +487,13 @@ typedef struct {
     uint64_t sprite_pixels_tested;
     uint64_t sprite_pixels_drawn;
     uint64_t ticks_sprite;
+    uint64_t ticks_objects;
+    uint64_t ticks_backdrop;
+    uint64_t ticks_floor_geometry;
+    uint64_t ticks_object_select;
+    uint64_t ticks_occluder;
+    uint64_t ticks_wall_kernel;
+    uint64_t ticks_wall_rows;
 } RendererWorkloadStats;
 
 #define RENDERER_F2_MAX_SPRITE_LOG_ENTRIES 768
@@ -1324,6 +1373,15 @@ static uint8_t automap_level_key_mask(const LevelState *level)
 static const uint16_t k_automap_key_ptr_off[4] = { 0u, 0u, 32u * 4u, 32u * 4u };
 static const uint16_t k_automap_key_down_strip[4] = { 0u, 32u, 0u, 32u };
 
+static inline uint16_t sprite_palette_read_c12(const uint8_t *p)
+{
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    return renderer_pixel_to_c12(renderer_pixel_from_palette(p));
+#else
+    return (uint16_t)((p[0] << 8) | p[1]);
+#endif
+}
+
 static uint32_t automap_c12_saturation(uint16_t c12)
 {
     uint32_t r = (uint32_t)((c12 >> 8) & 0xFu);
@@ -1388,7 +1446,7 @@ static AB3D_ATTR_UNUSED uint16_t automap_key_frame_representative_c12(const Rend
             if (texel == 0) continue;
             uint32_t ci = pal_level_off + (uint32_t)texel * 2u;
             if (ci + 1u >= pal_size) continue;
-            uint16_t c12 = (uint16_t)((pal[ci] << 8) | pal[ci + 1u]);
+            uint16_t c12 = sprite_palette_read_c12(pal + ci);
             uint32_t sat = automap_c12_saturation(c12);
             uint32_t luma = (uint32_t)((c12 >> 8) & 0xFu) + (uint32_t)((c12 >> 4) & 0xFu) + (uint32_t)(c12 & 0xFu);
             if (sat > best_sat || (sat == best_sat && luma > best_luma)) {
@@ -1654,6 +1712,30 @@ static uint8_t automap_door_key_for_wall_gfx_off(const LevelState *level, uint32
     }
 }
 
+static void automap_refresh_seen_wall(LevelState *level, AutomapSeenWall *wall,
+                                       int16_t zone_id, uint8_t is_door, uint8_t door_key_id)
+{
+    if (is_door) {
+        wall->is_door = 1;
+        wall->door_key_id = door_key_id;
+    }
+    uint16_t meta = wall->reserved;
+    if (zone_id >= 0) meta = automap_meta_set_zone_hint(meta, zone_id);
+    if (!automap_meta_internal_known(meta)) {
+        int is_internal = automap_segment_is_internal_connected(level,
+                                                               wall->x1, wall->z1,
+                                                               wall->x2, wall->z2);
+        meta = automap_meta_set_internal(meta, is_internal);
+    }
+    wall->reserved = meta;
+}
+
+#ifdef AB3D_DOS
+/* Recheck the current hash bucket and complete wall identity on every hit.
+ * Hash rebuilds, array growth, resets and reloads cannot retain a stale hit. */
+static uint32_t g_dos_seen_wall_slots[256];
+#endif
+
 static void automap_mark_seen_locked(LevelState *level,
                                      uint32_t gfx_off,
                                      int16_t zone_id,
@@ -1676,6 +1758,21 @@ static void automap_mark_seen_locked(LevelState *level,
         }
     }
 
+#ifdef AB3D_DOS
+    uint32_t *cached_slot = &g_dos_seen_wall_slots[(gfx_off >> 1) & 255];
+    uint32_t slot = *cached_slot;
+    uint32_t cached = slot && slot <= level->automap_seen_hash_cap
+        ? level->automap_seen_hash[slot - 1] : 0;
+    if (cached && cached <= level->automap_seen_count) {
+        AutomapSeenWall *wall = &level->automap_seen_walls[cached - 1];
+        if (wall->gfx_off == gfx_off &&
+            ((wall->x1 == x1 && wall->z1 == z1 && wall->x2 == x2 && wall->z2 == z2) ||
+             (wall->x1 == x2 && wall->z1 == z2 && wall->x2 == x1 && wall->z2 == z1))) {
+            automap_refresh_seen_wall(level, wall, zone_id, is_door, door_key_id);
+            return;
+        }
+    }
+#endif
     uint32_t key_plus1 = renderer_automap_seen_key_plus1(gfx_off, x1, z1, x2, z2);
     uint32_t cap = level->automap_seen_hash_cap;
     uint32_t mask = cap - 1u;
@@ -1690,21 +1787,10 @@ static void automap_mark_seen_locked(LevelState *level,
                 uint32_t ek = renderer_automap_seen_key_plus1(ew->gfx_off, ew->x1, ew->z1, ew->x2, ew->z2);
                 if (ek == key_plus1) {
                     /* Existing entry: refresh metadata so stale color assignments self-heal. */
-                    if (is_door) {
-                        ew->is_door = 1;
-                        ew->door_key_id = door_key_id;
-                    }
-                    {
-                        uint16_t meta = ew->reserved;
-                        if (zone_id >= 0) meta = automap_meta_set_zone_hint(meta, zone_id);
-                        if (!automap_meta_internal_known(meta)) {
-                            int is_internal = automap_segment_is_internal_connected(level,
-                                                                                   ew->x1, ew->z1,
-                                                                                   ew->x2, ew->z2);
-                            meta = automap_meta_set_internal(meta, is_internal);
-                        }
-                        ew->reserved = meta;
-                    }
+#ifdef AB3D_DOS
+                    *cached_slot = h + 1;
+#endif
+                    automap_refresh_seen_wall(level, ew, zone_id, is_door, door_key_id);
                     return; /* already seen */
                 }
             }
@@ -1729,6 +1815,9 @@ static void automap_mark_seen_locked(LevelState *level,
     }
 
     level->automap_seen_hash[h] = level->automap_seen_count;
+#ifdef AB3D_DOS
+    *cached_slot = h + 1;
+#endif
 }
 
 static AB3D_ATTR_UNUSED void automap_mark_seen(LevelState *level,
@@ -1801,8 +1890,22 @@ int renderer_key_sprite_frame_for_condition_bit(const GameState *state, int bit_
 uintptr_t renderer_key_sprite_hud_cache_tag(const GameState *state)
 {
     if (!state) return 0;
+#ifdef AB3D_DOS
+    /* Frame bitmaps depend on shared sprite assets. Per-level key-to-frame
+     * selection is separate and must not discard the prepared bitmaps. */
+    return automap_key_cache_tag_for_level(NULL);
+#else
     return automap_key_cache_tag_for_level(&state->level);
+#endif
 }
+
+#ifdef AB3D_DOS
+void renderer_key_sprite_condition_frames(const GameState *state,int frames[4])
+{
+    automap_refresh_key_bit_colors(&state->level);
+    for(int i=0;i<4;i++)frames[i]=g_automap_key_bit_frame_idx[i];
+}
+#endif
 
 /* Rasterize key sprite type 5 frame (0..3) to ARGB8888; texel 0 = transparent. Matches automap sampling. */
 int renderer_key_sprite_rasterize_frame_argb(int frame_index, uint32_t *out, int stride_pixels)
@@ -1865,7 +1968,7 @@ int renderer_key_sprite_rasterize_frame_argb(int frame_index, uint32_t *out, int
                 *dst = 0;
                 continue;
             }
-            uint16_t c12 = (uint16_t)((pal[ci] << 8) | pal[ci + 1u]);
+            uint16_t c12 = sprite_palette_read_c12(pal + ci);
             uint32_t argb = amiga12_to_argb(c12);
             *dst = (argb & 0x00FFFFFFu) | 0xFF000000u;
         }
@@ -2394,12 +2497,16 @@ static int renderer_thread_worker_main(void *userdata)
                     int h = g_renderer.height;
                     if (h > 0) {
                         (void)renderer_poly_edge_ensure_h(h);
+#if AB3D_ENABLE_FLOOR_COL_FAST && AB3D_CW_COL_MAJOR
                         (void)renderer_floor_fast_ensure_rows_capacity(h);
+#endif
                     }
                     if (w > 0) {
+#if AB3D_ENABLE_FLOOR_COL_FAST && AB3D_CW_COL_MAJOR
                         (void)renderer_poly_col_ensure_w(w);
-                        (void)renderer_viewer_floor_occlude_get_scratch(w);
                         (void)renderer_floor_fast_ensure_cols_capacity(w);
+#endif
+                        (void)renderer_viewer_floor_occlude_get_scratch(w);
                     }
                 }
                 renderer_draw_world_slice(state, world_zone_prepass,
@@ -3136,6 +3243,13 @@ static void renderer_workload_stats_add(RendererWorkloadStats *dst, const Render
     dst->sprite_pixels_tested += src->sprite_pixels_tested;
     dst->sprite_pixels_drawn += src->sprite_pixels_drawn;
     dst->ticks_sprite += src->ticks_sprite;
+    dst->ticks_objects += src->ticks_objects;
+    dst->ticks_backdrop += src->ticks_backdrop;
+    dst->ticks_floor_geometry += src->ticks_floor_geometry;
+    dst->ticks_object_select += src->ticks_object_select;
+    dst->ticks_occluder += src->ticks_occluder;
+    dst->ticks_wall_kernel += src->ticks_wall_kernel;
+    dst->ticks_wall_rows += src->ticks_wall_rows;
 }
 
 static void renderer_workload_stats_diff(RendererWorkloadStats *dst,
@@ -3166,6 +3280,13 @@ static void renderer_workload_stats_diff(RendererWorkloadStats *dst,
     dst->sprite_pixels_tested = after->sprite_pixels_tested - before->sprite_pixels_tested;
     dst->sprite_pixels_drawn = after->sprite_pixels_drawn - before->sprite_pixels_drawn;
     dst->ticks_sprite = after->ticks_sprite - before->ticks_sprite;
+    dst->ticks_objects = after->ticks_objects - before->ticks_objects;
+    dst->ticks_backdrop = after->ticks_backdrop - before->ticks_backdrop;
+    dst->ticks_floor_geometry = after->ticks_floor_geometry - before->ticks_floor_geometry;
+    dst->ticks_object_select = after->ticks_object_select - before->ticks_object_select;
+    dst->ticks_occluder = after->ticks_occluder - before->ticks_occluder;
+    dst->ticks_wall_kernel = after->ticks_wall_kernel - before->ticks_wall_kernel;
+    dst->ticks_wall_rows = after->ticks_wall_rows - before->ticks_wall_rows;
 }
 
 static uint64_t renderer_workload_estimated_writes(const RendererWorkloadStats *stats)
@@ -3431,6 +3552,15 @@ static void renderer_profile_maybe_report(uint64_t now)
              avg_wall_side_px, avg_wall_cap_px, avg_wall_ext_pct, avg_wall_ms_per_mpx);
          printf("[RPROF] floor(avg): px=%.0f fast_px=%.0f fast_spans=%.0f fast=%.0f%% efficiency=%.3f ms/Mfloorpx\n",
              avg_floor_px, avg_floor_fast_px, avg_floor_fast_spans, avg_floor_fast_pct, avg_floor_ms_per_mpx);
+        printf("[RPROF] world setup(avg): objects=%.3fms (includes sprites) backdrop=%.3fms\n",
+               g_renderer_profile.workload_totals.ticks_objects * 1000.0 / (freq * frames),
+               g_renderer_profile.workload_totals.ticks_backdrop * 1000.0 / (freq * frames));
+        printf("[RPROF] detail(avg): floor_geometry=%.3f object_select=%.3f occluder=%.3f wall_kernel=%.3f wall_rows=%.3f ms\n",
+               g_renderer_profile.workload_totals.ticks_floor_geometry * 1000.0 / (freq * frames),
+               g_renderer_profile.workload_totals.ticks_object_select * 1000.0 / (freq * frames),
+               g_renderer_profile.workload_totals.ticks_occluder * 1000.0 / (freq * frames),
+               g_renderer_profile.workload_totals.ticks_wall_kernel * 1000.0 / (freq * frames),
+               g_renderer_profile.workload_totals.ticks_wall_rows * 1000.0 / (freq * frames));
         if (g_renderer_profile.worst_total_ms > 0.0) {
             printf("[RPROF] worst frame=%llu total=%.3fms setup=%.3f world=%.3f tint=%.3f gun=%.3f swap=%.3f prepass=%d/%d clip_px=%d workers(world/tint)=%d/%d writes=%llu overdraw=%.2fx wall_px=%llu floor_px=%llu water_px=%llu sprite_draw=%llu sprite_test=%llu sprite_wall_occ=%llu sprite_spill_occ=%llu water=%s\n",
                    (unsigned long long)g_renderer_profile.worst_frame_idx,
@@ -3839,13 +3969,85 @@ static inline int64_t project_x_to_pixels_wide(int32_t vx, int32_t vz)
     if (center_x < 0 || center_x >= w)
         center_x = (w * 47) / 96;
     int proj_x = renderer_proj_x_scale_px();
-    return ((int64_t)vx * (int64_t)proj_x * (1 << ROT_Z_FRAC_BITS)) / vz + center_x;
+    return renderer_divide_i64_i32((int64_t)vx * proj_x * (1 << ROT_Z_FRAC_BITS), vz) + center_x;
 }
 
 static inline int project_x_to_pixels(int32_t vx, int32_t vz)
 {
     return (int)project_x_to_pixels_wide(vx, vz);
 }
+
+#ifdef AB3D_DOS
+static int g_dos_level_projection_active;
+static RendererRoundCache g_dos_y_projection_cache;
+#endif
+
+/* Shared vertices recur in portal clips and floor/ceiling edges. DOS reuses
+ * the unused legacy on_screen storage, retaining the exact division result.
+ * Near-clipped endpoints use the ordinary projection instead. */
+static inline int64_t project_level_point_x_wide(int index)
+{
+    RendererState *r = &g_renderer;
+#ifdef AB3D_DOS
+    int current = g_dos_level_projection_active && r->rotate_stamp &&
+        r->rotated_stamp[index] == r->rotate_stamp;
+    if (current && r->point_screen_x[index] != INT32_MIN)
+        return r->point_screen_x[index];
+#endif
+    int64_t x = project_x_to_pixels_wide(r->rotated[index].x, r->rotated[index].z);
+#ifdef AB3D_DOS
+    /* Very near water vertices can project beyond signed 32 bits. Preserve
+     * those wide results without assigning a truncated cache entry. */
+    if (current && x > INT32_MIN && x <= INT32_MAX)
+        r->point_screen_x[index] = (int32_t)x;
+#endif
+    return x;
+}
+
+#ifdef AB3D_DOS
+void renderer_dos_check_projection_cache(void)
+{
+    RendererState *r = &g_renderer;
+    const int index = MAX_POINTS - 1;
+    RotatedPoint saved_point = r->rotated[index];
+    int32_t saved_x = r->point_screen_x[index];
+    uint32_t saved_stamp = r->rotated_stamp[index], saved_frame = r->rotate_stamp;
+    int saved_active = g_dos_level_projection_active, saved_center = r->view_center_x;
+    static const int32_t xs[] = {INT32_MIN, -4194304, -65537, -1, 0, 1, 65537, 4194303, INT32_MAX};
+    static const int32_t zs[] = {-1, 0, 1, 2, 3, 127, 255, 256, 257, 65535, INT32_MAX};
+    unsigned checked = 0;
+    r->view_center_x = 0;
+    for (int mode = 0; mode < 4; mode++) {
+        for (unsigned x = 0; x < sizeof(xs) / sizeof(*xs); x++) {
+            for (unsigned z = 0; z <= sizeof(zs) / sizeof(*zs); z++) {
+                r->rotated[index].x = xs[x];
+                r->rotated[index].z = z < sizeof(zs) / sizeof(*zs) ? zs[z]
+                    : renderer_proj_x_scale_px() * (1 << ROT_Z_FRAC_BITS);
+                r->rotate_stamp = mode == 3 ? 0 : 1;
+                r->rotated_stamp[index] = mode == 2 ? 2 : r->rotate_stamp;
+                g_dos_level_projection_active = mode != 1;
+                r->point_screen_x[index] = mode == 0 ? INT32_MIN : 13;
+                int64_t expected = project_x_to_pixels_wide(r->rotated[index].x, r->rotated[index].z);
+                int32_t expected_cache = mode != 0 ? 13
+                    : expected > INT32_MIN && expected <= INT32_MAX ? (int32_t)expected : INT32_MIN;
+                if (project_level_point_x_wide(index) != expected ||
+                    project_level_point_x_wide(index) != expected ||
+                    r->point_screen_x[index] != expected_cache) {
+                    fprintf(stderr, "DOS level-point projection cache mismatch\n"); exit(1);
+                }
+                checked++;
+            }
+        }
+    }
+    r->rotated[index] = saved_point;
+    r->point_screen_x[index] = saved_x;
+    r->rotated_stamp[index] = saved_stamp;
+    r->rotate_stamp = saved_frame;
+    r->view_center_x = saved_center;
+    g_dos_level_projection_active = saved_active;
+    printf("[DOSCHECK] %u level-point projection cache cases match uncached results, including stale and wide inputs\n", checked);
+}
+#endif
 
 /* Project world Y to current render pixel-space Y using nearest-pixel rounding.
  * Matching wall/floor rounding avoids 1px seams along shared edges.
@@ -3854,8 +4056,12 @@ static inline int project_y_to_pixels_round(int32_t vy, int32_t vz, int32_t proj
 {
     int64_t den = (vz > 0) ? (int64_t)vz : 1;
     int64_t num = ((int64_t)vy * (int64_t)proj_y_scale * (int64_t)RENDER_SCALE) << ROT_Z_FRAC_BITS;
-    int64_t q = (num >= 0) ? ((num + den / 2) / den) : ((num - den / 2) / den);
+#ifdef AB3D_DOS
+    return renderer_divide_round_cached(&g_dos_y_projection_cache, num, (int32_t)den) + center_y;
+#else
+    int64_t q = renderer_divide_i64_i32(num >= 0 ? num + den / 2 : num - den / 2, (int32_t)den);
     return (int)q + center_y;
+#endif
 }
 
 /* Inverse of rotate_one_point and project_x/y_to_pixels, using the active
@@ -3879,9 +4085,16 @@ int renderer_unproject_plane(int x, int y, int32_t plane_y, double *out_x, doubl
  * through projection instead of rounding a whole half-screen to the horizon. */
 static inline int project_water_y_to_pixels(int32_t vy, int32_t vz, int32_t proj_y_scale, int center_y)
 {
+#ifdef AB3D_DOS
+    _Static_assert(ROT_Z_FRAC_BITS == WORLD_Y_FRAC_BITS, "Water projection requires equal Y/Z fractional bits");
+    /* Cancel equal coordinate scales before dividing. Odd depths retain
+     * exactly the same nearest-integer rounding as the expanded fraction. */
+    return renderer_divide_round_cached(&g_dos_y_projection_cache, (int64_t)vy * proj_y_scale * RENDER_SCALE, vz) + center_y;
+#else
     int64_t den = (int64_t)vz * (1 << WORLD_Y_FRAC_BITS);
     int64_t num = (int64_t)vy * proj_y_scale * RENDER_SCALE * (1 << ROT_Z_FRAC_BITS);
     return (int)((num >= 0 ? num + den / 2 : num - den / 2) / den) + center_y;
+#endif
 }
 
 static int renderer_water_contains_eye(const LevelState *level, const int16_t *points, int count)
@@ -4069,10 +4282,8 @@ static inline void renderer_floor_prepare_row_math(FloorRowMath *row_math,
         int64_t den = ((int64_t)common->width << FLOOR_STEP_SHIFT);
         int64_t num_u = (int64_t)d1 * (int64_t)common->base_w;
         int64_t num_v = (int64_t)d2 * (int64_t)common->base_w;
-        if (num_u >= 0) u_step = (int32_t)((num_u + den / 2) / den);
-        else            u_step = (int32_t)((num_u - den / 2) / den);
-        if (num_v >= 0) v_step = (int32_t)((num_v + den / 2) / den);
-        else            v_step = (int32_t)((num_v - den / 2) / den);
+        u_step = (int32_t)renderer_divide_i64_i32(num_u >= 0 ? num_u + den / 2 : num_u - den / 2, (int32_t)den);
+        v_step = (int32_t)renderer_divide_i64_i32(num_v >= 0 ? num_v + den / 2 : num_v - den / 2, (int32_t)den);
     }
 
     {
@@ -4486,17 +4697,21 @@ static void floor_span_prepare_pal_cache(RenderSliceContext *ctx,
 
     if (!ctx->floor_pal_cache_valid[level]) {
         const uint8_t *lut = pal_lut_src + level * 512;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+        ctx->floor_pal_cw_levels[level] = (const RendererPixel *)(const void *)lut;
+#else
         for (int ti = 0; ti < 256; ti++) {
             uint16_t cw = (uint16_t)((lut[ti * 2] << 8) | lut[ti * 2 + 1]);
             ctx->floor_span_cw_cache[level][ti] = renderer_pixel_from_c12(cw);
             if(g_renderer_rgb_raster_expand)ctx->floor_span_rgb_cache[level][ti] = amiga12_to_argb(cw);
         }
-        ctx->floor_pal_cache_valid[level] = 1;
         ctx->floor_pal_cw_levels[level] = ctx->floor_span_cw_cache[level];
+#endif
+        ctx->floor_pal_cache_valid[level] = 1;
         ctx->floor_pal_rgb_levels[level] = g_renderer_rgb_raster_expand?ctx->floor_span_rgb_cache[level]:NULL;
     }
 
-    *cw_out = ctx->floor_span_cw_cache[level];
+    *cw_out = ctx->floor_pal_cw_levels[level];
 }
 
 static void floor_span_prepare_pal_cache_all_levels(RenderSliceContext *ctx,
@@ -4607,9 +4822,10 @@ static void free_buffers(void)
     g_renderer.rgb_buffer = NULL;
     ab3d_aligned_free(g_renderer.rgb_back_buffer);
     g_renderer.rgb_back_buffer = NULL;
+    if(g_renderer.cw_back_buffer!=g_renderer.cw_buffer)
+        ab3d_aligned_free(g_renderer.cw_back_buffer);
     ab3d_aligned_free(g_renderer.cw_buffer);
     g_renderer.cw_buffer = NULL;
-    ab3d_aligned_free(g_renderer.cw_back_buffer);
     g_renderer.cw_back_buffer = NULL;
     ab3d_aligned_free(g_pick_zone_buffer);
     g_pick_zone_buffer = NULL;
@@ -4685,7 +4901,14 @@ static void allocate_buffers(int w, int h)
 
     size_t cw_size = buf_size * sizeof(RendererPixel);
     g_renderer.cw_buffer = (RendererPixel *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
+#ifdef AB3D_DOS
+    /* DOS renders synchronously. AB3DI's water sampling reads the current
+     * canvas, so retaining it directly also preserves RENDER_CLEAR=0 history.
+     * The independent SDL display surface receives the completed image. */
+    g_renderer.cw_back_buffer = g_renderer.cw_buffer;
+#else
     g_renderer.cw_back_buffer = (RendererPixel *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
+#endif
 
 #ifndef AB3D_DOS
     g_pick_zone_buffer = (uint16_t *)ab3d_aligned_calloc(AB3D_CACHE_LINE_SIZE, 1, cw_size);
@@ -4731,10 +4954,12 @@ static void allocate_buffers(int w, int h)
      * rendering does not need first-use allocations. Worker-thread scratch is
      * still grown lazily on each worker thread. */
     (void)renderer_poly_edge_ensure_h(h);
-    (void)renderer_poly_col_ensure_w(w);
     (void)renderer_viewer_floor_occlude_get_scratch(w);
+#if AB3D_ENABLE_FLOOR_COL_FAST && AB3D_CW_COL_MAJOR
+    (void)renderer_poly_col_ensure_w(w);
     (void)renderer_floor_fast_ensure_rows_capacity(h);
     (void)renderer_floor_fast_ensure_cols_capacity(w);
+#endif
 }
 
 void renderer_init(int width, int height)
@@ -4863,7 +5088,8 @@ void renderer_clear_frame_history(void)
     renderer_clear_rgb_history_buffer(g_renderer.rgb_buffer, w, h);
     renderer_clear_rgb_history_buffer(g_renderer.rgb_back_buffer, w, h);
     renderer_clear_cw_history_buffer(g_renderer.cw_buffer, w, h);
-    renderer_clear_cw_history_buffer(g_renderer.cw_back_buffer, w, h);
+    if(g_renderer.cw_back_buffer!=g_renderer.cw_buffer)
+        renderer_clear_cw_history_buffer(g_renderer.cw_back_buffer, w, h);
 
     if (g_pick_zone_buffer) memset(g_pick_zone_buffer, 0xFF, cw_size);
     if (g_pick_zone_back_buffer) memset(g_pick_zone_back_buffer, 0xFF, cw_size);
@@ -4917,7 +5143,7 @@ void renderer_clear(uint8_t color)
 
 static void renderer_prefill_current_color_from_previous_frame(void)
 {
-#if !RENDER_CLEAR
+#if !RENDER_CLEAR && !defined(AB3D_DOS)
     int w = g_renderer.width;
     int h = g_renderer.height;
     if (w <= 0 || h <= 0) return;
@@ -4984,6 +5210,17 @@ static void sky_build_lut_from_rgb768(const uint8_t *rgb_palette_768)
     }
 }
 
+static inline uint16_t sky_read_word(const uint8_t *p)
+{
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    return *(const uint16_t *)(const void *)p;
+#elif defined(AB3D_DOS_INDEXED)
+    return renderer_pixel_from_be(p);
+#else
+    return (uint16_t)((p[0]<<8)|p[1]);
+#endif
+}
+
 static inline uint16_t sky_fetch_cw_mode0(int tx, int ty)
 {
     if (tx < 0) tx = 0;
@@ -4997,11 +5234,7 @@ static inline uint16_t sky_fetch_cw_mode0(int tx, int ty)
         off = (size_t)tx * (size_t)s_sky_bytes_per_col + (size_t)ty * 2u;
     }
     if (off + 1u >= s_sky_data_bytes) return renderer_pixel_from_c12(0x0FFFu);
-    #ifdef AB3D_DOS_INDEXED
-    return renderer_pixel_from_be(s_sky_pixels+off);
-#else
-    return (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1u]);
-#endif
+    return sky_read_word(s_sky_pixels+off);
 }
 
 /* Unchecked: tx, ty must be in [0,tw-1] x [0,th-1] and off in bounds (bilinear inner loop). */
@@ -5013,11 +5246,7 @@ static inline uint16_t sky_fetch_cw_mode0_uc(int tx, int ty)
     } else {
         off = (size_t)tx * (size_t)s_sky_bytes_per_col + (size_t)ty * 2u;
     }
-    #ifdef AB3D_DOS_INDEXED
-    return renderer_pixel_from_be(s_sky_pixels+off);
-#else
-    return (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1u]);
-#endif
+    return sky_read_word(s_sky_pixels+off);
 }
 
 static AB3D_ATTR_UNUSED inline uint32_t sky_fetch_argb_mode0(int tx, int ty)
@@ -5069,11 +5298,16 @@ void renderer_set_sky_assets(uint8_t *chunky_pixels, int tex_w, int tex_h, size_
 #ifdef AB3D_NATIVE_RGB565
     if(chunky_pixels && tex_w==432 && data_bytes%432u==0 &&
        (data_bytes/432u)%2u==0 && !(data_bytes==32832u && tex_h==76)) {
-        /* IO owns this mutable asset for the session. Convert in place once. */
+        /* IO owns this mutable asset for the session. Convert in place once.
+         * DOS also prepares host byte order, removing swaps while drawing. */
+#ifdef AB3D_DOS
+        renderer_pixel_prepare_palette(chunky_pixels,data_bytes);
+#else
         for(size_t i=0;i+1<data_bytes;i+=2) {
             uint16_t color=renderer_pixel_from_be(chunky_pixels+i);
             chunky_pixels[i]=(uint8_t)(color>>8);chunky_pixels[i+1]=(uint8_t)color;
         }
+#endif
     }
 #endif
     s_sky_pixels = chunky_pixels;
@@ -5284,10 +5518,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
                     if (s_sky_row_major) off = (size_t)rpix * row_stride + (size_t)c * 2u;
                     else                 off = (size_t)c * (size_t)bpc + (size_t)rpix * 2u;
                     if (off + 2u > s_sky_data_bytes) continue;
-                    uint16_t cw12 = (uint16_t)((s_sky_pixels[off] << 8) | s_sky_pixels[off + 1u]);
-#ifdef AB3D_DOS_INDEXED
-                    cw12 = renderer_pixel_from_c12(cw12);
-#endif
+                    uint16_t cw12 = sky_read_word(s_sky_pixels+off);
                     size_t p = row + (size_t)x;
                     RENDER_TAG_STORE(buf[p], 0);
                     if (g_renderer_rgb_raster_expand)
@@ -5799,7 +6030,10 @@ static void rotate_one_point(RendererState *r, const uint8_t *pts, int idx)
     r->rotated[idx].x = vx_fine;
     r->rotated[idx].z = vz >> (16 - ROT_Z_FRAC_BITS);
 
-    /* Legacy on_screen: Amiga 96-column projection (kept for portal clip code). */
+#ifdef AB3D_DOS
+    r->point_screen_x[idx] = INT32_MIN;
+#else
+    /* Legacy 96-column projection. DOS clips in actual pixel coordinates. */
     int16_t vz16 = (int16_t)(vz >> 16);
     if (vz16 > 0) {
         int32_t screen_x = (vx_fine / vz16) + 47;
@@ -5809,6 +6043,7 @@ static void rotate_one_point(RendererState *r, const uint8_t *pts, int idx)
         r->on_screen[idx].screen_x = (int16_t)(((int16_t)vx_fine > 0) ? 96 : 0);
         r->on_screen[idx].flags = 1;
     }
+#endif
     r->rotated_stamp[idx] = r->rotate_stamp;
 }
 
@@ -5955,7 +6190,12 @@ void renderer_rotate_object_pts(GameState *state)
 /* Wall texture index for switches (io.c wall_texture_table). Must be before wall raster helpers. */
 #define SWITCHES_WALL_TEX_ID  11
 
-static void renderer_column_clip_add_span(int col, int top, int bot, int32_t z)
+#ifdef AB3D_DOS
+__attribute__((always_inline)) static inline
+#else
+static
+#endif
+void renderer_column_clip_add_span(int col, int top, int bot, int32_t z)
 {
     ColumnClip *clip = &g_renderer.clip;
     if (col < 0 || col >= g_renderer.width) return;
@@ -5969,6 +6209,27 @@ static void renderer_column_clip_add_span(int col, int top, int bot, int32_t z)
         top = bot;
         bot = t;
     }
+
+#ifdef AB3D_DOS
+    /* The common single-span case needs no temporary arrays or sorting.
+     * Keep the two-span merge/replacement policy below unchanged. */
+    if (clip->z2[col] == 0) {
+        int32_t first_z = clip->z[col];
+        if (first_z == 0) {
+            clip->top[col] = (int16_t)top;
+            clip->bot[col] = (int16_t)bot;
+            clip->z[col] = z;
+            return;
+        }
+        int first_top = clip->top[col], first_bot = clip->bot[col];
+        if (first_z > 0 && first_top <= first_bot && bot >= first_top - 1 && top <= first_bot + 1) {
+            if (top < first_top) clip->top[col] = (int16_t)top;
+            if (bot > first_bot) clip->bot[col] = (int16_t)bot;
+            if (z < first_z) clip->z[col] = z;
+            return;
+        }
+    }
+#endif
 
     int16_t tops[2] = { clip->top[col], clip->top2[col] };
     int16_t bots[2] = { clip->bot[col], clip->bot2[col] };
@@ -6390,6 +6651,97 @@ static void renderer_zone_trace_floor_stats_log(const RendererZoneTraceFloorStat
     }
 }
 
+static void renderer_wall_register_column(const RenderSliceContext *ctx, int x, int ct, int cb,
+                                          int32_t col_z, int extend_left, int extend_right)
+{
+    int occ_top = ct > ctx->top_clip ? ct - 1 : ct;
+    int occ_bot = cb + 1 <= ctx->bot_clip ? cb + 1 : cb;
+    renderer_column_clip_add_span(x, occ_top, occ_bot, col_z);
+    for (int side = -1; side <= 1; side += 2) {
+        if (side < 0 ? !extend_left : !extend_right) continue;
+        int32_t nz = renderer_column_clip_nearest_z_overlap(&g_renderer.clip, x + side, ct, cb);
+        if (nz > 0) {
+            int32_t dz = nz - col_z;
+            if (dz < 0) dz = -dz;
+            if (dz <= 3)
+                renderer_column_clip_add_span(x + side, ct, cb, nz < col_z ? nz : col_z);
+        }
+    }
+}
+
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+/* ScreenWallstripdraw at constant inverse Z: identical samples and painter
+ * order, gathered into rows for the unrotated DOS framebuffer. */
+static void renderer_wall_flat_rows(RenderSliceContext *ctx, int first, int last, int32_t inv_z,
+                                    int64_t tex_acc, int64_t tex_step_acc,
+                                    int64_t bright_acc, int64_t bright_step_acc,
+                                    int64_t top_proj, int64_t bot_proj, int64_t texture_height,
+                                    const uint8_t *texture, const uint8_t *pal,
+                                    int rows, int mask, int horand, int fromtile,
+                                    int32_t yoff, int d6_max)
+{
+    int center = renderer_view_center_y();
+    if (inv_z < 1) inv_z = 1;
+    int32_t z = (16777216u + (uint32_t)inv_z / 2) / (uint32_t)inv_z;
+    if (z < 1) z = 1;
+    int64_t n = top_proj * inv_z;
+    int top = renderer_project_round_24(n) + center;
+    n = bot_proj * inv_z;
+    int bot = renderer_project_round_24(n) + center;
+    if (bot <= top) bot = top + 1;
+    int clip_top = ctx->wall_top_clip >= 0 ? ctx->wall_top_clip : ctx->top_clip;
+    int clip_bot = ctx->wall_bot_clip >= 0 ? ctx->wall_bot_clip : ctx->bot_clip;
+    int ct = top < clip_top ? clip_top : top;
+    int cb = bot > clip_bot ? clip_bot : bot;
+    if (ct > cb) return;
+    int count = last - first + 1;
+    DosWallColumn columns[count];
+    /* The original negative packed-column shifts select palette entry zero. */
+    static const uint8_t zero_texels[768] = {0};
+    for (int i = 0; i < count; i++) {
+        int col = (renderer_wall_tex_column(tex_acc >> 16, inv_z) & horand) + fromtile;
+        int d6 = (z >> 7) + (int32_t)(bright_acc >> 32) * 2;
+        if (d6 < 0) d6 = 0;
+        if (d6 > d6_max) d6 = d6_max;
+        columns[i].palette = (const RendererPixel *)(const void *)(pal + wall_scale_table[d6]);
+        columns[i].texels = col >= 0 ? dos_wall_column(texture,col,rows) : zero_texels;
+        int left = i == 0 && first > ctx->slice_left;
+        int right = i == count - 1 && last + 1 < ctx->slice_right;
+        if (ctx->update_column_clip)
+            renderer_wall_register_column(ctx, first + i, ct, cb, z, left, right);
+        tex_acc += tex_step_acc;
+        bright_acc += bright_step_acc;
+    }
+    unsigned width = g_renderer.width;
+    RendererPixel *pixels = renderer_active_cw();
+    int32_t dy = (int32_t)renderer_divide_i64_i32(texture_height, bot - top);
+    uint32_t y = (uint32_t)(ct - top) * (uint32_t)dy + (uint32_t)yoff;
+    uint64_t kernel_start = ctx->profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
+    dos_raster_wall_rows(pixels + ct * width + first, count, cb - ct + 1, width,
+                         columns, y, dy, mask);
+    for (int row = ct; row <= cb; row++) {
+        RendererPixel *p = pixels + row * width;
+        if (first > ctx->slice_left) p[first - 1] = p[first];
+        if (last + 1 < ctx->slice_right) p[last + 1] = p[last];
+    }
+    if (ct > ctx->top_clip)
+        memcpy(pixels + (ct - 1) * width + first, pixels + ct * width + first, count * sizeof(*pixels));
+    if (cb + 1 <= ctx->bot_clip)
+        memcpy(pixels + (cb + 1) * width + first, pixels + cb * width + first, count * sizeof(*pixels));
+    if (ctx->profile_collect_stats) {
+        uint64_t elapsed = SDL_GetPerformanceCounter() - kernel_start;
+        ctx->workload_stats.ticks_wall_kernel += elapsed;
+        ctx->workload_stats.ticks_wall_rows += elapsed;
+        ctx->workload_stats.wall_columns += count;
+        ctx->workload_stats.wall_pixels_core += count * (cb - ct + 1);
+        ctx->workload_stats.wall_pixels_side_ext += (cb - ct + 1) *
+            ((first > ctx->slice_left) + (last + 1 < ctx->slice_right));
+        ctx->workload_stats.wall_pixels_cap_ext += count *
+            ((ct > ctx->top_clip) + (cb + 1 <= ctx->bot_clip));
+    }
+}
+#endif
+
 /* Wall column loop uses inverse-Z in 8.24 (INVZ_ONE). Projecting Y as world_y*K/z with an
  * integer z from z = INVZ_ONE/inv_z truncates twice vs. world_y*K*inv_z/INVZ_ONE (one divide).
  * The latter matches true perspective along the span and reduces stair-steps at floor/ceiling. */
@@ -6403,6 +6755,84 @@ static AB3D_ATTR_UNUSED int wall_proj_y_screen_invz(int16_t world_y, int64_t inv
         : ((num - INVZ_ONE / 2) / INVZ_ONE);
     return (int)q + height / 2;
 }
+
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+typedef struct {
+    int64_t inv_z, texture, brightness;
+    int64_t inv_z_step, texture_step, brightness_step;
+} DosWallInterpolants;
+
+/* ScreenWallstripdraw for native pixels. The caller proves the projection
+ * factors and inverse-Z fit signed 32 bits before selecting this loop.
+ * Products stay 64-bit; full subpixel interpolants and painter order remain. */
+__attribute__((noinline))
+static void renderer_wall_native_columns(RenderSliceContext *ctx, int first, int last,
+                                          const DosWallInterpolants *walk,
+                                          int32_t top_factor, int32_t bot_factor, uint32_t texture_height,
+                                          const uint8_t *texture, const uint8_t *pal,
+                                          int rows, unsigned mask, int horand, int fromtile,
+                                          uint32_t yoff, int d6_max)
+{
+    int width = g_renderer.width, center = renderer_view_center_y();
+    RendererPixel *pixels = renderer_active_cw();
+    int clip_top = ctx->wall_top_clip >= 0 ? ctx->wall_top_clip : ctx->top_clip;
+    int clip_bot = ctx->wall_bot_clip >= 0 ? ctx->wall_bot_clip : ctx->bot_clip;
+    int64_t inv_acc = walk->inv_z, tex_acc = walk->texture, bright_acc = walk->brightness;
+    for (int x = first; x <= last; x++) {
+        int32_t inv_z = (int32_t)(inv_acc >> 16);
+        if (inv_z < 1) inv_z = 1;
+        int32_t z = (16777216u + (uint32_t)inv_z / 2) / (uint32_t)inv_z;
+        if (z < 1) z = 1;
+        int shade = (z >> 7) + (int32_t)(bright_acc >> 32) * 2;
+        if (shade < 0) shade = 0;
+        if (shade > d6_max) shade = d6_max;
+        int top = renderer_project_round_24((int64_t)top_factor * inv_z) + center;
+        int bot = renderer_project_round_24((int64_t)bot_factor * inv_z) + center;
+        int col = (renderer_wall_tex_column(tex_acc >> 16, inv_z) & horand) + fromtile;
+        inv_acc += walk->inv_z_step;
+        tex_acc += walk->texture_step;
+        bright_acc += walk->brightness_step;
+        if (bot <= top) bot = top + 1;
+        int ct = top < clip_top ? clip_top : top;
+        int cb = bot > clip_bot ? clip_bot : bot;
+        int floor_occluded = 0;
+        if (ctx->foreground_floor_occlude_top && ctx->foreground_floor_occlude_top[x] <= cb) {
+            int occ = ctx->foreground_floor_occlude_top[x];
+            if (occ <= ct) continue;
+            cb = occ - 1;
+            floor_occluded = 1;
+        }
+        if (ct > cb) continue;
+        const RendererPixel *palette = (const void *)(pal + wall_scale_table[shade]);
+        static const uint8_t zero_texel;
+        const uint8_t *column = col < 0 ? &zero_texel : dos_wall_column(texture,col,rows);
+        unsigned row_mask = col < 0 ? 0 : mask;
+        uint32_t dy = texture_height / (uint32_t)(bot - top);
+        uint32_t y = (uint32_t)(ct - top) * dy + yoff;
+        int left = x == first && x > ctx->slice_left;
+        int right = x == last && x + 1 < ctx->slice_right;
+        RendererPixel *out = pixels + ct * width + x;
+        uint64_t start = ctx->profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
+        dos_raster_wall(out, cb - ct + 1, width, column, palette, y, dy, row_mask);
+        if (left) dos_raster_wall(out - 1, cb - ct + 1, width, column, palette, y, dy, row_mask);
+        if (right) dos_raster_wall(out + 1, cb - ct + 1, width, column, palette, y, dy, row_mask);
+        if (ct > ctx->top_clip) out[-width] = out[0];
+        if (!floor_occluded && cb + 1 <= ctx->bot_clip)
+            pixels[(cb + 1) * width + x] = pixels[cb * width + x];
+        if (ctx->profile_collect_stats) {
+            uint64_t count = cb - ct + 1;
+            ctx->workload_stats.ticks_wall_kernel += SDL_GetPerformanceCounter() - start;
+            ctx->workload_stats.wall_columns++;
+            ctx->workload_stats.wall_pixels_core += count;
+            ctx->workload_stats.wall_pixels_side_ext += count * (left + right);
+            ctx->workload_stats.wall_pixels_cap_ext +=
+                (ct > ctx->top_clip) + (!floor_occluded && cb + 1 <= ctx->bot_clip);
+        }
+        if (ctx->update_column_clip)
+            renderer_wall_register_column(ctx, x, ct, cb, z, left, right);
+    }
+}
+#endif
 
 /* -----------------------------------------------------------------------
  * Wall rendering — one entry per wall segment (not per screen column).
@@ -6424,7 +6854,6 @@ static void draw_wall_rasterize_segment(
     int16_t tex_id, int32_t texture_span_fp,
     int16_t d6_max)
 {
-    const int64_t INVZ_ONE = (1LL << 24);
     const int profile_collect_stats = (ctx && ctx->profile_collect_stats);
 
     uint8_t * AB3D_RESTRICT buf = renderer_active_buf();
@@ -6478,14 +6907,14 @@ static void draw_wall_rasterize_segment(
     const int64_t end_col = (int64_t)(draw_end - scr_x1);
     const int64_t draw_cols = end_col - start_col;
 
-    const int64_t inv_z_start = inv_z1_fp + (inv_z_delta_fp * start_col) / span;
-    const int64_t inv_z_end = inv_z1_fp + (inv_z_delta_fp * end_col) / span;
-    const int64_t tex_z_start = tex_over_z1_fp + (tex_over_z_delta_fp * start_col) / span;
-    const int64_t tex_z_end = tex_over_z1_fp + (tex_over_z_delta_fp * end_col) / span;
+    const int64_t inv_z_start = inv_z1_fp + renderer_divide_i64_i32(inv_z_delta_fp * start_col, span);
+    const int64_t inv_z_end = inv_z1_fp + renderer_divide_i64_i32(inv_z_delta_fp * end_col, span);
+    const int64_t tex_z_start = tex_over_z1_fp + renderer_divide_i64_i32(tex_over_z_delta_fp * start_col, span);
+    const int64_t tex_z_end = tex_over_z1_fp + renderer_divide_i64_i32(tex_over_z_delta_fp * end_col, span);
     const int64_t bright_start_fp = ((int64_t)left_brightness << 16) +
-                                    (((int64_t)bright_delta << 16) * start_col) / span;
+                                    renderer_divide_i64_i32(((int64_t)bright_delta << 16) * start_col, span);
     const int64_t bright_end_fp = ((int64_t)left_brightness << 16) +
-                                  (((int64_t)bright_delta << 16) * end_col) / span;
+                                  renderer_divide_i64_i32(((int64_t)bright_delta << 16) * end_col, span);
 
     int64_t inv_z_acc = inv_z_start << INTERP_SUB_BITS;
     int64_t tex_z_acc = tex_z_start << INTERP_SUB_BITS;
@@ -6494,16 +6923,36 @@ static void draw_wall_rasterize_segment(
     int64_t tex_z_step_acc = 0;
     int64_t bright_step_acc = 0;
     if (draw_cols > 0) {
-        inv_z_step_acc = ((inv_z_end - inv_z_start) << INTERP_SUB_BITS) / draw_cols;
-        tex_z_step_acc = ((tex_z_end - tex_z_start) << INTERP_SUB_BITS) / draw_cols;
-        bright_step_acc = ((bright_end_fp - bright_start_fp) << INTERP_SUB_BITS) / draw_cols;
+        inv_z_step_acc = renderer_divide_i64_i32((inv_z_end - inv_z_start) << INTERP_SUB_BITS, (int32_t)draw_cols);
+        tex_z_step_acc = renderer_divide_i64_i32((tex_z_end - tex_z_start) << INTERP_SUB_BITS, (int32_t)draw_cols);
+        bright_step_acc = renderer_divide_i64_i32((bright_end_fp - bright_start_fp) << INTERP_SUB_BITS, (int32_t)draw_cols);
     }
+
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    if (!inv_z_step_acc && has_tex_pal && !foreground_floor_occlude_top && !pick_capture_active) {
+        renderer_wall_flat_rows(ctx, draw_start, draw_end, (int32_t)inv_z_start,
+                                 tex_z_acc, tex_z_step_acc, bright_acc, bright_step_acc,
+                                 top_proj, bot_proj, h_shifted, texture, pal, rows, valand,
+                                 horand, fromtile, yoff_base_fp, d6_max);
+        return;
+    }
+    if (has_tex_pal && !pick_capture_active &&
+        top_proj >= INT32_MIN && top_proj <= INT32_MAX &&
+        bot_proj >= INT32_MIN && bot_proj <= INT32_MAX && h_shifted <= UINT32_MAX &&
+        inv_z_start >= 1 && inv_z_end >= 1 && inv_z_start <= INT32_MAX && inv_z_end <= INT32_MAX) {
+        DosWallInterpolants walk = {inv_z_acc, tex_z_acc, bright_acc,
+            inv_z_step_acc, tex_z_step_acc, bright_step_acc};
+        renderer_wall_native_columns(ctx, draw_start, draw_end, &walk,
+            (int32_t)top_proj, (int32_t)bot_proj, (uint32_t)h_shifted,
+            texture, pal, rows, valand, horand, fromtile, yoff_base_fp, d6_max);
+        return;
+    }
+#endif
 
     for (int screen_x = draw_start; screen_x <= draw_end; screen_x++) {
         int64_t inv_z_fp = inv_z_acc >> INTERP_SUB_BITS;
         if (inv_z_fp <= 0) inv_z_fp = 1;
 
-        /* 32-bit reciprocal: both INVZ_ONE and inv_z_fp fit in 32 bits for typical Z values */
         const uint32_t inv_z_u = (uint32_t)inv_z_fp;
         int32_t col_z = (int32_t)((16777216u + inv_z_u / 2u) / inv_z_u);
         if (col_z < 1) col_z = 1;
@@ -6513,11 +6962,10 @@ static void draw_wall_rasterize_segment(
         if (amiga_d6 < 0) amiga_d6 = 0;
         if (amiga_d6 > d6_max) amiga_d6 = d6_max;
 
-        /* Inline projection with precomputed factors */
         int64_t tnum = top_proj * inv_z_fp;
-        int y_top_scr = (int)((tnum >= 0 ? (tnum + (INVZ_ONE / 2)) : (tnum - (INVZ_ONE / 2))) / INVZ_ONE) + center_y;
         int64_t bnum = bot_proj * inv_z_fp;
-        int y_bot_scr = (int)((bnum >= 0 ? (bnum + (INVZ_ONE / 2)) : (bnum - (INVZ_ONE / 2))) / INVZ_ONE) + center_y;
+        int y_top_scr = renderer_project_round_24(tnum) + center_y;
+        int y_bot_scr = renderer_project_round_24(bnum) + center_y;
 
         /* Texture column via perspective divide */
         int tex_col = (renderer_wall_tex_column(tex_z_acc >> INTERP_SUB_BITS,
@@ -6550,6 +6998,7 @@ static void draw_wall_rasterize_segment(
         uint32_t fallback_rgb = 0;
         uint16_t fallback_cw = 0;
         if (has_tex_pal) {
+#if !(defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565))
             if (!ctx->wall_cache_valid || ctx->wall_cache_pal != pal || ctx->wall_cache_block_off != lut_block_off) {
                 for (int ti = 0; ti < 32; ti++) {
                     int lut_off = lut_block_off + ti * 2;
@@ -6562,6 +7011,7 @@ static void draw_wall_rasterize_segment(
                 ctx->wall_cache_block_off = lut_block_off;
                 ctx->wall_cache_valid = 1;
             }
+#endif
         } else {
             int gray = (64 - amiga_d6) * 255 / 64;
             if (gray < 0)   gray = 0;
@@ -6578,7 +7028,7 @@ static void draw_wall_rasterize_segment(
 
         int wall_pixels = yb - y_top_scr;
         if (wall_pixels < 1) wall_pixels = 1;
-        int32_t tex_step = (int32_t)(h_shifted / wall_pixels);
+        int32_t tex_step = (int32_t)renderer_divide_i64_i32(h_shifted, wall_pixels);
         int32_t tex_y = (ct - y_top_scr) * tex_step + yoff_base_fp;
 
         /* Edge extension only on segment boundary columns.  Interior columns
@@ -6609,9 +7059,30 @@ static void draw_wall_rasterize_segment(
 #define WALL_PF_DIST 8
         if (has_tex_pal && strip_offset >= 0) {
             const uint8_t *tex_strip = texture + strip_offset;
-            const RendererPixel *cache_cw  = ctx->wall_cache_cw;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+            const RendererPixel *cache_cw = (const RendererPixel *)(const void *)(pal + lut_block_off);
+#else
+            const RendererPixel *cache_cw = ctx->wall_cache_cw;
+#endif
             const uint32_t *cache_rgb = ctx->wall_cache_rgb;
 
+#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
+            static const uint8_t zero_texel = 0;
+            const uint8_t *column = tex_col >= 0
+                ? dos_wall_column(texture,tex_col,rows) : &zero_texel;
+            unsigned row_mask = tex_col >= 0 ? valand : 0;
+            uint64_t kernel_start = profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
+            dos_raster_wall(cw + pix_cw, cb - ct + 1, cw_step_y, column, cache_cw,
+                            tex_y, tex_step, row_mask);
+            if (do_ext_l)
+                dos_raster_wall(cw + pix_cw - cw_step_x, cb - ct + 1, cw_step_y,
+                                column, cache_cw, tex_y, tex_step, row_mask);
+            if (do_ext_r)
+                dos_raster_wall(cw + pix_cw + cw_step_x, cb - ct + 1, cw_step_y,
+                                column, cache_cw, tex_y, tex_step, row_mask);
+            if (profile_collect_stats)
+                ctx->workload_stats.ticks_wall_kernel += SDL_GetPerformanceCounter() - kernel_start;
+#else
             /* Dominant wall path: no RGB expand, no side extension. Keep loop body minimal. */
             if (!expand && !do_ext_l && !do_ext_r && (unsigned)pack_mode < 3u) {
                 size_t pix_hot = pix;
@@ -6736,8 +7207,9 @@ static void draw_wall_rasterize_segment(
                 else                             WALL_TEX_C(0, 0);
 #undef WALL_TEX_C
             }
+#endif
         } else if (has_tex_pal) {
-            uint16_t cw0 = ctx->wall_cache_cw[0];
+            uint16_t cw0 = renderer_pixel_from_palette(pal + lut_block_off);
             uint32_t rgb0 = ctx->wall_cache_rgb[0];
             if (expand) {
                 for (int y = ct; y <= cb; y++) {
@@ -6816,33 +7288,7 @@ static void draw_wall_rasterize_segment(
          * columns already contain overlapping wall spans. This preserves seam
          * occlusion while avoiding phantom occluders at stepped boundaries. */
         if (update_column_clip) {
-            int occ_top = ct, occ_bot = cb;
-            if (ct > top_clip_val) occ_top = ct - 1;
-            if (cb + 1 <= bot_clip_val) occ_bot = cb + 1;
-            renderer_column_clip_add_span(x, occ_top, occ_bot, col_z);
-
-            if (do_ext_l) {
-                int32_t nz = renderer_column_clip_nearest_z_overlap(&g_renderer.clip, x - 1, ct, cb);
-                if (nz > 0) {
-                    int32_t dz = nz - col_z;
-                    if (dz < 0) dz = -dz;
-                    if (dz <= 3) {
-                        int32_t ext_z = (nz < col_z) ? nz : col_z;
-                        renderer_column_clip_add_span(x - 1, ct, cb, ext_z);
-                    }
-                }
-            }
-            if (do_ext_r) {
-                int32_t nz = renderer_column_clip_nearest_z_overlap(&g_renderer.clip, x + 1, ct, cb);
-                if (nz > 0) {
-                    int32_t dz = nz - col_z;
-                    if (dz < 0) dz = -dz;
-                    if (dz <= 3) {
-                        int32_t ext_z = (nz < col_z) ? nz : col_z;
-                        renderer_column_clip_add_span(x + 1, ct, cb, ext_z);
-                    }
-                }
-            }
+            renderer_wall_register_column(ctx, x, ct, cb, col_z, do_ext_l, do_ext_r);
         }
     }
 }
@@ -6929,10 +7375,10 @@ static void renderer_draw_wall_ctx(RenderSliceContext *ctx,
      * resulting inv_z is in the same scale as the old integer-Z path. */
     const int64_t INVZ_ONE = (1LL << 24); /* 8.24 — used in the rasterizer denominator */
     const int64_t INVZ_FP_SCALE = ((int64_t)INVZ_ONE << ROT_Z_FRAC_BITS);
-    int64_t inv_z1_fp = INVZ_FP_SCALE / cz1;
-    int64_t inv_z2_fp = INVZ_FP_SCALE / cz2;
-    int64_t tex_over_z1_fp = (int64_t)ct1 * INVZ_FP_SCALE / cz1;
-    int64_t tex_over_z2_fp = (int64_t)ct2 * INVZ_FP_SCALE / cz2;
+    int64_t inv_z1_fp = renderer_divide_i64_i32(INVZ_FP_SCALE, cz1);
+    int64_t inv_z2_fp = renderer_divide_i64_i32(INVZ_FP_SCALE, cz2);
+    int64_t tex_over_z1_fp = renderer_divide_i64_i32((int64_t)ct1 * INVZ_FP_SCALE, cz1);
+    int64_t tex_over_z2_fp = renderer_divide_i64_i32((int64_t)ct2 * INVZ_FP_SCALE, cz2);
     int64_t inv_z_delta_fp = inv_z2_fp - inv_z1_fp;
     int64_t tex_over_z_delta_fp = tex_over_z2_fp - tex_over_z1_fp;
     int32_t bright_delta = (int32_t)right_brightness - (int32_t)left_brightness;
@@ -7057,6 +7503,39 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
 
         size_t row = (size_t)y * (size_t)w;
 
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+        if (s_sky_pixels && s_sky_mode == 0 && !g_pick_capture_active && !g_renderer_rgb_raster_expand) {
+            static uint32_t offsets[RENDER_INTERNAL_MAX_DIM];
+            static int cached_width, cached_step, cached_pan = -1, cached_tw, cached_stride;
+            int tw = s_sky_tex_w, th = s_sky_tex_h;
+            int stride = s_sky_row_major ? 2 : s_sky_bytes_per_col;
+            if (w != cached_width || sx_step_fp != cached_step || u0_fp != cached_pan ||
+                tw != cached_tw || stride != cached_stride) {
+                int32_t scale = (tw << 16) / SKY_PAN_WIDTH;
+                for (int x = 0; x < w; x++) {
+                    int32_t pan = u0_fp + x * sx_step_fp;
+                    if (pan >= sky_pan_period_fp) pan -= sky_pan_period_fp;
+                    int c = (int)(((int64_t)(pan >> 16) * scale) >> 16);
+                    if (c >= tw) c = tw - 1;
+                    offsets[x] = (uint32_t)c * stride;
+                }
+                cached_width = w; cached_step = sx_step_fp; cached_pan = u0_fp;
+                cached_tw = tw; cached_stride = stride;
+            }
+            int source_y = y * (th - 1) / (h > 1 ? h - 1 : 1);
+            if (source_y < 0) source_y = 0;
+            if (source_y >= th) source_y = th - 1;
+            size_t base = (size_t)source_y * (s_sky_row_major ? tw * 2 : 2);
+            RendererPixel *out = cwbuf + row;
+            for (int x = xl; x <= xr; x++) {
+                size_t off = base + offsets[x];
+                if (off + 2 > s_sky_data_bytes) continue;
+                out[x] = sky_read_word(s_sky_pixels+off);
+            }
+            return;
+        }
+#endif
+
         if (s_sky_pixels && s_sky_mode == 0) {
             int th = s_sky_tex_h;
             int tw = s_sky_tex_w;
@@ -7078,10 +7557,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                     if (c >= tw) c = tw - 1;
                     size_t off = rm_base + (size_t)c * 2u;
                     if (off + 2u > sky_lim) { sx_fp += sx_step_fp; continue; }
-                    uint16_t cw12 = (uint16_t)((sky_px[off] << 8) | sky_px[off + 1u]);
-#ifdef AB3D_DOS_INDEXED
-                    cw12 = renderer_pixel_from_c12(cw12);
-#endif
+                    uint16_t cw12 = sky_read_word(sky_px+off);
                     size_t p = row + (size_t)x;
                     if (pick_graphic) pick_graphic[p] = UINT32_MAX;
             if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
@@ -7101,10 +7577,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                     if (c >= tw) c = tw - 1;
                     size_t off = (size_t)c * (size_t)bpc + cm_base;
                     if (off + 2u > sky_lim) { sx_fp += sx_step_fp; continue; }
-                    uint16_t cw12 = (uint16_t)((sky_px[off] << 8) | sky_px[off + 1u]);
-#ifdef AB3D_DOS_INDEXED
-                    cw12 = renderer_pixel_from_c12(cw12);
-#endif
+                    uint16_t cw12 = sky_read_word(sky_px+off);
                     size_t p = row + (size_t)x;
                     if (pick_graphic) pick_graphic[p] = UINT32_MAX;
             if (pick_zone) pick_zone[p] = RENDERER_PICK_ZONE_NONE;
@@ -7249,6 +7722,52 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
 
     renderer_pick_mark_row_span(ctx, y, xl, xr, renderer_pick_zone_encode(ctx->pick_zone_id));
 
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    /* pastfloorbright/GOURSEL with the already-native palette: keep water
+     * state and desktop palette-cache scaffolding out of the 486 span. */
+    const uint8_t *dos_pal = floor_pal ? floor_pal : rs->floor_pal;
+    if (!is_water && texture && dos_pal && !g_debug_floor_gouraud_only && !g_renderer_rgb_raster_expand) {
+        renderer_floor_prepare_row_math(&row_math, rs, floor_common,
+            renderer_floor_row_dist_from_screen_y(y, renderer_view_center_y()));
+        unsigned count = xr - xl + 1;
+        uint32_t u = row_math.u_base + (uint32_t)xl * (uint32_t)row_math.u_step;
+        uint32_t v = row_math.v_base + (uint32_t)xl * (uint32_t)row_math.v_step;
+        RendererPixel *out = cwbuf + y * rs->width + xl;
+        const RendererPixel (*palettes)[256] = (const void *)dos_pal;
+        if (ctx->profile_collect_stats) {
+            ctx->workload_stats.floor_spans++;
+            ctx->workload_stats.floor_pixels += count;
+        }
+        if (use_gouraud) {
+            int left = left_brightness + (row_math.dist >> 7);
+            int right = right_brightness + (row_math.dist >> 7);
+            left = left < 0 ? 0 : left >> 1;
+            right = right < 0 ? 0 : right >> 1;
+            if (left > 14) left = 14;
+            if (right > 14) right = 14;
+            int width = shade_x_right - shade_x_left;
+            /* GOURSEL with equal endpoints is exactly the constant palette
+             * span. Skip its division and the gradient-kernel wrapper. */
+            if (left == right || width <= 0) {
+                dos_raster_floor(out, count, texture, palettes[left], u, v,
+                                 row_math.u_step, row_math.v_step);
+            } else {
+                int32_t step = ((right - left) * 65536) / width;
+                int32_t level = left * 65536 + step * (xl - shade_x_left);
+                dos_raster_floor_gouraud(out, count, texture, palettes, u, v,
+                                         row_math.u_step, row_math.v_step, level, step);
+            }
+        } else {
+            int bright = brightness + 5 + (row_math.dist >> 8);
+            if (bright < 0) bright = 0;
+            if (bright > 28) bright = 28;
+            dos_raster_floor(out, count, texture, palettes[floor_bright_level_table[bright]],
+                             u, v, row_math.u_step, row_math.v_step);
+        }
+        return;
+    }
+#endif
+
     const int expand = g_renderer_rgb_raster_expand;
 
     int center = renderer_view_center_y();  /* Match wall/floor projection center */
@@ -7316,7 +7835,11 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
          *   d0 = ((sin(dst*128 + wtan) / (dst+300)) >> 6) + 2 */
         int32_t refr_y_off_fp = 0;
         if (den != 0) {
+#ifdef AB3D_DOS
+            refr_y_off_fp = renderer_water_vertical_refraction(sine, dist);
+#else
             refr_y_off_fp = (int32_t)(((int64_t)sine << 8) / ((int64_t)den << 6));
+#endif
         }
         refr_y_off_fp += (2 << 8);
 
@@ -7399,6 +7922,12 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
     }
 
     /* Fast non-water textured path: no per-pixel branching. */
+#ifdef AB3D_DOS
+    if (use_span_lut) {
+        dos_raster_floor(row16, span_len, texture, span_cw, u_fp, v_fp, u_step, v_step);
+        return;
+    }
+#endif
     if (use_span_lut && span_cw) {
         if (expand) {
             uint8_t *p8 = row8;
@@ -8050,19 +8579,20 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
 #ifdef AB3D_DOS
             /* Keep the gradient loop's live state small on the 486. The desktop
              * four-pixel batches hold four levels and four texels at once. */
+#ifdef AB3D_NATIVE_RGB565
+            const RendererPixel (*dos_palettes)[256] = (const void *)pal_lut_src;
+#else
+            const RendererPixel (*dos_palettes)[256] = ctx->floor_span_cw_cache;
+#endif
             if (gour_level_step != 0) {
-                for (int i = 0; i < span_len; i++) {
-                    int level = gour_level_fp >> 16;
-                    gour_level_fp += gour_level_step;
-                    if (level < 0) level = 0;
-                    if (level >= FLOOR_PAL_LEVEL_COUNT) level = FLOOR_PAL_LEVEL_COUNT - 1;
-                    uint8_t texel = texture[((u_fp >> 14) & 0xFCu) | ((v_fp >> 6) & 0xFC00u)];
-                    u_fp += (uint32_t)u_step;
-                    v_fp += (uint32_t)v_step;
-                    FLOOR_CW_STORE_P16(gour_cw_levels[level][texel]);
-                }
+                dos_raster_floor_gouraud(row16, span_len, texture, dos_palettes,
+                                         u_fp, v_fp, u_step, v_step,
+                                         gour_level_fp, gour_level_step);
                 return;
             }
+            dos_raster_floor(row16, span_len, texture, gour_cw_levels[gour_level_fp >> 16],
+                             u_fp, v_fp, u_step, v_step);
+            return;
 #endif
             uint32_t u_pf = u_fp + (uint32_t)u_step * 8u;
             uint32_t v_pf = v_fp + (uint32_t)v_step * 8u;
@@ -9485,7 +10015,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
         ctx->workload_stats.sprite_columns += (uint64_t)(dx_end - dx_start);
     }
 
-    /* --- Pre-build 32-entry palette LUT for this brightness level ---
+    /* --- Select/build 32-entry palette LUT for this brightness level ---
      * Replaces per-pixel palette byte reads, c12 construction, and
      * amiga12_to_argb conversion with a single indexed load. */
     int bright_idx = brightness;
@@ -9494,21 +10024,27 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     uint32_t pal_level_off = obj_scale_cols[bright_idx];
     if (pal && pal_size < 960) pal_level_off = 0;
 
-    RendererPixel spr_cw[32];
+    RendererPixel spr_cw_storage[32];
+    const RendererPixel *spr_cw = spr_cw_storage;
     uint32_t spr_rgb[32];
     if (pal && pal_size >= 64) {
         uint32_t level_off = (pal_level_off + 64 <= pal_size) ? pal_level_off : 0;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+        /* These original shade blocks are prepared at build time. */
+        spr_cw = (const RendererPixel *)(const void *)(pal + level_off);
+#else
         for (int ti = 1; ti < 32; ti++) {
             uint32_t ci = level_off + (uint32_t)ti * 2;
             if (ci + 1 < pal_size) {
                 uint16_t c12 = (uint16_t)((pal[ci] << 8) | pal[ci + 1]);
-                spr_cw[ti] = renderer_pixel_from_c12(c12);
+                spr_cw_storage[ti] = renderer_pixel_from_c12(c12);
                 spr_rgb[ti] = amiga12_to_argb(c12);
             } else {
-                spr_cw[ti] = 0;
+                spr_cw_storage[ti] = 0;
                 spr_rgb[ti] = 0;
             }
         }
+#endif
     } else {
         int gray = (bright_idx * 255) / 62;
         if (gray < 90) gray = 90;
@@ -9516,7 +10052,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
             int shade = (gray * ti) / 31;
             uint32_t c = RENDER_RGB_RASTER_PIXEL(((uint32_t)shade << 16) | ((uint32_t)shade << 8) | (uint32_t)shade);
             spr_rgb[ti] = c;
-            spr_cw[ti] = argb_to_amiga12(c);
+            spr_cw_storage[ti] = argb_to_amiga12(c);
         }
     }
 
@@ -10301,10 +10837,26 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
     /* Do not draw placeholder gun when real gun data is missing or slot unused */
 }
 
+static int renderer_gun_scaled_size(int *out_w,int *out_h)
+{
+    int rw=g_renderer.width,rh=g_renderer.height;
+    if(rw<1 || rh<1)return 0;
+    int64_t scale_fp=(((int64_t)RENDER_SCALE*rh)<<16)/RENDER_DEFAULT_HEIGHT;
+    int64_t fit_w=((int64_t)rw<<16)/GUN_COLS,fit_h=((int64_t)rh<<16)/GUN_LINES;
+    if(scale_fp>fit_w)scale_fp=fit_w;
+    if(scale_fp>fit_h)scale_fp=fit_h;
+    if(scale_fp<1)scale_fp=1;
+    int w=(int)(((int64_t)GUN_COLS*scale_fp+0x7fff)>>16);
+    int h=(int)(((int64_t)GUN_LINES*scale_fp+0x7fff)>>16);
+    if(w<1)w=1;if(h<1)h=1;
+    if(w>rw)w=rw;if(h>rh)h=rh;
+    *out_w=w;*out_h=h;return 1;
+}
+
 #if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
-/* Cache the exact source nearest-neighbor weapon sampling once per animation
- * frame/size. Native RGB565 + a reserved color key lets SDL RLE skip transparent
- * runs, instead of resampling tens of thousands of empty pixels every frame. */
+/* Cache exact nearest-neighbor weapon samples once per animation frame/size.
+ * One reusable source-index bitmap bounds the full-height view's live memory.
+ * SDL converts the original weapon palette exactly to the native surface. */
 /* Original PTR column packing and palette, sampled without a temporary RGBA image. */
 static unsigned renderer_dos_gun_source(int slot,int x,int y)
 {
@@ -10316,16 +10868,57 @@ static unsigned renderer_dos_gun_source(int slot,int x,int y)
     unsigned index=(word>>(mode==0?0:mode==1?5:10))&31;
     if(!index)return 0;
     p=g_renderer.gun_pal+index*2;
-    return 0x1000u|((unsigned)p[0]<<8)|p[1];
+    return (index<<16)|0x1000u|((unsigned)p[0]<<8)|p[1];
+}
+void renderer_dos_prepare_gun_cache(void)
+{
+    int w,h;
+    if(!renderer_gun_scaled_size(&w,&h) || !g_renderer.gun_ptr ||
+       !g_renderer.gun_pal || !g_renderer.gun_wad)return;
+    if(g_dos_gun_pixels && w==g_dos_gun_width && h==g_dos_gun_height)return;
+    renderer_dos_release_gun_frames();
+    int edge_x[GUN_COLS+1],edge_y[GUN_LINES+1];
+    for(int i=0;i<=GUN_COLS;i++)edge_x[i]=(i*w+GUN_COLS-1)/GUN_COLS;
+    for(int i=0;i<=GUN_LINES;i++)edge_y[i]=(i*h+GUN_LINES-1)/GUN_LINES;
+    memset(g_dos_gun_empty,1,sizeof(g_dos_gun_empty));
+    unsigned char seen[32]={0};
+    size_t capacity=0;
+    for(int g=0;g<8;g++) {
+        for(int f=0;f<=gun_anims[g].num_frames;f++) {
+            int frame=gun_anims[g].frames[f];if(frame>3)frame=0;
+            int slot=g*4+frame;
+            if(seen[slot] || ((g==5 || g==6) && !gun_ptr_frame_offsets[slot]))continue;
+            seen[slot]=1;
+            int left=w,top=h,right=0,bottom=0;
+            for(int sy=0;sy<GUN_LINES;sy++)for(int sx=0;sx<GUN_COLS;sx++)
+                if(renderer_dos_gun_source(slot,sx,sy) && edge_x[sx+1]>edge_x[sx] && edge_y[sy+1]>edge_y[sy]) {
+                    if(edge_x[sx]<left)left=edge_x[sx];if(edge_y[sy]<top)top=edge_y[sy];
+                    if(edge_x[sx+1]>right)right=edge_x[sx+1];if(edge_y[sy+1]>bottom)bottom=edge_y[sy+1];
+                }
+            if(right<=left || bottom<=top)continue;
+            SDL_Rect crop={left,top,right-left,bottom-top};
+            g_dos_gun_crops[slot]=crop;g_dos_gun_empty[slot]=0;
+            size_t bytes=((crop.w+3)&~3u)*(size_t)crop.h;
+            if(bytes>capacity)capacity=bytes;
+        }
+    }
+    /* Reserve the largest single frame before loading level data. Animation
+     * changes reuse it instead of fragmenting the live 4 MB heap. */
+    g_dos_gun_pixels=malloc(capacity?capacity:1);
+    if(!g_dos_gun_pixels){fprintf(stderr,"DOS weapon cache %lu-byte reservation failed\n",(unsigned long)capacity);exit(1);}
+    g_dos_gun_width=w;g_dos_gun_height=h;
+    printf("[DOS VIDEO] weapon cache: %lu bytes, exact source indices\n",(unsigned long)capacity);
 }
 static void renderer_dos_draw_gun_cached(GameState *state)
 {
     if(!state || !state->cfg_weapon_draw)return;
     int slot,x,y,w,h;
     if(!renderer_get_gun_draw_info(state,&slot,&x,&y,&w,&h))return;
-    if(w!=g_dos_gun_width || h!=g_dos_gun_height || slot/4!=g_dos_gun_cached_weapon) {
-        renderer_dos_release_gun_frames();g_dos_gun_width=w;g_dos_gun_height=h;
-        g_dos_gun_cached_weapon=slot/4;
+    if(!g_dos_gun_pixels || w!=g_dos_gun_width || h!=g_dos_gun_height)
+        renderer_dos_prepare_gun_cache();
+    if(slot!=g_dos_gun_cached_slot) {
+        renderer_dos_clear_gun_surfaces();
+        g_dos_gun_cached_slot=slot;
     }
     SDL_Surface *gun=g_dos_gun_frames[slot];
     if(g_dos_gun_empty[slot])return;
@@ -10337,33 +10930,48 @@ static void renderer_dos_draw_gun_cached(GameState *state)
         int edge_x[GUN_COLS+1],edge_y[GUN_LINES+1];
         for(int i=0;i<=sw;i++)edge_x[i]=(i*w+sw-1)/sw;
         for(int i=0;i<=sh;i++)edge_y[i]=(i*h+sh-1)/sh;
-        int left=w,top=h,right=0,bottom=0;
-        for(int sy=0;sy<sh;sy++)for(int sx=0;sx<sw;sx++)
-            if(renderer_dos_gun_source(slot,sx,sy) && edge_x[sx+1]>edge_x[sx] && edge_y[sy+1]>edge_y[sy]) {
-                if(edge_x[sx]<left)left=edge_x[sx];if(edge_y[sy]<top)top=edge_y[sy];
-                if(edge_x[sx+1]>right)right=edge_x[sx+1];if(edge_y[sy+1]>bottom)bottom=edge_y[sy+1];
+        SDL_Rect crop=g_dos_gun_crops[slot];
+        /* The source weapon has only 32 colors. Retain those exact indices,
+         * even for RGB565 output, to halve live animation-cache storage. */
+        gun=SDL_CreateSurfaceFrom(crop.w,crop.h,SDL_PIXELFORMAT_INDEX8,
+            g_dos_gun_pixels,(crop.w+3)&~3u);
+        if(!gun){fprintf(stderr,"DOS weapon frame %d (%dx%d) allocation failed: %s\n",slot,crop.w,crop.h,SDL_GetError());exit(1);}
+#ifdef AB3D_NATIVE_RGB565
+        if(!g_dos_gun_palette) {
+            SDL_Color colors[32];
+            for(unsigned i=0;i<32;i++) {
+                unsigned c=(g_renderer.gun_pal[i*2]<<8)|g_renderer.gun_pal[i*2+1];
+                colors[i]=(SDL_Color){((c>>8)&15)*17,((c>>4)&15)*17,(c&15)*17,255};
             }
-        if(right<=left || bottom<=top){g_dos_gun_empty[slot]=1;return;}
-        SDL_Rect crop={left,top,right-left,bottom-top};g_dos_gun_crops[slot]=crop;
-        gun=SDL_CreateSurface(crop.w,crop.h,DOS_PIXEL_FORMAT);
-        if(!gun){fprintf(stderr,"DOS cropped weapon surface allocation failed\n");exit(1);}
-#ifdef AB3D_DOS_INDEXED
+            g_dos_gun_palette=SDL_CreatePalette(32);
+            if(!g_dos_gun_palette || !SDL_SetPaletteColors(g_dos_gun_palette,colors,0,32)) {
+                fprintf(stderr,"DOS weapon palette allocation failed: %s\n",SDL_GetError());exit(1);
+            }
+        }
+        if(!SDL_SetSurfacePalette(gun,g_dos_gun_palette)) {
+            fprintf(stderr,"DOS weapon palette attachment failed: %s\n",SDL_GetError());exit(1);
+        }
+#else
         dos_palette_attach(gun);
 #endif
         /* Retain every opaque sampled pixel, without storing empty margins. */
-        SDL_FillSurfaceRect(gun,NULL,DOS_PIXEL_KEY);
+        SDL_FillSurfaceRect(gun,NULL,DOS_GUN_CACHE_KEY);
         for(int sy=0;sy<sh;sy++)for(int sx=0;sx<sw;sx++) {
             unsigned color=renderer_dos_gun_source(slot,sx,sy);
             if(!color || edge_x[sx+1]<=edge_x[sx] || edge_y[sy+1]<=edge_y[sy])continue;
-            uint16_t c12=(uint16_t)(color&0xfff);
-            uint16_t pixel=renderer_pixel_from_c12(c12);
+#ifdef AB3D_NATIVE_RGB565
+            Uint8 pixel=(Uint8)(color>>16);
+#else
+            Uint8 pixel=renderer_pixel_from_c12((uint16_t)(color&0xfff));
+#endif
             for(int dy=edge_y[sy];dy<edge_y[sy+1];dy++) {
-                RendererPixel *out=(RendererPixel *)((uint8_t *)gun->pixels+(dy-crop.y)*gun->pitch);
+                Uint8 *out=(Uint8 *)gun->pixels+(dy-crop.y)*gun->pitch;
                 for(int dx=edge_x[sx];dx<edge_x[sx+1];dx++)out[dx-crop.x]=pixel;
             }
         }
-        if(!SDL_SetSurfaceColorKey(gun,true,DOS_PIXEL_KEY) || !SDL_SetSurfaceBlendMode(gun,SDL_BLENDMODE_NONE) ||
-           !SDL_SetSurfaceRLE(gun,true)) { fprintf(stderr,"DOS weapon RLE setup failed: %s\n",SDL_GetError());exit(1); }
+        if(!SDL_SetSurfaceColorKey(gun,true,DOS_GUN_CACHE_KEY) || !SDL_SetSurfaceBlendMode(gun,SDL_BLENDMODE_NONE)) {
+            fprintf(stderr,"DOS weapon color key setup failed: %s\n",SDL_GetError());exit(1);
+        }
         g_dos_gun_frames[slot]=gun;
     }
     RendererPixel *pixels=renderer_active_cw();int target_slot;
@@ -10396,13 +11004,15 @@ void renderer_draw_gun(GameState *state)
 }
 
 #if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
-void renderer_dos_check_gun_frames(GameState *state)
+void renderer_dos_check_gun_frames(GameState *state, RendererPixel *expected, int pitch_pixels)
 {
     size_t count=(size_t)g_renderer.width*g_renderer.height;
-    /* This end-of-run diagnostic may overwrite both history buffers. Reuse
-     * the inactive color buffer instead of allocating another 128 KiB on a 4 MB PC. */
+    /* This end-of-run diagnostic may overwrite the canvas and caller-owned
+     * display scratch. Keep the original draw and cached draw independent. */
     RendererPixel *cw=renderer_active_cw();
-    RendererPixel *expected=cw==g_renderer.cw_buffer?g_renderer.cw_back_buffer:g_renderer.cw_buffer;
+    if(!expected || expected==cw || pitch_pixels<g_renderer.width) {
+        fprintf(stderr,"DOS weapon comparison requires independent native scratch\n");exit(1);
+    }
     GameMode mode=state->mode;state->mode=MODE_SINGLE;
     int gun=state->plr1.gun_selected,frame=state->plr1.gun_frame,checked=0;
     unsigned char seen[32]={0};
@@ -10413,11 +11023,16 @@ void renderer_dos_check_gun_frames(GameState *state)
         seen[slot]=1;
         for(size_t i=0;i<count;i++){cw[i]=renderer_pixel_from_c12((uint16_t)((i*37)&4095));}
         renderer_draw_gun_columns(state,0,g_renderer.width);
-        memcpy(expected,cw,count*sizeof(RendererPixel));
+        for(int row=0;row<g_renderer.height;row++)
+            memcpy(expected+(size_t)row*pitch_pixels,cw+(size_t)row*g_renderer.width,
+                   g_renderer.width*sizeof(RendererPixel));
         for(size_t i=0;i<count;i++){cw[i]=renderer_pixel_from_c12((uint16_t)((i*37)&4095));}
         renderer_dos_draw_gun_cached(state);
-        if(memcmp(expected,cw,count*sizeof(RendererPixel))) {
-            fprintf(stderr,"DOS cached weapon pixels differ: gun=%d animation=%d slot=%d\n",g,f,slot);exit(1);
+        for(int row=0;row<g_renderer.height;row++) {
+            if(memcmp(expected+(size_t)row*pitch_pixels,cw+(size_t)row*g_renderer.width,
+                      g_renderer.width*sizeof(RendererPixel))) {
+                fprintf(stderr,"DOS cached weapon pixels differ: gun=%d animation=%d slot=%d row=%d\n",g,f,slot,row);exit(1);
+            }
         }
         checked++;
     }
@@ -10450,25 +11065,8 @@ int renderer_get_gun_draw_info(const GameState *state, int *out_frame_slot,
     /* Require gun assets to be loaded */
     if (!g_renderer.gun_wad || !g_renderer.gun_ptr || !g_renderer.gun_pal) return 0;
 
-    int rw = g_renderer.width, rh = g_renderer.height;
-    if (rw < 1 || rh < 1) return 0;
-
-    const int gun_w_src = GUN_COLS;
-    const int gun_h_src = GUN_LINES;
-
-    int64_t scale_fp = (((int64_t)RENDER_SCALE * (int64_t)rh) << 16) / RENDER_DEFAULT_HEIGHT;
-    int64_t fit_fp_w = ((int64_t)rw << 16) / gun_w_src;
-    int64_t fit_fp_h = ((int64_t)rh << 16) / gun_h_src;
-    if (scale_fp > fit_fp_w) scale_fp = fit_fp_w;
-    if (scale_fp > fit_fp_h) scale_fp = fit_fp_h;
-    if (scale_fp < 1) scale_fp = 1;
-
-    int gun_w_draw = (int)(((int64_t)gun_w_src * scale_fp + 0x7FFF) >> 16);
-    int gun_h_draw = (int)(((int64_t)gun_h_src * scale_fp + 0x7FFF) >> 16);
-    if (gun_w_draw < 1) gun_w_draw = 1;
-    if (gun_h_draw < 1) gun_h_draw = 1;
-    if (gun_w_draw > rw) gun_w_draw = rw;
-    if (gun_h_draw > rh) gun_h_draw = rh;
+    int rw=g_renderer.width,rh=g_renderer.height,gun_w_draw,gun_h_draw;
+    if(!renderer_gun_scaled_size(&gun_w_draw,&gun_h_draw))return 0;
 
     int gy = rh - gun_h_draw;
     if (gy < 0) gy = 0;
@@ -12687,8 +13285,52 @@ static void renderer_project_zone_world_clip_y(const RendererState *r,
  * Iterates all objects in ObjectData, finds those in the current zone,
  * sorts by depth, and draws them back-to-front.
  * ----------------------------------------------------------------------- */
+#ifdef AB3D_DOS
+static int g_dos_draw_objects_active;
+
+/* ObjDraw may visit a billboard in several connected rooms. Its authored
+ * dimensions and camera projection stay fixed throughout that frame; only
+ * the room's clip bounds change. Keep this small cache scoped to that frame. */
+typedef struct {
+    int world_w, world_h;
+    int screen_x, estimated_width;
+} DosBillboardGeometry;
+enum { DOS_BILLBOARD_SLOTS = 256 + NASTY_SHOT_SLOT_COUNT + PLAYER_SHOT_SLOT_COUNT };
+static DosBillboardGeometry g_dos_billboard_geometry[DOS_BILLBOARD_SLOTS];
+static uint8_t g_dos_billboard_geometry_valid[DOS_BILLBOARD_SLOTS];
+
+static DosBillboardGeometry *renderer_dos_billboard_world_size(int slot, const uint8_t *obj,
+                                                               int is_shot,
+                                                               int *world_w, int *world_h)
+{
+    DosBillboardGeometry *geometry = &g_dos_billboard_geometry[slot];
+    if (!(g_dos_billboard_geometry_valid[slot] & 1)) {
+        renderer_resolve_billboard_world_size_for_spill(obj, is_shot,
+                                                       &geometry->world_w, &geometry->world_h);
+        g_dos_billboard_geometry_valid[slot] = 1;
+    }
+    *world_w = geometry->world_w;
+    *world_h = geometry->world_h;
+    return geometry;
+}
+
+static void renderer_dos_billboard_project(int slot, const ObjRotatedPoint *point,
+                                           int64_t scale)
+{
+    if (!(g_dos_billboard_geometry_valid[slot] & 2)) {
+        DosBillboardGeometry *geometry = &g_dos_billboard_geometry[slot];
+        int z = ROT_Z_INT(point->z);
+        if (z < 1) z = 1;
+        geometry->estimated_width = renderer_project_billboard_size(geometry->world_w, scale, z) * SPRITE_SIZE_MULTIPLIER;
+        if (geometry->estimated_width < 1) geometry->estimated_width = 1;
+        geometry->screen_x = project_x_to_pixels(point->x_fine, point->z);
+        g_dos_billboard_geometry_valid[slot] |= 2;
+    }
+}
+#endif
+
 /* level_filter: -1 = draw all (single-level zone), 0 = lower floor only, 1 = upper floor only (multi-floor). */
-static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int16_t zone_id,
+static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, int16_t zone_id,
                                   int32_t top_of_room, int32_t bot_of_room,
                                   int level_filter,
                                   int ignore_sky_top_clip)
@@ -12736,6 +13378,7 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
     if (num_pts > MAX_OBJ_POINTS) num_pts = MAX_OBJ_POINTS;
 
     int16_t adjacent_source_zones[RENDERER_SPILL_SEARCH_MAX_NEIGHBORS];
+    uint64_t select_start = ctx->profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
     int adjacent_source_count = renderer_collect_connected_zones_fast(level,
                                                                       zone_id,
                                                                       adjacent_source_zones,
@@ -12748,15 +13391,22 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
 
     /* Iterate by object index; each object has point number at offset 0 (ObjDraw: move.w (a0)+,d0).
      * Use that to look up ObjRotated[pt_num] so keys and other pickups use correct position/z. */
-    for (int obj_idx = 0; obj_idx < RENDERER_OBJECT_SLOT_SCAN_CAP && obj_count < max_draw_entries; obj_idx++) {
+    int scan_count = RENDERER_OBJECT_SLOT_SCAN_CAP;
+#ifdef AB3D_DOS
+    uint8_t room_objects[256];
+    if (g_dos_draw_objects_active)
+        scan_count = dos_objects_for_room(level, zone_id, adjacent_source_zones, adjacent_source_count, room_objects);
+#endif
+    for (int scan = 0; scan < scan_count && obj_count < max_draw_entries; scan++) {
+        int obj_idx = scan;
+#ifdef AB3D_DOS
+        if (g_dos_draw_objects_active) obj_idx = room_objects[scan];
+#endif
         const uint8_t *obj = level->object_data + obj_idx * OBJECT_SIZE;
         int16_t pt_num = rd16(obj);
         if (pt_num < 0) break; /* End of object list */
 
         if ((unsigned)pt_num >= (unsigned)num_pts) continue; /* invalid point number */
-        int spill_world_w = 32, spill_world_h = 32;
-        renderer_resolve_billboard_world_size_for_spill(obj, 0, &spill_world_w, &spill_world_h);
-
         ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
         int is_poly_object = ((uint8_t)obj[6] == (uint8_t)OBJ_3D_SPRITE);
 
@@ -12786,6 +13436,19 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                 (level_filter == 0 && obj_on_upper))
                 continue;
         }
+
+        /* ObjDraw's ownership and near rejects do not need billboard sizing.
+         * Avoid resolving every off-zone/behind-camera object for each room. */
+        int32_t near_clip_z = is_poly_object ? 0 : ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z);
+        if (orp->z <= near_clip_z) continue;
+        int spill_world_w, spill_world_h;
+#ifdef AB3D_DOS
+        DosBillboardGeometry *geometry = NULL;
+        if (g_dos_draw_objects_active)
+            geometry = renderer_dos_billboard_world_size(obj_idx, obj, 0, &spill_world_w, &spill_world_h);
+        else
+#endif
+        renderer_resolve_billboard_world_size_for_spill(obj, 0, &spill_world_w, &spill_world_h);
 
         int16_t draw_clip_left = 0, draw_clip_right = 0;
         int32_t draw_zone_top = 0, draw_zone_bot = 0;
@@ -12817,23 +13480,24 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             if ((draw_zone_bot - draw_zone_top) < ((int32_t)(spill_world_h >> 1) << WORLD_Y_FRAC_BITS))
                 continue;
         }
-        {
-            /* Amiga parity:
-             * - BitMapObj: near reject at z <= 50
-             * - PolygonObj: near reject at z <= 0 (see PolygonObj ble polybehind) */
-            int32_t near_clip_z = is_poly_object ? 0 : ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z);
-            if (orp->z <= near_clip_z) continue;
-        }
-
         /* BitMapObj cull: skip early when a billboard cannot affect this
          * column strip. PolygonObj clips its projected polygons directly. */
         if (!is_poly_object) {
-            int world_w = spill_world_w;
-            int z_for_size = ROT_Z_INT(orp->z);
-            if (z_for_size < 1) z_for_size = 1;
-            int sprite_w_est = renderer_project_billboard_size(world_w, sprite_scale_x_for_estimate, z_for_size) * SPRITE_SIZE_MULTIPLIER;
-            if (sprite_w_est < 1) sprite_w_est = 1;
-            int scr_x_est = project_x_to_pixels(orp->x_fine, orp->z);
+            int sprite_w_est, scr_x_est;
+#ifdef AB3D_DOS
+            if (geometry) {
+                renderer_dos_billboard_project(obj_idx, orp, sprite_scale_x_for_estimate);
+                sprite_w_est = geometry->estimated_width;
+                scr_x_est = geometry->screen_x;
+            } else
+#endif
+            {
+                int z_for_size = ROT_Z_INT(orp->z);
+                if (z_for_size < 1) z_for_size = 1;
+                sprite_w_est = renderer_project_billboard_size(spill_world_w, sprite_scale_x_for_estimate, z_for_size) * SPRITE_SIZE_MULTIPLIER;
+                if (sprite_w_est < 1) sprite_w_est = 1;
+                scr_x_est = project_x_to_pixels(orp->x_fine, orp->z);
+            }
             int spr_l = scr_x_est - sprite_w_est / 2;
             int spr_r = spr_l + sprite_w_est;
             if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
@@ -12858,7 +13522,19 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
         const uint8_t *shots = (pool == 0) ? level->nasty_shot_data : level->player_shot_data;
         int slots = shot_pool_slots[pool];
         if (!shots) continue;
-        for (int slot = 0; slot < slots && obj_count < max_draw_entries; slot++) {
+#ifdef AB3D_DOS
+        const uint8_t *shot_indices = NULL;
+        if (g_dos_draw_objects_active) {
+            unsigned selected_count;
+            shot_indices = dos_objects_shots(pool, &selected_count);
+            slots = selected_count;
+        }
+#endif
+        for (int scan = 0; scan < slots && obj_count < max_draw_entries; scan++) {
+            int slot = scan;
+#ifdef AB3D_DOS
+            if (shot_indices) slot = shot_indices[scan];
+#endif
             const uint8_t *obj = shots + slot * OBJECT_SIZE;
             int16_t shot_zone = rd16(obj + 12);
             if (shot_zone < 0) continue; /* OBJ_ZONE */
@@ -12866,6 +13542,13 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             int16_t pt_num = rd16(obj);
             if (pt_num < 0 || (unsigned)pt_num >= (unsigned)num_pts) continue;
             int spill_world_w = 32, spill_world_h = 32;
+#ifdef AB3D_DOS
+            int geometry_slot = 256 + slot + (pool ? NASTY_SHOT_SLOT_COUNT : 0);
+            DosBillboardGeometry *geometry = NULL;
+            if (g_dos_draw_objects_active)
+                geometry = renderer_dos_billboard_world_size(geometry_slot, obj, 1, &spill_world_w, &spill_world_h);
+            else
+#endif
             renderer_resolve_billboard_world_size_for_spill(obj, 1, &spill_world_w, &spill_world_h);
             int in_this_zone = level_same_draw_room(level, shot_zone, zone_id);
             int shot_on_upper = (obj[obj_off_in_top] != 0);
@@ -12911,12 +13594,21 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
             if (orp->z <= ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z)) continue;
 
             {
-                int world_w = spill_world_w;
-                int z_for_size = ROT_Z_INT(orp->z);
-                if (z_for_size < 1) z_for_size = 1;
-                int sprite_w_est = renderer_project_billboard_size(world_w, sprite_scale_x_for_estimate, z_for_size) * SPRITE_SIZE_MULTIPLIER;
-                if (sprite_w_est < 1) sprite_w_est = 1;
-                int scr_x_est = project_x_to_pixels(orp->x_fine, orp->z);
+                int sprite_w_est, scr_x_est;
+#ifdef AB3D_DOS
+                if (geometry) {
+                    renderer_dos_billboard_project(geometry_slot, orp, sprite_scale_x_for_estimate);
+                    sprite_w_est = geometry->estimated_width;
+                    scr_x_est = geometry->screen_x;
+                } else
+#endif
+                {
+                    int z_for_size = ROT_Z_INT(orp->z);
+                    if (z_for_size < 1) z_for_size = 1;
+                    sprite_w_est = renderer_project_billboard_size(spill_world_w, sprite_scale_x_for_estimate, z_for_size) * SPRITE_SIZE_MULTIPLIER;
+                    if (sprite_w_est < 1) sprite_w_est = 1;
+                    scr_x_est = project_x_to_pixels(orp->x_fine, orp->z);
+                }
                 int spr_l = scr_x_est - sprite_w_est / 2;
                 int spr_r = spr_l + sprite_w_est;
                 if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
@@ -13055,6 +13747,8 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
     const SpriteFrame *expl_ft = sprite_frames_table[expl_vect].frames;
     const int expl_ft_count = sprite_frames_table[expl_vect].count;
     const int64_t explosion_sprite_scale_x = renderer_sprite_scale_x_fp16_for_state(r, state);
+    if (ctx->profile_collect_stats)
+        ctx->workload_stats.ticks_object_select += SDL_GetPerformanceCounter() - select_start;
     for (int oi = 0; oi < obj_count; oi++) {
         const ObjEntry *entry = &objs[oi];
         int entry_src = entry->src;
@@ -13240,7 +13934,15 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
 
         /* Project to screen X (PROJ_X_SCALE/2 = horizontal focal length). */
         int32_t obj_vx_fine = orp->x_fine;
-        int scr_x = project_x_to_pixels(obj_vx_fine, orp->z);
+        int scr_x;
+#ifdef AB3D_DOS
+        int geometry_slot = entry_src == DRAW_SRC_OBJECT ? entry->idx : 256 + entry->idx;
+        const DosBillboardGeometry *geometry = g_dos_draw_objects_active &&
+            (g_dos_billboard_geometry_valid[geometry_slot] & 2) ? &g_dos_billboard_geometry[geometry_slot] : NULL;
+        if (geometry) scr_x = geometry->screen_x;
+        else
+#endif
+        scr_x = project_x_to_pixels(obj_vx_fine, orp->z);
 
         /* Get brightness + distance attenuation (uses integer Z) */
         int16_t obj_bright = rd16(obj + 2);
@@ -13279,6 +13981,12 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
 
         int world_w = 32;
         int world_h = 32;
+#ifdef AB3D_DOS
+        if (geometry) {
+            world_w = geometry->world_w;
+            world_h = geometry->world_h;
+        } else
+#endif
         renderer_resolve_billboard_world_size_for_spill(obj,
                                                         (entry_src == DRAW_SRC_SHOT) ? 1 : 0,
                                                         &world_w, &world_h);
@@ -13452,6 +14160,17 @@ static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int
                                            billboard_view_right_z);
         }
     }
+}
+
+static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int16_t zone_id,
+                                  int32_t top_of_room, int32_t bot_of_room,
+                                  int level_filter, int ignore_sky_top_clip)
+{
+    uint64_t start = ctx->profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
+    draw_zone_objects_impl(ctx, state, zone_id, top_of_room, bot_of_room,
+                           level_filter, ignore_sky_top_clip);
+    if (ctx->profile_collect_stats)
+        ctx->workload_stats.ticks_objects += SDL_GetPerformanceCounter() - start;
 }
 
 /* -----------------------------------------------------------------------
@@ -13726,9 +14445,6 @@ static void renderer_reset_level_sky_cache_internal(void)
 
 void renderer_reset_level_sky_cache(void)
 {
-#if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
-    renderer_dos_release_gun_frames();
-#endif
     renderer_reset_level_sky_cache_internal();
 }
 
@@ -13917,8 +14633,9 @@ static int renderer_build_viewer_split_floor_occluder(const GameState *state,
                 const int32_t rel_h = draw_h_world - y_off;
                 const int32_t FLOOR_NEAR = ROT_Z_FROM_INT(1);
                 for (int s = 0; s < sides; s++) {
+                    int next = s + 1 < sides ? s + 1 : 0;
                     int i1 = pt_indices[s];
-                    int i2 = pt_indices[(s + 1) % sides];
+                    int i2 = pt_indices[next];
                     if (i1 < 0 || i1 >= MAX_POINTS || i2 < 0 || i2 >= MAX_POINTS) continue;
 
                     int32_t z1 = r->rotated[i1].z;
@@ -13951,8 +14668,8 @@ static int renderer_build_viewer_split_floor_occluder(const GameState *state,
                         ez2 = FLOOR_NEAR;
                     }
 
-                    int sx1 = project_x_to_pixels(ex1, ez1);
-                    int sx2 = project_x_to_pixels(ex2, ez2);
+                    int sx1 = ez1 == z1 ? (int)project_level_point_x_wide(i1) : project_x_to_pixels(ex1, ez1);
+                    int sx2 = ez2 == z2 ? (int)project_level_point_x_wide(i2) : project_x_to_pixels(ex2, ez2);
                     int32_t rel_h_8 = rel_h >> WORLD_Y_FRAC_BITS;
                     int sy1_raw = project_y_to_pixels_round(rel_h_8, ez1, r->proj_y_scale, center_y);
                     int sy2_raw = project_y_to_pixels_round(rel_h_8, ez2, r->proj_y_scale, center_y);
@@ -14283,10 +15000,12 @@ static void renderer_tessellate_sky_ceiling_ctx(RenderSliceContext *ctx,
     int16_t *left_edge  = g_poly_edge_left_scratch;
     int16_t *right_edge = g_poly_edge_right_scratch;
 
+#ifndef AB3D_DOS
     for (int i = 0; i < h; i++) {
         left_edge[i]  = renderer_clamp_edge_x_i16(r->width);
         right_edge[i] = -1;
     }
+#endif
     int poly_top = h;
     int poly_bot = -1;
 
@@ -14294,13 +15013,21 @@ static void renderer_tessellate_sky_ceiling_ctx(RenderSliceContext *ctx,
     int y_min = ctx->top_clip;
     int y_max = center - 1;
     if (y_max > ctx->bot_clip) y_max = ctx->bot_clip;
+#ifdef AB3D_DOS
+    if (y_min < 0) y_min = 0;
+    if (y_max >= h) y_max = h - 1;
+    if (y_min > y_max) return;
+    dos_raster_floor_edges_init(left_edge + y_min, right_edge + y_min,
+                                 y_max - y_min + 1, renderer_clamp_edge_x_i16(r->width));
+#endif
 
     const int32_t NEAR = ROT_Z_FROM_INT(1);
     int32_t rel_h_8 = rel_h >> WORLD_Y_FRAC_BITS;
 
     for (int s = 0; s < sides; s++) {
+        int next = s + 1 < sides ? s + 1 : 0;
         int i1 = pt_indices[s];
-        int i2 = pt_indices[(s + 1) % sides];
+        int i2 = pt_indices[next];
         if (i1 < 0 || i1 >= MAX_POINTS || i2 < 0 || i2 >= MAX_POINTS) continue;
 
         int32_t z1 = r->rotated[i1].z, z2 = r->rotated[i2].z;
@@ -14311,17 +15038,17 @@ static void renderer_tessellate_sky_ceiling_ctx(RenderSliceContext *ctx,
         int32_t ez1 = z1, ez2 = z2, ex1 = x1, ex2 = x2;
         if (ez1 < NEAR) {
             int32_t dz = ez2 - ez1;
-            ex1 = dz ? (x1 + (int32_t)((int64_t)(x2-x1) * (NEAR-ez1) / dz)) : (x1+x2)/2;
+            ex1 = dz ? (x1 + (int32_t)renderer_divide_i64_i32((int64_t)(x2-x1) * (NEAR-ez1), dz)) : (x1+x2)/2;
             ez1 = NEAR;
         }
         if (ez2 < NEAR) {
             int32_t dz = ez1 - ez2;
-            ex2 = dz ? (x2 + (int32_t)((int64_t)(x1-x2) * (NEAR-ez2) / dz)) : (x1+x2)/2;
+            ex2 = dz ? (x2 + (int32_t)renderer_divide_i64_i32((int64_t)(x1-x2) * (NEAR-ez2), dz)) : (x1+x2)/2;
             ez2 = NEAR;
         }
 
-        int sx1 = project_x_to_pixels(ex1, ez1);
-        int sx2 = project_x_to_pixels(ex2, ez2);
+        int sx1 = ez1 == z1 ? (int)project_level_point_x_wide(i1) : project_x_to_pixels(ex1, ez1);
+        int sx2 = ez2 == z2 ? (int)project_level_point_x_wide(i2) : project_x_to_pixels(ex2, ez2);
         int sy1_raw = project_y_to_pixels_round(rel_h_8, ez1, r->proj_y_scale, center);
         int sy2_raw = project_y_to_pixels_round(rel_h_8, ez2, r->proj_y_scale, center);
 
@@ -14342,17 +15069,29 @@ static void renderer_tessellate_sky_ceiling_ctx(RenderSliceContext *ctx,
         int row_end   = sy1_raw > sy2_raw ? sy1_raw : sy2_raw;
         if (row_start < y_min) row_start = y_min;
         if (row_end   > y_max) row_end   = y_max;
+        if (row_start > row_end) continue;
 
         int64_t x_fp = (int64_t)sx1 << 16;
-        int64_t dx_fp = ((int64_t)(sx2 - sx1) << 16) / dy_raw;
+        int64_t dx_fp = renderer_divide_i64_i32((int64_t)(sx2 - sx1) * 65536, dy_raw);
         if (sy1_raw < sy2_raw) {
             x_fp += dx_fp * (row_start - sy1_raw);
         } else {
             x_fp = (int64_t)sx2 << 16;
-            dx_fp = ((int64_t)(sx1 - sx2) << 16) / (-dy_raw);
             x_fp += dx_fp * (row_start - sy2_raw);
         }
 
+#ifdef AB3D_DOS
+        int64_t last_x_fp = x_fp + dx_fp * (row_end - row_start);
+        if (x_fp >= INT32_MIN && x_fp <= INT32_MAX &&
+            last_x_fp >= INT32_MIN && last_x_fp <= INT32_MAX &&
+            dx_fp >= INT32_MIN && dx_fp <= INT32_MAX) {
+            dos_raster_floor_edge(left_edge + row_start, right_edge + row_start, NULL, NULL,
+                                   row_end - row_start + 1, (uint32_t)x_fp, (uint32_t)dx_fp, 0, 0);
+            if (row_start < poly_top) poly_top = row_start;
+            if (row_end > poly_bot) poly_bot = row_end;
+            continue;
+        }
+#endif
         for (int row = row_start; row <= row_end; row++) {
             if (row < 0 || row >= h) { x_fp += dx_fp; continue; }
             int lx = renderer_fp16_x_floor_px(x_fp);
@@ -14580,7 +15319,10 @@ static void renderer_draw_zone_backdrop_section_ctx(RenderSliceContext *ctx,
         ? rd32(zone_data + ZONE_OFF_UPPER_ROOF)
         : rd32(zone_data + 6);
 
+    uint64_t start = ctx->profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
     renderer_draw_zone_backdrop_sky_ctx(ctx, zone_id, use_upper, zone_roof, r->yoff);
+    if (ctx->profile_collect_stats)
+        ctx->workload_stats.ticks_backdrop += SDL_GetPerformanceCounter() - start;
 }
 
 static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, int16_t zone_id, int use_upper)
@@ -14935,6 +15677,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
         case 10: /* Bumpy floor variant */
         case 11: /* Bumpy floor variant */
         {
+            uint64_t geometry_start = ctx->profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
             /* Floor/Roof/Water polygon entry (variable size)
              * Translated from AB3DI.s itsafloordraw (line 5066).
              *
@@ -15070,6 +15813,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 col_top_tab = g_poly_col_top_scratch;
                 col_bot_tab = g_poly_col_bot_scratch;
             }
+#ifndef AB3D_DOS
             for (int i = 0; i < h; i++) {
                 left_edge[i] = renderer_clamp_edge_x_i16(g_renderer.width);
                 right_edge_tab[i] = -1;
@@ -15078,6 +15822,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     right_bright_tab[i] = 0;
                 }
             }
+#endif
             if (build_floor_col_bounds) {
                 for (int i = 0; i < g_renderer.width; i++) {
                     col_top_tab[i] = renderer_clamp_edge_y_i16(h);
@@ -15105,6 +15850,13 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
             if (y_max_clamp > ctx->bot_clip) y_max_clamp = ctx->bot_clip;
             if (y_min_clamp > y_max_clamp) continue;
 
+#ifdef AB3D_DOS
+            /* sideloop and the span pass only touch this clamped row band. */
+            dos_raster_floor_edges_init(left_edge + y_min_clamp, right_edge_tab + y_min_clamp,
+                                         y_max_clamp - y_min_clamp + 1,
+                                         renderer_clamp_edge_x_i16(g_renderer.width));
+#endif
+
             /* Walk each polygon edge and rasterize into edge tables (floor and ceiling/roof).
              * Near-plane clip edges so vertices behind the camera get proper
              * screen X values (otherwise on_screen[].screen_x is garbage and
@@ -15121,8 +15873,9 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 }
             }
             for (int s = 0; !water_at_eye && s < sides; s++) {
+                int next = s + 1 < sides ? s + 1 : 0;
                 int i1 = pt_indices[s];
-                int i2 = pt_indices[(s + 1) % sides];
+                int i2 = pt_indices[next];
                 if (i1 < 0 || i1 >= MAX_POINTS || i2 < 0 || i2 >= MAX_POINTS) continue;
 
                 int32_t z1 = r->rotated[i1].z;
@@ -15142,7 +15895,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 int32_t eb1 = 0, eb2 = 0;
                 if (use_gour_floor) {
                     eb1 = pt_brights[s];
-                    eb2 = pt_brights[(s + 1) % sides];
+                    eb2 = pt_brights[next];
                 }
                 if (ez1 < FLOOR_NEAR) {
                     int32_t dz = ez2 - ez1;
@@ -15173,8 +15926,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     ez2 = FLOOR_NEAR;
                 }
                 /* Project X from clipped (ex,ez) so values are consistent and safe (no division by zero or negative z). */
-                int64_t sx1 = project_x_to_pixels_wide(ex1, ez1);
-                int64_t sx2 = project_x_to_pixels_wide(ex2, ez2);
+                int64_t sx1 = ez1 == z1 ? project_level_point_x_wide(i1) : project_x_to_pixels_wide(ex1, ez1);
+                int64_t sx2 = ez2 == z2 ? project_level_point_x_wide(i2) : project_x_to_pixels_wide(ex2, ez2);
 
                 /* Project Y: same rule so X and Y stay consistent (no jump when z crosses FLOOR_NEAR). */
                 int32_t rel_h_8 = rel_h >> WORLD_Y_FRAC_BITS;
@@ -15238,12 +15991,13 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                 int row_end = (sy1_raw > sy2_raw) ? sy1_raw : sy2_raw;
                 if (row_start < y_min_clamp) row_start = y_min_clamp;
                 if (row_end > y_max_clamp) row_end = y_max_clamp;
+                if (row_start > row_end) continue;
 
                 /* Use fixed-point for better precision */
                 int64_t x_fp = sx1 * 65536;
-                int64_t dx_fp = ((sx2 - sx1) * 65536) / dy_raw;
+                int64_t dx_fp = renderer_divide_i64_i32((sx2 - sx1) * 65536, dy_raw);
                 int64_t b_fp = (int64_t)eb1 << 16;
-                int64_t db_fp = ((int64_t)(eb2 - eb1) << 16) / dy_raw;
+                int64_t db_fp = renderer_divide_i64_i32((int64_t)(eb2 - eb1) * 65536, dy_raw);
                 
                 /* Adjust starting position if row_start is clamped */
                 if (sy1_raw < sy2_raw) {
@@ -15251,13 +16005,29 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     b_fp += db_fp * (row_start - sy1_raw);
                 } else {
                     x_fp = sx2 * 65536;
-                    dx_fp = ((sx1 - sx2) * 65536) / (-dy_raw);
                     x_fp += dx_fp * (row_start - sy2_raw);
                     b_fp = (int64_t)eb2 << 16;
-                    db_fp = ((int64_t)(eb1 - eb2) << 16) / (-dy_raw);
                     b_fp += db_fp * (row_start - sy2_raw);
                 }
                 
+                /* The usual visible edge fits signed 16.16. Keep genuinely
+                 * wide near-plane projections on the existing 64-bit walk. */
+#ifdef AB3D_DOS
+                int64_t last_x_fp = x_fp + dx_fp * (row_end - row_start);
+                if (row_start >= 0 && row_end < h && row_start <= row_end &&
+                    x_fp >= INT32_MIN && x_fp <= INT32_MAX &&
+                    last_x_fp >= INT32_MIN && last_x_fp <= INT32_MAX &&
+                    dx_fp >= INT32_MIN && dx_fp <= INT32_MAX) {
+                    dos_raster_floor_edge(left_edge + row_start, right_edge_tab + row_start,
+                                           left_bright_tab ? left_bright_tab + row_start : NULL,
+                                           right_bright_tab ? right_bright_tab + row_start : NULL,
+                                           row_end - row_start + 1, (uint32_t)x_fp, (uint32_t)dx_fp,
+                                           (uint32_t)b_fp, (uint32_t)db_fp);
+                    if (row_start < poly_top) poly_top = row_start;
+                    if (row_end > poly_bot) poly_bot = row_end;
+                    continue;
+                }
+#endif
                 for (int row = row_start; row <= row_end; row++) {
                     if (row < 0 || row >= h) { x_fp += dx_fp; b_fp += db_fp; continue; }
                     int32_t edge_bright = (int32_t)(b_fp >> 16);
@@ -15349,6 +16119,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                              poly_bot);
             ctx->active_floor_trace_stats = floor_trace_stats.active ? &floor_trace_stats : NULL;
 
+            if (ctx->profile_collect_stats)
+                ctx->workload_stats.ticks_floor_geometry += SDL_GetPerformanceCounter() - geometry_start;
             int run_floor_col_fast_poly = allow_floor_col_fast_poly;
             if (run_floor_col_fast_poly && use_gour_floor &&
                 left_bright_tab && right_bright_tab &&
@@ -15752,7 +16524,7 @@ static int renderer_compute_zone_clip_span_from_lgr_entry(GameState *state, int1
             }
             int32_t pz = r->rotated[pt].z;
             if (pz > 0) {
-                int sxpx = project_x_to_pixels(r->rotated[pt].x, pz);
+                int sxpx = (int)project_level_point_x_wide(pt);
                 int allow = 1;
                 if (connect_table) {
                     int16_t cpt = rd16(connect_table + (size_t)pt * 4u + 2u);
@@ -15766,7 +16538,7 @@ static int renderer_compute_zone_clip_span_from_lgr_entry(GameState *state, int1
                         }
                     }
                     if (allow && cpt >= 0 && cpt < num_level_points) {
-                        int csxpx = project_x_to_pixels(r->rotated[cpt].x, r->rotated[cpt].z);
+                        int csxpx = (int)project_level_point_x_wide(cpt);
                         if (csxpx > sxpx) allow = 0;
                     } else if (trace_clip) {
                         printf("[CLIP][frame %u] zone=%d left pt=%d bad cpt=%d\n",
@@ -15826,7 +16598,7 @@ static int renderer_compute_zone_clip_span_from_lgr_entry(GameState *state, int1
             }
             int32_t pz = r->rotated[pt].z;
             if (pz > 0) {
-                int sxpx = project_x_to_pixels(r->rotated[pt].x, pz);
+                int sxpx = (int)project_level_point_x_wide(pt);
                 int allow = 1;
                 if (connect_table) {
                     int16_t cpt = rd16(connect_table + (size_t)pt * 4u);
@@ -15840,7 +16612,7 @@ static int renderer_compute_zone_clip_span_from_lgr_entry(GameState *state, int1
                         }
                     }
                     if (allow && cpt >= 0 && cpt < num_level_points) {
-                        int csxpx = project_x_to_pixels(r->rotated[cpt].x, r->rotated[cpt].z);
+                        int csxpx = (int)project_level_point_x_wide(cpt);
                         if (csxpx < sxpx) allow = 0;
                     } else if (trace_clip) {
                         printf("[CLIP][frame %u] zone=%d right pt=%d bad cpt=%d\n",
@@ -16023,6 +16795,7 @@ static void renderer_draw_world_slice(GameState *state,
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
     const int trace_zone = (g_renderer_zone_trace_active && cs == 0 && ce == w) ? 1 : 0;
 
+    uint64_t occlude_start = frame_ctx.profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
     viewer_floor_occlude_top = renderer_viewer_floor_occlude_get_scratch(w);
     if (viewer_floor_occlude_top) {
         have_viewer_floor_occlude = renderer_build_viewer_split_floor_occluder(state, plr->zone,
@@ -16030,6 +16803,8 @@ static void renderer_draw_world_slice(GameState *state,
                                                                                viewer_floor_occlude_top);
     }
 
+    if (frame_ctx.profile_collect_stats)
+        frame_ctx.workload_stats.ticks_occluder += SDL_GetPerformanceCounter() - occlude_start;
     int zone_count = zone_prepass->count;
     if (zone_count < 0) zone_count = 0;
     if (zone_count > RENDERER_MAX_ZONE_ORDER) zone_count = RENDERER_MAX_ZONE_ORDER;
@@ -16442,6 +17217,14 @@ static void renderer_draw_display_impl(GameState *state)
     /* 4. Rotate geometry */
     renderer_rotate_level_pts(state);
     renderer_rotate_object_pts(state);
+#ifdef AB3D_DOS
+    /* ObjDraw's camera/point rejects are shared by every room this frame.
+     * Keep original object-slot order for equal-depth insertion ordering. */
+    dos_objects_prepare(&state->level, r->obj_rotated, ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z));
+    memset(g_dos_billboard_geometry_valid, 0, sizeof(g_dos_billboard_geometry_valid));
+    g_dos_draw_objects_active = 1;
+    g_dos_level_projection_active = 1;
+#endif
     RendererWorldZonePrepass world_zone_prepass;
     renderer_build_world_zone_prepass(state, frame_idx, trace_clip, &world_zone_prepass);
     prepass_total_zones = world_zone_prepass.count;
@@ -16504,6 +17287,10 @@ static void renderer_draw_display_impl(GameState *state)
         world_workers = 1;
     }
     automap_commit_staged_walls(&state->level);
+#ifdef AB3D_DOS
+    g_dos_draw_objects_active = 0;
+    g_dos_level_projection_active = 0;
+#endif
     if (prof_on) t_after_world = SDL_GetPerformanceCounter();
 
     int8_t tint_water = fill_screen_water;
@@ -16651,7 +17438,7 @@ void renderer_draw_display(GameState *state) {
 #ifdef AB3D_DOS_INDEXED
 void renderer_palette_changed(void)
 {
-    renderer_dos_release_gun_frames();
+    renderer_dos_clear_gun_surfaces();
     s_clear_rows_inited=0;
     renderer_build_water_brighten_cw_lut(g_water_brighten,g_water_brighten_size);
     for(int i=0;i<256;i++)s_sky_cw[i]=argb_to_amiga12(s_sky_argb[i]);
@@ -16684,7 +17471,6 @@ void renderer_dos_check_indexed_pixels(GameState *state)
             }
         }
     }
-    renderer_dos_check_gun_frames(state);
-    printf("[DOSCHECK] indexed palette roundtrip, 255 water/tint samples and weapon cache refresh passed\n");
+    printf("[DOSCHECK] indexed palette roundtrip and 255 water/tint samples passed\n");
 }
 #endif

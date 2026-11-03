@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare native DOS framebuffer pixels with the original 0RGB render pipeline.
+"""Compare DOS pixels with a preserved native build or the historical 0RGB pipeline.
 
 The reference converter exists only in an ignored build snapshot. Production
 retains only the native SDL surface path. Both variants use fixed logic ticks.
@@ -19,9 +19,40 @@ def main():
     parser.add_argument('--levels', type=int, nargs='+', default=list(range(1, 17)))
     parser.add_argument('--reference-commit', default='487c1aae41ae3443b8ea118b4d14550647597c61',
                         help='Original v1.0.2 renderer commit, before DOS changes')
+    parser.add_argument('--reference-build', type=Path,
+                        help='Compare against a preserved native DOS build instead of the historical 0RGB renderer')
+    parser.add_argument('--build-dir', type=Path, default=Path('build/dos'))
+    parser.add_argument('--frames', type=int, default=4)
+    parser.add_argument('--height', type=int, default=240, help='Common render height for native full-screen comparisons')
+    parser.add_argument('--turn', action='store_true', help='Compare moving camera views (requires native reference build)')
     args = parser.parse_args()
+    if not 1 <= args.frames <= 1024:
+        parser.error('--frames must be 1..1024')
+    if (args.turn or args.frames != 4) and not args.reference_build:
+        parser.error('moving/longer comparisons require --reference-build')
     root = Path(__file__).resolve().parent.parent
+    actual_build = args.build_dir.resolve()
     oracle = root / 'build/dos-pixel-oracle'
+    oracle.mkdir(parents=True, exist_ok=True)
+    if args.reference_build:
+        reference = args.reference_build.resolve()
+        if reference == actual_build:
+            parser.error('--reference-build must be a separate preserved build')
+        for level in args.levels:
+            case = f'40000-4m-320x{args.height}-l{level}-off' + ('-turn' if args.turn else '') + '-fixed'
+            with (oracle / f'baseline-level-{level}.log').open('w') as log:
+                for build in (actual_build, reference):
+                    subprocess.run([sys.executable, 'tools/check_dos.py', '--dosbox', str(args.dosbox.resolve()),
+                                    '--build-dir', str(build), '--cycles', '40000', '--frames', str(args.frames),
+                                    '--level', str(level), '--height', str(args.height), '--memory', '4', '--sound', 'off', '--fixed-ticks'] +
+                                   (['--turn'] if args.turn else []),
+                                   cwd=root, stdout=log, stderr=log, check=True)
+            actual = (actual_build / 'checks' / case / 'FRAME.BMP').read_bytes()
+            expected = (reference / 'checks' / case / 'FRAME.BMP').read_bytes()
+            if actual != expected:
+                raise SystemExit(f'Level {level}: native baseline pixel mismatch; see {oracle}')
+            print(f'PASS level {level}: complete SDL capture exactly matches native baseline', flush=True)
+        return
     source = oracle / 'source'
     reference = oracle / 'reference'
     source.mkdir(parents=True, exist_ok=True)
@@ -41,8 +72,11 @@ def main():
     section = section.replace('    int w = g_renderer.width;\n    int h = g_renderer.height;\n', '')
     legacy = legacy[:start] + section + legacy[end:]
     (source / 'src/renderer.c').write_text(legacy)
-    (source / 'src/renderer_3dobj.c').write_bytes(subprocess.check_output(
-        ['git', 'show', args.reference_commit + ':src/renderer_3dobj.c'], cwd=root))
+    # Keep the reference object's declaration paired with its implementation;
+    # current diagnostic/picking arguments need not exist in the old renderer.
+    for name in ('renderer_3dobj.c', 'renderer_3dobj.h'):
+        (source / 'src' / name).write_bytes(subprocess.check_output(
+            ['git', 'show', args.reference_commit + ':src/' + name], cwd=root))
     cmake = source / 'cmake/dos.cmake'
     cmake.write_text(cmake.read_text().replace('AB3D_NATIVE_RGB565', ''))
     display = source / 'src/display.c'
@@ -88,15 +122,15 @@ def main():
         src = reference / 'ABHD.exe' if name == 'ABHD.EXE' else root / 'build/dos/game' / name
         shutil.copy2(src, reference / 'game' / name)
     for level in args.levels:
-        case = f'40000-4m-320x200-l{level}-off-fixed'
-        reference_case = f'40000-16m-320x200-l{level}-off-fixed'
+        case = f'40000-4m-320x{args.height}-l{level}-off-fixed'
+        reference_case = f'40000-16m-320x{args.height}-l{level}-off-fixed'
         with (oracle / f'level-{level}.log').open('w') as log:
-            for build,memory in ((root / 'build/dos', 4), (reference, 16)):
+            for build,memory in ((actual_build, 4), (reference, 16)):
                 subprocess.run([sys.executable, 'tools/check_dos.py', '--dosbox', str(args.dosbox.resolve()),
                                 '--build-dir', str(build), '--cycles', '40000', '--frames', '4',
-                                '--level', str(level), '--memory', str(memory), '--sound', 'off', '--fixed-ticks'], cwd=root,
+                                '--level', str(level), '--height', str(args.height), '--memory', str(memory), '--sound', 'off', '--fixed-ticks'], cwd=root,
                                stdout=log, stderr=log, check=True)
-        actual = (root / 'build/dos/checks' / case / 'FRAME.BMP').read_bytes()
+        actual = (actual_build / 'checks' / case / 'FRAME.BMP').read_bytes()
         expected = (reference / 'checks' / reference_case / 'FRAME.BMP').read_bytes()
         if actual != expected:
             mismatches = sum(a != b for a, b in zip(actual[54:], expected[54:]))

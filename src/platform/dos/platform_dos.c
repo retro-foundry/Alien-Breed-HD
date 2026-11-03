@@ -102,10 +102,10 @@ void dos_platform_bootstrap(const char *executable)
     /* DJGPP's non-moving sbrk rounds each new DPMI zone to 64 KiB. Give its
      * normal allocator one contiguous game heap first, rather than losing
      * the padding of many small zones while loading differently-sized assets.
-     * The 1.5 MiB heap plus this EXE/stack fits the 4 MB physical target. */
-    const size_t heap_size=1536u*1024u;
+     * Leave room for the optimized renderer's larger text at 4 MB. */
+    const size_t heap_size=1280u*1024u;
     volatile unsigned char *heap=malloc(heap_size);
-    if(!heap){fprintf(stderr,"Cannot reserve the 1.5 MiB DOS game heap\n");exit(1);}
+    if(!heap){fprintf(stderr,"Cannot reserve the 1.25 MiB DOS game heap\n");exit(1);}
     heap[0]=0;heap[heap_size-1]=0;
     free((void *)heap);
 
@@ -252,6 +252,7 @@ void dos_check_saves(GameState *state)
 }
 void dos_check_ui_screens(GameState *state)
 {
+    renderer_dos_check_projection_cache();
     /* Repeat after gameplay, with discovered map walls and live enemy state. */
     dos_check_saves(state);
     display_draw_display(state);
@@ -267,6 +268,10 @@ void dos_check_ui_screens(GameState *state)
     game_conditions = conditions;
     dos_ui_check_images();
     display_dos_check_hud_bounds(state);
+#if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
+    /* Exercise every weapon with the live level still occupying its memory. */
+    display_dos_check_gun_frames(state);
+#endif
     play_the_game_finalize_session(state);
     GameLoopCtx ctx;
     game_loop_front_menu_init(&ctx,state);
@@ -295,10 +300,12 @@ void dos_check_ui_screens(GameState *state)
     display_dos_check_text_layouts();
 #if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
     display_release_title_memory();
-    renderer_dos_check_gun_frames(state);
+    display_dos_check_gun_frames(state);
 #endif
 #ifdef AB3D_DOS_INDEXED
     renderer_dos_check_indexed_pixels(state);
+    display_dos_check_gun_frames(state);
+    printf("[DOSCHECK] indexed palette roundtrip, 255 water/tint samples and weapon cache refresh passed\n");
     display_draw_display(state);
     dos_ui_check_indexed_images();
 #endif
@@ -370,7 +377,7 @@ void dos_platform_init(int argc,char **argv)
     if(dos_benchmark_frames<0 || dos_benchmark_frames>1024 || ((dos_check_enabled || dos_frontend_check_enabled) && !dos_benchmark_frames)) {
         fprintf(stderr,"Use --dos-bench 1..1024 [--dos-check]\n");exit(1);
     }
-    printf("[DOS] 486 DX2/DX4 target; software VESA; i386 instructions / i486 tuning\n");
+    printf("[DOS] 486 DX2/DX4 target; software VESA; i486 instructions and tuning\n");
     if(dos_fixed_test_ticks)printf("[DOS] Fixed diagnostic ticks; FPS is not a real-game benchmark\n");
     dos_memory_report("startup");
 }

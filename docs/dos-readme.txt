@@ -5,6 +5,7 @@ video (a mode of at least 320x200). A VBE 2 BIOS or UNIVBE is recommended.
 The smallest available RGB565 mode is selected; many cards use 320x240.
 
 Unzip the entire package into a writable directory, then run ABHD.BAT.
+When updating, keep ABHD.EXE and DATA from the same package.
 CWSDPMI.EXE is included; the launcher disables disk swapping. Use a lean DOS
 boot with XMS enabled and EMS disabled, aiming for about 600 KB free conventional
 RAM at the DOS prompt for texture/sample banks, the runtime and audio driver. Extra TSRs
@@ -21,10 +22,11 @@ DOS menus use the keyboard. Optional mouse input requires a DOS mouse driver:
 This enables automatic capture in-game; Esc releases it for menus. Mouse
 behavior still needs real-hardware validation. DOS always uses a full screen.
 
-AB3D.INI defaults to true 320x200 rendering, one renderer thread and normal
-game rules. The game draws native RGB565 pixels and presents them 1:1 with
-SDL: no framebuffer color conversion, enlargement or OpenGL. S3's 320x240
-mode centers the 320x200 view. Other modes also retain 1:1 pixels.
+AB3D.INI requests a small video mode, one renderer thread and normal game
+rules. The world fills the entire selected mode behind the HUD: 320x240 on
+S3 with RGB565, or standard 320x200 VGA in the indexed build. Existing INI
+files requesting 320x200 also fill the selected mode. Native RGB565 pixels
+are presented 1:1 with SDL: no conversion, enlargement, borders or OpenGL.
 
 Menus, HUD, text and the map use native pixel sizes through SDL. Weapons
 still scale to the game view; their exact sampled frames are cached for

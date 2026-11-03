@@ -1,6 +1,7 @@
 #ifndef AB3D_RENDERER_PIXEL_H
 #define AB3D_RENDERER_PIXEL_H
 #include <stdint.h>
+#include <stddef.h>
 #ifdef AB3D_DOS_INDEXED
 #include "palette_dos.h"
 typedef uint8_t RendererPixel;
@@ -39,6 +40,30 @@ static inline uint16_t renderer_pixel_to_c12(uint16_t p)
 }
 static inline uint16_t renderer_pixel_from_be(const uint8_t *p)
 { return renderer_pixel_from_c12((uint16_t)((p[0]<<8)|p[1])); }
+
+/* Wall/floor palettes have fixed colors in RGB565 DOS. Prepare their owned
+ * RAM once at load time, preserving every source 0RGB color and shade. */
+static inline void renderer_pixel_prepare_palette(uint8_t *p, size_t bytes)
+{
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    for (size_t i = 0; i + 1 < bytes; i += 2) {
+        uint16_t pixel = renderer_pixel_from_be(p + i);
+        p[i] = (uint8_t)pixel;
+        p[i + 1] = (uint8_t)(pixel >> 8);
+    }
+#else
+    (void)p; (void)bytes;
+#endif
+}
+
+static inline uint16_t renderer_pixel_from_palette(const uint8_t *p)
+{
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    return *(const uint16_t *)(const void *)p;
+#else
+    return renderer_pixel_from_be(p);
+#endif
+}
 static inline unsigned renderer_pixel_gb_index(uint16_t p)
 {
 #ifdef AB3D_DOS_INDEXED

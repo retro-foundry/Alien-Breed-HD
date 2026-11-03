@@ -48,22 +48,28 @@ void dos_palette_load(int level)
     printf("[DOS PALETTE] level=%d epoch=%u; 255 source-derived colors, reserved cutout index\n",level+1,dos_palette_epoch);
 }
 
-/* UI sources remain RGB565. Build a native indexed cache on palette changes,
- * preserving cutouts explicitly; SDL performs no per-frame quantization. */
+/* UI sources use RGB565 or the exact disabled-image grey palette. Build a
+ * native indexed cache on palette changes, preserving cutouts explicitly;
+ * SDL performs no per-frame quantization. */
 SDL_Surface *dos_palette_convert(SDL_Surface *source)
 {
     SDL_Surface *out=SDL_CreateSurface(source->w,source->h,SDL_PIXELFORMAT_INDEX8);
     if(!out || !SDL_LockSurface(source))fail("UI cache");
     dos_palette_attach(out);
     Uint32 key=0;bool masked=SDL_SurfaceHasColorKey(source);
+    SDL_Palette *source_palette=SDL_GetSurfacePalette(source);
     if(masked && !SDL_GetSurfaceColorKey(source,&key))fail("UI mask");
     for(int y=0;y<source->h;y++) {
-        const Uint16 *in=(const Uint16 *)((const Uint8 *)source->pixels+y*source->pitch);
+        const Uint8 *in=(const Uint8 *)source->pixels+y*source->pitch;
         Uint8 *dst=(Uint8 *)out->pixels+y*out->pitch;
         for(int x=0;x<source->w;x++) {
-            unsigned c=in[x];
+            unsigned raw=source_palette?in[x]:((const Uint16 *)in)[x],c=raw;
+            if(source_palette) {
+                SDL_Color color=source_palette->colors[raw];
+                c=((color.r>>3)<<11)|((color.g>>2)<<5)|(color.b>>3);
+            }
             unsigned c12=(((c>>12)&15)<<8)|(((c>>7)&15)<<4)|((c>>1)&15);
-            dst[x]=(masked && c==key)?255:dos_c12_to_index[c12];
+            dst[x]=(masked && raw==key)?255:dos_c12_to_index[c12];
         }
     }
     SDL_UnlockSurface(source);

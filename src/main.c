@@ -191,6 +191,13 @@ int main(int argc, char *argv[])
         dos_memory_report("level loaded");
         audio_dos_reset_stats();
         dos_profile_reset();
+        const char *turn_env = getenv("AB3D_DOS_BENCH_TURN");
+        int turn = turn_env && !strcmp(turn_env, "1");
+        int initial_angle = g_state.plr1.angpos;
+        int turn_observed = 0;
+        if (turn && !Ab3dDos_PushKey(SDL_SCANCODE_RIGHT, true)) {
+            fprintf(stderr, "DOS benchmark turn enqueue failed: %s\n", SDL_GetError());exit(1);
+        }
         for(int i=0;i<dos_benchmark_frames && g_state.running;i++) {
             dos_profile_begin(DOS_UPDATE);
             if(dos_check_enabled) {
@@ -198,7 +205,14 @@ int main(int argc, char *argv[])
                 audio_set_underwater(i>=dos_benchmark_frames/2);
             }
             game_loop_tick(&g_state,&ctx);
+            if (g_state.plr1.angpos != initial_angle) turn_observed = 1;
             dos_profile_end();dos_profile_frame();
+        }
+        if (turn) {
+            if (!Ab3dDos_PushKey(SDL_SCANCODE_RIGHT, false) || !turn_observed) {
+                fprintf(stderr, "DOS benchmark camera did not turn\n");exit(1);
+            }
+            printf("[DOSCHECK] benchmark camera turned from %d to %d\n", initial_angle, g_state.plr1.angpos);
         }
 #if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
         if (g_renderer.buffer || g_renderer.back_buffer || renderer_get_buffer()) {

@@ -34,6 +34,7 @@ def main():
     parser.add_argument('--rgb-build', type=Path, default=Path('build/dos'))
     parser.add_argument('--indexed-build', type=Path, default=Path('build/dos-indexed'))
     parser.add_argument('--levels', type=int, nargs='+', default=list(range(1, 17)))
+    parser.add_argument('--height', type=int, default=240, help='Use the same native mode for both pixel formats')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     results = []
@@ -44,9 +45,9 @@ def main():
             for build in (args.rgb_build, args.indexed_build):
                 subprocess.run([sys.executable, str(root/'tools/check_dos.py'), '--dosbox', str(args.dosbox),
                                 '--build-dir', str(build), '--cycles', '40000', '--frames', '4',
-                                '--memory', '4', '--level', str(level), '--sound', 'off', '--fixed-ticks'],
+                                '--memory', '4', '--height', str(args.height), '--level', str(level), '--sound', 'off', '--fixed-ticks'],
                                cwd=root, check=True)
-        case = f'40000-4m-320x200-l{level}-off-fixed'
+        case = f'40000-4m-320x{args.height}-l{level}-off-fixed'
         rgb = bmp_world(root/args.rgb_build/'checks'/case/'FRAME.BMP')
         indexed = bmp_world(root/args.indexed_build/'checks'/case/'FRAME.BMP')
         palette = (root/args.indexed_build/'generated'/f'palette{level:02d}.bin').read_bytes()

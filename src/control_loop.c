@@ -852,6 +852,12 @@ void play_game_load_shared_assets(GameState *state)
     printf("[CONTROL] PlayGame starting\n");
     /* Re-read ab3d.ini so prefs match the file on disk (exe dir / fallbacks). */
     settings_load(state);
+#ifdef AB3D_DOS
+    /* The INI selects a minimum mode. Keep projection and aiming tied to
+     * the actual full-surface view after re-reading an older 200-line INI. */
+    state->cfg_render_width=(int16_t)renderer_get_width();
+    state->cfg_render_height=(int16_t)renderer_get_height();
+#endif
     settings_log_recap(state);
 
     /* ---- Load shared assets ---- */
@@ -880,6 +886,9 @@ void play_game_load_shared_assets(GameState *state)
     s_front_menu_requested = true;
 
     io_load_panel();
+#ifdef AB3D_DOS
+    display_dos_prepare_gameplay_ui(state);
+#endif
 }
 
 #if !defined(__EMSCRIPTEN__)

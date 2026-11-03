@@ -2,6 +2,7 @@
  * runs. Alpha is only an on/off cutout mask; disabled items use cached grey. */
 #include <SDL3/SDL.h>
 #include "ui_dos.h"
+#include "platform_dos.h"
 #include <stdio.h>
 #include <stdlib.h>
 #ifdef AB3D_DOS_INDEXED
@@ -18,6 +19,7 @@ static void refresh_indexed(DosUiImage *i)
 #endif
 
 static DosUiImage *images;
+static SDL_Palette *grey_palette;
 
 static void ui_fail(const char *operation)
 {
@@ -76,6 +78,7 @@ void dos_ui_texture_destroy(DosUiImage *texture)
             SDL_DestroySurface(i->grey);
             if(i->strips)for(int n=0;n<i->strip_count;n++)SDL_DestroySurface(i->strips[n]);
             free(i->strips);free(i);
+            if(!images){SDL_DestroyPalette(grey_palette);grey_palette=NULL;}
             return;
         }
         link = &i->next;
@@ -124,38 +127,76 @@ void dos_ui_texture_upload(DosUiImage *image, const SDL_Rect *rect, const void *
         if (!SDL_SetSurfaceColorKey(image->normal, true, key)) ui_fail("mask");
     }
     SDL_UnlockSurface(src);
+    /* The pinned SDL retains its bitmap alongside the RLE copy. Keep only
+     * one resident image so live scenes leave room for UI cache creation. */
     if (!SDL_SetSurfaceBlendMode(image->normal, SDL_BLENDMODE_NONE) ||
-        !SDL_SetSurfaceRLE(image->normal, true)) ui_fail("opaque cache");
+        !SDL_SetSurfaceRLE(image->normal, false)) ui_fail("opaque cache");
 }
 
-static SDL_Surface *grey_image(DosUiImage *image)
+SDL_Surface *dos_ui_prepare_grey_image(DosUiImage *image)
 {
     if (image->grey) return image->grey;
     SDL_Surface *src = image->normal;
-    image->grey = SDL_CreateSurface(src->w, src->h, SDL_PIXELFORMAT_RGB565);
-    if (!image->grey || !SDL_LockSurface(src)) ui_fail("grey cache");
+    if (!SDL_LockSurface(src)) ui_fail("grey source lock");
+    /* The existing dim transform produces values 0..170. An exact grey
+     * palette needs one byte per pixel, plus a separate cutout index 255. */
+    image->grey = SDL_CreateSurface(src->w, src->h, SDL_PIXELFORMAT_INDEX8);
+    if(!image->grey)ui_fail("grey bitmap allocation");
+    if(!grey_palette) {
+        grey_palette=SDL_CreatePalette(256);
+        SDL_Color colors[256];
+        for(unsigned i=0;i<256;i++)colors[i]=(SDL_Color){i,i,i,255};
+        if(!grey_palette || !SDL_SetPaletteColors(grey_palette,colors,0,256))ui_fail("grey palette allocation");
+    }
+    if(!SDL_SetSurfacePalette(image->grey,grey_palette))ui_fail("grey palette attachment");
     Uint32 key;
     bool masked = SDL_SurfaceHasColorKey(src);
     if (masked && !SDL_GetSurfaceColorKey(src, &key)) ui_fail("grey mask");
     for (int y = 0; y < src->h; y++) {
         const Uint16 *in = (const Uint16 *)((const Uint8 *)src->pixels + y * src->pitch);
-        Uint16 *out = (Uint16 *)((Uint8 *)image->grey->pixels + y * image->grey->pitch);
+        Uint8 *out = (Uint8 *)image->grey->pixels + y * image->grey->pitch;
         for (int x = 0; x < src->w; x++) {
             Uint16 c = in[x];
-            if (masked && c == key) { out[x] = 1; continue; }
+            if (masked && c == key) { out[x] = 255; continue; }
             unsigned r = (c >> 11) * 255 / 31;
             unsigned g = ((c >> 5) & 63) * 255 / 63;
             unsigned b = (c & 31) * 255 / 31;
             unsigned value = SDL_max(r, SDL_max(g, b)) * 2 / 3;
-            out[x] = rgb565(value, value, value);
+            out[x] = (Uint8)value;
         }
     }
     SDL_UnlockSurface(src);
-    if ((masked && !SDL_SetSurfaceColorKey(image->grey, true, 1)) ||
-        !SDL_SetSurfaceBlendMode(image->grey, SDL_BLENDMODE_NONE) ||
-        !SDL_SetSurfaceRLE(image->grey, true)) ui_fail("opaque grey cache");
+    if ((masked && !SDL_SetSurfaceColorKey(image->grey, true, 255)) ||
+        !SDL_SetSurfaceBlendMode(image->grey, SDL_BLENDMODE_NONE)) ui_fail("opaque grey cache");
     return image->grey;
 }
+
+#ifndef AB3D_DOS_INDEXED
+void dos_ui_prepare_blits(DosUiRenderer *renderer)
+{
+    /* SDL builds small palette-to-RGB565 tables lazily. Allocate those with
+     * the persistent images, before a live level fragments the 4 MB heap. */
+    SDL_Surface *screen=renderer->surface;
+    SDL_Rect saved_clip;
+    if(!SDL_GetSurfaceClipRect(screen,&saved_clip) || !SDL_LockSurface(screen))
+        ui_fail("prepare blit target");
+    Uint16 saved=*(Uint16 *)screen->pixels;
+    SDL_UnlockSurface(screen);
+    SDL_SetSurfaceClipRect(screen,NULL);
+    for(DosUiImage *image=images;image;image=image->next) {
+        SDL_Surface *sources[]={image->normal,image->grey};
+        for(unsigned n=0;n<2;n++) {
+            if(!sources[n])continue;
+            SDL_Rect area={0,0,1,1},target={0,0,1,1};
+            if(!SDL_BlitSurface(sources[n],&area,screen,&target))ui_fail("prepare native blit");
+        }
+    }
+    if(!SDL_LockSurface(screen))ui_fail("restore blit target");
+    *(Uint16 *)screen->pixels=saved;
+    SDL_UnlockSurface(screen);
+    SDL_SetSurfaceClipRect(screen,&saved_clip);
+}
+#endif
 
 void dos_ui_check_images(void)
 {
@@ -173,13 +214,18 @@ void dos_ui_check_images(void)
         if (!SDL_LockSurface(i->normal) || !SDL_LockSurface(i->grey)) ui_fail("check lock");
         for (int y = 0; y < i->normal->h; y++) {
             const Uint16 *normal = (Uint16 *)((Uint8 *)i->normal->pixels + y * i->normal->pitch);
-            const Uint16 *grey = (Uint16 *)((Uint8 *)i->grey->pixels + y * i->grey->pitch);
+            const Uint8 *grey = (Uint8 *)i->grey->pixels + y * i->grey->pitch;
             for (int x = 0; x < i->normal->w; x++) {
                 bool cutout = masked && normal[x] == normal_key;
                 if (cutout != (masked && grey[x] == grey_key)) ui_fail("grey cutout differs");
-                if (!cutout && ((grey[x] >> 11) != (grey[x] & 31) ||
-                                (grey[x] >> 11) != ((grey[x] >> 6) & 31)))
-                    ui_fail("disabled pixel is not grey");
+                if (!cutout) {
+                    Uint16 c=normal[x];
+                    unsigned r=(c>>11)*255/31,g=((c>>5)&63)*255/63,b=(c&31)*255/31;
+                    unsigned expected=SDL_max(r,SDL_max(g,b))*2/3;
+                    SDL_Color actual=SDL_GetSurfacePalette(i->grey)->colors[grey[x]];
+                    if(actual.r!=expected || actual.g!=expected || actual.b!=expected)
+                        ui_fail("disabled pixel differs from original dim transform");
+                }
             }
         }
         SDL_UnlockSurface(i->grey);
@@ -205,11 +251,14 @@ void dos_ui_check_indexed_images(void)
             if(mask && !SDL_GetSurfaceColorKey(src,&key))ui_fail("indexed cache source mask");
             if(!SDL_LockSurface(src) || !SDL_LockSurface(dst))ui_fail("indexed cache lock");
             for(int y=0;y<src->h;y++) {
-                const Uint16 *a=(const Uint16 *)((const Uint8 *)src->pixels+y*src->pitch);
+                const Uint8 *a=(const Uint8 *)src->pixels+y*src->pitch;
                 const Uint8 *b=(const Uint8 *)dst->pixels+y*dst->pitch;
                 for(int x=0;x<src->w;x++) {
-                    unsigned c=a[x],c12=(((c>>12)&15)<<8)|(((c>>7)&15)<<4)|((c>>1)&15);
-                    unsigned expected=(mask && c==key)?255:dos_c12_to_index[c12];
+                    SDL_Palette *palette=SDL_GetSurfacePalette(src);
+                    unsigned raw=palette?a[x]:((const Uint16 *)a)[x],c=raw;
+                    if(palette){SDL_Color color=palette->colors[raw];c=rgb565(color.r,color.g,color.b);}
+                    unsigned c12=(((c>>12)&15)<<8)|(((c>>7)&15)<<4)|((c>>1)&15);
+                    unsigned expected=(mask && raw==key)?255:dos_c12_to_index[c12];
                     if(b[x]!=expected)ui_fail("stale indexed UI pixels or changed cutout");
                 }
             }
@@ -248,7 +297,7 @@ int dos_ui_blit(DosUiRenderer *renderer, DosUiImage *image,
         }
         return 0;
     }
-    SDL_Surface *pixels = alpha == 255 ? image->normal : grey_image(image);
+    SDL_Surface *pixels = alpha == 255 ? image->normal : dos_ui_prepare_grey_image(image);
 #ifdef AB3D_DOS_INDEXED
     refresh_indexed(image);
     SDL_Surface **native=alpha==255?&image->indexed_normal:&image->indexed_grey;
@@ -268,6 +317,11 @@ int dos_ui_blit(DosUiRenderer *renderer, DosUiImage *image,
         ) ui_fail("native DOS target");
     SDL_Rect target = *dst;
     target.x+=renderer->viewport.x;target.y+=renderer->viewport.y;
-    if (!SDL_BlitSurface(pixels, &area, screen, &target)) ui_fail("opaque blit");
+    if (!SDL_BlitSurface(pixels, &area, screen, &target)) {
+        fprintf(stderr,"DOS UI blit failed: source=%dx%d format=%lx grey=%d\n",
+                pixels->w,pixels->h,(unsigned long)pixels->format,alpha!=255);
+        dos_memory_report("UI blit failed");
+        ui_fail("opaque blit");
+    }
     return 0;
 }
