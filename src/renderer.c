@@ -6844,9 +6844,10 @@ static void renderer_wall_native_columns(RenderSliceContext *ctx, int first, int
         int right = x == last && x + 1 < ctx->slice_right;
         RendererPixel *out = pixels + ct * width + x;
         uint64_t start = ctx->profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
-        dos_raster_wall(out, cb - ct + 1, width, column, palette, y, dy, row_mask);
-        if (left) dos_raster_wall(out - 1, cb - ct + 1, width, column, palette, y, dy, row_mask);
-        if (right) dos_raster_wall(out + 1, cb - ct + 1, width, column, palette, y, dy, row_mask);
+        if (left || right)
+            dos_raster_wall_edges(out - left, cb - ct + 1, width, column, palette,
+                                   y, dy, row_mask, 1 + left + right);
+        else dos_raster_wall(out, cb - ct + 1, width, column, palette, y, dy, row_mask);
         if (ct > ctx->top_clip) out[-width] = out[0];
         if (!floor_occluded && cb + 1 <= ctx->bot_clip)
             pixels[(cb + 1) * width + x] = pixels[cb * width + x];

@@ -17,6 +17,11 @@ void dos_raster_wall(RendererPixel *out, unsigned count, unsigned stride,
                       const uint8_t *column, const RendererPixel *palette,
                       uint32_t y, uint32_t dy, unsigned mask);
 
+/* Draw the core and its one/two side extensions together: copies is 2 or 3. */
+void dos_raster_wall_edges(RendererPixel *out, unsigned count, unsigned stride,
+                            const uint8_t *column, const RendererPixel *palette,
+                            uint32_t y, uint32_t dy, unsigned mask, unsigned copies);
+
 typedef struct {
     const uint8_t *texels;
     const RendererPixel *palette;

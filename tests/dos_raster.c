@@ -352,7 +352,7 @@ static void check_walls(void)
     for (unsigned w = 0; w < 65536; w++)
         for (unsigned c = 0; c < 3; c++) assert(texels[c * 65536 + w] == ((w >> (c * 5)) & 31));
     RendererPixel palettes[4][32];
-    static RendererPixel actual[320 * 160], expected[320 * 160];
+    static RendererPixel actual[320 * 240], expected[320 * 240];
     for (unsigned l = 0; l < 4; l++)
         for (unsigned t = 0; t < 32; t++) palettes[l][t] = renderer_pixel_from_c12((t * 97 + l * 73) & 4095);
     const RendererPixel *pal = palettes[0];
@@ -393,9 +393,21 @@ static void check_walls(void)
         }
         dos_raster_wall(actual, count, stride, texels+base_word, pal, y, dy, mask);
         assert(!memcmp(actual, expected, sizeof(actual)));
+        unsigned edge_count = !c ? 0 : c % 13 ? c * 23 % 240 : 240;
+        for (unsigned copies = 2; copies <= 3; copies++) {
+            memset(actual, 0x91, sizeof(actual)); memset(expected, 0x91, sizeof(expected));
+            a = y;
+            for (unsigned row = 0; row < edge_count; row++) {
+                unsigned word = ((a >> 16) & mask) + base_word;
+                for (unsigned x = 0; x < copies; x++) expected[row * stride + 3 + x] = pal[word & 31];
+                a += dy;
+            }
+            dos_raster_wall_edges(actual + 3, edge_count, stride, texels + base_word, pal, y, dy, mask, copies);
+            assert(!memcmp(actual, expected, sizeof(actual)));
+        }
     }
     free(data);
-    puts("PASS: all packed wall words and 192 row/column rasters preserve samples");
+    puts("PASS: all packed wall words, 192 row/column rasters and 384 edge rasters preserve samples and bounds");
 }
 
 static void put_word(uint8_t *p, int value) { p[0] = (unsigned)value >> 8; p[1] = value; }

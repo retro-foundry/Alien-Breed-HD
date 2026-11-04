@@ -236,6 +236,71 @@ void dos_raster_wall(RendererPixel *restrict out, unsigned count, unsigned strid
 #endif
 }
 
+/* Side extensions use the completed core's exact sample and shade. Store all
+ * two/three adjacent words while that color is still in a register. */
+__attribute__((noinline, optimize("O2")))
+void dos_raster_wall_edges(RendererPixel *restrict out, unsigned count, unsigned stride,
+                            const uint8_t *restrict column, const RendererPixel *restrict palette,
+                            uint32_t y, uint32_t dy, unsigned mask, unsigned copies)
+{
+#ifdef AB3D_NATIVE_RGB565
+    if (stride == 320) {
+#define EDGE_STORE_TWO(OFFSET) "movw %%dx, " #OFFSET "+2(%%edi)\n\t"
+#define EDGE_STORE_THREE(OFFSET) EDGE_STORE_TWO(OFFSET) "movw %%dx, " #OFFSET "+4(%%edi)\n\t"
+#define EDGE_PIXEL(OFFSET, EXTRA) \
+        "movl %%eax, %%edx\n\t" \
+        "shrl $16, %%edx\n\t" \
+        "andl %[mask], %%edx\n\t" \
+        "movzbl (%%esi,%%edx), %%edx\n\t" \
+        "movw (%[pal],%%edx,2), %%dx\n\t" \
+        "movw %%dx, " #OFFSET "(%%edi)\n\t" \
+        EXTRA(OFFSET) \
+        "addl %%ebx, %%eax\n\t"
+#define EDGE_COLUMNS(EXTRA) do { \
+        unsigned groups = count / 8; \
+        if (groups) __asm__ volatile( \
+            "1:\n\t" \
+            EDGE_PIXEL(0, EXTRA) \
+            EDGE_PIXEL(640, EXTRA) \
+            EDGE_PIXEL(1280, EXTRA) \
+            EDGE_PIXEL(1920, EXTRA) \
+            EDGE_PIXEL(2560, EXTRA) \
+            EDGE_PIXEL(3200, EXTRA) \
+            EDGE_PIXEL(3840, EXTRA) \
+            EDGE_PIXEL(4480, EXTRA) \
+            "addl $5120, %%edi\n\t" \
+            "decl %%ecx\n\t" \
+            "jnz 1b" \
+            : "+&a"(y), "+&D"(out), "+&c"(groups) \
+            : "S"(column), "b"(dy), [pal] "r"(palette), [mask] "m"(mask) \
+            : "edx", "cc", "memory"); \
+        count &= 7; \
+        if (count) __asm__ volatile( \
+            "1:\n\t" \
+            EDGE_PIXEL(0, EXTRA) \
+            "addl $640, %%edi\n\t" \
+            "decl %%ecx\n\t" \
+            "jnz 1b" \
+            : "+&a"(y), "+&D"(out), "+&c"(count) \
+            : "S"(column), "b"(dy), [pal] "r"(palette), [mask] "m"(mask) \
+            : "edx", "cc", "memory"); \
+        } while (0)
+        if (copies == 3) EDGE_COLUMNS(EDGE_STORE_THREE);
+        else EDGE_COLUMNS(EDGE_STORE_TWO);
+#undef EDGE_COLUMNS
+#undef EDGE_PIXEL
+#undef EDGE_STORE_THREE
+#undef EDGE_STORE_TWO
+        return;
+    }
+#endif
+    for (unsigned row = 0; row < count; row++, out += stride, y += dy) {
+        RendererPixel color = palette[column[(y >> 16) & mask]];
+        out[0] = out[1] = color;
+        if (copies == 3) out[2] = color;
+    }
+}
+
 /* Separate small loops keep the water/projection state out of 486 registers.
  * Unsigned additions retain the renderer's exact 32-bit UV wrapping. */
 __attribute__((noinline, optimize("O2")))

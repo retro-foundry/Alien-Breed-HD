@@ -605,8 +605,9 @@ frames on level 1. Runs are sequential, with detailed profiling disabled.
 | Reuse exact wall endpoint values | 22.81 | 36.87 ms | 43.83 ms | 44.35 ms |
 | Carry-based projection rounding | 22.83 | 36.83 ms | 43.80 ms | 44.31 ms |
 | Clip native columns before texture/depth work | 22.87 | 36.76 ms | 43.72 ms | 44.23 ms |
+| Shade wall core and side pixels together | 23.06 | 36.40 ms | 43.36 ms | 43.86 ms |
 
-This is a 2.66x increase over the original at the same rendering size.
+This is a 2.68x increase over the original at the same rendering size.
 The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
 per frame, for this full-height baseline. The earlier 28.23 FPS target and
 320x200 tables above describe the earlier, smaller view.
@@ -1120,3 +1121,36 @@ Release, feedback, package checks, exact automap captures and saved level/map
 payload comparisons on levels 1 and 4 pass. The indexed package is unchanged:
 its executable and all 231 assets match all 22 previously validated capture
 inputs, recorded in `build/dos/wall-visible-indexed-unchanged.json`.
+
+
+### Shade native wall core and side pixels together
+
+A native wall's first/last column previously sampled and shaded again for
+each side extension. A dedicated two/three-word raster now stores those
+identical adjacent pixels while the original shaded color is still in a
+register. The 320-pixel path unrolls eight rows; other pitches keep the same
+sampling expression. Interior columns retain their existing kernel. Vertical
+caps, clipping, interpolation, clip registration and painter order are unchanged.
+No cache or asset bank is added. Native text grows by 1,024 bytes; data and BSS
+are unchanged.
+
+The DOS regression adds 384 edge rasters against the original packed-word
+samples, covering two/three adjacent words, canonical and general masks,
+zero-length/full 240-row draws, every unroll tail, alternate pitches, unsigned
+coordinate wrapping and untouched surrounding pixels. Existing raster/math
+and object-order cases pass with their original random input sequence.
+
+Public native timings are 23.06/22.01/31.61/29.88 FPS for levels 1/6/15/turning,
+against 22.87/21.92/31.58/29.77. Level 1 averages 43.36 ms per frame with a
+36.40 ms render and 43.86 ms p95. Raw logs and executable/archive hashes are
+in `build/dos/wall-edges-performance.json`. The main view is 2.68x the original;
+the 25.80 FPS target remains unmet.
+
+All sixteen native starts and six turning captures match the preserved original.
+Full native 4 MB exercises on levels 1/4/15 pass with fixed ticks at 200,000
+cycles; those timings are diagnostic only. The four real-time 40,000-cycle
+benchmark runs pass with SB16/mouse enabled and zero audio underruns. Host
+sound remains muted. Windows Release, feedback, package contents and exact
+automap/saved level-map data comparisons on levels 1 and 4 pass. The indexed
+executable and 231 assets remain identical to all 22 previously validated
+indexed capture inputs.
