@@ -1005,3 +1005,12 @@ SB16 and mouse. The previous build measured 22.33/21.66/31.39/29.53. The
 stationary result is 2.61x the original; the 25.80 FPS target remains unmet.
 Measurements and package hashes are in `build/dos/texture-walk-performance.json`.
 Tests remain muted at the host with guest audio enabled for timing/exercises.
+
+Two generic division-narrowing trials also passed 147,690 independent cases,
+but their per-call range checks did not improve the principal level-one view.
+The signed-32-bit-quotient guard measured 22.43/21.70/31.51/29.59 FPS; a simpler
+signed-32-bit-numerator guard measured 22.40/21.73/31.47/29.59, against the
+retained build's 22.45/21.66/31.44/29.53. Both global changes were removed.
+The existing general divide helper remains, alongside the targeted texture
+walk whose bounds are established once per span. Trial evidence is retained
+locally in `build/dos/division-experiments/results.json`.
