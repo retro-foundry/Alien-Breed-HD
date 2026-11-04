@@ -601,8 +601,9 @@ frames on level 1. Runs are sequential, with detailed profiling disabled.
 | Connected-room cache slots without pointer mixing | 22.28 | 37.92 ms | 44.89 ms | 45.42 ms |
 | Inline DOS wall clip registration | 22.33 | 37.83 ms | 44.79 ms | 45.32 ms |
 | Exact 32-bit texture walk for flat walls | 22.45 | 37.58 ms | 44.54 ms | 45.07 ms |
+| Wall clip guards once per native segment | 22.58 | 37.33 ms | 44.29 ms | 44.82 ms |
 
-This is a 2.61x increase over the original at the same rendering size.
+This is a 2.63x increase over the original at the same rendering size.
 The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
 per frame, for this full-height baseline. The earlier 28.23 FPS target and
 320x200 tables above describe the earlier, smaller view.
@@ -1014,3 +1015,29 @@ retained build's 22.45/21.66/31.44/29.53. Both global changes were removed.
 The existing general divide helper remains, alongside the targeted texture
 walk whose bounds are established once per span. Trial evidence is retained
 locally in `build/dos/division-experiments/results.json`.
+
+
+### Validate native wall clip inputs once per segment
+
+The native wall paths now validate the column range and six clip-array pointers
+once per segment. They pass those checked inputs to the existing span merge
+routine; both paths already clamp depth to at least one. General rendering and
+neighbor extensions retain the guarded entry point. Span normalization, merging,
+replacement, sorting and boundary rules are unchanged. No cache or data buffer
+is added; native text shrinks by 3,072 bytes, with data and BSS unchanged.
+
+Public native timings are 22.58/21.80/31.54/29.54 FPS for levels 1/6/15/turning,
+against 22.45/21.66/31.44/29.53 before this change. The level-1 average frame is
+44.29 ms, render 37.33 ms and p95 44.82 ms. These use the same sequential,
+real-time 40,000-cycle, 4 MB, SB16/mouse setup. Raw logs and executable/archive
+hashes are retained in `build/dos/clip-guards-performance.json` and its named
+logs. The main view is 2.63x the original; the 3x target remains unmet.
+
+All sixteen starts and six turning views match the original captures exactly
+in each package (44 comparisons). Native 4 MB exercises on levels 1, 4 and 15
+and indexed exercises on levels 1 and 4 pass, as does native level 4 at real-time
+40,000 cycles. Automap captures and all six saved level/map payloads on levels
+1 and 4 match the earlier projection baseline. Windows Release, feedback,
+DOS arithmetic/raster tests, ZIP CRCs and package contents pass; all 231 assets
+in each package match the corresponding preserved assets. Testing remains
+muted at the host, with guest audio active in performance and exercise runs.

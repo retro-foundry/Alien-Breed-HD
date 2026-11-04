@@ -6190,20 +6190,15 @@ void renderer_rotate_object_pts(GameState *state)
 /* Wall texture index for switches (io.c wall_texture_table). Must be before wall raster helpers. */
 #define SWITCHES_WALL_TEX_ID  11
 
+/* Inputs are validated by the guarded wrapper or once for a native wall
+ * span. Both native callers clamp depth to at least one before registering. */
 #ifdef AB3D_DOS
 __attribute__((always_inline)) static inline
 #else
 static
 #endif
-void renderer_column_clip_add_span(int col, int top, int bot, int32_t z)
+void renderer_column_clip_add_span_prechecked(ColumnClip *clip, int col, int top, int bot, int32_t z)
 {
-    ColumnClip *clip = &g_renderer.clip;
-    if (col < 0 || col >= g_renderer.width) return;
-    if (!clip->top || !clip->bot || !clip->z ||
-        !clip->top2 || !clip->bot2 || !clip->z2) {
-        return;
-    }
-    if (z <= 0) return;
     if (top > bot) {
         int t = top;
         top = bot;
@@ -6288,6 +6283,23 @@ write_back:
     clip->bot2[col] = bots[1];
     clip->z2[col] = zs[1];
 }
+
+static void renderer_column_clip_add_span(int col, int top, int bot, int32_t z)
+{
+    ColumnClip *clip = &g_renderer.clip;
+    if (col < 0 || col >= g_renderer.width || z <= 0) return;
+    if (!clip->top || !clip->bot || !clip->z || !clip->top2 || !clip->bot2 || !clip->z2) return;
+    renderer_column_clip_add_span_prechecked(clip, col, top, bot, z);
+}
+
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+static inline ColumnClip *renderer_wall_clip_for_span(const RenderSliceContext *ctx, int first, int last)
+{
+    ColumnClip *clip = &g_renderer.clip;
+    return ctx->update_column_clip && first >= 0 && last < g_renderer.width &&
+        clip->top && clip->bot && clip->z && clip->top2 && clip->bot2 && clip->z2 ? clip : NULL;
+}
+#endif
 
 int32_t renderer_column_clip_nearest_z_at(int col, int row)
 {
@@ -6657,11 +6669,12 @@ __attribute__((always_inline)) static inline
 static
 #endif
 void renderer_wall_register_column(const RenderSliceContext *ctx, int x, int ct, int cb,
-                                          int32_t col_z, int extend_left, int extend_right)
+                                          int32_t col_z, int extend_left, int extend_right, ColumnClip *prechecked_clip)
 {
     int occ_top = ct > ctx->top_clip ? ct - 1 : ct;
     int occ_bot = cb + 1 <= ctx->bot_clip ? cb + 1 : cb;
-    renderer_column_clip_add_span(x, occ_top, occ_bot, col_z);
+    if (prechecked_clip) renderer_column_clip_add_span_prechecked(prechecked_clip, x, occ_top, occ_bot, col_z);
+    else renderer_column_clip_add_span(x, occ_top, occ_bot, col_z);
     for (int side = -1; side <= 1; side += 2) {
         if (side < 0 ? !extend_left : !extend_right) continue;
         int32_t nz = renderer_column_clip_nearest_z_overlap(&g_renderer.clip, x + side, ct, cb);
@@ -6685,6 +6698,7 @@ static void renderer_wall_flat_rows(RenderSliceContext *ctx, int first, int last
                                     int rows, int mask, int horand, int fromtile,
                                     int32_t yoff, int d6_max)
 {
+    ColumnClip *prechecked_clip = renderer_wall_clip_for_span(ctx, first, last);
     int center = renderer_view_center_y();
     if (inv_z < 1) inv_z = 1;
     int32_t z = (16777216u + (uint32_t)inv_z / 2) / (uint32_t)inv_z;
@@ -6725,7 +6739,7 @@ static void renderer_wall_flat_rows(RenderSliceContext *ctx, int first, int last
         int left = i == 0 && first > ctx->slice_left;
         int right = i == count - 1 && last + 1 < ctx->slice_right;
         if (ctx->update_column_clip)
-            renderer_wall_register_column(ctx, first + i, ct, cb, z, left, right);
+            renderer_wall_register_column(ctx, first + i, ct, cb, z, left, right, prechecked_clip);
         bright_acc += bright_step_acc;
     }
     unsigned width = g_renderer.width;
@@ -6789,6 +6803,7 @@ static void renderer_wall_native_columns(RenderSliceContext *ctx, int first, int
                                           int rows, unsigned mask, int horand, int fromtile,
                                           uint32_t yoff, int d6_max)
 {
+    ColumnClip *prechecked_clip = renderer_wall_clip_for_span(ctx, first, last);
     int width = g_renderer.width, center = renderer_view_center_y();
     RendererPixel *pixels = renderer_active_cw();
     int clip_top = ctx->wall_top_clip >= 0 ? ctx->wall_top_clip : ctx->top_clip;
@@ -6845,7 +6860,7 @@ static void renderer_wall_native_columns(RenderSliceContext *ctx, int first, int
                 (ct > ctx->top_clip) + (!floor_occluded && cb + 1 <= ctx->bot_clip);
         }
         if (ctx->update_column_clip)
-            renderer_wall_register_column(ctx, x, ct, cb, z, left, right);
+            renderer_wall_register_column(ctx, x, ct, cb, z, left, right, prechecked_clip);
     }
 }
 #endif
@@ -7304,7 +7319,7 @@ static void draw_wall_rasterize_segment(
          * columns already contain overlapping wall spans. This preserves seam
          * occlusion while avoiding phantom occluders at stepped boundaries. */
         if (update_column_clip) {
-            renderer_wall_register_column(ctx, x, ct, cb, col_z, do_ext_l, do_ext_r);
+            renderer_wall_register_column(ctx, x, ct, cb, col_z, do_ext_l, do_ext_r, NULL);
         }
     }
 }
