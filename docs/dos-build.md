@@ -604,8 +604,9 @@ frames on level 1. Runs are sequential, with detailed profiling disabled.
 | Wall clip guards once per native segment | 22.58 | 37.33 ms | 44.29 ms | 44.82 ms |
 | Reuse exact wall endpoint values | 22.81 | 36.87 ms | 43.83 ms | 44.35 ms |
 | Carry-based projection rounding | 22.83 | 36.83 ms | 43.80 ms | 44.31 ms |
+| Clip native columns before texture/depth work | 22.87 | 36.76 ms | 43.72 ms | 44.23 ms |
 
-This is a 2.65x increase over the original at the same rendering size.
+This is a 2.66x increase over the original at the same rendering size.
 The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
 per frame, for this full-height baseline. The earlier 28.23 FPS target and
 320x200 tables above describe the earlier, smaller view.
@@ -1095,3 +1096,27 @@ exercises on levels 1/4/15, indexed exercises on levels 1/4, and real-time
 captures and saved level/map data on levels 1 and 4 match the projection
 baseline. Windows Release, feedback, DOS raster/math and package checks pass;
 all 231 assets per package are unchanged. No shade/cache bank is added.
+
+
+### Clip native columns before texture/depth work
+
+Native wall columns now project and clip before calculating their texture
+column, rounded depth and shade. All interpolants advance in the loop's step
+clause, including rejected columns. Accepted columns keep the original values,
+cap and side pixels, clip registration order and painter order. No arithmetic
+precision, allocation or asset format changes.
+
+Public native timings are 22.87/21.92/31.58/29.77 FPS for levels 1/6/15/turning,
+against 22.83/21.88/31.55/29.74. Level 1 averages 43.72 ms per frame, with
+36.76 ms render and 44.23 ms p95. Evidence and executable/archive hashes are
+in `build/dos/wall-visible-performance.json`. The 25.80 FPS target remains unmet.
+
+All sixteen native starts and six turning captures match the preserved original.
+The full native 4 MB exercises on levels 1/4/15 pass at 200,000 cycles with
+fixed logic ticks; those diagnostic timings are not benchmark results. The
+four public real-time benchmark runs at 40,000 cycles pass with SB16 and mouse
+active and no audio underruns. All testing is muted at the host. Windows
+Release, feedback, package checks, exact automap captures and saved level/map
+payload comparisons on levels 1 and 4 pass. The indexed package is unchanged:
+its executable and all 231 assets match all 22 previously validated capture
+inputs, recorded in `build/dos/wall-visible-indexed-unchanged.json`.

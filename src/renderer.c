@@ -6809,20 +6809,14 @@ static void renderer_wall_native_columns(RenderSliceContext *ctx, int first, int
     int clip_top = ctx->wall_top_clip >= 0 ? ctx->wall_top_clip : ctx->top_clip;
     int clip_bot = ctx->wall_bot_clip >= 0 ? ctx->wall_bot_clip : ctx->bot_clip;
     int64_t inv_acc = walk->inv_z, tex_acc = walk->texture, bright_acc = walk->brightness;
-    for (int x = first; x <= last; x++) {
+    /* Rejected columns still advance every interpolant. Defer texture/depth
+     * divisions and shade selection until projection/clipping accepts a span. */
+    for (int x = first; x <= last; x++, inv_acc += walk->inv_z_step,
+             tex_acc += walk->texture_step, bright_acc += walk->brightness_step) {
         int32_t inv_z = (int32_t)(inv_acc >> 16);
         if (inv_z < 1) inv_z = 1;
-        int32_t z = (16777216u + (uint32_t)inv_z / 2) / (uint32_t)inv_z;
-        if (z < 1) z = 1;
-        int shade = (z >> 7) + (int32_t)(bright_acc >> 32) * 2;
-        if (shade < 0) shade = 0;
-        if (shade > d6_max) shade = d6_max;
         int top = renderer_project_round_24((int64_t)top_factor * inv_z) + center;
         int bot = renderer_project_round_24((int64_t)bot_factor * inv_z) + center;
-        int col = (renderer_wall_tex_column(tex_acc >> 16, inv_z) & horand) + fromtile;
-        inv_acc += walk->inv_z_step;
-        tex_acc += walk->texture_step;
-        bright_acc += walk->brightness_step;
         if (bot <= top) bot = top + 1;
         int ct = top < clip_top ? clip_top : top;
         int cb = bot > clip_bot ? clip_bot : bot;
@@ -6834,6 +6828,12 @@ static void renderer_wall_native_columns(RenderSliceContext *ctx, int first, int
             floor_occluded = 1;
         }
         if (ct > cb) continue;
+        int32_t z = (16777216u + (uint32_t)inv_z / 2) / (uint32_t)inv_z;
+        if (z < 1) z = 1;
+        int shade = (z >> 7) + (int32_t)(bright_acc >> 32) * 2;
+        if (shade < 0) shade = 0;
+        if (shade > d6_max) shade = d6_max;
+        int col = (renderer_wall_tex_column(tex_acc >> 16, inv_z) & horand) + fromtile;
         const RendererPixel *palette = (const void *)(pal + wall_scale_table[shade]);
         static const uint8_t zero_texel;
         const uint8_t *column = col < 0 ? &zero_texel : dos_wall_column(texture,col,rows);
