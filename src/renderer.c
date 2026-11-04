@@ -6703,18 +6703,29 @@ static void renderer_wall_flat_rows(RenderSliceContext *ctx, int first, int last
     DosWallColumn columns[count];
     /* The original negative packed-column shifts select palette entry zero. */
     static const uint8_t zero_texels[768] = {0};
+    RendererWallTextureWalk texture_walk;
+    if (count >= 16 && renderer_wall_texture_walk_init(&texture_walk, tex_acc, tex_step_acc, inv_z)) {
+        for (int i = 0; i < count; i++) {
+            int col = ((int32_t)texture_walk.quotient & horand) + fromtile;
+            columns[i].texels = col >= 0 ? dos_wall_column(texture,col,rows) : zero_texels;
+            renderer_wall_texture_walk_advance(&texture_walk);
+        }
+    } else {
+        for (int i = 0; i < count; i++) {
+            int col = (renderer_wall_tex_column(tex_acc >> 16, inv_z) & horand) + fromtile;
+            columns[i].texels = col >= 0 ? dos_wall_column(texture,col,rows) : zero_texels;
+            tex_acc += tex_step_acc;
+        }
+    }
     for (int i = 0; i < count; i++) {
-        int col = (renderer_wall_tex_column(tex_acc >> 16, inv_z) & horand) + fromtile;
         int d6 = (z >> 7) + (int32_t)(bright_acc >> 32) * 2;
         if (d6 < 0) d6 = 0;
         if (d6 > d6_max) d6 = d6_max;
         columns[i].palette = (const RendererPixel *)(const void *)(pal + wall_scale_table[d6]);
-        columns[i].texels = col >= 0 ? dos_wall_column(texture,col,rows) : zero_texels;
         int left = i == 0 && first > ctx->slice_left;
         int right = i == count - 1 && last + 1 < ctx->slice_right;
         if (ctx->update_column_clip)
             renderer_wall_register_column(ctx, first + i, ct, cb, z, left, right);
-        tex_acc += tex_step_acc;
         bright_acc += bright_step_acc;
     }
     unsigned width = g_renderer.width;

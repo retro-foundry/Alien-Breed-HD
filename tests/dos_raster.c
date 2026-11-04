@@ -58,6 +58,56 @@ static void check_division(void)
     printf("PASS: %u signed 64/32 divisions, including wide quotients\n", checked);
 }
 
+static void check_wall_texture_walk(void)
+{
+    uint32_t saved_random = random_state;
+    random_state = 0x61438327;
+    static const int32_t divisors[] = {1, 2, 3, 17, 127, 128, 255, 16384, 65535, 65536, 131071, 16777216};
+    unsigned checked = 0;
+    for (unsigned test = 0; test < 128; test++) {
+        for (unsigned d = 0; d < sizeof(divisors) / sizeof(*divisors); d++) {
+            int32_t divisor = divisors[d];
+            int64_t phase = (int64_t)((int32_t)next_value() / 256) * 65536 + (next_value() & 65535);
+            int64_t step = (int64_t)((int32_t)next_value() % 4096) * 65536 + (next_value() & 65535);
+            RendererWallTextureWalk walk;
+            assert(renderer_wall_texture_walk_init(&walk, phase, step, divisor));
+            for (unsigned i = 0; i < 320; i++, phase += step) {
+                /* Original expanded tex/z expression, not the reduced walk. */
+                int32_t expected = (int32_t)(reference_divide((phase >> 16) * INT64_C(16777216), divisor) >> 24);
+                assert((int32_t)walk.quotient == expected);
+                assert(renderer_wall_tex_column(phase >> 16, divisor) == expected);
+                renderer_wall_texture_walk_advance(&walk);
+                checked++;
+            }
+        }
+    }
+    static const int32_t starts[] = {INT32_MIN + 4, -1, 0, INT32_MAX - 4};
+    for (unsigned q = 0; q < sizeof(starts) / sizeof(*starts); q++) {
+        for (unsigned d = 0; d < 9; d++) {
+            for (int sign = -1; sign <= 1; sign += 2) {
+                int32_t divisor = divisors[d];
+                int64_t phase = (int64_t)starts[q] * divisor * 65536 + 65535;
+                int64_t step = sign * ((int64_t)divisor * 65536 - 1);
+                RendererWallTextureWalk walk;
+                assert(renderer_wall_texture_walk_init(&walk, phase, step, divisor));
+                for (unsigned i = 0; i < 3; i++, phase += step) {
+                    int64_t value = phase >> 16;
+                    int64_t expected = reference_divide(value, divisor) - (value % divisor < 0);
+                    assert((int32_t)walk.quotient == expected);
+                    renderer_wall_texture_walk_advance(&walk);
+                    checked++;
+                }
+            }
+        }
+    }
+    RendererWallTextureWalk walk;
+    assert(!renderer_wall_texture_walk_init(&walk, 0, ((int64_t)INT32_MAX + 1) * 65536, 1));
+    assert(!renderer_wall_texture_walk_init(&walk, 0, ((int64_t)INT32_MIN - 1) * 65536, 1));
+    assert(!renderer_wall_texture_walk_init(&walk, 0, 0, 0));
+    random_state = saved_random;
+    printf("PASS: %u wall texture walk samples retain original division, signed carries and wide-step guards\n", checked);
+}
+
 static void check_palette(void)
 {
     uint8_t palette[8192];
@@ -371,7 +421,7 @@ static void check_objects(void)
 
 int main(void)
 {
-    check_division(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_edges(); check_walls();
+    check_division(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_edges(); check_walls();
     check_objects();
     puts("DOS raster regression passed");
     return 0;

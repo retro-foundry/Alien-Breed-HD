@@ -600,8 +600,9 @@ frames on level 1. Runs are sequential, with detailed profiling disabled.
 | Frame lookup for sprite spill order | 21.04 | 40.56 ms | 47.53 ms | 48.14 ms |
 | Connected-room cache slots without pointer mixing | 22.28 | 37.92 ms | 44.89 ms | 45.42 ms |
 | Inline DOS wall clip registration | 22.33 | 37.83 ms | 44.79 ms | 45.32 ms |
+| Exact 32-bit texture walk for flat walls | 22.45 | 37.58 ms | 44.54 ms | 45.07 ms |
 
-This is a 2.60x increase over the original at the same rendering size.
+This is a 2.61x increase over the original at the same rendering size.
 The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
 per frame, for this full-height baseline. The earlier 28.23 FPS target and
 320x200 tables above describe the earlier, smaller view.
@@ -971,3 +972,36 @@ remain identical on levels 1 and 4. The non-DOS declaration and function body
 are unchanged. All DOS tests remain muted with guest audio active where
 requested. A combined zone-stream query trial saved only about 0.07 ms per
 level-one frame and did not improve every measured view; it was removed.
+
+### Exact 32-bit wall texture interpolation
+
+The DOS binary already uses the 32-bit DJGPP/i486 ABI: `int`, `long` and
+pointers occupy four bytes. Explicit `int64_t` values still occupy eight
+bytes and can require multiple instructions or software division. Some wide
+intermediates remain necessary for fixed-point products and near clipping.
+The existing exact 64/32 helper already uses native 386/486 divide operations.
+
+For constant-depth wall spans of at least sixteen columns, texture selection
+now retains the original interpolation fraction and division remainder in
+32-bit fields. Their carries reproduce the original floor division, including
+negative coordinates and steps. Setup keeps the wide phase, and steps whose
+integer part exceeds signed 32 bits retain the original division loop. Texture
+pointers are prepared before the palette/clip loop, without changing draw
+order, shade selection or samples. The walk uses 28 bytes of local state and
+adds no heap allocation.
+
+The DJGPP raster check compares 491,736 samples with the original expanded
+expression and independent division at quotient boundaries. It also verifies
+the wide-step guards. Native captures match all sixteen starts and six
+48-frame turns. The live-level 4 MB exercises pass on levels 1, 4 and 15,
+including normal-cycle level 4; map captures and all six saves' level/map
+payloads remain identical on levels 1 and 4. The indexed executable and all
+231 indexed assets are byte-identical to their preceding validated versions.
+Windows Release and feedback checks pass.
+
+Public native timings are 22.45/21.66/31.44/29.53 FPS for levels 1/6/15/turning,
+over the established 128/64/64/128 real-time frames at 40,000 cycles, 4 MB,
+SB16 and mouse. The previous build measured 22.33/21.66/31.39/29.53. The
+stationary result is 2.61x the original; the 25.80 FPS target remains unmet.
+Measurements and package hashes are in `build/dos/texture-walk-performance.json`.
+Tests remain muted at the host with guest audio enabled for timing/exercises.

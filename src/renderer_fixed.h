@@ -87,4 +87,42 @@ static inline int32_t renderer_wall_tex_column(int64_t tex_z, int32_t inv_z)
     return (int32_t)(((tex_z * INT64_C(16777216)) / inv_z) >> 24);
 #endif
 }
+
+typedef struct {
+    uint32_t quotient, quotient_step, remainder, remainder_step;
+    uint32_t fraction, fraction_step, divisor;
+} RendererWallTextureWalk;
+
+/* ScreenWallstripdraw with constant inverse Z. Keep the original 16-bit
+ * interpolation fraction and Euclidean remainder separately: their carries
+ * reproduce floor((phase >> 16) / inv_z), including negative steps. */
+static inline int renderer_wall_texture_walk_init(RendererWallTextureWalk *walk,
+                                                  int64_t phase, int64_t step, int32_t inv_z)
+{
+    int64_t integer_step = step >> 16;
+    if (inv_z <= 0 || integer_step < INT32_MIN || integer_step > INT32_MAX) return 0;
+    int32_t quotient = renderer_wall_tex_column(phase >> 16, inv_z);
+    int32_t quotient_step = renderer_wall_tex_column(integer_step, inv_z);
+    walk->quotient = (uint32_t)quotient;
+    walk->quotient_step = (uint32_t)quotient_step;
+    walk->remainder = (uint32_t)((phase >> 16) - (int64_t)quotient * inv_z);
+    walk->remainder_step = (uint32_t)(integer_step - (int64_t)quotient_step * inv_z);
+    walk->fraction = (uint32_t)phase & 65535;
+    walk->fraction_step = (uint32_t)step & 65535;
+    walk->divisor = (uint32_t)inv_z;
+    return 1;
+}
+
+static inline void renderer_wall_texture_walk_advance(RendererWallTextureWalk *walk)
+{
+    uint32_t fraction = walk->fraction + walk->fraction_step;
+    uint32_t remainder = walk->remainder + walk->remainder_step + (fraction >> 16);
+    walk->fraction = fraction & 65535;
+    walk->quotient += walk->quotient_step;
+    if (remainder >= walk->divisor) {
+        remainder -= walk->divisor;
+        walk->quotient++;
+    }
+    walk->remainder = remainder;
+}
 #endif
