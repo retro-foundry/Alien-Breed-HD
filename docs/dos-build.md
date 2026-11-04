@@ -38,6 +38,26 @@ and a private native RGB565 version for DOS, compiles `ABHD.EXE`, sets a 128 KB 
 SDL's license, game data, music, `AB3D.INI`, `README.TXT` and `ABHD.BAT`.
 Only the distribution manifest is archived, excluding local saves, logs and tests.
 
+### Compiler feedback build
+
+For the faster native build, supply an installed DOSBox Staging executable:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_dos.ps1 `
+  -ProfileGuided -DosBox <path-to-dosbox.exe>
+```
+
+This rebuilds feedback from the current sources, using all sixteen levels,
+six turning runs and a save/load exercise. Instrumented training uses 16 MB;
+those timings are not performance measurements. Before packaging, the
+uninstrumented image must reproduce all 22 ordinary 4 MB captures exactly
+and pass the real-time 4 MB level-4 SB16/mouse exercise. Host audio is muted.
+Training takes several minutes and stays under the selected build directory.
+No compiler counters or additional texture/shade banks enter the package.
+The option currently targets native RGB565; the indexed build is unchanged.
+An ordinary build command clears the CMake feedback option and recompiles
+the ordinary executable. Missing or mismatched feedback fails compilation.
+
 ### Direct 8-bit trial
 
 The default build retains exact RGB565 colors. To build the optional 8-bit
@@ -607,8 +627,10 @@ frames on level 1. Runs are sequential, with detailed profiling disabled.
 | Clip native columns before texture/depth work | 22.87 | 36.76 ms | 43.72 ms | 44.23 ms |
 | Shade wall core and side pixels together | 23.06 | 36.40 ms | 43.36 ms | 43.86 ms |
 | Classify identical darkest-shade floor rows at load | 23.19 | 36.15 ms | 43.12 ms | 43.62 ms |
+| Compiler feedback build (`-ProfileGuided`) | 24.32 | 34.47 ms | 41.12 ms | 41.67 ms |
 
-This is a 2.70x increase over the original at the same rendering size.
+The trained build is a 2.83x increase over the original at the same rendering
+size. The ordinary build without compiler feedback remains at 23.19 FPS.
 The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
 per frame, for this full-height baseline. The earlier 28.23 FPS target and
 320x200 tables above describe the earlier, smaller view.
@@ -1188,3 +1210,39 @@ Automap captures and all six saved level/map payloads on levels 1 and 4 match
 the projection baseline. Windows Release, feedback, DOS raster/math and package
 checks pass; all 231 assets per package are unchanged. Host output is muted,
 with guest SB16 and mouse active. Real 486 hardware remains unmeasured.
+
+
+### Reproducible compiler feedback
+
+The optional `-ProfileGuided` build now trains from current sources, then uses
+the collected counts through the normal CMake target. DOS writes counters
+under unique short object names. Matching GCC auxiliary names in the final
+compile preserve the IDs of static functions; see
+[GCC 12.2's profile-ID implementation](https://github.com/gcc-mirror/gcc/blob/releases/gcc-12.2.0/gcc/coverage.cc#L515).
+Missing feedback and checksum mismatches are compilation errors. Every object
+depends on the feedback files: touching one rebuilt all 29 sources and
+reproduced the exact verified executable. Ordinary builds clear the feedback
+option and reproduce the preceding ordinary image byte-for-byte.
+
+The 23 instrumented training runs use 16 MB, with fixed ticks and host audio
+muted. These are not FPS measurements. The resulting uninstrumented image
+must match 22 ordinary 4 MB captures and pass the real-time 4 MB level-4
+SB16/mouse exercise before packaging. The ordinary images and executable
+remain under `build/dos/pgo/ordinary-captures` and `ordinary.exe`; feedback,
+logs and `report.json` remain under `build/dos/pgo`. No counters enter the ZIP.
+
+The packaged native build measures 24.32/23.47/33.01/30.86 FPS for levels
+1/6/15/turning, against 23.19/22.22/31.62/29.88. Level 1 averages 41.12 ms per
+frame, with a 34.47 ms render and 41.67 ms p95. The four measurements remain
+sequential real-time 40,000-cycle runs with 4 MB, SB16 and mouse. Raw logs and
+executable/archive hashes are in `build/dos/compiler-feedback-performance.json`.
+The main view reaches 2.83x the original; the 25.80 FPS target remains unmet.
+
+All 22 native captures also match verified original inputs. The full native
+4 MB exercises on levels 1/4/15 pass; automap captures and all six saved
+level/map payloads on levels 1/4 remain exact. Both ZIPs pass CRC, contents,
+executable and default-INI checks, with all 231 assets unchanged. The indexed
+rebuild reproduces its previously validated executable. The 94 C/header files
+in `src` and `tests` are unchanged from the preceding Windows Release, feedback
+and DOS raster/math validation. Native text shrinks by 23,040 bytes; data is
+unchanged and padded BSS grows by 1,024 bytes. Real hardware remains unmeasured.
