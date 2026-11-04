@@ -597,8 +597,9 @@ frames on level 1. Runs are sequential, with detailed profiling disabled.
 | Exact wall wrapping | 19.10 | 42.40 ms | 52.35 ms | 52.65 ms |
 | Shared projections and contiguous presentation copy | 20.66 | 41.43 ms | 48.40 ms | 49.03 ms |
 | Repeated automap wall updates | 20.97 | 40.73 ms | 47.70 ms | 48.31 ms |
+| Frame lookup for sprite spill order | 21.04 | 40.56 ms | 47.53 ms | 48.14 ms |
 
-This is a 2.44x increase over the original at the same rendering size.
+This is a 2.45x increase over the original at the same rendering size.
 The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
 per frame, for this full-height baseline. The earlier 28.23 FPS target and
 320x200 tables above describe the earlier, smaller view.
@@ -875,3 +876,32 @@ are byte-identical to those covered by the preceding DOS raster regression.
 Host test output remains muted with guest audio active. A short-row copy
 experiment made no meaningful FPS difference and was removed; the isolated
 automap timing probe is also absent from the final sources.
+
+### Frame lookup for sprite spill order
+
+DOS builds a 512-byte lookup of each room's first position in the current
+draw order. Sprite spill checks reuse it during that world frame. It includes
+rooms rejected by the clip prepass, preserving the existing ordering rules;
+the prepass's visible-room lookup cannot substitute for it. Duplicate room
+IDs retain their first match. Other GameState owners, IDs outside 0..255 and
+calls outside the active world frame retain the original linear search.
+The lookup rebuilds each frame and is disabled after world drawing.
+
+The live-level diagnostic compares 429 cases with the original search,
+covering repeated hits, changing lists, duplicate/missing/negative/large IDs,
+clamped counts and other owners. The DOS exercise requires this diagnostic
+in both native and indexed builds.
+
+Public-package timings are 21.04/19.43/31.27 FPS on levels 1/6/15 and
+28.95 FPS while turning on level 1, using the same 128/64/64/128 real-time
+frames, 40,000 cycles, 4 MB and SB16/mouse settings. The previous build
+measured 20.97/19.14/31.25/28.95. The 25.80 FPS target remains unmet.
+Package hashes, measurements and validation records are in
+`build/dos/zone-order-performance.json`.
+
+All sixteen native and indexed starts and six 48-frame turns in each build
+match their preserved references. Native 4 MB exercises pass on levels 1,
+4 and 15, including a normal-cycle level-4 exercise; indexed exercises pass
+on levels 1 and 4. Map captures and saved level/map payloads remain identical
+on levels 1 and 4. Windows Release and feedback checks pass. Tests remain
+muted at the host with guest audio enabled.

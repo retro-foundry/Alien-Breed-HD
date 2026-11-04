@@ -453,6 +453,7 @@ void renderer_dos_prepare_gun_cache(void);
 void renderer_key_sprite_condition_frames(const GameState *state,int frames[4]);
 void renderer_dos_check_gun_frames(GameState *state, RendererPixel *expected, int pitch_pixels);
 void renderer_dos_check_projection_cache(void);
+void renderer_dos_check_zone_order_cache(const GameState *live_state);
 #endif
 
 /* GL weapon/tint post-pass support.

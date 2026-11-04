@@ -189,6 +189,7 @@ exit
                       'pixel tag buffers absent (0 bytes)',
                       'scaled weapon frames: SDL pixels match original draws',
                       'level-point projection cache cases match uncached results',
+                      'frame zone-order cases match linear search',
                       'four keys/underlines, 9999 FPS, crosshair and map fit 320x200/240',
                       'main/options/autosaves/load/new-game/pause menus fit 320x200/240']:
             if check not in log:

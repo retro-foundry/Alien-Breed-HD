@@ -11531,9 +11531,32 @@ static int renderer_billboard_crosses_zone_portal_mode(const LevelState *level,
                                                        int allow_ambiguous,
                                                        int allow_near_fallback);
 
+#ifdef AB3D_DOS
+static int16_t g_dos_zone_order_indices[RENDERER_MAX_ZONE_ORDER];
+static const GameState *g_dos_zone_order_state;
+
+static void renderer_prepare_dos_zone_order(const GameState *state)
+{
+    memset(g_dos_zone_order_indices, 0xFF, sizeof(g_dos_zone_order_indices));
+    int count = state->zone_order_count;
+    if (count < 0) count = 0;
+    if (count > RENDERER_MAX_ZONE_ORDER) count = RENDERER_MAX_ZONE_ORDER;
+    for (int i = 0; i < count; i++) {
+        unsigned zone = (uint16_t)state->zone_order_zones[i];
+        if (zone < RENDERER_MAX_ZONE_ORDER && g_dos_zone_order_indices[zone] < 0)
+            g_dos_zone_order_indices[zone] = (int16_t)i;
+    }
+    g_dos_zone_order_state = state;
+}
+#endif
+
 static int renderer_zone_order_index(const GameState *state, int16_t zone_id)
 {
     if (!state || zone_id < 0) return -1;
+#ifdef AB3D_DOS
+    if (state == g_dos_zone_order_state && (uint16_t)zone_id < RENDERER_MAX_ZONE_ORDER)
+        return g_dos_zone_order_indices[(uint16_t)zone_id];
+#endif
     int count = state->zone_order_count;
     if (count < 0) count = 0;
     if (count > RENDERER_MAX_ZONE_ORDER) count = RENDERER_MAX_ZONE_ORDER;
@@ -11542,6 +11565,45 @@ static int renderer_zone_order_index(const GameState *state, int16_t zone_id)
     }
     return -1;
 }
+
+#ifdef AB3D_DOS
+void renderer_dos_check_zone_order_cache(const GameState *live_state)
+{
+    GameState fixture = {0};
+    int16_t saved_indices[RENDERER_MAX_ZONE_ORDER];
+    const GameState *saved_state = g_dos_zone_order_state;
+    memcpy(saved_indices, g_dos_zone_order_indices, sizeof(saved_indices));
+    static const int counts[] = {-5, 0, 1, 2, 7, 64, 128, 255, 256, 257, INT_MAX};
+    static const int16_t zones[] = {-1, 0, 1, 2, 16, 63, 127, 239, 254, 255, 256, 300, INT16_MAX};
+    unsigned checked = 0;
+    for (int pattern = 0; pattern < 3; pattern++) {
+        for (int i = 0; i < RENDERER_MAX_ZONE_ORDER; i++)
+            fixture.zone_order_zones[i] = pattern == 0 ? i % 17
+                : pattern == 1 ? (i % 5 ? i - 16 : 300)
+                : (i % 3 ? 255 - i : -1);
+        for (unsigned c = 0; c < sizeof(counts) / sizeof(*counts); c++) {
+            fixture.zone_order_count = counts[c];
+            renderer_prepare_dos_zone_order(&fixture);
+            for (unsigned z = 0; z < sizeof(zones) / sizeof(*zones); z++) {
+                int cached = renderer_zone_order_index(&fixture, zones[z]);
+                int repeated = renderer_zone_order_index(&fixture, zones[z]);
+                int other_owner = renderer_zone_order_index(live_state, zones[z]);
+                g_dos_zone_order_state = NULL;
+                int expected = renderer_zone_order_index(&fixture, zones[z]);
+                int expected_other = renderer_zone_order_index(live_state, zones[z]);
+                g_dos_zone_order_state = &fixture;
+                if (cached != expected || repeated != expected || other_owner != expected_other) {
+                    fprintf(stderr, "DOS frame zone-order cache mismatch\n"); exit(1);
+                }
+                checked++;
+            }
+        }
+    }
+    memcpy(g_dos_zone_order_indices, saved_indices, sizeof(saved_indices));
+    g_dos_zone_order_state = saved_state;
+    printf("[DOSCHECK] %u frame zone-order cases match linear search, including duplicates, missing and inactive owners\n", checked);
+}
+#endif
 
 static int renderer_spill_zone_order_allows(const GameState *state,
                                             int16_t source_zone,
@@ -17223,6 +17285,7 @@ static void renderer_draw_display_impl(GameState *state)
     dos_objects_prepare(&state->level, r->obj_rotated, ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z));
     memset(g_dos_billboard_geometry_valid, 0, sizeof(g_dos_billboard_geometry_valid));
     g_dos_draw_objects_active = 1;
+    renderer_prepare_dos_zone_order(state);
     g_dos_level_projection_active = 1;
 #endif
     RendererWorldZonePrepass world_zone_prepass;
@@ -17289,6 +17352,7 @@ static void renderer_draw_display_impl(GameState *state)
     automap_commit_staged_walls(&state->level);
 #ifdef AB3D_DOS
     g_dos_draw_objects_active = 0;
+    g_dos_zone_order_state = NULL;
     g_dos_level_projection_active = 0;
 #endif
     if (prof_on) t_after_world = SDL_GetPerformanceCounter();
