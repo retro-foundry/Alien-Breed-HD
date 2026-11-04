@@ -599,8 +599,9 @@ frames on level 1. Runs are sequential, with detailed profiling disabled.
 | Repeated automap wall updates | 20.97 | 40.73 ms | 47.70 ms | 48.31 ms |
 | Frame lookup for sprite spill order | 21.04 | 40.56 ms | 47.53 ms | 48.14 ms |
 | Connected-room cache slots without pointer mixing | 22.28 | 37.92 ms | 44.89 ms | 45.42 ms |
+| Inline DOS wall clip registration | 22.33 | 37.83 ms | 44.79 ms | 45.32 ms |
 
-This is a 2.59x increase over the original at the same rendering size.
+This is a 2.60x increase over the original at the same rendering size.
 The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
 per frame, for this full-height baseline. The earlier 28.23 FPS target and
 320x200 tables above describe the earlier, smaller view.
@@ -945,3 +946,28 @@ Capture hashes and those input checks are recorded in
 on levels 1, 4 and 15, including normal-cycle level 4; indexed exercises pass
 on levels 1 and 4. All runs remain muted with guest audio active for the
 performance and exercise checks.
+
+### Inline DOS wall clip registration
+
+DOS now forces the wall clip-registration helper into its callers. The
+guard, span merge, depth replacement and boundary-extension rules remain the
+same. This removes the generic helper call from approximately 1,100 columns
+per level-one frame and permits optimization using the caller's values.
+The native executable adds 5,632 text bytes; data and BSS sizes are unchanged.
+Both packages still pass the full 4 MB exercises.
+
+Matched public-package timings improve from 22.28/21.65/31.27/29.31 to
+22.33/21.66/31.39/29.53 FPS for the established level 1/6/15/turning cases,
+using 128/64/64/128 real-time frames at 40,000 cycles with SB16 and mouse.
+The stationary result is 2.60x the original; the 25.80 FPS target remains
+unmet. Measurements, code sizes and package hashes are in
+`build/dos/clip-inline-performance.json`.
+
+All sixteen native/indexed starts and six 48-frame turns in each build
+match the verified reference captures. Native live-level 4 MB exercises
+pass on levels 1, 4 and 15, including normal-cycle level 4; indexed exercises
+pass on levels 1 and 4. Map captures and all six saves' level/map payloads
+remain identical on levels 1 and 4. The non-DOS declaration and function body
+are unchanged. All DOS tests remain muted with guest audio active where
+requested. A combined zone-stream query trial saved only about 0.07 ms per
+level-one frame and did not improve every measured view; it was removed.

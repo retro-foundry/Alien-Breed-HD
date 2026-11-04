@@ -6651,7 +6651,12 @@ static void renderer_zone_trace_floor_stats_log(const RendererZoneTraceFloorStat
     }
 }
 
-static void renderer_wall_register_column(const RenderSliceContext *ctx, int x, int ct, int cb,
+#ifdef AB3D_DOS
+__attribute__((always_inline)) static inline
+#else
+static
+#endif
+void renderer_wall_register_column(const RenderSliceContext *ctx, int x, int ct, int cb,
                                           int32_t col_z, int extend_left, int extend_right)
 {
     int occ_top = ct > ctx->top_clip ? ct - 1 : ct;
