@@ -6030,6 +6030,13 @@ static void compute_blast_apply_target(GameState *state,
     int16_t effective_dist = (int16_t)(dist - target_radius);
     if (effective_dist < 0) effective_dist = 0;
 
+    /* The original ComputeBlast falloff rejects these targets regardless of
+     * visibility. Apply that same range check before traversing room portals. */
+    int16_t dist_bucket = (int16_t)(effective_dist >> 3);
+    dist_bucket = (int16_t)(dist_bucket - 4);
+    if (dist_bucket < 0) dist_bucket = 0;
+    if (dist_bucket > 31) return;
+
     int16_t to_zone_id = (int16_t)((to_room[0] << 8) | to_room[1]);
     /* Very close overlaps are allowed even when LOS is flaky at portal seams/edge cases. */
     if (effective_dist > BLAST_LOS_BYPASS_DIST) {
@@ -6040,11 +6047,6 @@ static void compute_blast_apply_target(GameState *state,
                                      in_top, target_in_top, 1);
         if (!vis) return;
     }
-
-    int16_t dist_bucket = (int16_t)(effective_dist >> 3);
-    dist_bucket = (int16_t)(dist_bucket - 4);
-    if (dist_bucket < 0) dist_bucket = 0;
-    if (dist_bucket > 31) return;
 
     int16_t atten = (int16_t)(32 - dist_bucket);
     int32_t damage = ((int32_t)max_damage * (int32_t)atten) >> 5;

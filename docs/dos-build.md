@@ -1574,3 +1574,25 @@ host audio muted. Frame/render/present times remain 38.72/32.76/3.13 ms, with
 39.24 ms p95 and no audio underruns. This is still 3.00x the original 8.60 FPS;
 real hardware remains unmeasured. Package hashes, final input/image/exercise
 checks and timing are recorded in `build/dos/mouse-validation.json`.
+
+
+### Reject unreachable blast distances before visibility traversal
+
+`compute_blast_apply_target` now applies its existing cylinder-edge distance
+bucket rejection before `can_it_be_seen`. Targets outside that unchanged range
+cannot take damage, so their room-portal traversal is unnecessary. Damage,
+knockback, particles, corpse gibbing, random calls and update order are retained.
+
+A diagnostic triggers the real `object_handle_barrel` handler after a lethal
+weapon-1-equivalent hit on a real barrel, using original level 1/6 geometry.
+Across quiet and close-up explosion cases, all 128 per-frame object/shot/point
+hashes and all 20 selected complete images match the preceding code exactly.
+The level-1 detonation drops from 109 to 32 visibility calls and 3.063 to
+2.277 ms; level 6 drops from 67 to 30 calls and 3.587 to 2.339 ms. These are
+fixed-tick diagnostic measurements at 40,000 cycles/4 MB, with host audio muted.
+Windows Release and the existing feedback/corpse regressions pass.
+
+This removes avoidable blast work but does not solve the large rendering
+pause: the close-up explosion still tests over two million sprite pixels in
+one frame. Diagnostic sources, images and timing are retained locally under
+`build/dos-effects-trace` while that rendering work is investigated.
