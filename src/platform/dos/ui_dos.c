@@ -176,6 +176,7 @@ void dos_ui_prepare_blits(DosUiRenderer *renderer)
 {
     /* SDL builds small palette-to-RGB565 tables lazily. Allocate those with
      * the persistent images, before a live level fragments the 4 MB heap. */
+    dos_ui_materialize_canvas(renderer);
     SDL_Surface *screen=renderer->surface;
     SDL_Rect saved_clip;
     if(!SDL_GetSurfaceClipRect(screen,&saved_clip) || !SDL_LockSurface(screen))
@@ -276,6 +277,9 @@ int dos_ui_blit(DosUiRenderer *renderer, DosUiImage *image,
     if (!image) ui_fail("texture was not uploaded");
     Uint8 alpha=image->alpha,r=image->red,g=image->green,b=image->blue;
     if (!alpha) return 0;
+#ifdef AB3D_NATIVE_RGB565
+    dos_ui_materialize_canvas(renderer);
+#endif
     if (r != 255 || g != 255 || b != 255) ui_fail("unexpected color modulation");
     if(image->strips) {
 #ifdef AB3D_DOS_INDEXED

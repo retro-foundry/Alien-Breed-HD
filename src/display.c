@@ -199,11 +199,34 @@ static int g_texture_is_4444_direct = 0;
 static SDL_Surface *g_dos_frame_surfaces[2];
 static const RendererPixel *g_dos_frame_pixels[2];
 static int g_dos_frame_next;
+#ifdef AB3D_NATIVE_RGB565
+static int g_dos_canvas_disabled;
+#endif
 static unsigned char *g_dos_map_scratch;
 static int g_dos_map_capacity;
 
 /* Renderer output already matches SDL and VESA: native RGB565, row-major.
  * Fallback surface descriptors borrow the engine image. No conversion or scaling. */
+static SDL_Surface *display_dos_frame_surface(const RendererPixel *src,int w,int h)
+{
+    int slot;
+    if(g_dos_frame_pixels[0]==src)slot=0;
+    else if(g_dos_frame_pixels[1]==src)slot=1;
+    else {slot=g_dos_frame_next;g_dos_frame_next^=1;}
+    SDL_Surface *frame=g_dos_frame_surfaces[slot];
+    if(g_dos_frame_pixels[slot]!=src || !frame || frame->w!=w || frame->h!=h) {
+        if(frame)SDL_DestroySurface(frame);
+        frame=SDL_CreateSurfaceFrom(w,h,DOS_PIXEL_FORMAT,(void *)src,w*DOS_PIXEL_BYTES);
+        if(!frame){fprintf(stderr,"DOS native surface failed: %s\n",SDL_GetError());exit(1);}
+#ifdef AB3D_DOS_INDEXED
+        dos_palette_attach(frame);
+#endif
+        SDL_SetSurfaceBlendMode(frame,SDL_BLENDMODE_NONE);
+        g_dos_frame_surfaces[slot]=frame;g_dos_frame_pixels[slot]=src;
+    }
+    return frame;
+}
+
 static void display_dos_copy_cw(const RendererPixel *src,int w,int h,const SDL_Rect *rect)
 {
     SDL_Surface *surface=SDL_GetWindowSurface(g_window);
@@ -225,8 +248,10 @@ static void display_dos_copy_cw(const RendererPixel *src,int w,int h,const SDL_R
         }
         memcpy(surface->pixels, src, (size_t)w * h * DOS_PIXEL_BYTES);
         SDL_UnlockSurface(surface);
+        dos_ui_discard_canvas_readback(g_sdl_ren);
         return;
     }
+    dos_ui_materialize_canvas(g_sdl_ren);
 #endif
     int slot;
     if(g_dos_frame_pixels[0]==src)slot=0;
@@ -4606,18 +4631,9 @@ static SDL_Rect display_hud_bar_fill_rect(SDL_Rect track, int value, int maximum
     return fill;
 }
 
-static void display_hud_stats_sdl_overlay(const GameState *state)
+/* Shared by HUD drawing and the native canvas preservation plan. */
+static void display_hud_bar_tracks(int pw,int ph,SDL_Rect tracks[2])
 {
-    if (!state || !g_sdl_ren) return;
-    if (!state->cfg_hud_bars) {
-        display_hud_numbers_sdl_overlay(state);
-        return;
-    }
-    const PlayerState *plr = state->mode == MODE_SLAVE ? &state->plr2 : &state->plr1;
-    int values[2] = { plr->energy, state->ammo };
-    if (state->infinite_ammo) values[1] = 63;
-    int pw = g_present_dst_rect.w, ph = g_present_dst_rect.h;
-    if (pw < 8 || ph < 8) return;
     /* Compact borderless HUD requested from the Amiga reference: half-view
      * height, narrow strips, centred vertically at the side edges. */
     int bw = ph * 4 / 256;
@@ -4635,12 +4651,30 @@ static void display_hud_stats_sdl_overlay(const GameState *state)
     int max_top=key_y-2-full_h-1;
     if(top>max_top)top=max_top;
 #endif
+    tracks[0]=(SDL_Rect){margin,top,bw,full_h};
+    tracks[1]=(SDL_Rect){pw-margin-bw,top,bw,full_h};
+}
+
+static void display_hud_stats_sdl_overlay(const GameState *state)
+{
+    if (!state || !g_sdl_ren) return;
+    if (!state->cfg_hud_bars) {
+        display_hud_numbers_sdl_overlay(state);
+        return;
+    }
+    const PlayerState *plr = state->mode == MODE_SLAVE ? &state->plr2 : &state->plr1;
+    int values[2] = { plr->energy, state->ammo };
+    if (state->infinite_ammo) values[1] = 63;
+    int pw = g_present_dst_rect.w, ph = g_present_dst_rect.h;
+    if (pw < 8 || ph < 8) return;
+    SDL_Rect tracks[2];
+    display_hud_bar_tracks(pw,ph,tracks);
     for (int kind = 0; kind < 2; kind++) {
         int maximum = kind ? 63 : PLAYER_MAX_ENERGY;
         int value = values[kind];
         if (value < 0) value = 0;
         if (value > maximum) value = maximum;
-        int x = kind ? pw - margin - bw : margin;
+        int x=tracks[kind].x,top=tracks[kind].y,bw=tracks[kind].w,full_h=tracks[kind].h;
         display_key_hud_fill_rect(g_sdl_ren, x - 1, top - 1, bw + 2, full_h + 2,
                                   12, 12, 12, 24);
         int missing_rows = kind ? (63 - value) * 2 : PLAYER_MAX_ENERGY - value;
@@ -5058,6 +5092,9 @@ static void display_automap_sdl_overlay(GameState *state)
 #ifdef AB3D_DOS
 void display_dos_check_gun_frames(GameState *state)
 {
+#ifdef AB3D_NATIVE_RGB565
+    dos_ui_materialize_canvas(g_sdl_ren);
+#endif
     /* The display's independent native pixels are diagnostic scratch after
      * capture. No second world canvas is needed just to compare weapons. */
     SDL_Surface *surface=SDL_GetWindowSurface(g_window);
@@ -5101,6 +5138,9 @@ static void display_present_cw_frame(GameState *state)
     display_sync_present_output_size(NULL, NULL);
 
     int w = renderer_get_width(), h = renderer_get_height();
+#ifdef AB3D_NATIVE_RGB565
+    int direct_canvas=0;
+#endif
 
     int use_gl_weapon = state && state->cfg_weapon_post_gl && g_gl_unpack_ok && g_gl_hud_ok;
     int use_gl_water_tint = state && state->cfg_post_tint && g_gl_unpack_ok && g_gl_hud_ok;
@@ -5141,8 +5181,26 @@ static void display_present_cw_frame(GameState *state)
             display_sdl_resync_after_raw_gl();
     } else {
 #ifdef AB3D_DOS
-        /* The world covers the native surface, including the area behind HUD. */
-        display_dos_copy_cw(src,w,h,&g_present_dst_rect);
+#ifdef AB3D_NATIVE_RGB565
+        int hit=state?(state->mode==MODE_SLAVE?state->hitcol2:state->hitcol):0;
+        if(!g_dos_canvas_disabled && state && state->cfg_hud_bars && !state->cfg_show_fps &&
+           !(state->cfg_crosshair_colour&7) && !state->automap_visible &&
+           !g_screen_tint_enabled && !display_text_has_lines() &&
+           (state->infinite_health || hit<=0) && !g_suppress_next_present_count &&
+           w==320 && h==240 && !g_present_dst_rect.x && !g_present_dst_rect.y &&
+           g_present_dst_rect.w==w && g_present_dst_rect.h==h) {
+            int m,kh,gap,gw,kx,ky;
+            hud_key_row_layout(w,h,&m,&kh,&gap,&gw,&kx,&ky);
+            SDL_Rect tracks[2],areas[3];
+            display_hud_bar_tracks(w,h,tracks);
+            for(int n=0;n<2;n++)areas[n]=(SDL_Rect){tracks[n].x-1,tracks[n].y-1,
+                                                   tracks[n].w+2,tracks[n].h+2};
+            areas[2]=(SDL_Rect){kx,ky,gw,kh+1+hud_key_mark_height(kh)};
+            direct_canvas=dos_ui_begin_canvas(g_sdl_ren,display_dos_frame_surface(src,w,h),areas,3);
+        }
+        if(!direct_canvas)
+#endif
+            display_dos_copy_cw(src,w,h,&g_present_dst_rect);
 #else
         if (!g_texture) return;
         display_cpu_unpack_cw_to_texture(src, w, h);
@@ -5206,6 +5264,9 @@ static void display_present_cw_frame(GameState *state)
     }
 #endif
     SDL_RenderPresent(g_sdl_ren);
+#ifdef AB3D_NATIVE_RGB565
+    if(direct_canvas)dos_ui_restore_canvas(g_sdl_ren);
+#endif
 
     /* Debug: show player position in window title (throttled) */
     if (g_debug_window_title && state && g_window) {
@@ -5458,8 +5519,74 @@ void display_dos_check_text_screen(const char *label, int allow_pages)
     g_dos_text_page=saved_page;g_dos_text_pages=saved_pages;g_dos_text_page_rows=saved_rows;
 }
 
+#ifdef AB3D_NATIVE_RGB565
+/* Compare the actual two presentation paths at 4 MB without allocating a third
+ * framebuffer. Disk oracles are diagnostic only; every displayed/world word is
+ * compared, including pixels beneath the transparent HUD and after readback. */
+static void display_dos_check_canvas(GameState *state)
+{
+    if(renderer_get_width()!=320 || renderer_get_height()!=240)return;
+    GameState test=*state;
+    test.cfg_hud_bars=1;test.cfg_show_fps=0;test.cfg_crosshair_colour=0;
+    test.automap_visible=false;test.hitcol=test.hitcol2=0;
+    test.infinite_health=test.infinite_ammo=false;
+    if(g_screen_tint_enabled || display_text_has_lines()) {
+        fprintf(stderr,"DOS canvas diagnostic requires the gameplay overlay state\n");exit(1);
+    }
+    FILE *screen=fopen("CANVAS.RAW","w+b"),*world=fopen("WORLD.RAW","w+b");
+    const RendererPixel *pixels=renderer_get_cw_buffer();
+    const size_t row_bytes=320*sizeof(*pixels),bytes=row_bytes*240;
+    if(!screen || !world || fwrite(pixels,1,bytes,world)!=bytes) {
+        fprintf(stderr,"DOS canvas oracle creation failed\n");exit(1);
+    }
+    int16_t conditions=game_conditions;
+    unsigned checked=0;
+    for(int keys=0;keys<3;keys++)for(int value=0;value<3;value++) {
+        game_conditions=(conditions&~15)|(keys==2?15:keys==1?5:0);
+        test.plr1.energy=test.plr2.energy=test.energy=value==2?PLAYER_MAX_ENERGY:value;
+        test.ammo=value==2?MAX_AMMO_RAW:value;
+        g_dos_canvas_disabled=1;
+        display_present_cw_frame(&test);
+        rewind(screen);
+        if(fwrite(g_sdl_ren->surface->pixels,1,bytes,screen)!=bytes || fflush(screen)) {
+            fprintf(stderr,"DOS canvas image oracle write failed\n");exit(1);
+        }
+        g_dos_canvas_disabled=0;
+        display_present_cw_frame(&test);
+        if(!g_sdl_ren->canvas_surface_stale) {
+            fprintf(stderr,"DOS canvas diagnostic did not use the direct path\n");exit(1);
+        }
+        /* A small RenderReadPixels call must materialize the entire displayed
+         * image correctly for later raw captures and partial UI changes. */
+        SDL_Rect corner={0,0,1,1};
+        SDL_Surface *readback=dos_ui_readback(g_sdl_ren,&corner);
+        if(!readback) {fprintf(stderr,"DOS canvas readback failed\n");exit(1);}
+        rewind(screen);rewind(world);
+        RendererPixel row[320];
+        for(int y=0;y<240;y++) {
+            if(fread(row,1,row_bytes,screen)!=row_bytes ||
+               memcmp(row,(Uint8 *)g_sdl_ren->surface->pixels+y*g_sdl_ren->surface->pitch,row_bytes) ||
+               (!y && *(RendererPixel *)readback->pixels!=row[0])) {
+                fprintf(stderr,"DOS canvas display differs at keys=%d value=%d row=%d\n",keys,value,y);exit(1);
+            }
+            if(fread(row,1,row_bytes,world)!=row_bytes || memcmp(row,pixels+y*320,row_bytes)) {
+                fprintf(stderr,"DOS canvas changed world history at keys=%d value=%d row=%d\n",keys,value,y);exit(1);
+            }
+        }
+        SDL_DestroySurface(readback);
+        checked++;
+    }
+    game_conditions=conditions;
+    fclose(screen);fclose(world);
+    printf("[DOSCHECK] %u direct HUD frames/readbacks match independent surfaces; world history unchanged\n",checked);
+}
+#endif
+
 void display_dos_check_hud_bounds(GameState *state)
 {
+#ifdef AB3D_NATIVE_RGB565
+    display_dos_check_canvas(state);
+#endif
     /* Diagnostic scratch belongs in the reserved stack, not the live heap. */
     GameState test_state=*state;
     GameState *test=&test_state;
@@ -5553,6 +5680,9 @@ void display_draw_display(GameState *state) {
 #ifdef AB3D_DOS
 void dos_capture_frame(const char *filename) {
     /* DOS drawing is synchronous; stream the resident native surface directly. */
+#ifdef AB3D_NATIVE_RGB565
+    dos_ui_materialize_canvas(g_sdl_ren);
+#endif
     SDL_Surface *surface=g_sdl_ren?g_sdl_ren->surface:NULL;
     if(!surface) { fprintf(stderr,"DOS frame readback failed: %s\n",SDL_GetError());exit(1); }
     const SDL_PixelFormatDetails *fmt=SDL_GetPixelFormatDetails(surface->format);

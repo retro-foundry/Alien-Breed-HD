@@ -1324,3 +1324,78 @@ and all six saved level/map payloads on levels 1/4 remain exact. The indexed
 rebuild reproduces its preceding executable. Windows Release, feedback, DOS
 raster/math/object checks and both package audits pass; all 231 assets per
 package are unchanged. Real hardware remains unmeasured.
+
+
+### Measured wall-clip merge alternatives
+
+A temporary fixed-tick native diagnostic recorded 10,560 empty first slots,
+20,548 existing first-span fast merges, 1,156 generic first-span merges,
+3,209 second-span merges and 2,048 second-span insertions. Every second-span
+insertion needed the original ordering swap. Startup drawing is included;
+these counters describe the workload and are not FPS measurements.
+
+Three alternatives passed 252,768 independent clip cases, including sequential
+updates, invalid spans, depth ties and signed-16-bit writeback boundaries.
+Their ordinary-build FPS for levels 1/6/15/turning were 23.33/22.27/31.69/29.84
+(first-span shortcut), 23.43/22.30/31.69/29.85 (direct insertion/swap), and
+23.38/22.25/31.67/29.84 (ordered merge writeback). The unchanged ordinary
+control measured 23.43/22.28/31.71/29.88. These use the established sequential
+real-time 40,000-cycle, 4 MB, SB16/mouse runs with muted host output.
+
+None improved the principal view. All three changes and their temporary
+production header were removed, and rebuilding reproduced the original
+ordinary executable byte-for-byte. Trial sources, oracle cases, counters and
+logs are retained locally in `build/dos-clip-experiments`. The public compiler
+feedback build remained at 24.75 FPS while the next presentation trial began.
+
+
+### Present native gameplay through a borrowed canvas
+
+The native 320x240 bar HUD now presents the renderer's existing RGB565 canvas
+directly. Its two 10x130 bar bounds and 134x36 key band come from the same
+layout functions used to draw the HUD, including collected-key underlines.
+Before overlay drawing, 7,424 world pixels are preserved in the existing SDL
+RAM surface. They are restored after the video-memory copy. This replaces a
+153,600-byte full-frame copy with 29,696 bytes of HUD backup/restoration.
+The renderer's world history is exact when presentation returns, including
+with frame clearing disabled. SDL retains ownership of its original pixels.
+
+The pinned SDL driver loans its public surface and cached presentation pointer
+only for that synchronous interval. Later surface reads and partial UI writes
+materialize the displayed video-memory image on demand; a complete frame
+replacement discards that pending readback. Readback uses the displayed LFB
+page or readable banked window. Other HUD/overlay configurations and video
+layouts continue through the existing independent surface path. Captures made
+during presentation read the complete current image while the loan is active.
+
+`cmake/dos-present.patch` contains the driver changes. `tools/setup_dos.ps1`
+applies it alongside the existing SDL patch; existing dependency caches need
+the setup step rerun. The patch applies to a clean pinned driver, reproduces
+the working driver, and reverses exactly. The game adds surface metadata and
+three saved rectangles, using the existing pixel allocations. Native text
+grows by 5,632 bytes; data and BSS sizes are unchanged.
+
+A native diagnostic compares both actual presentation paths for nine
+combinations of key ownership and health/ammo, checking every display and
+world word plus RenderReadPixels. It uses disk oracles to fit the 4 MB target.
+All nine comparisons pass in the level 1/4/15 fixed-tick exercises and the
+real-time level-4 exercise: 36 complete display/readback/history comparisons.
+The same exercises retain all 24 weapon frames and repeated full quickloads.
+
+Fresh compiler-feedback training covers all 23 scenarios. All sixteen native
+starts and six turns match the preserved original images in both ordinary and
+optimized builds. The indexed rebuild also matches all sixteen starts and six
+turns, with 4 MB exercises passing on levels 1/4. Native automap images and all
+six saves' level/map payloads remain exact on levels 1/4. Both packages pass
+CRC, contents, executable/default-INI and all 231 asset comparisons. Windows
+Release and feedback checks pass.
+
+The final native package measures 25.11/24.02/33.75/31.36 FPS for levels
+1/6/15/turning, against 24.75/23.60/33.04/30.86. These are the established
+128/64/64/128 sequential real-time frames at 40,000 cycles, 4 MB, SB16 and
+mouse, with host output muted. Level 1 falls from 40.40 to 39.82 ms per frame;
+presentation falls from 3.81 to 3.25 ms, and p95 falls from 40.94 to 40.37 ms.
+Logs and package hashes are in `build/dos/hud-canvas-performance.json`;
+validation is in `build/dos/hud-canvas-validation.json` and
+`build/dos/hud-canvas-exercises.json`. The main view reaches 2.92x the original;
+the 25.80 FPS target remains unmet. Real 486 hardware remains unmeasured.

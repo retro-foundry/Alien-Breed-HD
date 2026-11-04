@@ -56,17 +56,19 @@ if (!(Test-Path "$sdl/.git")) {
   Check 'SDL pinned checkout'
 }
 if ((git -C $sdl rev-parse HEAD).Trim() -ne $revision) { throw 'DOS SDL is not at the pinned revision' }
-$patch = Join-Path $repo 'cmake/dos-sdl.patch'
-$previousErrorAction = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
-git -C $sdl apply --reverse --check $patch 2>$null
-$alreadyPatched = $LASTEXITCODE -eq 0
-$ErrorActionPreference = $previousErrorAction
-if (!$alreadyPatched) {
-  git -C $sdl apply --check $patch
-  Check 'DOS SDL patch validation'
-  git -C $sdl apply $patch
-  Check 'DOS SDL patch'
+foreach ($patchName in @('dos-sdl.patch', 'dos-present.patch')) {
+  $patch = Join-Path $repo "cmake/$patchName"
+  $previousErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  git -C $sdl apply --reverse --check $patch 2>$null
+  $alreadyPatched = $LASTEXITCODE -eq 0
+  $ErrorActionPreference = $previousErrorAction
+  if (!$alreadyPatched) {
+    git -C $sdl apply --check $patch
+    Check "$patchName validation"
+    git -C $sdl apply $patch
+    Check $patchName
+  }
 }
 cmake -S $sdl -B $sdlBuild -G Ninja `
   "-DCMAKE_TOOLCHAIN_FILE=$sdl/build-scripts/i586-pc-msdosdjgpp.cmake" `

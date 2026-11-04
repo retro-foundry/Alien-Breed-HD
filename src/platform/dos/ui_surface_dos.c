@@ -2,8 +2,91 @@
 #include <SDL3/SDL.h>
 #include "ui_dos.h"
 #include <stdlib.h>
+#include <stdio.h>
 #ifdef AB3D_DOS_INDEXED
 #include "palette_dos.h"
+#endif
+
+#ifdef AB3D_NATIVE_RGB565
+extern bool Ab3dDos_BeginCanvas(SDL_Window *window,SDL_Surface *source,void **backup);
+extern void Ab3dDos_EndCanvas(SDL_Window *window);
+extern bool Ab3dDos_MaterializeCanvas(SDL_Window *window);
+extern void Ab3dDos_DiscardCanvasReadback(void);
+
+void dos_ui_materialize_canvas(DosUiRenderer *r)
+{
+    if(!r || !r->canvas_surface_stale || r->window_pixels)return;
+    if(!Ab3dDos_MaterializeCanvas(r->window)) {
+        fprintf(stderr,"DOS canvas readback failed: %s\n",SDL_GetError());exit(1);
+    }
+    r->canvas_surface_stale=false;
+}
+
+void dos_ui_discard_canvas_readback(DosUiRenderer *r)
+{
+    if(!r || !r->canvas_surface_stale)return;
+    r->canvas_surface_stale=false;
+    Ab3dDos_DiscardCanvasReadback();
+}
+
+/* Both native canvases are word aligned. Match their four-byte alignment
+ * with one leading word, then copy dwords and the optional trailing word. */
+__attribute__((always_inline)) static inline
+void copy_native_span(void *destination,const void *source,unsigned pixels)
+{
+    __asm__ volatile("testl $2, %%esi\n\t"
+                     "jz 1f\n\t"
+                     "movsw\n\t"
+                     "decl %%ecx\n\t"
+                     "1: movl %%ecx, %%eax\n\t"
+                     "shrl $1, %%ecx\n\t"
+                     "rep movsl\n\t"
+                     "testb $1, %%al\n\t"
+                     "jz 2f\n\t"
+                     "movsw\n\t"
+                     "2:"
+                     : "+&D"(destination), "+&S"(source), "+&c"(pixels)
+                     : : "eax", "cc", "memory");
+}
+
+static void copy_canvas_rects(DosUiRenderer *r,bool restore)
+{
+    SDL_Surface *s=r->surface;
+    Uint8 *destination=restore?s->pixels:r->window_pixels;
+    const Uint8 *source=restore?r->window_pixels:s->pixels;
+    for(int n=0;n<r->saved_count;n++) {
+        SDL_Rect a=r->saved_rects[n];
+        int offset=a.y*s->pitch+a.x*2;
+        for(int y=0;y<a.h;y++,offset+=s->pitch)
+            copy_native_span(destination+offset,source+offset,a.w);
+    }
+}
+
+bool dos_ui_begin_canvas(DosUiRenderer *r,SDL_Surface *source,const SDL_Rect *rects,int count)
+{
+    SDL_Rect clip;
+    if(!r || r->window_pixels || !source || count<0 || count>3 ||
+       r->viewport.x || r->viewport.y || r->viewport.w!=source->w || r->viewport.h!=source->h ||
+       !SDL_GetSurfaceClipRect(r->surface,&clip) || clip.x || clip.y ||
+       clip.w!=source->w || clip.h!=source->h)return false;
+    r->saved_count=count;
+    for(int n=0;n<count;n++) {
+        SDL_Rect bounds={0,0,source->w,source->h};
+        if(!SDL_GetRectIntersection(&rects[n],&bounds,&r->saved_rects[n]))return false;
+    }
+    if(!Ab3dDos_BeginCanvas(r->window,source,&r->window_pixels))return false;
+    copy_canvas_rects(r,false);
+    return true;
+}
+
+void dos_ui_restore_canvas(DosUiRenderer *r)
+{
+    if(!r || !r->window_pixels)return;
+    copy_canvas_rects(r,true);
+    Ab3dDos_EndCanvas(r->window);
+    r->window_pixels=NULL;
+    r->canvas_surface_stale=true;
+}
 #endif
 
 DosUiRenderer *dos_ui_create_renderer(SDL_Window *window)
@@ -19,7 +102,12 @@ DosUiRenderer *dos_ui_create_renderer(SDL_Window *window)
     DosUiRenderer *r=calloc(1,sizeof(*r));if(!r){SDL_OutOfMemory();return NULL;}
     r->window=window;r->surface=s;r->viewport=(SDL_Rect){0,0,s->w,s->h};return r;
 }
-void dos_ui_destroy_renderer(DosUiRenderer *r){free(r);}
+void dos_ui_destroy_renderer(DosUiRenderer *r){
+#ifdef AB3D_NATIVE_RGB565
+    dos_ui_restore_canvas(r);
+#endif
+    free(r);
+}
 static bool apply_clip(DosUiRenderer *r)
 {
     SDL_Rect a=r->viewport;
@@ -40,13 +128,24 @@ int dos_ui_color(DosUiRenderer *r,Uint8 red,Uint8 green,Uint8 blue,Uint8 alpha)
 #endif
  return 0;}
 int dos_ui_fill(DosUiRenderer *r,const SDL_Rect *rect)
-{if(!r)return -1;SDL_Rect a=rect?*rect:(SDL_Rect){0,0,r->viewport.w,r->viewport.h};
+{if(!r)return -1;
+#ifdef AB3D_NATIVE_RGB565
+ dos_ui_materialize_canvas(r);
+#endif
+ SDL_Rect a=rect?*rect:(SDL_Rect){0,0,r->viewport.w,r->viewport.h};
  a.x+=r->viewport.x;a.y+=r->viewport.y;return SDL_FillSurfaceRect(r->surface,&a,r->color)?0:-1;}
 int dos_ui_clear(DosUiRenderer *r)
-{if(!r)return -1;SDL_SetSurfaceClipRect(r->surface,NULL);bool ok=SDL_FillSurfaceRect(r->surface,NULL,r->color);apply_clip(r);return ok?0:-1;}
+{if(!r)return -1;
+#ifdef AB3D_NATIVE_RGB565
+ dos_ui_materialize_canvas(r);
+#endif
+ SDL_SetSurfaceClipRect(r->surface,NULL);bool ok=SDL_FillSurfaceRect(r->surface,NULL,r->color);apply_clip(r);return ok?0:-1;}
 int dos_ui_line(DosUiRenderer *r,int x0,int y0,int x1,int y1)
 {
     if(!r)return -1;
+#ifdef AB3D_NATIVE_RGB565
+    dos_ui_materialize_canvas(r);
+#endif
     SDL_Surface *surface=r->surface;SDL_Rect clip;
     if(!SDL_GetSurfaceClipRect(surface,&clip) || !SDL_LockSurface(surface))return -1;
     x0+=r->viewport.x;x1+=r->viewport.x;y0+=r->viewport.y;y1+=r->viewport.y;
@@ -72,10 +171,19 @@ int dos_ui_outline(DosUiRenderer *r,const SDL_Rect *rect)
     return dos_ui_line(r,a.x,a.y,a.x+a.w-1,a.y) || dos_ui_line(r,a.x,a.y+a.h-1,a.x+a.w-1,a.y+a.h-1) ||
            dos_ui_line(r,a.x,a.y,a.x,a.y+a.h-1) || dos_ui_line(r,a.x+a.w-1,a.y,a.x+a.w-1,a.y+a.h-1)?-1:0;
 }
-bool dos_ui_present(DosUiRenderer *r){return r && SDL_UpdateWindowSurface(r->window);}
+bool dos_ui_present(DosUiRenderer *r){
+#ifdef AB3D_NATIVE_RGB565
+    dos_ui_materialize_canvas(r);
+#endif
+    return r && SDL_UpdateWindowSurface(r->window);
+}
 SDL_Surface *dos_ui_readback(DosUiRenderer *r,const SDL_Rect *rect)
 {
-    if(!r)return NULL;SDL_Rect a=rect?*rect:(SDL_Rect){0,0,r->surface->w,r->surface->h};
+    if(!r)return NULL;
+#ifdef AB3D_NATIVE_RGB565
+    dos_ui_materialize_canvas(r);
+#endif
+    SDL_Rect a=rect?*rect:(SDL_Rect){0,0,r->surface->w,r->surface->h};
     SDL_Surface *copy=SDL_CreateSurface(a.w,a.h,SDL_PIXELFORMAT_RGB565);
     if(copy && !SDL_BlitSurface(r->surface,&a,copy,NULL)){SDL_DestroySurface(copy);return NULL;}return copy;
 }

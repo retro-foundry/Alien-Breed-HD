@@ -1,0 +1,114 @@
+diff --git a/src/video/dos/SDL_dosframebuffer.c b/src/video/dos/SDL_dosframebuffer.c
+index 2a707c9..9615234 100644
+--- a/src/video/dos/SDL_dosframebuffer.c
++++ b/src/video/dos/SDL_dosframebuffer.c
+@@ -41,6 +41,8 @@ typedef struct DOSFramebufferState
+ {
+     SDL_Surface *surface;     // system-RAM surface (app renders here)
+     SDL_Surface *lfb_surface; // LFB surface (pixels in VRAM), NULL for direct-FB path
++    bool borrowed_canvas;
++    bool canvas_surface_stale;
+     bool direct_fb;           // true when the fast direct-FB hint path is active
+     bool use_dosmemput;       // true = dosmemput (banked), false = nearptr (LFB)
+     int vram_pitch;
+@@ -68,6 +70,46 @@ typedef struct DOSFramebufferState
+ 
+ static DOSFramebufferState fb_state;
+ 
++/* The public window surface borrows the driver's owned system surface. Keep
++ * ownership there while a synchronous native frame uses another RAM canvas. */
++bool Ab3dDos_BeginCanvas(SDL_Window *window, SDL_Surface *source, void **backup)
++{
++    SDL_Surface *target = window ? window->surface : NULL;
++    SDL_VideoDevice *device = SDL_GetVideoDevice();
++    SDL_VideoData *data = device ? device->internal : NULL;
++    const SDL_DisplayModeData *mode = data ? data->current_mode.internal : NULL;
++    if (!mode || !fb_state.pitches_match ||
++        (fb_state.use_dosmemput && !(mode->win_a_attributes & 0x02))) return false;
++    if (!backup || !source || !target || !fb_state.surface || fb_state.borrowed_canvas ||
++        !fb_state.direct_fb || !(fb_state.vram_ptr || fb_state.vram_phys) ||
++        target == fb_state.surface || source->format != SDL_PIXELFORMAT_RGB565 ||
++        target->w != fb_state.vram_w || target->h != fb_state.vram_h ||
++        target->format != source->format || source->w != target->w || source->h != target->h ||
++        source->pitch != fb_state.src_pitch || !source->pixels ||
++        source->locked || target->locked || fb_state.surface->locked ||
++        target->pixels != fb_state.pixels || fb_state.pixels != fb_state.surface->pixels ||
++        source->pixels == fb_state.pixels) return false;
++    *backup = fb_state.pixels;
++    target->pixels = source->pixels;
++    fb_state.pixels = source->pixels;
++    fb_state.borrowed_canvas = true;
++    return true;
++}
++
++void Ab3dDos_EndCanvas(SDL_Window *window)
++{
++    if (!fb_state.borrowed_canvas) return;
++    fb_state.pixels = fb_state.surface->pixels;
++    if (window && window->surface) window->surface->pixels = fb_state.pixels;
++    fb_state.borrowed_canvas = false;
++    fb_state.canvas_surface_stale = true;
++}
++
++void Ab3dDos_DiscardCanvasReadback(void)
++{
++    fb_state.canvas_surface_stale = false;
++}
++
+ // Convert cursor to the current format.
+ static SDL_Surface *GetConvertedCursorSurface(SDL_CursorData *curdata, SDL_Surface *dst)
+ {
+@@ -390,6 +432,45 @@ SDL_FORCE_INLINE void SwitchBank(int bank, int *current_bank, Uint32 win_func_pt
+     *current_bank = bank;
+ }
+ 
++/* Restore the public RAM surface only when it is read or modified outside
++ * the synchronous canvas loan. Read the displayed page, not the next LFB page.
++ * Banked loans require a readable window; write-only hardware uses the normal
++ * independent system-RAM surface path. No readback is done per gameplay frame. */
++bool Ab3dDos_MaterializeCanvas(SDL_Window *window)
++{
++    if (!fb_state.canvas_surface_stale || fb_state.borrowed_canvas) return true;
++    SDL_VideoDevice *device = SDL_GetVideoDevice();
++    SDL_VideoData *data = device ? device->internal : NULL;
++    if (!data || !window || !window->surface || !fb_state.direct_fb ||
++        window->surface->pixels != fb_state.pixels || !fb_state.pitches_match)
++        return SDL_SetError("DOS canvas readback state is unavailable");
++    if (fb_state.use_dosmemput) {
++        if (!fb_state.banked_multibank) {
++            dosmemget(fb_state.vram_phys, fb_state.fb_size, fb_state.pixels);
++        } else {
++            Uint32 offset = 0, remaining = fb_state.fb_size;
++            int current_bank = -1;
++            while (remaining) {
++                int bank = (int)(offset / fb_state.win_gran_bytes);
++                Uint32 in_window = offset % fb_state.win_gran_bytes;
++                Uint32 count = SDL_min(remaining, fb_state.win_size_bytes - in_window);
++                SwitchBank(bank, &current_bank, fb_state.win_func_ptr);
++                dosmemget(fb_state.win_base + in_window, count, fb_state.pixels + offset);
++                offset += count;
++                remaining -= count;
++            }
++        }
++    } else {
++        Uint8 *front = fb_state.vram_ptr;
++        if (data->page_flip_available)
++            front = (Uint8 *)DOS_PhysicalToLinear(data->mapping.address) +
++                    data->page_offset[data->current_page];
++        SDL_memcpy(fb_state.pixels, front, fb_state.fb_size);
++    }
++    fb_state.canvas_surface_stale = false;
++    return true;
++}
++
+ // Copy a contiguous byte range from system RAM to VRAM through the banked
+ // window, switching banks as needed.
+ SDL_FORCE_INLINE void BankedDosmemput(const Uint8 *src, Uint32 total_bytes, Uint32 dst_offset,
+@@ -957,6 +1038,7 @@ bool DOSVESA_UpdateWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window
+ 
+ void DOSVESA_DestroyWindowFramebuffer(SDL_VideoDevice *device, SDL_Window *window)
+ {
++    Ab3dDos_EndCanvas(window);
+     // Note: we intentionally do NOT call SDL_ClearSurface on the LFB surface
+     // here. SetDisplayMode already blanks the framebuffer (both pages) when
+     // setting a new mode, and the LFB surface's pixels pointer may be stale
