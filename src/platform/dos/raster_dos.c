@@ -123,13 +123,20 @@ uint8_t *dos_load_wall(uint8_t *data, size_t bytes, size_t *source_bytes)
 
 __attribute__((noinline, optimize("O2")))
 void dos_raster_wall_rows(RendererPixel *restrict out, unsigned width, unsigned height, unsigned pitch,
-                           const DosWallColumn *restrict columns, uint32_t y, uint32_t dy, unsigned mask)
+                           const DosWallColumn *restrict columns, const RendererPixel *shared_palette,
+                           uint32_t y, uint32_t dy, unsigned mask)
 {
 #ifdef AB3D_NATIVE_RGB565
-    const RendererPixel *shared_palette = width ? columns[0].palette : NULL;
-    for (unsigned x = 1; x < width; x++) {
-        if (columns[x].palette != shared_palette) { shared_palette = NULL; break; }
+    /* A caller with constant brightness already knows the palette. Its column
+     * palette fields are unused; varying spans retain the exact classification. */
+    if (!shared_palette) {
+        shared_palette = width ? columns[0].palette : NULL;
+        for (unsigned x = 1; x < width; x++) {
+            if (columns[x].palette != shared_palette) { shared_palette = NULL; break; }
+        }
     }
+#else
+    (void)shared_palette;
 #endif
     unsigned previous_sample = ~0u;
     for (unsigned row = 0; row < height; row++) {

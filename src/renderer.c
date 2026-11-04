@@ -6747,12 +6747,12 @@ static void renderer_wall_flat_rows(RenderSliceContext *ctx, int first, int last
         }
     }
     /* Constant brightness selects one authored palette for the whole span. */
+    const RendererPixel *shared_palette = NULL;
     if (!bright_step_acc) {
         int d6 = (z >> 7) + (int32_t)(bright_acc >> 32) * 2;
         if (d6 < 0) d6 = 0;
         if (d6 > d6_max) d6 = d6_max;
-        const RendererPixel *shared_palette = (const RendererPixel *)(const void *)(pal + wall_scale_table[d6]);
-        for (int i = 0; i < count; i++) columns[i].palette = shared_palette;
+        shared_palette = (const RendererPixel *)(const void *)(pal + wall_scale_table[d6]);
     } else {
         for (int i = 0; i < count; i++) {
             int d6 = (z >> 7) + (int32_t)(bright_acc >> 32) * 2;
@@ -6775,7 +6775,7 @@ static void renderer_wall_flat_rows(RenderSliceContext *ctx, int first, int last
     uint32_t y = (uint32_t)(ct - top) * (uint32_t)dy + (uint32_t)yoff;
     uint64_t kernel_start = ctx->profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
     dos_raster_wall_rows(pixels + ct * width + first, count, cb - ct + 1, width,
-                         columns, y, dy, mask);
+                         columns, shared_palette, y, dy, mask);
     for (int row = ct; row <= cb; row++) {
         RendererPixel *p = pixels + row * width;
         if (first > ctx->slice_left) p[first - 1] = p[first];

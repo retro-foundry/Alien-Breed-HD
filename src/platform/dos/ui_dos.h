@@ -51,8 +51,10 @@ int dos_ui_outline(DosUiRenderer *r,const SDL_Rect *rect);
 bool dos_ui_viewport(DosUiRenderer *r,const SDL_Rect *rect);
 bool dos_ui_clip(DosUiRenderer *r,const SDL_Rect *rect);
 #ifdef AB3D_NATIVE_RGB565
-bool dos_ui_begin_canvas(DosUiRenderer *r,SDL_Surface *source,const SDL_Rect *rects,int count);
+bool dos_ui_prepare_canvas(DosUiRenderer *r,const SDL_Rect *rects,int count);
+bool dos_ui_begin_canvas(DosUiRenderer *r,SDL_Surface *source);
 void dos_ui_restore_canvas(DosUiRenderer *r);
+void dos_ui_check_canvas_copy(void);
 void dos_ui_materialize_canvas(DosUiRenderer *r);
 void dos_ui_discard_canvas_readback(DosUiRenderer *r);
 #endif

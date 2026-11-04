@@ -30,8 +30,11 @@ void dos_raster_floor_edge(int16_t *left, int16_t *right, int16_t *left_bright, 
                             unsigned count, uint32_t x, uint32_t dx, uint32_t bright, uint32_t dbright);
 void dos_raster_floor_edges_init(int16_t *left, int16_t *right,
                                   unsigned count, int16_t empty_left);
+/* Native callers can supply one palette and leave column palette fields unused.
+ * NULL retains automatic classification for spans with per-column brightness. */
 void dos_raster_wall_rows(RendererPixel *out, unsigned width, unsigned height, unsigned pitch,
-                           const DosWallColumn *columns, uint32_t y, uint32_t dy, unsigned mask);
+                           const DosWallColumn *columns, const RendererPixel *shared_palette,
+                           uint32_t y, uint32_t dy, unsigned mask);
 
 /* AB3DI.s pastfloorbright sampling: V*1024 + U*4, wrapping at 64. */
 #ifdef AB3D_NATIVE_RGB565

@@ -5125,6 +5125,18 @@ void display_dos_prepare_gameplay_ui(GameState *state)
 #ifndef AB3D_DOS_INDEXED
     dos_ui_prepare_blits(g_sdl_ren);
 #endif
+#ifdef AB3D_NATIVE_RGB565
+    /* The DOS window/HUD geometry is fixed for this renderer. Preserve the
+     * same drawing bounds once, before a live level occupies the 4 MB heap. */
+    int m,kh,gap,gw,kx,ky;
+    hud_key_row_layout(g_present_width,g_present_height,&m,&kh,&gap,&gw,&kx,&ky);
+    SDL_Rect tracks[2],areas[3];
+    display_hud_bar_tracks(g_present_width,g_present_height,tracks);
+    for(int n=0;n<2;n++)areas[n]=(SDL_Rect){tracks[n].x-1,tracks[n].y-1,
+                                           tracks[n].w+2,tracks[n].h+2};
+    areas[2]=(SDL_Rect){kx,ky,gw,kh+1+hud_key_mark_height(kh)};
+    dos_ui_prepare_canvas(g_sdl_ren,areas,3);
+#endif
 }
 #endif
 
@@ -5189,14 +5201,7 @@ static void display_present_cw_frame(GameState *state)
            (state->infinite_health || hit<=0) && !g_suppress_next_present_count &&
            w==320 && h==240 && !g_present_dst_rect.x && !g_present_dst_rect.y &&
            g_present_dst_rect.w==w && g_present_dst_rect.h==h) {
-            int m,kh,gap,gw,kx,ky;
-            hud_key_row_layout(w,h,&m,&kh,&gap,&gw,&kx,&ky);
-            SDL_Rect tracks[2],areas[3];
-            display_hud_bar_tracks(w,h,tracks);
-            for(int n=0;n<2;n++)areas[n]=(SDL_Rect){tracks[n].x-1,tracks[n].y-1,
-                                                   tracks[n].w+2,tracks[n].h+2};
-            areas[2]=(SDL_Rect){kx,ky,gw,kh+1+hud_key_mark_height(kh)};
-            direct_canvas=dos_ui_begin_canvas(g_sdl_ren,display_dos_frame_surface(src,w,h),areas,3);
+            direct_canvas=dos_ui_begin_canvas(g_sdl_ren,display_dos_frame_surface(src,w,h));
         }
         if(!direct_canvas)
 #endif
@@ -5526,6 +5531,7 @@ void display_dos_check_text_screen(const char *label, int allow_pages)
 static void display_dos_check_canvas(GameState *state)
 {
     if(renderer_get_width()!=320 || renderer_get_height()!=240)return;
+    dos_ui_check_canvas_copy();
     GameState test=*state;
     test.cfg_hud_bars=1;test.cfg_show_fps=0;test.cfg_crosshair_colour=0;
     test.automap_visible=false;test.hitcol=test.hitcol2=0;
@@ -5540,7 +5546,7 @@ static void display_dos_check_canvas(GameState *state)
         fprintf(stderr,"DOS canvas oracle creation failed\n");exit(1);
     }
     int16_t conditions=game_conditions;
-    unsigned checked=0;
+    unsigned checked=0,direct=0;
     for(int keys=0;keys<3;keys++)for(int value=0;value<3;value++) {
         game_conditions=(conditions&~15)|(keys==2?15:keys==1?5:0);
         test.plr1.energy=test.plr2.energy=test.energy=value==2?PLAYER_MAX_ENERGY:value;
@@ -5553,9 +5559,7 @@ static void display_dos_check_canvas(GameState *state)
         }
         g_dos_canvas_disabled=0;
         display_present_cw_frame(&test);
-        if(!g_sdl_ren->canvas_surface_stale) {
-            fprintf(stderr,"DOS canvas diagnostic did not use the direct path\n");exit(1);
-        }
+        direct+=g_sdl_ren->canvas_surface_stale!=0;
         /* A small RenderReadPixels call must materialize the entire displayed
          * image correctly for later raw captures and partial UI changes. */
         SDL_Rect corner={0,0,1,1};
@@ -5578,7 +5582,11 @@ static void display_dos_check_canvas(GameState *state)
     }
     game_conditions=conditions;
     fclose(screen);fclose(world);
-    printf("[DOSCHECK] %u direct HUD frames/readbacks match independent surfaces; world history unchanged\n",checked);
+    if(direct==checked)
+        printf("[DOSCHECK] %u direct HUD frames/readbacks match independent surfaces; world history unchanged\n",checked);
+    else if(!direct)
+        printf("[DOSCHECK] %u fallback HUD frames/readbacks match independent surfaces; world history unchanged\n",checked);
+    else {fprintf(stderr,"DOS canvas availability changed during diagnostic\n");exit(1);}
 }
 #endif
 

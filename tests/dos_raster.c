@@ -441,8 +441,16 @@ static void check_walls(void)
             }
             a += dy;
         }
-        dos_raster_wall_rows(actual, width, 150, 40, columns, y, dy, mask);
+        dos_raster_wall_rows(actual, width, 150, 40, columns, NULL, y, dy, mask);
         assert(!memcmp(actual, expected, sizeof(actual)));
+        if(c%3) {
+            /* The original packed-word oracle above supplies the expected
+             * pixels. An explicit palette must avoid every per-column field. */
+            for(unsigned col=0;col<33;col++)columns[col].palette=NULL;
+            memset(actual,0x91,sizeof(actual));
+            dos_raster_wall_rows(actual,width,150,40,columns,palettes[0],y,dy,mask);
+            assert(!memcmp(actual,expected,sizeof(actual)));
+        }
         memset(actual, 0x91, sizeof(actual)); memset(expected, 0x91, sizeof(expected));
         a = y;
         unsigned count = c * 23 % 160, stride = c % 3 == 2 ? 40 : 320, base_word=c*17;

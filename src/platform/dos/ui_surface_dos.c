@@ -3,6 +3,7 @@
 #include "ui_dos.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #ifdef AB3D_DOS_INDEXED
 #include "palette_dos.h"
 #endif
@@ -29,24 +30,55 @@ void dos_ui_discard_canvas_readback(DosUiRenderer *r)
     Ab3dDos_DiscardCanvasReadback();
 }
 
-/* Both native canvases are word aligned. Match their four-byte alignment
- * with one leading word, then copy dwords and the optional trailing word. */
+/* The two native allocations have the same word/dword alignment and pitch.
+ * Select the leading/trailing word once, then retain both row pointers and
+ * stride in registers throughout the rectangle. */
 __attribute__((always_inline)) static inline
-void copy_native_span(void *destination,const void *source,unsigned pixels)
+void copy_native_rectangle(void *destination,const void *source,unsigned pixels,
+                            unsigned rows,unsigned pitch)
 {
-    __asm__ volatile("testl $2, %%esi\n\t"
-                     "jz 1f\n\t"
-                     "movsw\n\t"
-                     "decl %%ecx\n\t"
-                     "1: movl %%ecx, %%eax\n\t"
-                     "shrl $1, %%ecx\n\t"
-                     "rep movsl\n\t"
-                     "testb $1, %%al\n\t"
-                     "jz 2f\n\t"
-                     "movsw\n\t"
-                     "2:"
-                     : "+&D"(destination), "+&S"(source), "+&c"(pixels)
-                     : : "eax", "cc", "memory");
+    if(!pixels || !rows)return;
+    unsigned head=((uintptr_t)source&2)!=0;
+    unsigned pairs=(pixels-head)/2,tail=(pixels-head)&1,skip=pitch-pixels*2;
+#define COPY_RECTANGLE(HEAD,TAIL) \
+    __asm__ volatile("1:\n\t" HEAD \
+                     "movl %%ebx, %%ecx\n\t" \
+                     "rep movsl\n\t" TAIL \
+                     "addl %[skip], %%esi\n\t" \
+                     "addl %[skip], %%edi\n\t" \
+                     "decl %%edx\n\t" \
+                     "jnz 1b" \
+                     : "+&D"(destination), "+&S"(source), "+&d"(rows) \
+                     : "b"(pairs), [skip] "r"(skip) : "ecx", "cc", "memory")
+    if(head) {
+        if(tail)COPY_RECTANGLE("movsw\n\t","movsw\n\t");
+        else COPY_RECTANGLE("movsw\n\t","");
+    } else {
+        if(tail)COPY_RECTANGLE("","movsw\n\t");
+        else COPY_RECTANGLE("","");
+    }
+#undef COPY_RECTANGLE
+}
+
+void dos_ui_check_canvas_copy(void)
+{
+    _Alignas(16) Uint16 source[8*64],actual[8*64],expected[8*64];
+    static const unsigned widths[]={0,1,2,3,4,7,8,9,10,15,16,31};
+    static const unsigned heights[]={0,1,2,4};
+    for(unsigned i=0;i<8*64;i++)source[i]=(Uint16)(i*131+17);
+    unsigned checked=0;
+    for(unsigned x=0;x<4;x++)for(unsigned w=0;w<12;w++)for(unsigned h=0;h<4;h++) {
+        memset(actual,0xa5,sizeof(actual));memcpy(expected,actual,sizeof(actual));
+        unsigned start=64+x;
+        for(unsigned row=0;row<heights[h];row++)
+            memcpy(expected+start+row*64,source+start+row*64,widths[w]*2);
+        copy_native_rectangle(actual+start,source+start,widths[w],heights[h],128);
+        if(memcmp(actual,expected,sizeof(actual))) {
+            fprintf(stderr,"DOS strided copy differs at x=%u width=%u height=%u\n",x,widths[w],heights[h]);exit(1);
+        }
+        checked++;
+    }
+    printf("[DOSCHECK] %u strided rectangle copies retain word alignment, odd sizes and row guards\n",checked);
 }
 
 static void copy_canvas_rects(DosUiRenderer *r,bool restore)
@@ -57,23 +89,28 @@ static void copy_canvas_rects(DosUiRenderer *r,bool restore)
     for(int n=0;n<r->saved_count;n++) {
         SDL_Rect a=r->saved_rects[n];
         int offset=a.y*s->pitch+a.x*2;
-        for(int y=0;y<a.h;y++,offset+=s->pitch)
-            copy_native_span(destination+offset,source+offset,a.w);
+        copy_native_rectangle(destination+offset,source+offset,a.w,a.h,s->pitch);
     }
 }
 
-bool dos_ui_begin_canvas(DosUiRenderer *r,SDL_Surface *source,const SDL_Rect *rects,int count)
+bool dos_ui_prepare_canvas(DosUiRenderer *r,const SDL_Rect *rects,int count)
+{
+    if(!r || r->window_pixels || !rects || count<1 || count>3)return false;
+    r->saved_count=0;
+    SDL_Rect bounds={0,0,r->surface->w,r->surface->h};
+    for(int n=0;n<count;n++)
+        if(!SDL_GetRectIntersection(&rects[n],&bounds,&r->saved_rects[n]))return false;
+    r->saved_count=count;
+    return true;
+}
+
+bool dos_ui_begin_canvas(DosUiRenderer *r,SDL_Surface *source)
 {
     SDL_Rect clip;
-    if(!r || r->window_pixels || !source || count<0 || count>3 ||
+    if(!r || r->window_pixels || !source || r->saved_count<1 || r->saved_count>3 ||
        r->viewport.x || r->viewport.y || r->viewport.w!=source->w || r->viewport.h!=source->h ||
        !SDL_GetSurfaceClipRect(r->surface,&clip) || clip.x || clip.y ||
        clip.w!=source->w || clip.h!=source->h)return false;
-    r->saved_count=count;
-    for(int n=0;n<count;n++) {
-        SDL_Rect bounds={0,0,source->w,source->h};
-        if(!SDL_GetRectIntersection(&rects[n],&bounds,&r->saved_rects[n]))return false;
-    }
     if(!Ab3dDos_BeginCanvas(r->window,source,&r->window_pixels))return false;
     copy_canvas_rects(r,false);
     return true;

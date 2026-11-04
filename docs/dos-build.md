@@ -1399,3 +1399,54 @@ Logs and package hashes are in `build/dos/hud-canvas-performance.json`;
 validation is in `build/dos/hud-canvas-validation.json` and
 `build/dos/hud-canvas-exercises.json`. The main view reaches 2.92x the original;
 the 25.80 FPS target remains unmet. Real 486 hardware remains unmeasured.
+
+
+### Pass shared wall palettes and prepare HUD copies
+
+Native constant-brightness flat walls pass their known authored palette directly
+to the row rasterizer. This removes per-column palette writes and repeated
+classification. Varying brightness retains automatic classification and its
+original samples. An additional 128 packed-word oracle comparisons verify the
+explicit-palette path with every per-column palette field set to NULL.
+
+The HUD backup now copies each rectangle with one strided assembly loop. Its
+leading/trailing word handling is selected once per rectangle; row pointers,
+copy counts and stride stay in registers. HUD bounds are prepared with the UI
+assets using the existing layout functions and saved rectangle storage. A
+192-case comparison against ordinary row copies covers alignment, odd widths,
+empty sizes and untouched row guards. The full image/readback/history check
+also retains verification when hardware uses the independent surface fallback.
+
+The ordinary control measured 23.69/22.54/32.24/30.30 FPS for levels
+1/6/15/turning. Passing the palette measured 23.75/22.56/32.25/30.30; strided
+copying raised this to 23.84/22.62/32.41/30.51, and preparing the bounds once
+reached 23.85/22.62/32.42/30.51. Source sampling, shading, painter order, HUD
+geometry and world history remain exact. No pixel allocation or shade bank is
+added. Final native text grows by 512 bytes, with data/BSS unchanged.
+
+Fresh feedback training and both ordinary/optimized 4 MB capture checks pass.
+The final package measures 25.25/24.04/33.79/31.53 FPS, against the preceding
+25.11/24.02/33.75/31.36. Level 1 averages 39.60 ms per frame, 33.63 ms rendering,
+3.13 ms presentation and 40.15 ms p95. These retain the established sequential
+128/64/64/128 real-time frames, 40,000 cycles, 4 MB, SB16 and mouse, with muted
+host output. Logs/hashes are in `build/dos/row-copy-performance.json`.
+The main view reaches 2.94x the original; the 25.80 FPS target remains unmet.
+
+All 22 native captures match verified original inputs. Native 4 MB exercises
+on levels 1/4/15 and real-time level 4 pass, including 768 guarded rectangle
+cases, 36 complete canvas/readback/history comparisons, all 24 weapon frames
+and repeated full quickloads. Map images and all six saved level/map payloads
+remain exact on levels 1/4. The indexed rebuild reproduces its validated
+executable byte-for-byte. Windows Release, feedback, DOS raster/math/object
+checks and both package audits pass; all 231 assets per package are unchanged.
+Evidence is in `build/dos/row-copy-validation.json` and `row-copy-exercises.json`.
+
+A separate diagnostic found 891 shared-palette flat spans and 28,446 texture
+columns, with no adjacent repeated columns; horizontal reuse was therefore
+not added. GCC pointer analysis measured only 23.70/22.55/32.24/30.30 FPS and
+was removed. A mapped linear-framebuffer trial measured 17.54 FPS with page
+flipping and 22.11 FPS with direct visible-page writes, against the banked
+23.75 FPS control. Both linear trials passed the level-1 canvas/readback check,
+but were removed; the pinned driver/mode code was restored exactly. Trial
+records are under `build/dos-row-runs`, `build/dos-pta-trial` and
+`build/dos-lfb-trial`. Real hardware remains unmeasured.
