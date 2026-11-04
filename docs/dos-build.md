@@ -628,8 +628,9 @@ frames on level 1. Runs are sequential, with detailed profiling disabled.
 | Shade wall core and side pixels together | 23.06 | 36.40 ms | 43.36 ms | 43.86 ms |
 | Classify identical darkest-shade floor rows at load | 23.19 | 36.15 ms | 43.12 ms | 43.62 ms |
 | Compiler feedback build (`-ProfileGuided`) | 24.32 | 34.47 ms | 41.12 ms | 41.67 ms |
+| Compiler feedback without tracer duplication | 24.47 | 34.21 ms | 40.87 ms | 41.42 ms |
 
-The trained build is a 2.83x increase over the original at the same rendering
+The trained build is a 2.85x increase over the original at the same rendering
 size. The ordinary build without compiler feedback remains at 23.19 FPS.
 The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
 per frame, for this full-height baseline. The earlier 28.23 FPS target and
@@ -1246,3 +1247,38 @@ rebuild reproduces its previously validated executable. The 94 C/header files
 in `src` and `tests` are unchanged from the preceding Windows Release, feedback
 and DOS raster/math validation. Native text shrinks by 23,040 bytes; data is
 unchanged and padded BSS grows by 1,024 bytes. Real hardware remains unmeasured.
+
+
+### Compiler loop choices after feedback
+
+The feedback build now uses `-fno-tracer`. Disabling automatic loop unrolling
+and peeling reduced stationary performance in every tested level; disabling
+late instruction scheduling was effectively neutral. Those changes were
+rejected. All trials used the same verified feedback, strict checksum checks,
+unchanged 320x240 pixels, 4 MB, 40,000 cycles, SB16 and mouse, with host output
+muted. A control build reproduced the preceding executable byte-for-byte.
+
+| Feedback variant | Level 1 | Level 6 | Level 15 | Level 1 turning |
+|---|---:|---:|---:|---:|
+| Previous | 24.32 | 23.47 | 33.01 | 30.86 |
+| No automatic unrolling/peeling | 24.04 | 23.24 | 32.53 | 30.86 |
+| No tracer duplication, final package | 24.47 | 23.50 | 32.92 | 30.86 |
+| No late instruction scheduling | 24.32 | 23.47 | 32.99 | 30.87 |
+
+The retained flag reduces level-1 render time from 34.47 to 34.21 ms. Its
+average frame falls from 41.12 to 40.87 ms, with p95 falling from 41.67 to
+41.42 ms. Level 15's frame rises from 30.29 to 30.37 ms; its update rises by
+0.06 ms and render by 0.02 ms. This small tradeoff accompanies the main-view
+gain. Turning remains unchanged. The native text section shrinks by another
+1,024 bytes, with data/BSS unchanged and no additional runtime tables.
+
+All sixteen native starts and six turning captures remain byte-identical
+to the verified original inputs. The native 4 MB exercises on levels 1/4/15
+and the real-time 40,000-cycle level-4 exercise pass without audio underruns.
+Automap captures and all six saved level/map payloads on levels 1/4 remain
+exact. Both packages pass CRC, contents, executable/default-INI and all 231
+asset comparisons. The indexed image and all 94 C/header files in `src` and
+`tests` retain their preceding validated bytes. Timings and package hashes
+are in `build/dos/no-tracer-performance.json`; the rejected trials are under
+`build/dos-compiler-trials`. The main view is 2.85x the original; the 25.80 FPS
+target remains unmet. Real 486 hardware remains unmeasured.

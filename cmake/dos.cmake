@@ -29,7 +29,7 @@ if(AB3D_DOS_PROFILE_DIR)
   include("${AB3D_DOS_PROFILE_DIR}/sources.cmake")
   file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}" dos_profile_prefix)
   set(dos_profile_options "-fprofile-use=${AB3D_DOS_PROFILE_DIR}"
-    "-fprofile-prefix-path=${dos_profile_prefix}" -fprofile-correction
+    "-fprofile-prefix-path=${dos_profile_prefix}" -fprofile-correction -fno-tracer
     -Werror=coverage-mismatch -Werror=missing-profile)
   target_compile_options(ab3d1 PRIVATE ${dos_profile_options})
   target_link_options(ab3d1 PRIVATE ${dos_profile_options})
