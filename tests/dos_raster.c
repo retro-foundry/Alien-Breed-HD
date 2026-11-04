@@ -27,6 +27,120 @@ static uint32_t next_value(void)
 
 __attribute__((noinline)) static int64_t reference_divide(int64_t n, int64_t d) { return n / d; }
 
+static void check_word_offset_bounds(void)
+{
+    static const uint32_t values[]={0,1,2,3,4,15,31,255,256,65535,65536,UINT32_MAX-2,UINT32_MAX-1,UINT32_MAX};
+    unsigned checked=0;
+    for(unsigned a=0;a<sizeof(values)/sizeof(*values);a++)
+        for(unsigned b=0;b<sizeof(values)/sizeof(*values);b++)
+            for(unsigned c=0;c<sizeof(values)/sizeof(*values);c++) {
+                uint32_t base=values[a],offset=values[b],bytes=values[c];
+                int expected=(uint64_t)base+offset+2<=bytes;
+                assert(renderer_word_offsets_fit_u32(base,offset,bytes)==expected);
+                checked++;
+            }
+    uint32_t seed=0xa5a55a5a;
+    for(unsigned i=0;i<32768;i++) {
+        seed=seed*1664525u+1013904223u;uint32_t base=seed;
+        seed=seed*1664525u+1013904223u;uint32_t maximum=seed;
+        seed=seed*1664525u+1013904223u;uint32_t bytes=seed;
+        assert(renderer_word_offsets_fit_u32(base,maximum,bytes)==((uint64_t)base+maximum+2<=bytes));
+        checked++;
+    }
+    printf("PASS: %u word-span bounds retain short inputs and unsigned overflow guards\n",checked);
+}
+
+static void check_sky_step_cache(void)
+{
+    static const int32_t widths[]={1,2,3,7,127,128,255,256,319,320,321,640,1024,16384,INT32_MAX};
+    static const int32_t columns[]={1,2,3,31,64,127,128,511,512,1024,32767,65536,INT32_MAX};
+    RendererSkyStepCache cache={0};unsigned checked=0;
+    for(unsigned pass=0;pass<4;pass++)
+        for(unsigned w=0;w<sizeof(widths)/sizeof(*widths);w++)
+            for(unsigned c=0;c<sizeof(columns)/sizeof(*columns);c++) {
+                int32_t width=widths[pass&1?(sizeof(widths)/sizeof(*widths)-1-w):w];
+                int32_t count=columns[pass&2?(sizeof(columns)/sizeof(*columns)-1-c):c];
+                int32_t expected=(int32_t)reference_divide((int64_t)count*65536,width);
+                assert(renderer_sky_step_cached(&cache,count,width)==expected);
+                assert(renderer_sky_step_cached(&cache,count,width)==expected);
+                int32_t changed_width=width==1?2:width-1;
+                int32_t changed=(int32_t)reference_divide((int64_t)count*65536,changed_width);
+                assert(renderer_sky_step_cached(&cache,count,changed_width)==changed);
+                assert(renderer_sky_step_cached(&cache,count,width)==expected);
+                checked+=4;
+            }
+    printf("PASS: %u cached sky quotients preserve changed widths/columns, repeats and wide results\n",checked);
+}
+
+static void check_billboard_projection(void)
+{
+    static const int32_t sizes[]={1,2,3,31,127,128,255,1024,32767,INT32_MAX};
+    static const int64_t scales[]={65536,65537,98304,131072,33554432,
+        INT64_C(4294967296),INT64_C(4294967297),INT64_C(1)<<47,
+        INT64_MAX-65535,INT64_MAX};
+    static const int32_t depths[]={1,2,3,255,32767,32768,65535,16777216,INT32_MAX};
+    unsigned checked=0;
+    for(unsigned s=0;s<sizeof(sizes)/sizeof(*sizes);s++)
+        for(unsigned k=0;k<sizeof(scales)/sizeof(*scales);k++) {
+            if(scales[k]>INT64_MAX/sizes[s])continue;
+            int64_t n=(int64_t)sizes[s]*scales[k];
+            for(unsigned d=0;d<sizeof(depths)/sizeof(*depths);d++) {
+                int64_t denominator=(int64_t)depths[d]*65536;
+                assert(renderer_project_size_fp16(sizes[s],scales[k],depths[d])==reference_divide(n,denominator));
+                checked++;
+            }
+        }
+    uint32_t seed=0x9e3779b9;
+    for(unsigned i=0;i<65536;i++) {
+        seed=seed*1664525u+1013904223u;int32_t size=1+(seed&65535);
+        seed=seed*1664525u+1013904223u;int64_t scale=(int64_t)(1+(seed&32767))*65536;
+        if(i&1)scale+=i&65535;
+        seed=seed*1664525u+1013904223u;int32_t depth=(int32_t)(seed&INT32_MAX);
+        if(!depth)depth=1;
+        int64_t expected=reference_divide((int64_t)size*scale,(int64_t)depth*65536);
+        assert(renderer_project_size_fp16(size,scale,depth)==expected);
+        checked++;
+    }
+    printf("PASS: %u billboard projections preserve whole/fractional scales, wide depths and quotients\n",checked);
+}
+
+static void check_floor_step_rounding(void)
+{
+    static const int32_t values[]={INT32_MIN,INT32_MIN+1,-65537,-65536,-257,-256,-255,
+        -129,-128,-127,-2,-1,0,1,2,127,128,129,255,256,257,65535,65536,INT32_MAX-1,INT32_MAX};
+    static const int32_t widths[]={1,3,7,160,320,511,640,1024,1048575};
+    unsigned checked=0;
+    for(unsigned shift=0;shift<32;shift++)for(unsigned i=0;i<sizeof(values)/sizeof(*values);i++) {
+        int64_t d=INT64_C(1)<<shift,n=values[i],half=d/2;
+        int32_t expected=(int32_t)reference_divide(n>=0?n+half:n-half,d);
+        assert(renderer_round_shift_away_i32(values[i],shift)==expected);
+        checked++;
+    }
+    uint32_t seed=0x6d2b79f5;
+    for(unsigned i=0;i<131072;i++) {
+        seed=seed*1664525u+1013904223u;
+        int32_t value=(int32_t)seed;
+        unsigned shift=1+(i%31);
+        int64_t d=INT64_C(1)<<shift,n=value,half=d/2;
+        assert(renderer_round_shift_away_i32(value,shift)==reference_divide(n>=0?n+half:n-half,d));
+        checked++;
+    }
+    /* Exhaust every discarded byte on both sides of selected quotient and
+     * overflow boundaries against the original width-scaled wide expression. */
+    static const int32_t quotients[]={-8388608,-8388607,-65536,-129,-128,-127,-2,-1,0,1,2,127,128,129,65535,8388606,8388607};
+    for(unsigned w=0;w<sizeof(widths)/sizeof(*widths);w++)
+        for(unsigned q=0;q<sizeof(quotients)/sizeof(*quotients);q++)for(unsigned rem=0;rem<256;rem++) {
+            int64_t value=(int64_t)quotients[q]*256+rem;
+            if(value<INT32_MIN || value>INT32_MAX)continue;
+            int64_t denominator=(int64_t)widths[w]*512;
+            int64_t numerator=value*(widths[w]*2);
+            int32_t expected=(int32_t)reference_divide(numerator>=0?numerator+denominator/2:numerator-denominator/2,denominator);
+            assert(renderer_round_shift_away_i32((int32_t)value,8)==expected);
+            checked++;
+        }
+    printf("PASS: %u floor step roundings preserve signed half ties, width cancellation and int32 extremes\n",checked);
+}
+
 static void check_division(void)
 {
     for (int64_t n = -65537; n <= 65537; n += 127) {
@@ -567,7 +681,11 @@ static void check_objects(void)
 
 int main(void)
 {
-    check_division(); check_projection_rounding(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_solid_floor_rows(); check_edges(); check_walls();
+    check_division();
+    check_floor_step_rounding();
+    check_billboard_projection();
+    check_sky_step_cache();
+    check_word_offset_bounds(); check_projection_rounding(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_solid_floor_rows(); check_edges(); check_walls();
     check_objects();
     puts("DOS raster regression passed");
     return 0;

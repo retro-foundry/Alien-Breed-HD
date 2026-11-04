@@ -4282,6 +4282,13 @@ static inline void renderer_floor_prepare_row_math(FloorRowMath *row_math,
     if (common->width == common->base_w) {
         u_step = (int32_t)(d1 >> FLOOR_STEP_SHIFT);
         v_step = (int32_t)(d2 >> FLOOR_STEP_SHIFT);
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    } else if(!(common->base_w&1) && common->width==common->base_w/2) {
+        /* Cancel base_w == 2*width in the original rounded quotient.
+         * Keep signed half ties and extreme int32 deltas exact. */
+        u_step=renderer_round_shift_away_i32(d1,FLOOR_STEP_SHIFT-1);
+        v_step=renderer_round_shift_away_i32(d2,FLOOR_STEP_SHIFT-1);
+#endif
     } else {
         int64_t den = ((int64_t)common->width << FLOOR_STEP_SHIFT);
         int64_t num_u = (int64_t)d1 * (int64_t)common->base_w;
@@ -7560,7 +7567,12 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
             sky_view_cols = s_cached_sky_view_cols;
         }
 
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+        static RendererSkyStepCache step_cache;
+        const int32_t sx_step_fp=renderer_sky_step_cached(&step_cache,sky_view_cols,w);
+#else
         const int32_t sx_step_fp = (int32_t)(((int64_t)sky_view_cols << 16) / (int64_t)w);
+#endif
         int32_t sx_fp = (int32_t)((int64_t)xl * (int64_t)sx_step_fp);
 
         size_t row = (size_t)y * (size_t)w;
@@ -7569,17 +7581,20 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
         if (s_sky_pixels && s_sky_mode == 0 && !g_pick_capture_active && !g_renderer_rgb_raster_expand) {
             static uint32_t offsets[RENDER_INTERNAL_MAX_DIM];
             static int cached_width, cached_step, cached_pan = -1, cached_tw, cached_stride;
+            static uint32_t maximum_offset;
             int tw = s_sky_tex_w, th = s_sky_tex_h;
             int stride = s_sky_row_major ? 2 : s_sky_bytes_per_col;
             if (w != cached_width || sx_step_fp != cached_step || u0_fp != cached_pan ||
                 tw != cached_tw || stride != cached_stride) {
                 int32_t scale = (tw << 16) / SKY_PAN_WIDTH;
+                maximum_offset=0;
                 for (int x = 0; x < w; x++) {
                     int32_t pan = u0_fp + x * sx_step_fp;
                     if (pan >= sky_pan_period_fp) pan -= sky_pan_period_fp;
                     int c = (int)(((int64_t)(pan >> 16) * scale) >> 16);
                     if (c >= tw) c = tw - 1;
                     offsets[x] = (uint32_t)c * stride;
+                    if(offsets[x]>maximum_offset)maximum_offset=offsets[x];
                 }
                 cached_width = w; cached_step = sx_step_fp; cached_pan = u0_fp;
                 cached_tw = tw; cached_stride = stride;
@@ -7589,10 +7604,15 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
             if (source_y >= th) source_y = th - 1;
             size_t base = (size_t)source_y * (s_sky_row_major ? tw * 2 : 2);
             RendererPixel *out = cwbuf + row;
-            for (int x = xl; x <= xr; x++) {
-                size_t off = base + offsets[x];
-                if (off + 2 > s_sky_data_bytes) continue;
-                out[x] = sky_read_word(s_sky_pixels+off);
+            if(renderer_word_offsets_fit_u32(base,maximum_offset,s_sky_data_bytes)) {
+                const uint8_t *source=s_sky_pixels+base;
+                for(int x=xl;x<=xr;x++)out[x]=sky_read_word(source+offsets[x]);
+            } else {
+                for (int x = xl; x <= xr; x++) {
+                    size_t off = base + offsets[x];
+                    if (off + 2 > s_sky_data_bytes) continue;
+                    out[x] = sky_read_word(s_sky_pixels+off);
+                }
             }
             return;
         }
@@ -11493,7 +11513,7 @@ static inline int renderer_project_billboard_size(int world_size, int64_t sprite
     if (world_size < 1) world_size = 1;
     if (sprite_scale_fp16 < (1LL << 16)) sprite_scale_fp16 = (1LL << 16);
     if (z < 1) z = 1;
-    projected = ((int64_t)world_size * sprite_scale_fp16) / ((int64_t)z << 16);
+    projected = renderer_project_size_fp16(world_size,sprite_scale_fp16,z);
     if (projected < 1) projected = 1;
     if (projected > INT_MAX) projected = INT_MAX;
     return (int)projected;
@@ -11506,7 +11526,7 @@ static inline int renderer_project_billboard_wall_y_size(const RendererState *r,
     if (world_size < 1) world_size = 1;
     if (py < 1) py = 1;
     if (z < 1) z = 1;
-    projected = ((int64_t)world_size * (int64_t)py * (int64_t)RENDER_SCALE) / (int64_t)z;
+    projected = renderer_divide_i64_i32((int64_t)world_size * py * RENDER_SCALE,z);
     if (projected < 1) projected = 1;
     if (projected > INT_MAX) projected = INT_MAX;
     return (int)projected;
@@ -13401,11 +13421,13 @@ static void renderer_project_zone_world_clip_y(const RendererState *r,
     if (ignore_top_clip) {
         *out_top_y = INT32_MIN;
     } else {
-        *out_top_y = (int)(((int64_t)((zone_top_world - y_off) >> WORLD_Y_FRAC_BITS) *
-                            (int64_t)r->proj_y_scale * (int64_t)RENDER_SCALE << ROT_Z_FRAC_BITS) / z) + center_y;
+        *out_top_y = (int)renderer_divide_i64_i32(
+            (int64_t)((zone_top_world - y_off) >> WORLD_Y_FRAC_BITS) *
+            r->proj_y_scale * RENDER_SCALE << ROT_Z_FRAC_BITS,z) + center_y;
     }
-    *out_bot_y = (int)(((int64_t)((zone_bot_world - y_off) >> WORLD_Y_FRAC_BITS) *
-                        (int64_t)r->proj_y_scale * (int64_t)RENDER_SCALE << ROT_Z_FRAC_BITS) / z) + center_y;
+    *out_bot_y = (int)renderer_divide_i64_i32(
+        (int64_t)((zone_bot_world - y_off) >> WORLD_Y_FRAC_BITS) *
+        r->proj_y_scale * RENDER_SCALE << ROT_Z_FRAC_BITS,z) + center_y;
 }
 
 /* -----------------------------------------------------------------------
@@ -13913,7 +13935,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             int scr_x = project_x_to_pixels(vx_fine, orp_z);
             int32_t rel_y_8 = (state->explosions[ei].y_floor - y_off) >> WORLD_Y_FRAC_BITS;
             int center_y = renderer_view_center_y();
-            int scr_y = (int)(((int64_t)rel_y_8 * (int64_t)r->proj_y_scale * (int64_t)RENDER_SCALE << ROT_Z_FRAC_BITS) / (int64_t)orp_z) + center_y;
+            int scr_y = (int)renderer_divide_i64_i32((int64_t)rel_y_8 * (int64_t)r->proj_y_scale * (int64_t)RENDER_SCALE << ROT_Z_FRAC_BITS,orp_z) + center_y;
             int z_for_size = ROT_Z_INT(orp_z);
             if (z_for_size < 1) z_for_size = 1;
             int anchor_h = renderer_project_billboard_wall_y_size(r, expl_h, z_for_size) * SPRITE_SIZE_MULTIPLIER;
@@ -14199,7 +14221,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
         int32_t rel_y = (((int32_t)obj_y) << 7) - y_off;
         int32_t rel_y_8 = rel_y >> WORLD_Y_FRAC_BITS;
         int center_y = renderer_view_center_y();
-        int scr_y = (int)(((int64_t)rel_y_8 * (int64_t)g_renderer.proj_y_scale * (int64_t)RENDER_SCALE << ROT_Z_FRAC_BITS) / (int64_t)orp->z) + center_y;
+        int scr_y = (int)renderer_divide_i64_i32((int64_t)rel_y_8 * (int64_t)g_renderer.proj_y_scale * (int64_t)RENDER_SCALE << ROT_Z_FRAC_BITS,orp->z) + center_y;
         /* Keep the BitMapObj bottom edge anchored to the wall/floor projection
          * after applying Amiga-proportioned billboard height. */
         scr_y += (anchor_h - sprite_h) / 2;

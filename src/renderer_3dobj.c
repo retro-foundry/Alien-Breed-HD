@@ -18,6 +18,7 @@
 
 #include "renderer_3dobj.h"
 #include "renderer.h"
+#include "renderer_fixed.h"
 #include "renderer_alloc.h"
 #include "math_tables.h"
 #include "game_types.h"
@@ -678,12 +679,12 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
             for (int v = 0; v < clipped_n; v++) {
                 int32_t wz = clipped_poly[v].z;
                 if (wz <= 0) wz = 1;
-                sx[v] = (int)(((int64_t)clipped_poly[v].x * (int64_t)proj_xs << ROT_Z_FRAC_BITS) / (int64_t)wz) + center_x;
+                sx[v] = (int)renderer_divide_i64_i32((int64_t)clipped_poly[v].x * proj_xs << ROT_Z_FRAC_BITS,wz) + center_x;
                 /* AB3D I ObjDraw3.ChipRam.s convtoscr adds fixed #40.
                  * With AB3D2-style look, use the shifted SMIDDLEY-equivalent
                  * center already computed by renderer_draw_display. */
-                sy[v] = (int)(((int64_t)(clipped_poly[v].y >> WORLD_Y_FRAC_BITS) * proj_ys * RENDER_SCALE
-                              << ROT_Z_FRAC_BITS) / wz) + center_y;
+                sy[v] = (int)renderer_divide_i64_i32((int64_t)(clipped_poly[v].y >> WORLD_Y_FRAC_BITS) * proj_ys * RENDER_SCALE
+                              << ROT_Z_FRAC_BITS,wz) + center_y;
                 sz[v] = ROT_Z_INT(wz);
                 su[v] = clipped_poly[v].u;
                 svt[v] = clipped_poly[v].v;

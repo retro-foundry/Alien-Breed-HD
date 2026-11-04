@@ -1450,3 +1450,61 @@ flipping and 22.11 FPS with direct visible-page writes, against the banked
 but were removed; the pinned driver/mode code was restored exactly. Trial
 records are under `build/dos-row-runs`, `build/dos-pta-trial` and
 `build/dos-lfb-trial`. Real hardware remains unmeasured.
+
+
+### Cancel exact floor/projection factors and reuse sky bounds
+
+The DOS executable is 32-bit i486 code. Explicit 64-bit arithmetic still costs
+software work, so these changes remove repeated wide division only where its
+original result is preserved. A temporary floor diagnostic recorded 10,804
+row preparations across 33 draws; every sampled row used width 320/base 640.
+For that exact ratio, cancelling the common width factor turns the original
+rounded quotient into a signed shift. Signed half ties and INT32 extremes
+remain exact, including in the four-instruction 386 shift specialization.
+Other ratios and the existing unrounded full-width path are unchanged.
+
+Billboard scales with no fractional 16.16 bits cancel their common 65536
+factor before division. Fractional scales retain the original wide expression.
+Sprite, explosion, zone-clip and vector-object projections reuse the existing
+exact 64/32 divider, retaining wide numerators and genuinely wide quotients.
+The sky caches its horizontal quotient with both width and view columns as
+keys. Its existing offset table now records the largest offset; a subtraction
+check proves all two-byte reads fit before using an unchecked sampling loop.
+Short inputs retain the original checked loop. The two additions need 16 bytes
+of cache fields within existing BSS padding, with no new pixel or shade bank.
+Native text grows by 3,072 bytes; data and BSS remain 22,016/285,184 bytes.
+
+Independent DOS checks pass 171,040 signed floor-rounding cases, 66,265
+whole/fractional billboard projections, 3,120 sky-cache checks and 35,512
+word-span bounds checks. These cover signed half ties, extreme values,
+changed cache keys, wide quotients, short inputs and unsigned overflow.
+The existing raster, water, sprite, wall and object-order checks also pass.
+A separate diagnostic found no eligible constant-stride flat-wall spans;
+no wall-stride kernel or full row-math cache was added. Diagnostic code is
+absent from both release packages.
+
+Fresh compiler-feedback training covers all 23 scenarios. The final package
+measures 25.83/24.41/34.16/31.68 FPS for levels 1/6/15/turning, against the
+preceding 25.25/24.04/33.79/31.53. The main view averages 38.72 ms per frame,
+32.76 ms rendering, 3.13 ms presentation and 39.24 ms p95. An independent
+128-frame repeat also returns 25.83 FPS. Both use the established sequential
+real-time runs at normal/486_slow, 40,000 cycles, 4 MB, SB16 and mouse, with
+host output muted and no fixed-tick shortcut. The main view reaches 3.00x
+the original 8.60 FPS and meets the 25.80 FPS target. Real 486 hardware remains
+unmeasured. Full 320x240 RGB565 rendering, sampling and shading are preserved.
+
+All sixteen native starts and six turns match the verified original images
+in both ordinary and optimized builds. The optional indexed build also
+matches all sixteen starts and six turns. Native 4 MB exercises on levels
+1/4/15 and real-time level 4 pass, including 768 guarded rectangle cases,
+36 complete canvas/readback/history comparisons, all 24 weapon frames and
+repeated full quickloads, without audio underruns. Indexed 4 MB exercises
+pass on levels 1/4. Native automap images and all six saved level/map payloads
+remain exact on levels 1/4. Both ZIPs pass CRC, executable/default-INI and all
+231 asset comparisons. Windows Release and feedback checks pass.
+
+Logs, executable/package hashes and confirmation are recorded in
+`build/dos/floor-project-performance.json`; capture/package validation is in
+`floor-project-validation.json`, live checks in `floor-project-exercises.json`
+and indexed image evidence in `floor-project-indexed-pixel-evidence.json`.
+The immutable source/package/evidence copy is `build/dos-floor-project-baseline`.

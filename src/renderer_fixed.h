@@ -22,6 +22,30 @@ static inline int32_t renderer_project_round_24(int64_t numerator)
 #endif
 }
 
+/* Signed nearest division by 2^shift, with ties away from zero (0..31).
+ * Round the arithmetic quotient from its low-bit remainder; adding a bias to
+ * the original signed value could overflow at INT32_MIN/MAX. */
+static inline int32_t renderer_round_shift_away_i32(int32_t value,unsigned shift)
+{
+    if(!shift)return value;
+#ifdef AB3D_DOS
+    if(__builtin_constant_p(shift) && shift==8) {
+        /* Add the half-unit bias across a sign-extended pair, including its
+         * carry, so INT32_MIN/MAX retain their original wide rounding. */
+        uint32_t low=(uint32_t)value,high=(uint32_t)(value>>31);
+        __asm__("cmpl $0x80000000, %0\n\t"
+                "adcl $127, %0\n\t"
+                "adcl $0, %1\n\t"
+                "shrdl $8, %1, %0"
+                : "+&r"(low), "+&r"(high) : : "cc");
+        return (int32_t)low;
+    }
+#endif
+    uint32_t remainder=(uint32_t)value&((UINT32_C(1)<<shift)-1);
+    uint32_t half=UINT32_C(1)<<(shift-1);
+    return (value>>shift)+(remainder>=half+(value<0));
+}
+
 /* Exact signed 64/32 division. Most projection/interpolation quotients need
  * one 386 DIV; the high-word step also preserves genuinely wide results.
  * Unlike __divdi3, the divisor's upper word is known to be zero here. */
@@ -44,6 +68,39 @@ static inline int64_t renderer_divide_i64_i32(int64_t numerator, int32_t divisor
 #else
     return numerator / divisor;
 #endif
+}
+
+/* Every two-byte read is safe when the largest unsigned offset fits without
+ * addition wrapping. Short/truncated inputs keep their checked sampling path. */
+static inline int renderer_word_offsets_fit_u32(uint32_t base,uint32_t maximum,uint32_t bytes)
+{
+    return bytes>=2 && base<=bytes-2 && maximum<=bytes-2-base;
+}
+
+typedef struct {
+    int32_t columns,width,step;
+} RendererSkyStepCache;
+
+/* Sky spans share this exact truncating quotient. Both positive inputs are
+ * keys; projection/FOV changes update columns and width before lookup. */
+static inline int32_t renderer_sky_step_cached(RendererSkyStepCache *cache,int32_t columns,int32_t width)
+{
+    if(cache->columns==columns && cache->width==width)return cache->step;
+    int32_t step=(int32_t)renderer_divide_i64_i32((int64_t)columns*65536,width);
+    cache->columns=columns;cache->width=width;cache->step=step;
+    return step;
+}
+
+/* Billboard projection with an authored 16.16 scale and positive depth.
+ * Whole-pixel scales cancel the common 65536 factor exactly. Fractional
+ * scales retain the original wide numerator and denominator. */
+static inline int64_t renderer_project_size_fp16(int32_t size,int64_t scale,int32_t depth)
+{
+#ifdef AB3D_DOS
+    if(!(scale&65535))
+        return renderer_divide_i64_i32((int64_t)size*(scale>>16),depth);
+#endif
+    return ((int64_t)size*scale)/((int64_t)depth<<16);
 }
 
 /* Endpoint-anchored wall interpolation: zero/full-span positions and constant
