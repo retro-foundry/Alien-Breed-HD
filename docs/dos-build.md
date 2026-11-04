@@ -598,8 +598,9 @@ frames on level 1. Runs are sequential, with detailed profiling disabled.
 | Shared projections and contiguous presentation copy | 20.66 | 41.43 ms | 48.40 ms | 49.03 ms |
 | Repeated automap wall updates | 20.97 | 40.73 ms | 47.70 ms | 48.31 ms |
 | Frame lookup for sprite spill order | 21.04 | 40.56 ms | 47.53 ms | 48.14 ms |
+| Connected-room cache slots without pointer mixing | 22.28 | 37.92 ms | 44.89 ms | 45.42 ms |
 
-This is a 2.45x increase over the original at the same rendering size.
+This is a 2.59x increase over the original at the same rendering size.
 The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
 per frame, for this full-height baseline. The earlier 28.23 FPS target and
 320x200 tables above describe the earlier, smaller view.
@@ -905,3 +906,42 @@ match their preserved references. Native 4 MB exercises pass on levels 1,
 on levels 1 and 4. Map captures and saved level/map payloads remain identical
 on levels 1 and 4. Windows Release and feedback checks pass. Tests remain
 muted at the host with guest audio enabled.
+
+### Connected-room cache collisions
+
+The DOS connected-room cache now chooses its existing 128 slots directly
+from room ID instead of mixing the ID with the LevelState pointer. Authored
+visible IDs tend to cluster. In level one's saved draw order, the old hash
+put rooms 6 and 17 in the same slot, repeatedly replacing their adjacency
+lists and repeating the complete reverse-link scan. Direct slots separate
+those IDs. The entry still checks the complete level/data/zone/floor-line
+identity before using a cached result; room traversal and list order are
+unchanged. Desktop hashing is unchanged, and no storage is added.
+
+At the established 40,000-cycle, 4 MB, SB16/mouse-on settings, public-package
+timings are 22.28/21.65/31.27 FPS on levels 1/6/15 and 29.31 FPS while turning
+on level 1, over 128/64/64/128 real-time frames. The previous build measured
+21.04/19.43/31.27/28.95. The stationary baseline is now 2.59x the original
+8.60 FPS; its 25.80 FPS target remains unmet.
+
+A separate matched 32-frame comparison covers all sixteen starting views.
+Its results are in `build/dos/connected-all-level-performance.json`, with
+individual raw logs preserved. This shorter sample is separate from the
+128-frame target measurement. Package hashes and validation records are in
+`build/dos/connected-slot-performance.json`.
+
+The short sample's largest gain is level 13, from 26.47 to 33.01 FPS. Small
+decreases on levels 5 and 7 were checked with matched 128-frame runs: level 5
+improves from 18.51 to 18.66 FPS, while level 7 measures 68.97 versus 68.94
+FPS (both round to 14.50 ms per frame). These longer follow-ups are also
+recorded with the comparison results.
+
+All sixteen native and indexed starts and six 48-frame turns in each build
+match the preserved captures. Before reusing each reference capture, the
+runner verifies the logged level/frame count, fixed-tick and turn settings,
+executable, CWSDPMI and every mapped asset against the frozen reference game.
+Capture hashes and those input checks are recorded in
+`build/dos/connected-slot-pixel-evidence.json`. Native 4 MB exercises pass
+on levels 1, 4 and 15, including normal-cycle level 4; indexed exercises pass
+on levels 1 and 4. All runs remain muted with guest audio active for the
+performance and exercise checks.

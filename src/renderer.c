@@ -12529,10 +12529,17 @@ static AB3D_THREAD_LOCAL RendererConnectedZoneCacheEntry
 static inline unsigned renderer_connected_zone_cache_slot(const LevelState *level,
                                                           int16_t zone_id)
 {
+#ifdef AB3D_DOS
+    /* Visible authored room IDs cluster. Direct slots avoid systematic
+     * pointer-hash collisions; the full entry identity is still checked. */
+    (void)level;
+    return (uint16_t)zone_id & (RENDERER_CONNECTED_ZONE_CACHE_SIZE - 1u);
+#else
     uintptr_t k = (uintptr_t)level;
     k ^= (uintptr_t)((uint32_t)(uint16_t)zone_id * 0x9E3779B1u);
     k ^= (k >> 9);
     return (unsigned)(k & (RENDERER_CONNECTED_ZONE_CACHE_SIZE - 1u));
+#endif
 }
 
 static int renderer_collect_connected_zones_fast(const LevelState *level,
