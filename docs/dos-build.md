@@ -1627,3 +1627,24 @@ particles, gibs and gameplay updates are preserved. Room-spill masks
 retain their existing geometry and source sampling; any wall-depth occluder
 retains the original per-column handling. All 256 state hashes and 20 selected
 images remain exact after extending the row path to unobstructed room masks.
+
+
+The final compiler-feedback package passes fresh training on all 23 scenarios
+and all 22 ordinary/optimized 4 MB capture comparisons. Its sixteen starts and
+six turns also match the verified original native images; the indexed build
+matches all 22 of its original images. Native 4 MB exercises pass on levels
+1/4/15, plus the real-time level-4 exercise; the indexed level-4 exercise also
+passes. Repeated full quickloads, all weapon frames and native canvas/history
+checks pass without audio underruns. Native map images and all six saved
+level/map payloads remain exact on levels 1/4. Both packages retain all 231
+assets and pass ZIP CRC, executable and default-INI checks.
+
+The normal level-1 view measures 25.82 FPS over 128 sequential real-time frames
+at normal/486_slow, 40,000 cycles, 4 MB, SB16 and mouse, with host audio muted.
+Frame/render/present times are 38.72/32.76/3.13 ms, with 39.24 ms p95. This
+retains the 3x target while reducing the barrel-explosion spike. Native text,
+data and BSS measure 1,180,696/22,016/284,160 bytes; the row scratch stays on
+the existing stack. Windows Release and feedback regressions pass. Real
+hardware remains unmeasured. Final package hashes, diagnostic comparisons,
+live exercises and timing are in `build/dos/effects-performance.json`; original
+image, package, asset and save checks are in `effects-validation.json`.
