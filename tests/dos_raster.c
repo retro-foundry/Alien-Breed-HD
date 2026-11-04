@@ -27,6 +27,61 @@ static uint32_t next_value(void)
 
 __attribute__((noinline)) static int64_t reference_divide(int64_t n, int64_t d) { return n / d; }
 
+static void check_sprite_rows(void)
+{
+    static RendererPixel actual[324*242],expected[324*242];
+    static uint8_t wad[4099],ptr[131];
+    static RendererPixel palette[32];
+    static int rows[240];
+    static const unsigned widths[]={0,1,2,3,7,31,127,319,320};
+    uint32_t seed=0x13579bdf;unsigned checked=0;
+    for(unsigned i=0;i<sizeof(wad);i++) {
+        seed=seed*1664525u+1013904223u;wad[i]=(uint8_t)(seed>>24);
+    }
+    for(unsigned i=0;i<32;i++)palette[i]=(RendererPixel)(i==1?0:i*1973u);
+    for(unsigned test=0;test<144;test++) {
+        unsigned width=widths[test%9],height=test==143?240:1+(test%29);
+        unsigned pitch=width+4;
+        for(unsigned i=0;i<32;i++) {
+            unsigned offset=2+i*64;
+            if(i==0 && test%3==0)offset=0;
+            if(i==31)offset=4097;
+            ptr[i*4]=(uint8_t)((i+test)%4);
+            ptr[i*4+1]=(uint8_t)(offset>>16);ptr[i*4+2]=(uint8_t)(offset>>8);ptr[i*4+3]=(uint8_t)offset;
+        }
+        for(unsigned i=0;i<height;i++)rows[i]=(int)(i/(1+test%7))-(test%11==0?1:0);
+        for(unsigned i=0;i<sizeof(actual)/sizeof(*actual);i++)actual[i]=expected[i]=0xa55a;
+        DosSpriteRows sprite={wad,ptr,sizeof(wad)-(test%5),sizeof(ptr)-(test%7),palette,rows,
+                              test%4,(test%3)*65536u+333u,test%4==0?0:65536u/(1+test%8),
+                              32,test%13==0?65535u:test%3};
+        DosSpriteCoverage coverage={0,0};
+        unsigned available=(sprite.ptr_bytes-sprite.ptr_offset)/4;
+        for(unsigned x=0;x<width;x++) {
+            unsigned column=(sprite.u+x*sprite.du)>>16;
+            if(column>=sprite.columns)column=sprite.columns-1;
+            if(column>=available)column=available-1;
+            const uint8_t *entry=ptr+sprite.ptr_offset+column*4;
+            unsigned offset=((unsigned)entry[1]<<16)|((unsigned)entry[2]<<8)|entry[3];
+            unsigned mode=entry[0];
+            if((!mode && !offset) || (uint64_t)offset+(uint64_t)sprite.down_strip*2+2>sprite.wad_bytes)continue;
+            coverage.visible+=height;
+            for(unsigned y=0;y<height;y++) {
+                if(rows[y]<0)continue;
+                uint64_t address=(uint64_t)offset+((uint64_t)sprite.down_strip+(unsigned)rows[y])*2;
+                if(address+2>sprite.wad_bytes)continue;
+                unsigned word=((unsigned)wad[address]<<8)|wad[address+1];
+                unsigned texel=(word>>(!mode?0:mode==1?5:10))&31;
+                if(texel){expected[(y+1)*pitch+x+2]=palette[texel];coverage.drawn++;}
+            }
+        }
+        DosSpriteCoverage got=dos_raster_sprite_rows(actual+pitch+2,width,height,pitch,&sprite);
+        assert(got.visible==coverage.visible && got.drawn==coverage.drawn);
+        assert(!memcmp(actual,expected,sizeof(actual)));
+        checked++;
+    }
+    printf("PASS: %u sprite row rasters preserve packed modes, clipping origins, repeated rows, black/transparent texels, bounds and guards\n",checked);
+}
+
 static void check_word_offset_bounds(void)
 {
     static const uint32_t values[]={0,1,2,3,4,15,31,255,256,65535,65536,UINT32_MAX-2,UINT32_MAX-1,UINT32_MAX};
@@ -686,6 +741,7 @@ int main(void)
     check_billboard_projection();
     check_sky_step_cache();
     check_word_offset_bounds(); check_projection_rounding(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_solid_floor_rows(); check_edges(); check_walls();
+    check_sprite_rows();
     check_objects();
     puts("DOS raster regression passed");
     return 0;

@@ -38,6 +38,21 @@ void dos_raster_wall_rows(RendererPixel *out, unsigned width, unsigned height, u
 
 /* AB3DI.s pastfloorbright sampling: V*1024 + U*4, wrapping at 64. */
 #ifdef AB3D_NATIVE_RGB565
+typedef struct {
+    const uint8_t *wad, *ptr;
+    size_t wad_bytes, ptr_bytes;
+    const RendererPixel *palette;
+    const int *rows;
+    uint32_t ptr_offset, u, du;
+    unsigned columns, down_strip;
+} DosSpriteRows;
+typedef struct { unsigned visible, drawn; } DosSpriteCoverage;
+/* Native, unclipped rectangle after the renderer applies its screen/plane
+ * bounds. Transparent texels leave the destination untouched, including
+ * opaque palette entries whose RGB565 word happens to be zero. */
+DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out, unsigned width,
+                                        unsigned height, unsigned pitch,
+                                        const DosSpriteRows *sprite);
 void dos_raster_prepare_floor(unsigned slot,const uint8_t *texture,const uint8_t *palettes);
 #endif
 void dos_raster_floor(RendererPixel *out, unsigned count, const uint8_t *texture,

@@ -10268,6 +10268,24 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
 
     int32_t src_col_fp = (int32_t)dx_start * src_col_step;
 
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565) && !AB3D_CW_COL_MAJOR
+    if(!is_spill && !expand && !have_pick && !pick_graphic &&
+       !mark_sprite_pick_zone_none && rw==320 && prefer_col_texel_lut) {
+        DosSpriteRows sprite={wad,ptr_data,wad_size,ptr_size,spr_cw,row_src_lut,
+                              ptr_offset,(uint32_t)src_col_fp,(uint32_t)src_col_step,
+                              (unsigned)eff_cols,(unsigned)down_strip_i};
+        DosSpriteCoverage coverage=dos_raster_sprite_rows(
+            cw+(size_t)draw_top*rw+(size_t)col_start,
+            (unsigned)(dx_end-dx_start),(unsigned)draw_row_count,(unsigned)rw,&sprite);
+        if(profile_collect_stats) {
+            ctx->workload_stats.sprite_pixels_visible+=coverage.visible;
+            ctx->workload_stats.sprite_pixels_tested+=coverage.visible;
+            ctx->workload_stats.sprite_pixels_drawn+=coverage.drawn;
+        }
+        return;
+    }
+#endif
+
     /* --- Column loop ---
      * Spill geometry is a draw mask only; source columns still follow the
      * normal BitMapObj DDA across the full projected billboard. */

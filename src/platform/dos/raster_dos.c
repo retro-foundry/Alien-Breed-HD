@@ -12,6 +12,76 @@ static void fill_words(int16_t *out, unsigned count, uint16_t value)
 }
 
 #ifdef AB3D_NATIVE_RGB565
+DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out,unsigned width,
+                                        unsigned height,unsigned pitch,
+                                        const DosSpriteRows *sprite)
+{
+    enum { MAX_WIDTH=320 };
+    typedef struct { const uint8_t *source; unsigned limit,shift,end; } Group;
+    Group groups[MAX_WIDTH];
+    RendererPixel row[MAX_WIDTH];
+    uint16_t starts[MAX_WIDTH/2],lengths[MAX_WIDTH/2];
+    DosSpriteCoverage result={0,0};
+    if(!width || width>MAX_WIDTH || !height || !sprite->columns ||
+       sprite->ptr_bytes<=sprite->ptr_offset)return result;
+    unsigned available=(sprite->ptr_bytes-sprite->ptr_offset)/4u;
+    if(!available)return result;
+    unsigned count=0,previous=UINT32_MAX;
+    uint32_t u=sprite->u;
+    for(unsigned x=0;x<width;x++,u+=sprite->du) {
+        unsigned column=u>>16;
+        if(column>=sprite->columns)column=sprite->columns-1;
+        if(column>=available)column=available-1;
+        if(column==previous){groups[count-1].end=x+1;continue;}
+        previous=column;
+        Group *g=&groups[count++];g->source=NULL;g->end=x+1;
+        const uint8_t *entry=sprite->ptr+sprite->ptr_offset+column*4u;
+        unsigned mode=entry[0];
+        uint32_t offset=((uint32_t)entry[1]<<16)|((uint32_t)entry[2]<<8)|entry[3];
+        if((!mode && !offset) || offset>=sprite->wad_bytes)continue;
+        unsigned words=(sprite->wad_bytes-offset)/2u;
+        if(words<=sprite->down_strip)continue;
+        g->source=sprite->wad+offset+sprite->down_strip*2u;
+        g->limit=words-1-sprite->down_strip;
+        g->shift=!mode?0:mode==1?5:10;
+    }
+    unsigned start=0;
+    for(unsigned g=0;g<count;g++) {
+        if(groups[g].source)result.visible+=(groups[g].end-start)*height;
+        start=groups[g].end;
+    }
+    for(unsigned y=0;y<height;) {
+        int source_row=sprite->rows[y];
+        unsigned end_y=y+1;
+        while(end_y<height && sprite->rows[end_y]==source_row)end_y++;
+        unsigned spans=0,opaque=0;int open=0;start=0;
+        for(unsigned i=0;i<count;i++) {
+            const Group *g=&groups[i];unsigned texel=0;
+            if(g->source && (unsigned)source_row<=g->limit) {
+                const uint8_t *p=g->source+(unsigned)source_row*2u;
+                texel=(((unsigned)p[0]<<8)|p[1])>>g->shift&31u;
+            }
+            if(texel) {
+                RendererPixel color=sprite->palette[texel];
+                for(unsigned x=start;x<g->end;x++)row[x]=color;
+                if(!open){starts[spans]=(uint16_t)start;lengths[spans++]=0;open=1;}
+                lengths[spans-1]+=(uint16_t)(g->end-start);
+                opaque+=g->end-start;
+            } else open=0;
+            start=g->end;
+        }
+        for(unsigned dy=y;dy<end_y;dy++)for(unsigned span=0;span<spans;span++) {
+            const RendererPixel *source=row+starts[span];
+            RendererPixel *destination=out+dy*pitch+starts[span];
+            unsigned pairs=lengths[span]/2u;
+            __asm__ volatile("rep movsl" : "+S"(source), "+D"(destination), "+c"(pairs) : : "memory", "cc");
+            if(lengths[span]&1u)*destination=*source;
+        }
+        result.drawn+=opaque*(end_y-y);y=end_y;
+    }
+    return result;
+}
+
 /* Two 1024-bit maps classify every interleaved horizontal/vertical tile row
  * at the authored darkest shade. No pre-shaded texture bank is retained. */
 typedef struct {

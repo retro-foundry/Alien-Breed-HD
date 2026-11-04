@@ -1596,3 +1596,31 @@ This removes avoidable blast work but does not solve the large rendering
 pause: the close-up explosion still tests over two million sprite pixels in
 one frame. Diagnostic sources, images and timing are retained locally under
 `build/dos-effects-trace` while that rendering work is investigated.
+
+
+### Copy magnified native sprites by opaque row spans
+
+The native 320-pixel renderer now groups identical source columns, decodes
+one RGB565 row per distinct sampled source row, and copies its opaque spans
+across repeated destination rows. Texel-zero cutouts remain separate from
+pixel values, so opaque black stays opaque. Packed PTR modes, 16.16 stepping,
+clipped sampling origins, strip offsets, truncated inputs and authored shade
+palettes retain their original values. This uses about 6.3 KiB of stack scratch
+without a new heap allocation or texture/shade bank. Local magnified sprites
+use the row path when no picking channel is active; other cases keep the
+existing sampler and clip handling.
+
+All 144 independent DOS row-raster cases pass, including every packed mode,
+odd widths, clipping origins, repeated rows, black/cutout texels, short inputs
+and untouched guards. In the real level-1/6 close-barrel diagnostic, all 128
+per-frame object/shot/point hashes and all 20 selected complete images match
+the original renderer. An additional 128 hashes match with detailed rendering
+profiling disabled. All tests use 4 MB with host audio muted.
+
+With detailed profiling disabled, the worst post-detonation frame in the
+32-frame level-1 fixture falls from 1160.547 to 158.472 ms. Level 6 falls from
+599.112 to below its 117.118 ms cold startup frame. These are diagnostic
+ordinary-build timings at normal/486_slow, 40,000 cycles and fixed game ticks;
+they are separate from the stationary real-time FPS benchmark. All explosion
+particles, gibs and gameplay updates are preserved. Spill-sprite clipping
+continues through the general path while the remaining cost is examined.
