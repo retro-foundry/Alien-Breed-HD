@@ -1,0 +1,77 @@
+diff --git a/src/video/dos/SDL_dosmouse.c b/src/video/dos/SDL_dosmouse.c
+--- a/src/video/dos/SDL_dosmouse.c
++++ b/src/video/dos/SDL_dosmouse.c
+@@ -129,6 +129,18 @@
+     return true; // we handle this elsewhere.
+ }
+ 
++static bool DOSVESA_SetRelativeMouseMode(bool enabled)
++{
++    // PumpEvents already reads INT 33h/0Bh when SDL enables relative mode.
++    // Discard motion accumulated before either capture transition, so menu
++    // movement does not become a camera jump when gameplay captures again.
++    __dpmi_regs regs = {0};
++    (void)enabled;
++    regs.x.ax = 0xB;
++    __dpmi_int(0x33, &regs);
++    return true;
++}
++
+ void DOSVESA_InitMouse(SDL_VideoDevice *_this)
+ {
+     SDL_Mouse *mouse = SDL_GetMouse();
+@@ -143,19 +155,13 @@
+ 
+     mouse->internal = SDL_calloc(1, 1); // just something non-NULL (and safely freeable) to say "there's a mouse available."
+ 
+-    // Query mouse sensitivity (mickeys per pixel) via INT 33h function 0x1B
+-    SDL_VideoData *data = _this->internal;
+-    regs.x.ax = 0x1B; // Get Mouse Sensitivity
+-    __dpmi_int(0x33, &regs);
+-    data->mickeys_per_hpixel = (regs.x.bx > 0) ? (float)regs.x.bx : 8.0f;
+-    data->mickeys_per_vpixel = (regs.x.cx > 0) ? (float)regs.x.cx : 16.0f;
+-
+     mouse->CreateCursor = DOSVESA_CreateCursor;
+     mouse->ShowCursor = DOSVESA_ShowCursor;
+     mouse->MoveCursor = DOSVESA_MoveCursor;
+     mouse->FreeCursor = DOSVESA_FreeCursor;
+     mouse->WarpMouse = DOSVESA_WarpMouse;
+     mouse->WarpMouseGlobal = DOSVESA_WarpMouseGlobal;
++    mouse->SetRelativeMouseMode = DOSVESA_SetRelativeMouseMode;
+ 
+     SDL_SetDefaultCursor(DOSVESA_CreateDefaultCursor());
+ }
+diff --git a/src/video/dos/SDL_dosevents.c b/src/video/dos/SDL_dosevents.c
+--- a/src/video/dos/SDL_dosevents.c
++++ b/src/video/dos/SDL_dosevents.c
+@@ -342,12 +342,12 @@
+             regs.x.ax = 0xB; // read motion counters
+             __dpmi_int(0x33, &regs);
+             // values returned here are -32768 to 32767
+-            const SDL_VideoData *viddata = device->internal;
+-            const float MICKEYS_PER_HPIXEL = viddata->mickeys_per_hpixel;
+-            const float MICKEYS_PER_VPIXEL = viddata->mickeys_per_vpixel;
+             const int mickeys_x = (int)(Sint16)regs.x.cx;
+             const int mickeys_y = (int)(Sint16)regs.x.dx;
+-            SDL_SendMouseMotion(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, true, mickeys_x / MICKEYS_PER_HPIXEL, mickeys_y / MICKEYS_PER_VPIXEL);
++            // INT 33h/0Bh returns raw motion, just like desktop relative input.
++            // INT 33h/1Bh sensitivity values are not mickeys-per-pixel ratios;
++            // dividing by them also discards small moves in integer consumers.
++            SDL_SendMouseMotion(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, true, mickeys_x, mickeys_y);
+         }
+     }
+ }
+diff --git a/src/video/dos/SDL_dosvideo.h b/src/video/dos/SDL_dosvideo.h
+--- a/src/video/dos/SDL_dosvideo.h
++++ b/src/video/dos/SDL_dosvideo.h
+@@ -65,10 +65,6 @@
+     void *vbe_state_buffer;       // saved VBE state (from VBE 0x4F04)
+     Uint32 vbe_state_buffer_size; // size of the state buffer
+ 
+-    // Mouse sensitivity (mickeys per pixel), queried from INT 33h function 0x1B
+-    float mickeys_per_hpixel; // horizontal mickeys per pixel (default: 8)
+-    float mickeys_per_vpixel; // vertical mickeys per pixel (default: 16)
+-
+     // Page-flipping (double-buffering) state
+     int current_page;         // 0 or 1: which page is currently displayed
+     Uint32 page_offset[2];    // byte offset of each page within video memory

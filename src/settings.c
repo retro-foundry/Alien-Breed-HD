@@ -149,7 +149,19 @@ static int settings_path_with_suffix(char *out, size_t out_size,
 {
     int n;
     if (!out || out_size == 0 || !path || !suffix) return 0;
+#ifdef AB3D_DOS
+    /* Keep the temporary INI in the same directory with a DOS 8.3 name.
+     * Appending .tmp to ab3d.ini makes option saves fail on real DOS. */
+    const char *name = path;
+    for (const char *p = path; *p; p++) {
+        if (*p == '/' || *p == '\\' || *p == ':') name = p + 1;
+    }
+    const char *extension = strrchr(name, '.');
+    size_t stem = extension ? (size_t)(extension - path) : strlen(path);
+    n = snprintf(out, out_size, "%.*s%s", (int)stem, path, suffix);
+#else
     n = snprintf(out, out_size, "%s%s", path, suffix);
+#endif
     return n >= 0 && n < (int)out_size;
 }
 

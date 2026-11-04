@@ -56,7 +56,7 @@ if (!(Test-Path "$sdl/.git")) {
   Check 'SDL pinned checkout'
 }
 if ((git -C $sdl rev-parse HEAD).Trim() -ne $revision) { throw 'DOS SDL is not at the pinned revision' }
-foreach ($patchName in @('dos-sdl.patch', 'dos-present.patch')) {
+foreach ($patchName in @('dos-sdl.patch', 'dos-present.patch', 'dos-mouse.patch')) {
   $patch = Join-Path $repo "cmake/$patchName"
   $previousErrorAction = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'

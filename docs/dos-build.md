@@ -139,8 +139,23 @@ to keep the executable small. Keyboard controls match the desktop port: arrows/W
 fires, Space operates, 1-6 select weapons, Esc opens the menu, Enter selects,
 Tab opens the map, F5/F9 save/load. DOS menus default to keyboard input.
 `SET AB3D_DOS_MOUSE=1` enables the DOS mouse driver transport and captures the
-mouse in-game; Esc releases it for menus. This path was smoke-tested with DOSBox's
-mouse driver, but mouse accuracy needs real-hardware testing.
+mouse in-game; Esc releases it for menus. Enable Mouse Look in Options, or set
+`mouse_look=1` in `AB3D.INI`, for vertical look. Menu options save using DOS 8.3
+temporary filenames. In DOSBox, click inside the window to capture the host
+mouse; Ctrl+F10 releases it. DOSBox's `[mouse] dos_mouse_driver=true` enables its
+built-in INT 33h driver. Mouse accuracy still needs real-hardware testing.
+
+The focused input check uses the actual SDL DOS driver and game's capture,
+button, motion, menu-release/recapture and INI paths in 4 MB:
+
+```powershell
+python tools/check_dos_mouse.py --dosbox <dosbox.exe>
+```
+
+On Windows, append `--physical` to also send small host mouse movements into
+a dedicated DOSBox window. It verifies both game input axes through INT 33h
+and refuses to send input if that test process loses focus. All checks mute
+host audio; the default check does not move the host pointer.
 
 The smallest RGB565 mode meeting the configured minimum size is selected.
 The world fills that entire mode behind the keys and HUD, with 1:1 pixels and
@@ -1508,3 +1523,54 @@ Logs, executable/package hashes and confirmation are recorded in
 `floor-project-validation.json`, live checks in `floor-project-exercises.json`
 and indexed image evidence in `floor-project-indexed-pixel-evidence.json`.
 The immutable source/package/evidence copy is `build/dos-floor-project-baseline`.
+
+
+### Working DOS mouse capture and saved look options
+
+The pinned DOS SDL backend had a relative-motion polling branch but did not
+register `DOSVESA_SetRelativeMouseMode`. SDL therefore rejected capture, and
+`input_apply_relative_mouse` correctly discarded gameplay mouse motion.
+`cmake/dos-mouse.patch` registers the driver callback and clears old INT 33h
+motion counters at capture transitions, so menu movement cannot jump the view.
+It is applied by `tools/setup_dos.ps1` alongside the existing patches; rerun
+setup for an existing dependency cache. With no mouse driver, capture still
+reports failure.
+
+Relative events now pass signed INT 33h/0Bh motion counts directly, matching
+SDL's desktop raw-input path. The old backend incorrectly divided by the
+INT 33h/1Bh sensitivity settings, making small moves disappear in integer
+consumers. These are different driver quantities, as documented in the
+[FreeDOS mouse interrupt reference](https://github.com/FDOS/mouse/blob/master/int33.lst).
+The unused sensitivity fields and query are removed. Gameplay control scales,
+mouse-look projection and aim logic remain unchanged.
+
+`settings_path_with_suffix` replaces the INI extension for the DOS temporary
+file, producing `ab3d.tmp` rather than the invalid `ab3d.ini.tmp`. Options can
+now persist mouse look and inversion through the existing replacement path.
+Desktop and web settings paths are unchanged.
+
+`tools/check_dos_mouse.py` exercises the real DOS SDL capture callback and
+actual game input/INI code in 4 MB, including motion gating, buttons, menu
+release/recapture, missing-driver rejection and saved mouse-look/inversion
+values. Its Windows `--physical` case also verifies small host movements in
+both directions on both game axes through INT 33h, without injected SDL events.
+The test refuses to send host input after another process gains focus.
+All three cases pass, as do clean application of all three dependency patches
+and reproduction of the working SDL source from its pinned revision.
+
+Fresh feedback training covers all 23 scenarios. The final raw-motion backend
+correction relinks that feedback without changing instrumented game sources;
+the final public/private feedback executables match byte-for-byte. All sixteen
+native starts and six turns, and all sixteen indexed starts and six turns,
+match the verified original images. Final native and indexed 4 MB level-4
+exercises pass, including repeated full quickloads and all 24 weapon frames.
+Native map pixels and all six saved level/map payloads remain exact. Both
+ZIPs pass CRC, executable/default-INI and all 231 asset comparisons. Windows
+Release and the existing feedback regressions also pass.
+
+The final native package retains 25.83 FPS in the sequential 128-frame level-1
+benchmark at normal/486_slow, 40,000 cycles, 4 MB, SB16 and mouse enabled, with
+host audio muted. Frame/render/present times remain 38.72/32.76/3.13 ms, with
+39.24 ms p95 and no audio underruns. This is still 3.00x the original 8.60 FPS;
+real hardware remains unmeasured. Package hashes, final input/image/exercise
+checks and timing are recorded in `build/dos/mouse-validation.json`.

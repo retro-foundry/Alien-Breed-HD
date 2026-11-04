@@ -20,7 +20,10 @@ Esc menu; Enter selects; Tab map; F5/F9 save/load. See the in-game options.
 DOS menus use the keyboard. Optional mouse input requires a DOS mouse driver:
   SET AB3D_DOS_MOUSE=1
 This enables automatic capture in-game; Esc releases it for menus. Mouse
-behavior still needs real-hardware validation. DOS always uses a full screen.
+Look in Options, or mouse_look=1 in AB3D.INI, enables vertical look. Options
+save with DOS 8.3 filenames. In DOSBox, click inside its window to capture the
+host mouse; Ctrl+F10 releases it. Mouse behavior still needs real-hardware
+validation. DOS always uses a full screen.
 
 AB3D.INI requests a small video mode, one renderer thread and normal game
 rules. The world fills the entire selected mode behind the HUD: 320x240 on
@@ -51,7 +54,8 @@ Source: https://github.com/retro-foundry/Alien-Breed-HD
 Original Alien Breed 3D: Team17; original source and data are in amiga/.
 DOS SDL transport adapted from the local GloomAmiga port. SDL is distributed
 under the zlib license; see SDL-LIC.TXT. Our DOS SDL changes are marked in the
-source patch (Sound Blaster ring, event scheduling and 486 CPU probe).
+source patches (Sound Blaster ring, event scheduling, 486 CPU probe, native
+presentation and relative mouse input).
 
 CWSDPMI Copyright (C) 1995-2010 Charles W Sandmann. See CWSDPMI.DOC for
 redistribution terms. You have the right to receive its source and updates:
