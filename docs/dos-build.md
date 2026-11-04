@@ -603,6 +603,7 @@ frames on level 1. Runs are sequential, with detailed profiling disabled.
 | Exact 32-bit texture walk for flat walls | 22.45 | 37.58 ms | 44.54 ms | 45.07 ms |
 | Wall clip guards once per native segment | 22.58 | 37.33 ms | 44.29 ms | 44.82 ms |
 | Reuse exact wall endpoint values | 22.81 | 36.87 ms | 43.83 ms | 44.35 ms |
+| Carry-based projection rounding | 22.83 | 36.83 ms | 43.80 ms | 44.31 ms |
 
 This is a 2.65x increase over the original at the same rendering size.
 The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
@@ -1067,3 +1068,30 @@ Automap captures and all six saved level/map payloads on levels 1 and 4 match
 the earlier projection baseline. Windows Release, feedback, DOS raster/math,
 ZIP CRC/contents/default-INI checks pass; all 231 assets per package are
 unchanged. Host audio remains muted throughout testing.
+
+
+### Carry-based signed projection rounding
+
+DOS projection rounding now compares the original high word as unsigned to
+put the sign-dependent bias bit in carry, adds the exact bias with two ADCs,
+and returns the low quotient word with SHRD. The original 64-bit product and
+rounding of signed half ties are preserved. This replaces temporary bias
+registers, sign branches and an unused high-word shift with four instructions;
+the portable implementation remains unchanged. The regression adds 8,235
+cases using a quotient/remainder oracle, including high-word sign boundaries,
+low-word carries, signed half ties and wide returned quotients. It restores
+the random generator state before the existing raster cases.
+
+Public native timings are 22.83/21.88/31.55/29.74 FPS for levels 1/6/15/turning,
+against 22.81/21.80/31.59/29.74. Render times change from
+36.87/36.09/22.56/26.73 ms to 36.83/35.92/22.53/26.73 ms; level 15's total
+frame time rises from 31.66 to 31.70 ms, with update time rising by 0.08 ms.
+The main-view gain is small. Raw evidence and executable/archive hashes are
+in `build/dos/round-carry-performance.json`. The 25.80 FPS target remains unmet.
+
+All 44 original native/indexed captures match exactly. The native 4 MB
+exercises on levels 1/4/15, indexed exercises on levels 1/4, and real-time
+40,000-cycle native level-4 exercise pass without audio underruns. Automap
+captures and saved level/map data on levels 1 and 4 match the projection
+baseline. Windows Release, feedback, DOS raster/math and package checks pass;
+all 231 assets per package are unchanged. No shade/cache bank is added.

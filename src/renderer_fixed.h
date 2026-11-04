@@ -6,7 +6,20 @@
  * WallRoutine3 projection stays in range of the original bias addition. */
 static inline int32_t renderer_project_round_24(int64_t numerator)
 {
+#ifdef AB3D_DOS
+    uint32_t low = (uint32_t)numerator, high = (uint32_t)((uint64_t)numerator >> 32);
+    /* Unsigned high-word comparison puts !negative in carry. ADC then adds
+     * the exact half-unit bias and propagates the low-word carry. Only the
+     * low 32 quotient bits are returned, so the high-word shift is unused. */
+    __asm__("cmpl $0x80000000, %1\n\t"
+            "adcl $8388607, %0\n\t"
+            "adcl $0, %1\n\t"
+            "shrdl $24, %1, %0"
+            : "+&r"(low), "+&r"(high) : : "cc");
+    return (int32_t)low;
+#else
     return (int32_t)((numerator + (numerator < 0 ? 8388607 : 8388608)) >> 24);
+#endif
 }
 
 /* Exact signed 64/32 division. Most projection/interpolation quotients need

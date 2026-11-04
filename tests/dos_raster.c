@@ -58,6 +58,34 @@ static void check_division(void)
     printf("PASS: %u signed 64/32 divisions, including wide quotients\n", checked);
 }
 
+static void check_projection_rounding(void)
+{
+    uint32_t saved_random = random_state;
+    random_state = 0x9826c31b;
+    static const int32_t high_words[] = {INT32_MIN, -1, 0, 1, INT32_MAX};
+    static const uint32_t low_words[] = {0, 1, 8388607, 8388608, 8388609,
+        16777215, 0xff7fffff, 0xff800000, UINT32_MAX};
+    unsigned checked = 0;
+    for (unsigned i = 0; i < 8192 + 45; i++) {
+        uint32_t high, low;
+        if (i < 45) {
+            high = (uint32_t)high_words[i / 9]; low = low_words[i % 9];
+        } else {
+            high = next_value(); low = next_value();
+        }
+        int64_t numerator = (int64_t)(((uint64_t)high << 32) | low);
+        if (numerator > INT64_MAX - 8388608) continue;
+        int64_t expected = reference_divide(numerator, 16777216);
+        int64_t remainder = numerator - expected * 16777216;
+        if (remainder >= 8388608) expected++;
+        if (remainder <= -8388608) expected--;
+        assert(renderer_project_round_24(numerator) == (int32_t)expected);
+        checked++;
+    }
+    random_state = saved_random;
+    printf("PASS: %u projection roundings preserve wide products, carries and signed half ties\n", checked);
+}
+
 static unsigned check_wall_interpolation_case(int64_t delta, int32_t position, int32_t span)
 {
     /* Exercise every defined original product without overflowing the oracle. */
@@ -459,7 +487,7 @@ static void check_objects(void)
 
 int main(void)
 {
-    check_division(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_edges(); check_walls();
+    check_division(); check_projection_rounding(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_edges(); check_walls();
     check_objects();
     puts("DOS raster regression passed");
     return 0;
