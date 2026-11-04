@@ -58,6 +58,44 @@ static void check_division(void)
     printf("PASS: %u signed 64/32 divisions, including wide quotients\n", checked);
 }
 
+static unsigned check_wall_interpolation_case(int64_t delta, int32_t position, int32_t span)
+{
+    /* Exercise every defined original product without overflowing the oracle. */
+    uint64_t magnitude = delta < 0 ? UINT64_C(0) - (uint64_t)delta : (uint64_t)delta;
+    uint64_t distance = position < 0 ? UINT64_C(0) - (uint64_t)(int64_t)position : (uint64_t)position;
+    uint64_t bound = ((delta < 0) != (position < 0)) ? UINT64_C(1) << 63 : INT64_MAX;
+    if (distance && magnitude > bound / distance) return 0;
+    int64_t expected = reference_divide(delta * position, span);
+    assert(renderer_wall_interpolate_delta(delta, position, span) == expected);
+    return 1;
+}
+
+static void check_wall_interpolation(void)
+{
+    uint32_t saved_random = random_state;
+    random_state = 0x73952b17;
+    static const int64_t deltas[] = {INT64_MIN, INT64_MIN + 1, -4294967297LL,
+        INT32_MIN, -65536, -1, 0, 1, 65536, INT32_MAX, 4294967297LL, INT64_MAX};
+    static const int32_t spans[] = {1, 2, 3, 7, 127, 128, 255, 320, 65535, 65536, INT32_MAX};
+    unsigned checked = 0;
+    for (unsigned d = 0; d < sizeof(deltas) / sizeof(*deltas); d++) {
+        for (unsigned s = 0; s < sizeof(spans) / sizeof(*spans); s++) {
+            int32_t span = spans[s];
+            int32_t positions[] = {0, 1, span / 2, span - 1, span, -1, INT32_MIN, INT32_MAX};
+            for (unsigned p = 0; p < sizeof(positions) / sizeof(*positions); p++)
+                checked += check_wall_interpolation_case(deltas[d], positions[p], span);
+        }
+    }
+    for (unsigned i = 0; i < 4096; i++) {
+        int32_t span = (next_value() & 65535) + 1;
+        int32_t position = (int32_t)(next_value() % ((uint32_t)span + 1));
+        int64_t delta = (int64_t)(int32_t)next_value() * 65536 + (next_value() & 65535);
+        checked += check_wall_interpolation_case(delta, position, span);
+    }
+    random_state = saved_random;
+    printf("PASS: %u wall endpoint interpolations preserve constant, clipped and full-span divisions\n", checked);
+}
+
 static void check_wall_texture_walk(void)
 {
     uint32_t saved_random = random_state;
@@ -421,7 +459,7 @@ static void check_objects(void)
 
 int main(void)
 {
-    check_division(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_edges(); check_walls();
+    check_division(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_edges(); check_walls();
     check_objects();
     puts("DOS raster regression passed");
     return 0;

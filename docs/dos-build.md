@@ -602,8 +602,9 @@ frames on level 1. Runs are sequential, with detailed profiling disabled.
 | Inline DOS wall clip registration | 22.33 | 37.83 ms | 44.79 ms | 45.32 ms |
 | Exact 32-bit texture walk for flat walls | 22.45 | 37.58 ms | 44.54 ms | 45.07 ms |
 | Wall clip guards once per native segment | 22.58 | 37.33 ms | 44.29 ms | 44.82 ms |
+| Reuse exact wall endpoint values | 22.81 | 36.87 ms | 43.83 ms | 44.35 ms |
 
-This is a 2.63x increase over the original at the same rendering size.
+This is a 2.65x increase over the original at the same rendering size.
 The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
 per frame, for this full-height baseline. The earlier 28.23 FPS target and
 320x200 tables above describe the earlier, smaller view.
@@ -1041,3 +1042,28 @@ and indexed exercises on levels 1 and 4 pass, as does native level 4 at real-tim
 DOS arithmetic/raster tests, ZIP CRCs and package contents pass; all 231 assets
 in each package match the corresponding preserved assets. Testing remains
 muted at the host, with guest audio active in performance and exercise runs.
+
+
+### Reuse exact wall interpolation endpoints
+
+DOS wall interpolation now reuses a zero or full-span endpoint and constant
+attributes directly, avoiding their wide multiply/divide. Identical endpoint
+values also retain the initialized zero step. Other clipped positions keep
+the original signed 64/32 division and fractional precision. This adds no
+cache or shade bank. The DOS regression compares 4,972 cases with the original
+product/division, including signed deltas, wide products and clipped endpoints;
+its random state is restored so the existing raster corpus stays unchanged.
+
+Public native timings are 22.81/21.80/31.59/29.74 FPS for levels 1/6/15/turning,
+against 22.58/21.80/31.54/29.54. Level 1 averages 43.83 ms per frame with a
+36.87 ms render and 44.35 ms p95. Logs and executable/archive hashes are in
+`build/dos/wall-endpoints-performance.json`. The main view is now 2.65x the
+original; the 25.80 FPS target remains unmet.
+
+Both packages pass all sixteen start captures and six turning captures,
+native 4 MB exercises on levels 1/4/15 and indexed exercises on levels 1/4.
+The real-time 40,000-cycle native level-4 exercise has no audio underruns.
+Automap captures and all six saved level/map payloads on levels 1 and 4 match
+the earlier projection baseline. Windows Release, feedback, DOS raster/math,
+ZIP CRC/contents/default-INI checks pass; all 231 assets per package are
+unchanged. Host audio remains muted throughout testing.

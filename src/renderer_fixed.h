@@ -33,6 +33,18 @@ static inline int64_t renderer_divide_i64_i32(int64_t numerator, int32_t divisor
 #endif
 }
 
+/* Endpoint-anchored wall interpolation: zero/full-span positions and constant
+ * attributes already have their exact result, including signed deltas. */
+static inline int64_t renderer_wall_interpolate_delta(int64_t delta, int32_t position, int32_t span)
+{
+#ifdef AB3D_DOS
+    if (!position) return 0;
+    if (position == span) return delta;
+    if (!delta) return 0;
+#endif
+    return renderer_divide_i64_i32(delta * position, span);
+}
+
 /* Nearest projection quotient, ties away from zero. The depth is positive
  * and the projection numerator leaves room for its half-depth bias. */
 static inline int64_t renderer_divide_round_i64_i32(int64_t numerator, int32_t depth)

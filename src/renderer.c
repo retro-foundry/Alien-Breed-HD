@@ -6938,14 +6938,14 @@ static void draw_wall_rasterize_segment(
     const int64_t end_col = (int64_t)(draw_end - scr_x1);
     const int64_t draw_cols = end_col - start_col;
 
-    const int64_t inv_z_start = inv_z1_fp + renderer_divide_i64_i32(inv_z_delta_fp * start_col, span);
-    const int64_t inv_z_end = inv_z1_fp + renderer_divide_i64_i32(inv_z_delta_fp * end_col, span);
-    const int64_t tex_z_start = tex_over_z1_fp + renderer_divide_i64_i32(tex_over_z_delta_fp * start_col, span);
-    const int64_t tex_z_end = tex_over_z1_fp + renderer_divide_i64_i32(tex_over_z_delta_fp * end_col, span);
+    const int64_t inv_z_start = inv_z1_fp + renderer_wall_interpolate_delta(inv_z_delta_fp, (int32_t)start_col, span);
+    const int64_t inv_z_end = inv_z1_fp + renderer_wall_interpolate_delta(inv_z_delta_fp, (int32_t)end_col, span);
+    const int64_t tex_z_start = tex_over_z1_fp + renderer_wall_interpolate_delta(tex_over_z_delta_fp, (int32_t)start_col, span);
+    const int64_t tex_z_end = tex_over_z1_fp + renderer_wall_interpolate_delta(tex_over_z_delta_fp, (int32_t)end_col, span);
     const int64_t bright_start_fp = ((int64_t)left_brightness << 16) +
-                                    renderer_divide_i64_i32(((int64_t)bright_delta << 16) * start_col, span);
+                                    renderer_wall_interpolate_delta(((int64_t)bright_delta << 16), (int32_t)start_col, span);
     const int64_t bright_end_fp = ((int64_t)left_brightness << 16) +
-                                  renderer_divide_i64_i32(((int64_t)bright_delta << 16) * end_col, span);
+                                  renderer_wall_interpolate_delta(((int64_t)bright_delta << 16), (int32_t)end_col, span);
 
     int64_t inv_z_acc = inv_z_start << INTERP_SUB_BITS;
     int64_t tex_z_acc = tex_z_start << INTERP_SUB_BITS;
@@ -6954,9 +6954,12 @@ static void draw_wall_rasterize_segment(
     int64_t tex_z_step_acc = 0;
     int64_t bright_step_acc = 0;
     if (draw_cols > 0) {
-        inv_z_step_acc = renderer_divide_i64_i32((inv_z_end - inv_z_start) << INTERP_SUB_BITS, (int32_t)draw_cols);
-        tex_z_step_acc = renderer_divide_i64_i32((tex_z_end - tex_z_start) << INTERP_SUB_BITS, (int32_t)draw_cols);
-        bright_step_acc = renderer_divide_i64_i32((bright_end_fp - bright_start_fp) << INTERP_SUB_BITS, (int32_t)draw_cols);
+        if (inv_z_end != inv_z_start)
+            inv_z_step_acc = renderer_divide_i64_i32((inv_z_end - inv_z_start) << INTERP_SUB_BITS, (int32_t)draw_cols);
+        if (tex_z_end != tex_z_start)
+            tex_z_step_acc = renderer_divide_i64_i32((tex_z_end - tex_z_start) << INTERP_SUB_BITS, (int32_t)draw_cols);
+        if (bright_end_fp != bright_start_fp)
+            bright_step_acc = renderer_divide_i64_i32((bright_end_fp - bright_start_fp) << INTERP_SUB_BITS, (int32_t)draw_cols);
     }
 
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
