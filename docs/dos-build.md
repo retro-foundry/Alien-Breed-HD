@@ -606,8 +606,9 @@ frames on level 1. Runs are sequential, with detailed profiling disabled.
 | Carry-based projection rounding | 22.83 | 36.83 ms | 43.80 ms | 44.31 ms |
 | Clip native columns before texture/depth work | 22.87 | 36.76 ms | 43.72 ms | 44.23 ms |
 | Shade wall core and side pixels together | 23.06 | 36.40 ms | 43.36 ms | 43.86 ms |
+| Classify identical darkest-shade floor rows at load | 23.19 | 36.15 ms | 43.12 ms | 43.62 ms |
 
-This is a 2.68x increase over the original at the same rendering size.
+This is a 2.70x increase over the original at the same rendering size.
 The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
 per frame, for this full-height baseline. The earlier 28.23 FPS target and
 320x200 tables above describe the earlier, smaller view.
@@ -1154,3 +1155,36 @@ sound remains muted. Windows Release, feedback, package contents and exact
 automap/saved level-map data comparisons on levels 1 and 4 pass. The indexed
 executable and 231 assets remain identical to all 22 previously validated
 indexed capture inputs.
+
+
+### Classify identical darkest-shade floor rows at load
+
+The native DOS loader now classifies each interleaved horizontal/vertical
+floor row against its actual darkest RGB565 palette. A row whose 64 samples
+all produce the same word can use the existing fill loop. Other rows retain
+their exact texture samples. A completely uniform palette also permits the
+fill for spans with both coordinates moving. The check applies only to shade
+14 and spans of at least 16 pixels, keeping the ordinary floor loop unchanged.
+Classification is cleared before asset replacement and rebuilt after loading
+the floor, bump and smooth-bump textures with their existing palette fallbacks.
+
+The three records occupy 804 bytes, rather than a pre-shaded texture bank;
+the linked native image gains 1,024 bytes each of text and padded BSS. Assets,
+save formats and rendering precision are unchanged. The DOS regression adds
+9,219 oracle comparisons covering both axes and signs, all sixteen interleaved
+tile channels, palette selection, two-coordinate motion, unsigned UV wrapping,
+zero/short/long spans, untouched guards and reloads at the same addresses.
+
+Public native timings are 23.19/22.22/31.62/29.88 FPS for levels 1/6/15/turning,
+against 23.06/22.01/31.61/29.88. Level 1 averages 43.12 ms per frame with a
+36.15 ms render and 43.62 ms p95. Raw logs and executable/archive hashes are
+in `build/dos/solid-floor-performance.json`. This is 2.70x the original;
+the 25.80 FPS target remains unmet.
+
+All 44 native/indexed start and turning captures match the preserved originals.
+The native 4 MB exercises on levels 1/4/15, indexed exercises on levels 1/4,
+and real-time 40,000-cycle native level-4 exercise pass without audio underruns.
+Automap captures and all six saved level/map payloads on levels 1 and 4 match
+the projection baseline. Windows Release, feedback, DOS raster/math and package
+checks pass; all 231 assets per package are unchanged. Host output is muted,
+with guest SB16 and mouse active. Real 486 hardware remains unmeasured.

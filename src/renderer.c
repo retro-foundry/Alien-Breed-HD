@@ -7784,8 +7784,8 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             /* GOURSEL with equal endpoints is exactly the constant palette
              * span. Skip its division and the gradient-kernel wrapper. */
             if (left == right || width <= 0) {
-                dos_raster_floor(out, count, texture, palettes[left], u, v,
-                                 row_math.u_step, row_math.v_step);
+                dos_raster_floor_shaded(out, count, texture, palettes, left, u, v,
+                                        row_math.u_step, row_math.v_step);
             } else {
                 int32_t step = ((right - left) * 65536) / width;
                 int32_t level = left * 65536 + step * (xl - shade_x_left);
@@ -7796,8 +7796,8 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             int bright = brightness + 5 + (row_math.dist >> 8);
             if (bright < 0) bright = 0;
             if (bright > 28) bright = 28;
-            dos_raster_floor(out, count, texture, palettes[floor_bright_level_table[bright]],
-                             u, v, row_math.u_step, row_math.v_step);
+            dos_raster_floor_shaded(out, count, texture, palettes, floor_bright_level_table[bright],
+                                    u, v, row_math.u_step, row_math.v_step);
         }
         return;
     }

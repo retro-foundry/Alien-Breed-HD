@@ -697,6 +697,9 @@ void io_init(void)
 
 void io_shutdown(void)
 {
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    for(unsigned i=0;i<3;i++)dos_raster_prepare_floor(i,NULL,NULL);
+#endif
     /* Free wall texture data */
     for (int i = 0; i < MAX_WALL_TILES; i++) {
         free(g_wall_data[i]);
@@ -1034,6 +1037,9 @@ void io_load_walls(void)
 
 void io_load_floor(void)
 {
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    for(unsigned i=0;i<3;i++)dos_raster_prepare_floor(i,NULL,NULL);
+#endif
     printf("[IO] Loading floor texture...\n");
 
     extern RendererState g_renderer;
@@ -1235,6 +1241,15 @@ void io_load_floor(void)
             io_fatal_missing("SmoothBumpPalScaled", path);
         }
     }
+
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    dos_raster_prepare_floor(0,g_renderer.floor_tile,g_renderer.floor_pal);
+    dos_raster_prepare_floor(1,g_renderer.bump_tile,
+        g_renderer.bump_pal?g_renderer.bump_pal:g_renderer.floor_pal);
+    dos_raster_prepare_floor(2,g_renderer.smooth_bump_tile?g_renderer.smooth_bump_tile:g_renderer.bump_tile,
+        g_renderer.smooth_bump_pal?g_renderer.smooth_bump_pal:
+        (g_renderer.bump_pal?g_renderer.bump_pal:g_renderer.floor_pal));
+#endif
 
     /* Optional Amiga water assets (used for textured water + underwater tint parity). */
     shared_texture_free(g_water_file_data);

@@ -11,6 +11,58 @@ static void fill_words(int16_t *out, unsigned count, uint16_t value)
     if (count & 1) *out = (int16_t)value;
 }
 
+#ifdef AB3D_NATIVE_RGB565
+/* Two 1024-bit maps classify every interleaved horizontal/vertical tile row
+ * at the authored darkest shade. No pre-shaded texture bank is retained. */
+typedef struct {
+    const uint8_t *texture;
+    const RendererPixel *palette;
+    int whole_solid;
+    uint8_t solid[2][128];
+} DosFloorSolid;
+static DosFloorSolid floor_solid[3];
+
+void dos_raster_prepare_floor(unsigned slot,const uint8_t *texture,const uint8_t *palettes)
+{
+    if(slot>=3)return;
+    DosFloorSolid *e=&floor_solid[slot];
+    memset(e,0,sizeof(*e));
+    if(!texture || !palettes)return;
+    e->texture=texture;e->palette=(const RendererPixel *)(const void *)palettes+14*256;
+    e->whole_solid=1;
+    for(unsigned i=1;i<256;i++)if(e->palette[i]!=e->palette[0]){e->whole_solid=0;break;}
+    if(e->whole_solid){memset(e->solid,255,sizeof(e->solid));return;}
+    for(unsigned axis=0;axis<2;axis++)for(unsigned key=0;key<1024;key++) {
+        unsigned start=axis?(key>>2)+(key&3)*256:(key>>2)*256+(key&3);
+        unsigned stride=axis?1024:4,i;
+        RendererPixel color=e->palette[texture[start]];
+        for(i=1;i<64;i++)if(e->palette[texture[start+i*stride]]!=color)break;
+        if(i==64)e->solid[axis][key>>3]|=(uint8_t)(1u<<(key&7));
+    }
+}
+
+__attribute__((always_inline)) static inline
+int dos_raster_solid_floor(RendererPixel *out,unsigned count,const uint8_t *texture,
+                            const RendererPixel *palette,uint32_t u,uint32_t v,uint32_t du,uint32_t dv)
+{
+    for(unsigned i=0;i<3;i++) {
+        const DosFloorSolid *e=&floor_solid[i];
+        if(palette!=e->palette)continue;
+        if(e->whole_solid){fill_words((int16_t *)out,count,palette[0]);return 1;}
+        if(du && dv)continue;
+        unsigned axis=dv!=0;
+        const uint8_t *source=texture+(axis?((u>>14)&0xfc):((v>>6)&0xfc00));
+        uintptr_t offset=(uintptr_t)source-(uintptr_t)e->texture;
+        if(offset>=65536 || (axis?(offset>>8)>3:(offset&255)>3))continue;
+        unsigned key=axis?((offset&255)<<2)+(offset>>8):((offset>>8)<<2)+(offset&3);
+        if(e->solid[axis][key>>3]&(1u<<(key&7))) {
+            fill_words((int16_t *)out,count,palette[source[0]]);return 1;
+        }
+    }
+    return 0;
+}
+#endif
+
 void dos_raster_floor_edges_init(int16_t *left, int16_t *right,
                                   unsigned count, int16_t empty_left)
 {
@@ -301,6 +353,16 @@ void dos_raster_wall_edges(RendererPixel *restrict out, unsigned count, unsigned
     }
 }
 
+#ifdef AB3D_NATIVE_RGB565
+__attribute__((noinline, optimize("O2")))
+void dos_raster_floor_dark(RendererPixel *out,unsigned count,const uint8_t *texture,
+                            const RendererPixel *palette,uint32_t u,uint32_t v,uint32_t du,uint32_t dv)
+{
+    if(count>=16 && (du || dv) && dos_raster_solid_floor(out,count,texture,palette,u,v,du,dv))return;
+    dos_raster_floor(out,count,texture,palette,u,v,du,dv);
+}
+#endif
+
 /* Separate small loops keep the water/projection state out of 486 registers.
  * Unsigned additions retain the renderer's exact 32-bit UV wrapping. */
 __attribute__((noinline, optimize("O2")))
@@ -498,7 +560,7 @@ void dos_raster_floor_gouraud(RendererPixel *restrict out, unsigned count, const
                                int32_t level, int32_t dlevel)
 {
     if (!dlevel) {
-        dos_raster_floor(out, count, texture, palettes[level >> 16], u, v, du, dv);
+        dos_raster_floor_shaded(out, count, texture, palettes, level >> 16, u, v, du, dv);
         return;
     }
     unsigned gradient = dlevel < 0 ? 0u - (uint32_t)dlevel : (uint32_t)dlevel;
@@ -510,7 +572,7 @@ void dos_raster_floor_gouraud(RendererPixel *restrict out, unsigned count, const
             unsigned run = dlevel < 0 ? fraction / gradient + 1
                 : (65536 - fraction + gradient - 1) / gradient;
             if (run > count) run = count;
-            dos_raster_floor(out, run, texture, palettes[level >> 16], u, v, du, dv);
+            dos_raster_floor_shaded(out, run, texture, palettes, level >> 16, u, v, du, dv);
             out += run;
             u += du * run;
             v += dv * run;

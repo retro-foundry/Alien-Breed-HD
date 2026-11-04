@@ -295,6 +295,66 @@ static void check_sprite_palettes(void)
     printf("PASS: %u embedded sprite shade colors match the original palettes\n",checked);
 }
 
+static void check_solid_floor_span(const uint8_t *texture,const RendererPixel (*palettes)[256],
+                                   unsigned shade,unsigned count,uint32_t u,uint32_t v,uint32_t du,uint32_t dv)
+{
+    RendererPixel actual[322],expected[322];
+    memset(actual,0x91,sizeof(actual));memcpy(expected,actual,sizeof(actual));
+    uint32_t eu=u,ev=v;
+    for(unsigned x=0;x<count;x++,eu+=du,ev+=dv)
+        expected[x+1]=palettes[shade][texture[((eu>>14)&0xfc)|((ev>>6)&0xfc00)]];
+    dos_raster_floor_shaded(actual+1,count,texture,palettes,shade,u,v,du,dv);
+    assert(!memcmp(actual,expected,sizeof(actual)));
+}
+
+static void check_solid_floor_rows(void)
+{
+    uint32_t saved_random=random_state;random_state=0x16375829;
+    static uint8_t texture[65536],other[65536];
+    static RendererPixel palettes[3][15][256];
+    for(unsigned y=0;y<256;y++)for(unsigned x=0;x<256;x++) {
+        texture[y*256+x]=(y%8==0 || x%7==0)?0:(uint8_t)((x*37+y*13)&3);
+        other[y*256+x]=(uint8_t)(next_value()>>24);
+    }
+    for(unsigned bank=0;bank<3;bank++)for(unsigned shade=0;shade<15;shade++)
+        for(unsigned c=0;c<256;c++)palettes[bank][shade][c]=(RendererPixel)(c*37+shade*173+bank*977);
+    for(unsigned c=0;c<256;c++)palettes[1][14][c]=0x7619;
+    for(unsigned i=0;i<3;i++)dos_raster_prepare_floor(i,i==1?other:texture,(const uint8_t *)palettes[i]);
+    static const unsigned counts[]={0,1,7,8,15,16,17,31,64,127,239,320};
+    unsigned checked=0;
+    for(unsigned bank=0;bank<3;bank++)for(unsigned tile=0;tile<16;tile++)
+    for(unsigned axis=0;axis<2;axis++)for(int sign=-1;sign<=1;sign+=2)
+    for(unsigned mode=0;mode<4;mode++)for(unsigned n=0;n<sizeof(counts)/sizeof(*counts);n++) {
+        unsigned offset=(tile/4)*256+tile%4;
+        uint32_t u=next_value(),v=next_value(),step=(uint32_t)(sign*(mode?98304:16384));
+        if(!mode) {
+            unsigned column=0;while((column*4+tile%4)%7)column++;
+            u=(column<<16)|65535;v=(2u<<16)|65535;
+        }
+        uint32_t du=axis?0:step,dv=axis?step:0;
+        if(mode==2)du=dv=0;
+        if(mode==3){du=step;dv=0u-step;}
+        unsigned shade=mode==1?13:14;
+        check_solid_floor_span((bank==1?other:texture)+offset,palettes[bank],shade,counts[n],u,v,du,dv);
+        checked++;
+    }
+    /* Rebuild at the same addresses after a palette/source change, and clear
+     * before replacing data so no stale uniform classification can survive. */
+    for(unsigned c=0;c<256;c++)palettes[0][14][c]=0x5678;
+    dos_raster_prepare_floor(0,texture,(const uint8_t *)palettes[0]);
+    check_solid_floor_span(texture,palettes[0],14,320,0,0,98304,65535);checked++;
+    palettes[0][14][0]=0x1234;palettes[0][14][1]=0x7bef;
+    dos_raster_prepare_floor(0,texture,(const uint8_t *)palettes[0]);
+    texture[0]=1;
+    dos_raster_prepare_floor(0,NULL,NULL);
+    check_solid_floor_span(texture,palettes[0],14,320,0,0,65536,0);checked++;
+    dos_raster_prepare_floor(0,texture,(const uint8_t *)palettes[0]);
+    check_solid_floor_span(texture,palettes[0],14,320,0,0,65536,0);checked++;
+    for(unsigned i=0;i<3;i++)dos_raster_prepare_floor(i,NULL,NULL);
+    random_state=saved_random;
+    printf("PASS: %u classified floor spans preserve both axes, tile channels, shade, UV wraps, bounds and reloads\n",checked);
+}
+
 static void check_edges(void)
 {
     int16_t actual[4][320], expected[4][320];
@@ -499,7 +559,7 @@ static void check_objects(void)
 
 int main(void)
 {
-    check_division(); check_projection_rounding(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_edges(); check_walls();
+    check_division(); check_projection_rounding(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_solid_floor_rows(); check_edges(); check_walls();
     check_objects();
     puts("DOS raster regression passed");
     return 0;

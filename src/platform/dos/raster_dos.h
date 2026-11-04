@@ -34,9 +34,26 @@ void dos_raster_wall_rows(RendererPixel *out, unsigned width, unsigned height, u
                            const DosWallColumn *columns, uint32_t y, uint32_t dy, unsigned mask);
 
 /* AB3DI.s pastfloorbright sampling: V*1024 + U*4, wrapping at 64. */
+#ifdef AB3D_NATIVE_RGB565
+void dos_raster_prepare_floor(unsigned slot,const uint8_t *texture,const uint8_t *palettes);
+#endif
 void dos_raster_floor(RendererPixel *out, unsigned count, const uint8_t *texture,
                        const RendererPixel *palette, uint32_t u, uint32_t v,
                        uint32_t du, uint32_t dv);
+#ifdef AB3D_NATIVE_RGB565
+void dos_raster_floor_dark(RendererPixel *out,unsigned count,const uint8_t *texture,
+                            const RendererPixel *palette,uint32_t u,uint32_t v,uint32_t du,uint32_t dv);
+#endif
+static inline void dos_raster_floor_shaded(RendererPixel *out,unsigned count,const uint8_t *texture,
+                            const RendererPixel (*palettes)[256],unsigned shade,
+                            uint32_t u,uint32_t v,uint32_t du,uint32_t dv)
+{
+#ifdef AB3D_NATIVE_RGB565
+    if(shade==14){dos_raster_floor_dark(out,count,texture,palettes[shade],u,v,du,dv);return;}
+#endif
+    dos_raster_floor(out,count,texture,palettes[shade],u,v,du,dv);
+}
+
 void dos_raster_floor_gouraud(RendererPixel *out, unsigned count, const uint8_t *texture,
                                const RendererPixel (*palettes)[256],
                                uint32_t u, uint32_t v, uint32_t du, uint32_t dv,
