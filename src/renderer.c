@@ -230,6 +230,10 @@ static AB3D_THREAD_LOCAL uint8_t g_sprite_col_texel_lut[256];
  * Global renderer state
  * ----------------------------------------------------------------------- */
 RendererState g_renderer;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+/* DOS draws synchronously; scratch follows the framebuffer width. */
+static DosWallColumn *g_dos_wall_columns;
+#endif
 /* When zero (default), raster skips redundant ARGB writes; display unpacks from cw_buffer. */
 #ifdef AB3D_DOS
 static const int g_renderer_rgb_raster_expand = 0;
@@ -4810,6 +4814,10 @@ static const uint32_t gun_ptr_frame_offsets[32] = {
  * ----------------------------------------------------------------------- */
 static void free_buffers(void)
 {
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    free(g_dos_wall_columns);
+    g_dos_wall_columns = NULL;
+#endif
     ab3d_aligned_free(g_pick_graphic_buffer);
     g_pick_graphic_buffer = NULL;
     ab3d_aligned_free(g_pick_graphic_back_buffer);
@@ -4884,6 +4892,13 @@ static void allocate_buffers(int w, int h)
     g_renderer.height = h;
     g_renderer.present_width = w;
     g_renderer.present_height = h;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    g_dos_wall_columns = malloc((size_t)w * sizeof(*g_dos_wall_columns));
+    if (!g_dos_wall_columns) {
+        fprintf(stderr, "[RENDERER] Cannot allocate %d wall columns\n", w);
+        exit(1);
+    }
+#endif
 
     size_t buf_size = (size_t)w * h;
     if (!allocate_graphic_pick_buffers(w, h)) {
@@ -6714,7 +6729,7 @@ static void renderer_wall_flat_rows(RenderSliceContext *ctx, int first, int last
     int cb = bot > clip_bot ? clip_bot : bot;
     if (ct > cb) return;
     int count = last - first + 1;
-    DosWallColumn columns[count];
+    DosWallColumn *columns = g_dos_wall_columns;
     /* The original negative packed-column shifts select palette entry zero. */
     static const uint8_t zero_texels[768] = {0};
     RendererWallTextureWalk texture_walk;
@@ -6731,16 +6746,28 @@ static void renderer_wall_flat_rows(RenderSliceContext *ctx, int first, int last
             tex_acc += tex_step_acc;
         }
     }
-    for (int i = 0; i < count; i++) {
+    /* Constant brightness selects one authored palette for the whole span. */
+    if (!bright_step_acc) {
         int d6 = (z >> 7) + (int32_t)(bright_acc >> 32) * 2;
         if (d6 < 0) d6 = 0;
         if (d6 > d6_max) d6 = d6_max;
-        columns[i].palette = (const RendererPixel *)(const void *)(pal + wall_scale_table[d6]);
-        int left = i == 0 && first > ctx->slice_left;
-        int right = i == count - 1 && last + 1 < ctx->slice_right;
-        if (ctx->update_column_clip)
+        const RendererPixel *shared_palette = (const RendererPixel *)(const void *)(pal + wall_scale_table[d6]);
+        for (int i = 0; i < count; i++) columns[i].palette = shared_palette;
+    } else {
+        for (int i = 0; i < count; i++) {
+            int d6 = (z >> 7) + (int32_t)(bright_acc >> 32) * 2;
+            if (d6 < 0) d6 = 0;
+            if (d6 > d6_max) d6 = d6_max;
+            columns[i].palette = (const RendererPixel *)(const void *)(pal + wall_scale_table[d6]);
+            bright_acc += bright_step_acc;
+        }
+    }
+    if (ctx->update_column_clip) {
+        for (int i = 0; i < count; i++) {
+            int left = i == 0 && first > ctx->slice_left;
+            int right = i == count - 1 && last + 1 < ctx->slice_right;
             renderer_wall_register_column(ctx, first + i, ct, cb, z, left, right, prechecked_clip);
-        bright_acc += bright_step_acc;
+        }
     }
     unsigned width = g_renderer.width;
     RendererPixel *pixels = renderer_active_cw();

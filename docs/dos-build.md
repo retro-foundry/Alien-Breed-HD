@@ -629,9 +629,10 @@ frames on level 1. Runs are sequential, with detailed profiling disabled.
 | Classify identical darkest-shade floor rows at load | 23.19 | 36.15 ms | 43.12 ms | 43.62 ms |
 | Compiler feedback build (`-ProfileGuided`) | 24.32 | 34.47 ms | 41.12 ms | 41.67 ms |
 | Compiler feedback without tracer duplication | 24.47 | 34.21 ms | 40.87 ms | 41.42 ms |
+| Reuse flat-wall palettes and column scratch | 24.75 | 33.74 ms | 40.40 ms | 40.94 ms |
 
-The trained build is a 2.85x increase over the original at the same rendering
-size. The ordinary build without compiler feedback remains at 23.19 FPS.
+The trained build is a 2.88x increase over the original at the same rendering
+size. The ordinary build without compiler feedback now measures 23.43 FPS.
 The approximately 3x target remains unmet: it requires 25.80 FPS, or 38.76 ms
 per frame, for this full-height baseline. The earlier 28.23 FPS target and
 320x200 tables above describe the earlier, smaller view.
@@ -1282,3 +1283,44 @@ asset comparisons. The indexed image and all 94 C/header files in `src` and
 are in `build/dos/no-tracer-performance.json`; the rejected trials are under
 `build/dos-compiler-trials`. The main view is 2.85x the original; the 25.80 FPS
 target remains unmet. Real 486 hardware remains unmeasured.
+
+
+### Reuse flat-wall palette selection and column scratch
+
+A fixed-tick diagnostic run recorded 891 native flat-wall spans covering
+28,446 columns, all with constant brightness and one shared palette. It also
+found no vertical wall steps at or below half a texel, so adding another
+repeated-sample kernel would not help that view. These counters were used for
+workload analysis only and are absent from the final executable.
+
+Native `ScreenWallstripdraw` spans with constant inverse Z and brightness now
+select the authored palette once per span. Varying brightness retains its
+original calculation for every column. Palette preparation finishes before
+the existing clip-registration loop, whose column and neighbor order is
+unchanged; the update flag is checked once outside that loop. Projection,
+texture coordinates, sampling, painter order, caps and side extensions remain
+exact.
+
+The native renderer also owns a column array sized with its framebuffer,
+releasing it on resize/shutdown. DOS rendering is synchronous, so successive
+spans reuse it. This removes the variable-size stack array; the persistent
+heap cost is 2,560 bytes at width 320, plus allocator metadata. No shade bank
+is added, and the linked text/data/BSS section sizes are unchanged. The
+palette-only ordinary build measured 23.41 FPS; array reuse raised that to
+23.43, against 23.19 before this change.
+
+Fresh feedback training and both ordinary/optimized 4 MB capture checks pass.
+The final package measures 24.75/23.60/33.04/30.86 FPS for levels 1/6/15/turning,
+against 24.47/23.50/32.92/30.86. Level 1 averages 40.40 ms per frame with a
+33.74 ms render and 40.94 ms p95. The four sequential real-time runs retain
+40,000 cycles, 4 MB, SB16 and mouse, with host output muted. Logs and hashes
+are in `build/dos/flat-prepared-performance.json`; the main view reaches 2.88x
+the original, with the 25.80 FPS target still unmet.
+
+All 22 native captures match verified original inputs. Native 4 MB exercises
+on levels 1/4/15 and the real-time level-4 exercise pass without audio underruns,
+including all 24 weapon frames and repeated saves/quickloads. Automap images
+and all six saved level/map payloads on levels 1/4 remain exact. The indexed
+rebuild reproduces its preceding executable. Windows Release, feedback, DOS
+raster/math/object checks and both package audits pass; all 231 assets per
+package are unchanged. Real hardware remains unmeasured.
