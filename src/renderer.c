@@ -10284,8 +10284,9 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
 
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565) && !AB3D_CW_COL_MAJOR
     if(!expand && !have_pick && !pick_graphic && !spill_visualize &&
-       !mark_sprite_pick_zone_none && rw==320 && prefer_col_texel_lut) {
-        /* Geometric X masks are already disjoint rectangles. A spill can use
+       !mark_sprite_pick_zone_none && rw==320) {
+        /* All sprite scales benefit from contiguous native row writes.
+         * Geometric X masks are already disjoint rectangles. A spill can use
          * them directly when no wall-depth span changes its vertical clip. */
         int clear=1;
         const ColumnClip *cc=&g_renderer.clip;
