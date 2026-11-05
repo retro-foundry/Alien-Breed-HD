@@ -3449,8 +3449,17 @@ copied switches, reset timers, default textures and retained native barriers.
 
 Delivery package: `index-D1YRsso5.js` with runtime
 `r-3a3fddd130e89f0e`. All eighty package files match the staged website blobs,
-including the exact native runtime hashes. Source and website delivery/public
-verification are recorded below once pushed.
+including the exact native runtime hashes. Source commit
+`6b4bb7a5bc838bf0bde371cfa3f7e12238ae0c4c` and website commit
+`0a6bdf2431b08c125f27e70a4fc02205e768c118` were pushed to their main branches.
+GitHub Pages run `42090280092` completed successfully. All eighty public files
+match the tested package by SHA-256. Live Chromium and Firefox each opened the
+saved moved-switch and removed-switch projects, showed the authored settings,
+loaded the matching versioned native runtime and rendered more than one million
+nonblack pixels. Native inspection reported the adopted switch in its new room
+and the retired switch as inactive with no panel phase, while its independent
+copy remained active. All four live checks had no page errors or engine alerts.
+The unrelated website archive and historical assets were preserved.
 
 The complete R0-R12 audit remains open, including native copied-controller
 reassignment/removal, door/lift controller groups and the other recorded gaps.
