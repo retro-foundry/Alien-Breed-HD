@@ -3508,5 +3508,17 @@ creation and native walking/falling through openings. An earlier fourteen-check
 browser run also passed existing copied circuits, clipboard gate remapping and
 reset timers. The production build/typecheck and source whitespace checks pass.
 All eighty files in `index-Bdn8KV3U.js`'s package match the staged website blobs;
-the native runtime remains `r-3a3fddd130e89f0e`. Delivery verification is recorded
-with the pushed checkpoint.
+the native runtime remains `r-3a3fddd130e89f0e`.
+
+Source commit `14dc1697e5687908bc8ce70e9e322cb316f1149b` and website commit
+`da8dea5039edcdaec7b35002635b4bab64b27469` are pushed. GitHub Pages run
+`42093134892` completed successfully. All eighty public package files match
+local SHA-256. Live Chromium and Firefox each opened the moved-copy and
+removed-copy saved projects, showed the expected source controls and loaded the
+matching native runtime. The moved copy activated its own condition bit and
+opened its copied door without changing the original switch state. The removed
+copy reported zone -1, false state, zero timer and no panel phase while the
+original retained its own native record. All four live checks rendered more
+than one million nonblack pixels with no page errors or engine alerts.
+The historical website assets and unrelated archive were preserved. The broader
+completion audit remains active.
