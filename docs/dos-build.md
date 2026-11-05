@@ -1679,3 +1679,42 @@ That result is exact for every alpha. The same 15 frames, 192 state hashes
 and 4 MB raster cases still match. The three ordinary-build mean loop
 times improve further to 76.76/72.22/81.11 ms, with no profile audio
 underruns in these runs.
+
+Final compiler-feedback builds were also compared using the same diagnostic
+camera/loop wrapper linked against the preserved old and new optimized
+objects. Profiling and captures are off during the timed runs; all emulators
+and builds run sequentially for those measurements. Each view runs 64 fixed
+ticks, with the first eight frames excluded from the mean.
+
+| Dry shore (level 1) | Camera X/Z, angle | Old loop ms | New loop ms | Reduction |
+| --- | --- | ---: | ---: | ---: |
+| Zone 91 | -48/2901, 0 | 120.57 | 74.57 | 38.2% |
+| Zone 89 | -48/3285, 4096 | 106.57 | 70.42 | 33.9% |
+| Zone 90 | 240/3100, 6144 | 120.87 | 79.12 | 34.5% |
+
+All accepted comparisons preserve every per-frame simulation hash. One
+timing attempt diverged after frame 27 and was rejected; its repeat matched
+all 64 hashes. The cause of that divergent attempt was not established.
+The optimized builds also preserve all 15 selected pool images. Independent
+ordinary-build profiles put water work alone at 73.76/58.62/68.11 ms before
+and 38.33/30.58/36.12 ms afterwards.
+
+The normal 128-frame real-time level-1 benchmark remains 25.82 FPS: 38.72 ms
+per frame, 32.76 ms render, 3.13 ms present and 39.24 ms p95, with no audio
+underruns. This retains the original roughly-threefold performance gain.
+All 22 ordinary and optimized starting/turning views match the preserved
+original images. Level 1/4/15 full 4 MB exercises pass, including quickloads,
+save payloads, canvas/readbacks, HUD, menus and weapon caches. The real-time
+40,000-cycle level-4 exercise also passes with zero profile audio underruns.
+Its complete disk-backed save/readback checks exceed four minutes, so the
+host exercise deadline is now six minutes; the timed frame window is unchanged.
+
+The indexed DOS executable is byte-identical to its previous validated
+build. Windows Release and the feedback suite, including 3,600 authored
+waterline cases, pass. Both packages retain all 231 original prepared assets
+and 238 archive entries, with generated defaults and no diagnostic fixture
+instrumentation. Native sections are text 1,182,232, data 22,016 and BSS
+315,392 bytes. The final native EXE SHA-256 is
+`fbe3540543005aaf0d0a0ae7092bedbdf33c18e0d55e34187036571667273a8b`;
+local comparison and package evidence is in `build/dos/water-performance.json`
+and `build/dos/water-validation.json`. Physical 486 hardware is unmeasured.
