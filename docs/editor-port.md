@@ -3740,3 +3740,21 @@ The final JavaScript bytes are identical to the 28-case tested
 JavaScript SHA-256: `c3ddf62a78190c96bff71282d28cf10a67b8ca499c68b5ca4b62baa632993fc5`.
 All 80 deployment files are checked against local and staged bytes before push.
 This advances R0/R6/R7/R8/R9; the remaining requirements audit stays active.
+
+
+Published verification (2026-11-05): source implementation `fc2d270` and website
+`6c5b0a37b5f2e6e2eda88900ee27b87ccca19d1e` are pushed. GitHub Pages run
+[42112968665](https://github.com/retro-foundry/retro-foundry.github.io/actions/runs/42112968665)
+completed successfully. All 80 public package files match the local build and
+staged Git bytes by SHA-256. The public editor loaded all eight saved
+original/copied door/lift retirement/reassignment projects in Chromium and
+Firefox (16 checks): actual native planes match the saved static height,
+remaining controls initialize without movement, real surface pixels are drawn,
+an independent authored controller completes its full native cycle with zero
+unsynchronized walls, and the retired plane stays static. No page errors or
+engine alerts occurred. The deployment retains older published hashed assets;
+unrelated website archives and local unused build assets remain untouched.
+
+This is an incremental authoring delivery, not closure of R0-R12. Synchronized
+controller groups, the strict original-engine profile and the other open items
+in the requirements/parity audit remain active.
