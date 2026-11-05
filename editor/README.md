@@ -299,8 +299,19 @@ an explicit Wall repair appearance, just as redrawn boundaries do.
   the destination is selected automatically and the original room returns to its
   editable static heights. Destinations, starting height, requirements, trigger
   rules and material move together as one Undo. Cancel move draft or Escape
-  discards the pending target. Original/copied-controller reassignment and
-  grouped moving volumes remain in progress.
+  discards the pending target.
+  Original and copied controllers offer **Remove or move this door/lift**.
+  Choose the ceiling/floor height to leave in the old room: doors default to
+  their open height, lifts to their saved height. **Remove movement** makes
+  the old room and its attached walls static. **Move to another room** also
+  creates independent movement in the selected static room, retaining the
+  destinations, starting height, trigger rules and requirements. Choose its
+  moving wall style before applying. The destination and its neighbours need
+  enough headroom for the complete range. Other original/copied controllers
+  keep their own attachments. Cancel removal draft or Escape discards pending
+  choices. Apply validates the whole level and commits one Undo; Save project
+  retains the static geometry and new assignment. Shared moving planes/walls
+  still require synchronized groups, which remain in progress.
   **Copy settings from another door/lift** works on original, copied and authored
   controllers of the same kind. Choose a source, select the setting groups and
   **Copy selected settings**. Trigger rules are selected by default; destinations

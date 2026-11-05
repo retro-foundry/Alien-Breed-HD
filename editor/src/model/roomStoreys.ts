@@ -1,3 +1,4 @@
+import { roomTemplate } from './staticMechanismPose';
 import { activeNativeSwitches } from './nativeSwitches';
 import { mechanismsForRoom } from './mechanismDependencies';
 import { roomPlaneRecords } from './roomPlanes';
@@ -20,7 +21,7 @@ export function restoreStorey(value: unknown): UpperStorey | false {
  * and floor/roof polygons. New upper rooms copy explicitly selected existing
  * wall sampling and explicit normal floor/roof material references. */
 export function storeyMaterials(document: LevelDocument, room: SourceRoom) {
-  const template = document.zones.find(zone => zone.id === room.recordZone)!;
+  const template = roomTemplate(document, room);
   const outline = JSON.stringify(normaliseRoomOutline(template.boundaryIds.map(id => ({ x: document.lines[id]!.x, z: document.lines[id]!.z }))));
   const whole = (type: number) => roomPlaneRecords(document, room, false).find(record => record.type === type && record.polygon
     && (room.planeSources?.some(item => !item.upper && item.record === record.offset) || JSON.stringify(normaliseRoomOutline(record.points.map(id => ({ x: document.points[id]!.x, z: document.points[id]!.z })))) === outline));
@@ -53,7 +54,7 @@ export function setUpperStorey(document: LevelDocument, id: string, value: { flo
     throw new Error('Choose normal upper floor and ceiling patterns, a straight wall style and an existing lighting point.');
   const upperStorey = value ? restoreStorey({ wall: value.wall, lightingPoint: value.lightingPoint, floorMaterial, ceilingMaterial }) : false;
   const heights = restoreRoomHeights({ floor: settings.floor, ceiling: settings.ceiling,
-    upperFloor: value?.floor ?? settings.ceiling, upperCeiling: value?.ceiling ?? settings.ceiling }, document.zones.find(zone => zone.id === room.recordZone)!, upperStorey);
+    upperFloor: value?.floor ?? settings.ceiling, upperCeiling: value?.ceiling ?? settings.ceiling }, roomTemplate(document, room), upperStorey);
   const lowerRecords = new Set([...roomPlaneRecords(document, room, false), ...settings.lower].map(item => item.offset));
   const upperRecords = new Set([...roomPlaneRecords(document, room, true), ...settings.upper].map(item => item.offset));
   const { polygonMaterials, wallMaterials, wallSettings, planeSources, cornerLights, ...retained } = room;
@@ -91,7 +92,7 @@ export function setSkyCeiling(document: LevelDocument, id: string, upper: boolea
 
 export function ceilingIsSky(document: LevelDocument, room: SourceRoom, upper: boolean): boolean {
   if (room.sky?.[upper ? 1 : 0] !== undefined) return room.sky[upper ? 1 : 0]!;
-  const template = document.zones.find(zone => zone.id === room.recordZone)!;
+  const template = roomTemplate(document, room);
   const records = upper ? template.upper : template.lower;
   return !roomPlaneRecords(document, room, upper).some(record => [2, 9, 11].includes(record.type)) && (template.backdrop || records.some(record => record.type === 12));
 }

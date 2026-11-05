@@ -1,3 +1,4 @@
+import { activeNativeMechanisms } from './nativeMechanisms';
 import { BinaryReader, checkedInteger } from './binary';
 import { editRoomSource, numberPatch, type EditCommand } from './commands';
 import type { LevelDocument } from './level';
@@ -17,7 +18,7 @@ export interface MechanismTransferOptions { readonly range: boolean; readonly ru
 export const mechanismOwnerKey = (owner: MechanismOwner) => `${owner.type}:${owner.kind}:${owner.type === 'native' ? owner.id : owner.room}`;
 export function mechanismSettingsOwners(document: LevelDocument, kind: 'door' | 'lift') {
   return [
-    ...document.mechanisms.filter(item => item.kind === kind).map(item => {
+    ...activeNativeMechanisms(document).filter(item => item.kind === kind).map(item => {
       const zone = resolveAnimationRoom(document, item.zone, kind === 'lift');
       if (zone === undefined) throw new Error(`Original ${kind} ${item.id} has no controlled room.`);
       return { owner: { type: 'native', kind, id: item.id } as MechanismOwner, label: `Original ${kind} ${item.id} · Zone ${zone}` };
@@ -29,7 +30,7 @@ export function mechanismSettingsOwners(document: LevelDocument, kind: 'door' | 
 
 function readHeader(document: LevelDocument, owner: MechanismOwner): Uint8Array {
   if (owner.type === 'native') {
-    const item = document.mechanisms.find(item => item.kind === owner.kind && item.id === owner.id);
+    const item = activeNativeMechanisms(document).find(item => item.kind === owner.kind && item.id === owner.id);
     if (!item) throw new Error('That original mechanism no longer exists.');
     return document.files.graphics.slice(item.offset, item.offset + 18);
   }
@@ -66,7 +67,7 @@ export function transferMechanismSettings(document: LevelDocument, target: Mecha
   assertMechanismRange({ kind: target.kind, current: view.getInt16(4) / 4, direction: view.getInt16(6), conditions: view.getUint16(14) }, view.getInt16(2) / 4, view.getInt16(0) / 4);
   const label = `Copy ${target.kind} settings`;
   if (target.type === 'native') {
-    const item = document.mechanisms.find(item => item.kind === target.kind && item.id === target.id)!;
+    const item = activeNativeMechanisms(document).find(item => item.kind === target.kind && item.id === target.id)!;
     return { label, patches: [
       ...(options.range ? [numberPatch(document, 'graphics', item.offset, view.getInt16(0), 2), numberPatch(document, 'graphics', item.offset + 2, view.getInt16(2), 2)] : []),
       ...(options.requirements ? [numberPatch(document, 'graphics', item.offset + 14, view.getUint16(14), 2, false)] : []),

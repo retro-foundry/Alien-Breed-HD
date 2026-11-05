@@ -1,3 +1,4 @@
+import { roomTemplate, roomRecordBytes } from './staticMechanismPose';
 import { polygonPlane } from './surfaces';
 import { roomPlaneRecords } from './roomPlanes';
 import { normaliseRoomOutline, type Position } from './geometry';
@@ -60,7 +61,7 @@ export function buildCellPolygons(document: LevelDocument, topology: RoomTopolog
   const result = new Map<number, CellPolygons>();
   for (const cell of topology.cells) {
     if (result.has(cell.id)) throw new Error('Surface geometry contains duplicate runtime room identities.');
-    const template = document.zones.find(zone => zone.id === cell.recordZone);
+    const template = roomTemplate(document, cell);
     if (!template) throw new Error(`Room ${cell.sourceId} has no surface settings template.`);
     const room = document.roomSource.rooms.find(room => room.id === cell.sourceId);
     const starter = document.roomAppearances?.find(item => item.room === cell.sourceId);
@@ -89,7 +90,7 @@ export function buildCellPolygons(document: LevelDocument, topology: RoomTopolog
         return generated?.x === original.x && generated.z === original.z;
       });
       if (unchanged && retainedPoints) return { sourceOffset: record.offset, bytes: height === polygon.heightQuarter / 4
-        ? document.files.graphics.slice(record.offset, record.offset + record.size) : encodePolygonSurface({ ...polygon, heightQuarter: height * 4 }) };
+        ? roomRecordBytes(document, record) : encodePolygonSurface({ ...polygon, heightQuarter: height * 4 }) };
       const translation = translations?.rooms.get(cell.sourceId);
       if (translation) {
         const translatedPoint = (id: number) => {

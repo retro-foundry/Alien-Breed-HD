@@ -1,3 +1,4 @@
+import { RetireMechanism } from './RetireMechanism';
 import { WaterInspector } from './WaterInspector';
 import { CornerLightInspector } from './CornerLightInspector';
 import { waterStartHeight } from '../model/sourceWater';
@@ -84,7 +85,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
       {sourceRoom && <RoomHeightInspector document={document} room={sourceRoom} edit={edit} onViewSide={onViewRoomSide} />}
       {sourceRoom && <WaterInspector key={`water:${sourceRoom.id}`} document={document} room={sourceRoom} edit={edit} onInspect={onInspectRoom} />}
       {sourceRoom && <AuthoredMechanismInspector document={document} room={sourceRoom} edit={edit} onShowRoom={onInspectRoom} />}
-      {sourceRoom && <CopiedMechanismInspector document={document} room={sourceRoom} edit={edit} />}
+      {sourceRoom && <CopiedMechanismInspector document={document} room={sourceRoom} edit={edit} onShowRoom={onInspectRoom} />}
       <SwitchesInspector document={document} room={sourceRoom} zone={zone?.id} edit={edit} frameRoom={onShowDestination} />
       {sourceRoom && (!zone || sourceRoom.properties) && <RoomPropertiesInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && (!zone || !sourceMatchesLevel(document)) && <TeleportInspector document={document} room={sourceRoom} edit={edit} onShowDestination={onShowDestination} />}
@@ -115,6 +116,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
             change={(conditions, openRule, closeRule) => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, conditions, openRule, closeRule))} />
           <MechanismAttachments document={document} mechanism={mechanism} onShowRoom={onShowDestination} />
           <CopyMechanismSettings document={document} owner={{ type: 'native', kind: mechanism.kind, id: mechanism.id }} edit={edit} />
+          <RetireMechanism document={document} owner={{ type: 'native', kind: mechanism.kind, id: mechanism.id }} edit={edit} onShowRoom={onInspectRoom} />
         </section>)}
         <section className="property-section"><h3>Visibility</h3><InfoRow label="Visible zones" value={zone.visibleZones.length} /><InfoRow label="Lower graphics" value={zone.lower.length} /><InfoRow label="Upper graphics" value={zone.upper.length} /></section>
       </>}

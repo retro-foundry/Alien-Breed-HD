@@ -1,3 +1,4 @@
+import { roomTemplate } from './staticMechanismPose';
 import { checkedInteger } from './binary';
 import type { Graphic, LevelDocument } from './level';
 import type { RoomChange, SourceRoom } from './roomSource';
@@ -27,7 +28,7 @@ export function restorePlaneSources(value: unknown): readonly RoomPlaneSource[] 
 }
 
 export function roomPlaneRecords(document: Pick<LevelDocument, 'zones' | 'roomAppearances'>, room: SourceRoom, upper: boolean): Graphic[] {
-  const template = document.zones.find(zone => zone.id === room.recordZone)!;
+  const template = roomTemplate(document, room)!;
   const selection = upper ? room.upperStorey : undefined;
   const defaults = document.roomAppearances?.find(item => item.room === room.id)?.surfaces;
   const references = defaults && (upper ? [defaults.upperFloor, defaults.upperCeiling] : [defaults.lowerFloor, defaults.lowerCeiling]).filter((offset): offset is number => offset !== null);

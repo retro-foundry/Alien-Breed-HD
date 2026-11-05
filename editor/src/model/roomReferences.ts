@@ -1,3 +1,4 @@
+import { activeNativeMechanisms } from './nativeMechanisms';
 import { roomSettings } from './roomHeights';
 import { normaliseRoomOutline, type Position } from './geometry';
 import type { LevelDocument } from './level';
@@ -113,7 +114,7 @@ export function planRoomReferences(document: LevelDocument, source: RoomSource, 
     if (!a || !b) { error(`Switch ${item.id}`, 'Its activation point pair is missing. Repair the switch before building.'); switches.set(item.id, null); continue; }
     switches.set(item.id, locate(item.zone, { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }, `Switch ${item.id}`));
   }
-  const mechanisms = document.mechanisms.map(item => {
+  const mechanisms = activeNativeMechanisms(document).map(item => {
     const origin = resolveAnimationRoom(document, item.zone, item.kind === 'lift');
     const cells = (origin === undefined ? [] : byOrigin.get(origin) ?? []).map(cell => cell.id);
     if (!cells.length) error(`${item.kind} ${item.id}`, `Its controlled room ${item.zone} was deleted. Remove or reassign this mechanism before building.`);

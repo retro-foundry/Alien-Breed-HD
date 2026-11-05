@@ -1,3 +1,6 @@
+import { copiedMechanismSettings } from './movingControllerCopies';
+import { nativeWallIsMoving } from './nativeMechanisms';
+import { roomTemplate, roomRecordBytes } from './staticMechanismPose';
 import { removedNativeSwitchPanel } from './nativeSwitches';
 import { BinaryReader } from './binary';
 import { readWallSurface } from './surfaces';
@@ -59,7 +62,7 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
   const walls = new Map<number, CellWalls>();
   for (const cell of topology.cells) {
     if (walls.has(cell.id)) throw new Error('Wall geometry contains duplicate runtime room identities.');
-    const room = source.rooms.find(room => room.id === cell.sourceId), template = document.zones.find(zone => zone.id === cell.recordZone);
+    const room = source.rooms.find(room => room.id === cell.sourceId), template = roomTemplate(document, cell);
     if (!room || !template) throw new Error(`Room ${cell.sourceId} has a missing wall source or settings template.`);
     const native = hasNativeWallMaterials(room.originZone, room.wallSources);
     const settings = roomSettings(document, cell);
@@ -81,8 +84,10 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
     // A moving neighbour's static frame surrounds its full swept aperture.
     // Closing it at its initial plane would permanently seal an animated door.
     const aperture=(target: typeof cell,original=false)=>{
-      let result=original?document.zones.find(zone=>zone.id===target.recordZone)!:roomSettings(document,target);
-      for(const mechanism of mechanismsForRoom(document,target.recordZone))result={...result,
+      let result=original?roomTemplate(document,target):roomSettings(document,target);
+      const controls = target.originZone !== null ? mechanismsForRoom(document,target.originZone)
+        : (source.controllerCopies ?? []).filter(copy => copy.room === target.sourceId).map(copiedMechanismSettings);
+      for(const mechanism of controls)result={...result,
         ...(mechanism.kind==='door'?{ceiling:Math.min(result.ceiling,mechanism.top)}:{floor:Math.max(result.floor,mechanism.bottom)})};
       return result;
     };
@@ -118,9 +123,9 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
         });
         const heightEdge=cell.vertices.findIndex((_,edge)=>cell.sourceLines[edge]===lineId && heightPortalTarget(document,topology,cell,edge));
         const heightTarget=heightEdge<0?undefined:heightPortalTarget(document,topology,cell,heightEdge);
-        const controlled=document.mechanisms.some(item=>item.walls.some(wall=>wall.graphic===record.offset));
+        const controlled=nativeWallIsMoving(document,room,record.offset);
         if(heightTarget && !controlled){
-          const before=document.zones.find(zone=>zone.id===heightTarget.recordZone)!,after=roomSettings(document,heightTarget);
+          const before=roomTemplate(document,heightTarget),after=roomSettings(document,heightTarget);
           for(const field of ['floor','upperFloor'] as const)if(original.topFixed===before[field]*256 && original.topFixed!==template[roof]*256)material={...material,topFixed:after[field]*256};
           for(const field of ['ceiling','upperCeiling'] as const)if(original.bottomFixed===before[field]*256 && original.bottomFixed!==template[floor]*256)material={...material,bottomFixed:after[field]*256};
           if(material.bottomFixed<=material.topFixed)return [];
@@ -129,7 +134,7 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
         const opened = cell.vertices.some((_, edge) => cell.sourceLines[edge] === lineId && newPortalTarget(document, topology, cell, edge));
         const changedLine = changed.some(edge => cell.sourceLines[edge] === lineId);
         const modeChanged = importedBarrierModeOverride(document, room, record);
-        if (unchanged && retained(record) && !opened && !changedLine && !heightChanged && !modeChanged) return [{ sourceOffset: record.offset, bytes: document.files.graphics.slice(record.offset, record.offset + record.size) }];
+        if (unchanged && retained(record) && !opened && !changedLine && !heightChanged && !modeChanged) return [{ sourceOffset: record.offset, bytes: roomRecordBytes(document, record) }];
         if (lineId === undefined) {
           if (translatedWholeRoom) return [{ sourceOffset: record.offset, bytes: encodeWallSurface({ ...material,
             points: [pointId({ x: a.x + dx, z: a.z + dz }), pointId({ x: b.x + dx, z: b.z + dz })] }) }];

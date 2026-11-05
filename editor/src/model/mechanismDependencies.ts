@@ -1,8 +1,9 @@
+import { activeNativeMechanisms } from './nativeMechanisms';
 import type { LevelDocument } from './level';
 import { resolveAnimationRoom } from './animationRooms';
 
 export function mechanismsForRoom(document: LevelDocument, room: number) {
-  return document.mechanisms.filter(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift') === room);
+  return activeNativeMechanisms(document).filter(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift') === room);
 }
 
 export interface MechanismDependencies {

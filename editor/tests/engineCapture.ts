@@ -2,6 +2,20 @@ import type { Page } from '@playwright/test';
 import type { RoomProperties } from '../src/model/roomProperties';
 import type { NativeSurfacePick } from '../src/model/engineSurfacePick';
 import type { NativeObjectPick } from '../src/model/engineObjectPick';
+import type { RoomHeights } from '../src/model/roomHeights';
+
+export async function engineRoomPlanes(page: Page, zone: number): Promise<RoomHeights> {
+  return page.evaluate(zone => new Promise((resolve, reject) => {
+    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();
+    const timer = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('Engine room plane query timed out')); }, 10000);
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'zone-planes' || event.data.id !== id) return;
+      clearTimeout(timer); window.removeEventListener('message', receive); resolve(event.data.planes);
+    };
+    window.addEventListener('message', receive);
+    frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'zone-planes', id, zone }, location.origin);
+  }), zone);
+}
 
 export async function engineRoomProperties(page: Page, zone: number): Promise<RoomProperties> {
   return page.evaluate(zone => new Promise((resolve, reject) => {

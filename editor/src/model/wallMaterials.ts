@@ -1,3 +1,4 @@
+import { activeNativeMechanisms } from './nativeMechanisms';
 import { activeNativeSwitches } from './nativeSwitches';
 import { authoredMovingSurfaceOwner } from './authoredMovingRoom';
 import { BinaryReader, checkedInteger } from './binary';
@@ -47,7 +48,7 @@ function validateSourceSampling(document: LevelDocument, wall: WallSurface, mate
   validateWallMaterialSampling(wall, sampling, column ?? wall.horizontalOffset);
   if (column !== undefined) return; // The controller base is rebuilt with this explicit tile.
   // LiftRoutine may replace FROMTILE with the wall-list base phase.
-  for (const mechanism of document.mechanisms) if (mechanism.kind === 'lift')
+  for (const mechanism of activeNativeMechanisms(document)) if (mechanism.kind === 'lift')
     for (const entry of mechanism.walls) if (entry.graphic === material.record)
       validateWallMaterialSampling(wall, sampling, entry.base >> 16);
 }

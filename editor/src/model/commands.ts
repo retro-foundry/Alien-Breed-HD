@@ -1,3 +1,4 @@
+import { activeNativeMechanisms } from './nativeMechanisms';
 import { BinaryReader, checkedInteger } from './binary';
 import { parseLevel, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './level';
 import type { RoomChange, RoomSource } from './roomSource';
@@ -274,7 +275,7 @@ export function setStart(document: LevelDocument, player: 1 | 2, x: number, z: n
 }
 
 export function setMechanismRules(document: LevelDocument, kind: 'door' | 'lift', id: number, conditions: number, openRule: number, closeRule: number): EditCommand {
-  const mechanism = document.mechanisms.find(mechanism => mechanism.kind === kind && mechanism.id === id);
+  const mechanism = activeNativeMechanisms(document).find(mechanism => mechanism.kind === kind && mechanism.id === id);
   if (!mechanism) throw new Error('That mechanism no longer exists.');
   if (mechanism.conditions === 0 && conditions !== 0) assertMechanismActivation({ ...mechanism, conditions });
   return { label: `Change ${kind} ${id} rules`, patches: [

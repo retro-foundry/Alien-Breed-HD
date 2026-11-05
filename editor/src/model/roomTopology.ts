@@ -1,3 +1,4 @@
+import { roomTemplate, type StaticMechanismPose } from './staticMechanismPose';
 import { portalStateAt, portalBarrierAt } from './portalStates';
 import { importedBarrierConnection } from './importedBarriers';
 import type { UpperStorey } from './roomStoreys';
@@ -13,6 +14,7 @@ export interface CompiledRoomCell extends VisibilityRoom {
   sourceId: string;
   recordZone: number;
   originZone: number | null;
+  staticMechanisms?: readonly StaticMechanismPose[];
   heights?: RoomHeights;
   properties?: RoomProperties;
   upperStorey?: UpperStorey | false;
@@ -40,7 +42,7 @@ export function compileRoomTopology(document: LevelDocument, source: RoomSource)
     if (ids.has(room.id)) throw new Error('Each source room must have a unique identity.');
     ids.add(room.id);
     if (!records.has(room.recordZone)) throw new Error(`Room ${room.id} refers to missing surface record ${room.recordZone}.`);
-    if (room.heights) restoreRoomHeights(room.heights, records.get(room.recordZone)!, room.upperStorey);
+    if (room.heights) restoreRoomHeights(room.heights, roomTemplate(document, room), room.upperStorey);
     if (room.properties) restoreRoomProperties(room.properties);
     if (room.wallSources.length !== room.vertices.length || room.wallSources.some(line => line !== null && !records.get(room.recordZone)!.boundaryIds.includes(line)))
       throw new Error(`Room ${room.id} has invalid wall-source references. Restore or reassign its wall materials before building.`);
@@ -84,7 +86,7 @@ export function compileRoomTopology(document: LevelDocument, source: RoomSource)
       return destination;
     });
     sourceCells.set(room.id, [...(sourceCells.get(room.id) ?? []), id]);
-    return { upperStorey: room.upperStorey, id, sourceId: room.id, recordZone: room.recordZone, originZone: room.originZone, ...(room.heights ? { heights: room.heights } : {}), ...(room.properties ? { properties: room.properties } : {}),
+    return { staticMechanisms: room.staticMechanisms, upperStorey: room.upperStorey, id, sourceId: room.id, recordZone: room.recordZone, originZone: room.originZone, ...(room.heights ? { heights: room.heights } : {}), ...(room.properties ? { properties: room.properties } : {}),
       vertices: boundary.map(edge => pointId(edge.start)), neighbours, sourceLines };
   });
   // A one-sided closed portal is not a playable join. Report it at the source

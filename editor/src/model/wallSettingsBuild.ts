@@ -13,8 +13,10 @@ import { repeatWallSurface } from './wallRepeat';
 
 const identity = (item: WallSettings) => `${item.upper}:${'record' in item ? 'record:' + item.record : 'boundary:' + item.boundary}`;
 function settingsFor(room: SourceRoom, item: GraphicsRecordInput, upper: boolean) {
-  return room.wallSettings?.find(settings => settings.upper === upper && ('record' in settings ? settings.record === item.sourceOffset
+  const explicit = room.wallSettings?.find(settings => settings.upper === upper && ('record' in settings ? settings.record === item.sourceOffset
     : item.sourceOffset === undefined && item.boundaryIndex !== undefined && room.boundaryMaterials?.edges[item.boundaryIndex] === settings.boundary));
+  const pose = room.staticMechanisms?.flatMap(pose => pose.walls).find(wall => wall.record === item.sourceOffset);
+  return pose ? { upper, ...pose, ...explicit } : explicit;
 }
 
 /** Native WallRoutine adds the signed wallbrightoff to endpoint light words.
@@ -22,7 +24,7 @@ function settingsFor(room: SourceRoom, item: GraphicsRecordInput, upper: boolean
  * Apply after geometry/material assembly so every generated piece retains
  * its own strip span, heights, points, transparency and provenance. */
 export function buildWallSettings(document: LevelDocument, input: CellGraphics): CellGraphics {
-  if (!document.roomSource.rooms.some(room => room.wallSettings?.length)) return input;
+  if (!document.roomSource.rooms.some(room => room.wallSettings?.length || room.staticMechanisms?.some(pose => pose.walls.length))) return input;
   const applied = new Set<string>(), streams = new Map(input.streams);
   for (const cell of input.topology.cells) {
     const room = document.roomSource.rooms.find(room => room.id === cell.sourceId)!, stream = streams.get(cell.id)!;

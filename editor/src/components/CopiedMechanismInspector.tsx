@@ -1,3 +1,4 @@
+import { RetireMechanism } from './RetireMechanism';
 import type { LevelDocument } from '../model/level';
 import type { SourceRoom } from '../model/roomSource';
 import { editRoomSource, type EditCommand } from '../model/commands';
@@ -6,8 +7,8 @@ import { MovementRangeForm } from './MechanismRangeInspector';
 import { MechanismRulesInspector } from './MechanismRulesInspector';
 import { CopyMechanismSettings } from './MechanismTransfers';
 
-export function CopiedMechanismInspector({ document, room, edit }: {
-  document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void;
+export function CopiedMechanismInspector({ document, room, edit, onShowRoom }: {
+  document: LevelDocument; room: SourceRoom; onShowRoom: (room: string) => void; edit: (command: EditCommand | (() => EditCommand)) => void;
 }) {
   return <>{document.roomSource.controllerCopies?.filter(copy => copy.room === room.id).map(copy => {
     const mechanism = copiedMechanismSettings(copy), prefix = `copied ${copy.kind} ${room.id}`;
@@ -20,6 +21,7 @@ export function CopiedMechanismInspector({ document, room, edit }: {
         change={(conditions, openRule, closeRule) => edit(() => editRoomSource(setCopiedMechanismRules(document, room.id, copy.kind, conditions, openRule, closeRule)))} />
       <p className="field-note">Key and switch requirements refer to this level's shared conditions. Build &amp; play tests the current settings from the initial position.</p>
       <CopyMechanismSettings document={document} owner={{ type: 'copy', kind: copy.kind, room: room.id }} edit={edit} />
+      <RetireMechanism document={document} owner={{ type: 'copy', kind: copy.kind, room: room.id }} edit={edit} onShowRoom={onShowRoom} />
     </section>;
   })}</>;
 }

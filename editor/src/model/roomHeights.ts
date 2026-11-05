@@ -1,3 +1,4 @@
+import { roomTemplate, type StaticRoomTemplate } from './staticMechanismPose';
 import type { SourceWaterSurface } from './sourceWater';
 import type { UpperStorey } from './roomStoreys';
 import { checkedInteger } from './binary';
@@ -33,13 +34,13 @@ export function restoreRoomHeights(value: unknown, template: Zone, authored?: Up
   return Object.freeze(result);
 }
 
-export function roomSettings(document: Pick<LevelDocument, 'zones'>, room: { recordZone: number; heights?: RoomHeights; properties?: RoomProperties; upperStorey?: UpperStorey | false; waterSurface?: SourceWaterSurface | false }): Zone {
-  const template = document.zones.find(zone => zone.id === room.recordZone);
+export function roomSettings(document: Pick<LevelDocument, 'zones'>, room: StaticRoomTemplate & { heights?: RoomHeights; properties?: RoomProperties; upperStorey?: UpperStorey | false; waterSurface?: SourceWaterSurface | false }): Zone {
+  const template = roomTemplate(document, room);
   if (!template) throw new Error('The room height settings have no original template.');
   const settings = room.heights || room.properties || room.upperStorey !== undefined ? { ...template, ...room.properties, ...room.heights, ...(room.upperStorey !== undefined ? { upper: room.upperStorey === false ? [] : template.lower } : {}) } : template;
   return room.waterSurface !== undefined ? { ...settings, water: room.waterSurface === false ? settings.floor + 4 : room.waterSurface.height } : settings;
 }
-export function airHeightsChanged(document: Pick<LevelDocument, 'zones'>, room: { recordZone: number; heights?: RoomHeights }): boolean {
-  const template = document.zones.find(zone => zone.id === room.recordZone)!;
+export function airHeightsChanged(document: Pick<LevelDocument, 'zones'>, room: StaticRoomTemplate & { heights?: RoomHeights }): boolean {
+  const template = roomTemplate(document, room);
   return !!room.heights && roomHeightFields.some(field => room.heights![field] !== template[field]);
 }

@@ -1,3 +1,4 @@
+import { activeNativeMechanisms } from './nativeMechanisms';
 import { activeNativeSwitches } from './nativeSwitches';
 import type { SourceSwitch } from './sourceSwitches';
 import { sourceMovingSettings, setSourceMovingRoom } from './sourceMovingRoom';
@@ -52,7 +53,7 @@ export function copyRoomControllers(destination: LevelDocument, source: LevelDoc
   const occupied = new Set([...(destination.roomSource.switchCopies ?? []).map(copy => copy.slot),
     ...destination.roomSource.rooms.filter(room => !mappedRooms.has(room.id)).flatMap(room => room.switches?.map(item => item.slot) ?? [])]);
   const internalMask = [...switches, ...independent].reduce((mask, item) => mask | (1 << (item.previousSlot + 4)), 0);
-  const claimed = [...destination.mechanisms.map(item => item.conditions),
+  const claimed = [...activeNativeMechanisms(destination).map(item => item.conditions),
     ...destination.roomSource.rooms.flatMap(room => room.moving ? [sourceMovingSettings(room.moving).conditions & ~(mappedRooms.has(room.id) ? internalMask : 0)] : []),
     ...(destination.roomSource.controllerCopies ?? []).map(copy => copiedMechanismSettings(copy).conditions),
     ...motions.map(copy => new DataView(copy.header!.buffer, copy.header!.byteOffset, copy.header!.byteLength).getUint16(14) & ~internalMask)];

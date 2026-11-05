@@ -3637,3 +3637,106 @@ Zone 140 while its source-room inspector remained selected. After Build & play, 
 controller moved with matching plane/wall state. There were no page errors or
 engine alerts. Historical website assets and the unrelated archive were
 preserved. The complete authoring audit remains active.
+
+
+## Original and copied controller retirement and reassignment (2026-11-05)
+
+AMOS `DEFDOOR`/`DEFLIFT` at 4659/4728 independently assign the zone and
+wall group. Native `DoorRoutine`/`LiftRoutine`, `objects.c`'s
+`moving_wall_apply_position`, and the lift renderer's wall-list phase decoder
+are the authority for releasing those attachments.
+
+Original and copied controller inspectors now offer **Remove or move this
+door/lift**. Removal selects the static ceiling/floor height left in the old
+room and releases every graphics and collision owner in one source transaction.
+Doors default to their open height; lifts default to their saved height.
+Reassignment also creates an independently authored controller in another
+eligible static room, retaining the range, current height, rules and requirements.
+Its wall style uses the existing visual material browser. Invalid/occupied
+or disconnected destinations and insufficient adjoining headroom reject the
+whole proposal. Shared active planes/walls still require synchronized groups;
+this does not close that R6/R7 requirement.
+
+Room-source v24 retains original native records as copy templates and records
+removed native identities separately. Per-room static poses use original record
+identities, quarter heights and effective wall-list alignment, never generated
+pointers, runtime zone IDs or controller indices. The geometry compiler projects
+those poses into room templates before wall/plane construction, then applies
+explicit material/lighting overrides. Frozen phase belongs to the baseline;
+independent brightness/repeat overrides remain user settings. A later static
+height edit may remove an empty band without inventing a missing alignment
+override. Original level bytes remain untouched in source saves.
+
+Active-controller ownership now drives inspectors, settings/range/rule edits,
+requirements, copy dependencies, reference validation and animation rebuilding.
+Copied attachments bind by their own source-room mappings, including when the
+original controller has been removed. Static clipboard captures remain static
+when pasted after Undo into a document with the original controller live again.
+The runtime bridge exposes actual lower/upper planes for native acceptance
+checks; it reads the engine's zone data rather than the source model.
+
+`tests/retireMechanism.test.ts` covers original/copied doors and lifts, complete
+attachments, effective phase capture, retained brightness, destination rejection,
+project saves, Undo/Redo, malformed source, static height edits and paste after
+Undo. Its corpus cases individually remove every original controller in all sixteen
+shipped levels at its saved height. `tests/e2e/retire-mechanism.spec.ts` exercises the
+visual controls, invalid drafts, Cancel/Escape, selection, saved projects, actual
+native planes, rendered surfaces and independent movement in both browsers.
+The test player starts in adjoining static air so occupancy does not hold an
+automatic door open during its complete native movement cycle.
+
+
+The static copied-door ceiling regression also compares native rendered pixels
+and picked wall identities after lowering the old room's ceiling while its
+original controller remains animated. Swept apertures now use controllers
+owned by that source room: an independent copy uses its own range, and a
+retired copy uses static air. This prevents the original controller's range
+from cutting away the retired copy's lintel. Retired native requirement bits
+also stop reserving switch slots during clipboard allocation, and retired
+original doors lose their live-controller badge in the room list.
+
+
+The released copy can also receive a fresh authored controller. Moving-band
+ownership is checked in the actual source graphics owner, including independent
+copied switches; a live original no longer reserves its retired copy's wall
+records. The regression creates a new door through the existing inspector,
+checks Undo/Redo and source saves, and runs its complete native movement cycle
+in Chromium and Firefox while the original controller keeps its own records.
+
+
+Normal floor/ceiling polygons follow the frozen zone plane, matching
+`renderer.c` at 16008. Other imported polygon types retain their own height
+unless they are the controller's explicitly attached surface. The preservation
+regression retains an unattached imported bump decoration while freezing a
+normal ceiling. This does not enable bump authoring; those choices stay disabled.
+
+
+Visual review found that the full wall-style list could push Apply thousands
+of pixels below the visible inspector. The existing material gallery now has
+a bounded scrolling area, preserving search, shade, every style and native
+preview while keeping the rest of the authoring form within a usable distance.
+
+
+Validation for this increment:
+
+- Full model suite: 1,219 tests in 103 files passed, including all shipped
+  original controllers and retirement/reassignment/clipboard/phase regressions.
+- Native runtime build/bridge synchronization and `npm run build:web` passed.
+- The final controller logic passed 28 Chromium/Firefox cases: removal,
+  reassignment, draft cancellation, Undo/Redo, saved source, static lintel pixels,
+  fresh authoring in retired copies, native planes and complete movement cycles,
+  plus the existing settings-transfer/authored-move regressions.
+- Both-browser all-sixteen original native load/paused-pose checks passed on
+  the same runtime before the final authoring-only refinements.
+- Final gallery CSS passed the two native-door cases again and visual checks
+  in Chromium and Firefox: 360-pixel scrolling grid, 14,755 pixels of retained
+  styles, and approximately 1,000-pixel expanded form instead of 15,403 pixels.
+
+Final package: `assets/index-CMvsk1R6.js`, `assets/index-B6eeO7EI.css`, runtime
+`runtime/r-43f8ae7d896adb6c/` (full revision
+`43f8ae7d896adb6cc2b912eaac7b59eaa45f564d1be57e7058f78bff1eed2220`).
+The final JavaScript bytes are identical to the 28-case tested
+`index-6YXxijUJ.js`; its filename changes with the extracted gallery CSS.
+JavaScript SHA-256: `c3ddf62a78190c96bff71282d28cf10a67b8ca499c68b5ca4b62baa632993fc5`.
+All 80 deployment files are checked against local and staged bytes before push.
+This advances R0/R6/R7/R8/R9; the remaining requirements audit stays active.

@@ -34,10 +34,10 @@ replace the AB3D I source as the format/behaviour authority.
 | 11 | Set Player Start / End Zone | Implemented: authored starts and original/new-room exits with stable source references, save/Undo/export and native completion from every section of a concave exit room; disabled and original-slot exits verified in both browsers |
 | 12 | Upper Floor Height | Implemented: independent upper floor, relationship validation and preview |
 | 13 | Upper Floor Point Brightness | Partial: as ID 10 |
-| 14 | Define Door Zone | Partial: independent eligible original/new connected convex lower doors can be created/removed, start closed, save/Undo/copy and run natively; authored controllers move between rooms and original/copied/authored controllers transfer selected settings; original/copied reassignment and grouped/multi-plane geometry remain required |
+| 14 | Define Door Zone | Partial: independent eligible original/new connected convex lower doors can be created/removed, start closed, save/Undo/copy and run natively; authored controllers move between rooms and original/copied/authored controllers transfer selected settings; original/copied controllers can be removed to static poses or reassigned to independent authored destinations; grouped/multi-plane geometry remains required |
 | 15 | Define Roof Height | Implemented: lower-storey ceiling numerical/graphical editing and native checks |
 | 16 | Lower Roof Point Brightness | Partial: as ID 10 |
-| 17 | Define Lift Zone | Partial: independent eligible original/new connected convex lower lifts can be created/removed, save/Undo/copy and run natively; authored controllers move between rooms and original/copied/authored lift controllers transfer selected settings; original/copied reassignment and full grouping remain required |
+| 17 | Define Lift Zone | Partial: independent eligible original/new connected convex lower lifts can be created/removed, save/Undo/copy and run natively; authored controllers move between rooms and original/copied/authored lift controllers transfer selected settings; original/copied controllers can be removed to static poses or reassigned to independent authored destinations; full grouping remains required |
 | 18 | Define Floor Height | Implemented: lower floor editing, stairs and native standing/crouched collision checks |
 | 19 | Lower Floor Point Brightness | Partial: as ID 10 |
 | 20 | Define Teleporter | Implemented source links/destinations and native teleport checks; retains explicit invalid-link diagnostics |

@@ -1,3 +1,4 @@
+import { activeNativeMechanisms, validateRetiredMechanisms } from './nativeMechanisms';
 import { activeNativeSwitches, validateRemovedNativeSwitches } from './nativeSwitches';
 import { buildWallSettings, syncWallSettingsAnimations } from './wallSettingsBuild';
 import { authorSeeThroughBarriers, barrierCollisionTopology } from './seeThroughBarriers';
@@ -53,6 +54,7 @@ export interface SourceBuildOptions {
  */
 export function buildSourceLevel(document: LevelDocument, options: SourceBuildOptions) {
   validateRemovedNativeSwitches(document);
+  validateRetiredMechanisms(document);
   const source = document.roomSource;
   const controllerCopies = options.controllerCopies ?? compileControllerCopies(source.controllerCopies ?? []);
   validateMovingControllerCopies(document, controllerCopies);
@@ -60,10 +62,10 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
   validateSwitchCopies(document, switchCopies);
   const plans = options.authoredControllers ?? source.rooms.flatMap(room => { const plan = compileSourceMovingRoom(document, room); return plan ? [plan] : []; });
   const topology = compileRoomTopology(document, source);
-  const moving = new Set(document.mechanisms.map(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift')));
+  const moving = new Set(activeNativeMechanisms(document).map(item => resolveAnimationRoom(document, item.zone, item.kind === 'lift')));
   for (const room of source.rooms) if (room.originZone === null && hasNativeWallMaterials(room.originZone, room.wallSources)) {
     if (moving.has(room.recordZone) && mechanismsForRoom(document, room.recordZone).some(mechanism =>
-      !controllerCopies.some(copy => copy.room === room.id && copy.kind === mechanism.kind && copy.id === mechanism.id))) {
+      !room.staticMechanisms?.some(pose => pose.kind === mechanism.kind && pose.id === mechanism.id) && !controllerCopies.some(copy => copy.room === room.id && copy.kind === mechanism.kind && copy.id === mechanism.id))) {
       const dependencies = mechanismsForRoom(document, room.recordZone).map(item => mechanismDependencies(document, item.kind, item.id));
       const owners = [...new Set(dependencies.flatMap(item => item.graphicsRooms))].sort((a, b) => a - b);
       throw new Error(`Room ${room.id} copies a moving door or lift. Allocate its independent controller and wall attachments before building; the original controller cannot drive a room copy. Its live graphics belong to ${owners.map(id => `Zone ${id}`).join(', ')}. Inspect Attachments on the original mechanism to locate its moving walls and trigger boundaries.`);

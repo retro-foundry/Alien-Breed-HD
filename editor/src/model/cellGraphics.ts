@@ -1,3 +1,4 @@
+import { roomTemplate } from './staticMechanismPose';
 import { BinaryReader } from './binary';
 import { roomPlaneRecords } from './roomPlanes';
 import { readGraphicRecord, type Graphic } from './graphics';
@@ -60,7 +61,7 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
   const reader = new BinaryReader(document.files.graphics, 'source graphics'), table = reader.i32(12);
   const streams = new Map<number, GraphicsStreamInput>(), pointReferences = new Map<number, number[]>();
   for (const cell of topology.cells) {
-    const room = source.rooms.find(room => room.id === cell.sourceId)!, template = document.zones.find(zone => zone.id === cell.recordZone)!;
+    const room = source.rooms.find(room => room.id === cell.sourceId)!, template = roomTemplate(document, cell)!;
     const native = hasNativeWallMaterials(room.originZone, room.wallSources);
     const translation = nativeRoomTranslation(document, room), dx = translation?.x ?? 0, dz = translation?.z ?? 0;
     const owner = draw.owners.get(cell.id)!, members = topology.cells.filter(target => target.sourceId === cell.sourceId);

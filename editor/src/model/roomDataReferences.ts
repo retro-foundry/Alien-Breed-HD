@@ -4,7 +4,7 @@ import type { RoomSource } from './roomSource';
 import type { RoomTopology } from './roomTopology';
 import { assertRoomReferences, planRoomReferences, type RoomReferencePlan } from './roomReferences';
 import { runtimeObjectPosition } from './sourceObjects';
-import { roomHeightFields } from './roomHeights';
+import { roomHeightFields, roomSettings } from './roomHeights';
 import { writeRoomProperties } from './roomProperties';
 import { waterStartHeight } from './sourceWater';
 
@@ -82,7 +82,10 @@ export function buildRoomDataReferences(document: LevelDocument, source: RoomSou
     if (room.sky?.some(Boolean)) headerView.setInt16(36, 1);
     // Defs.i / level.c: lower floor/roof and upper floor/roof are 24.8
     // LONGs at +2/+6/+10/+14. Water (+18) is separately authored.
-    if (cell.heights) roomHeightFields.forEach((field, index) => headerView.setInt32(2 + index * 4, cell.heights![field] * 256));
+    if (cell.heights || cell.staticMechanisms?.length) {
+      const settings = roomSettings(document, cell);
+      roomHeightFields.forEach((field, index) => headerView.setInt32(2 + index * 4, settings[field] * 256));
+    }
     headerView.setInt16(38, checkedInteger(references.cellTeleports.get(cell.id)!, -32768, topology.cells.length - 1, 'Teleport destination room'));
     const teleport = document.sourceTeleports?.find(item => item.room === cell.sourceId);
     if (teleport) {

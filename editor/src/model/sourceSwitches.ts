@@ -1,3 +1,4 @@
+import { activeNativeMechanisms } from './nativeMechanisms';
 import { checkedInteger } from './binary';
 import { restoreBoundaryMaterials } from './boundaryMaterials';
 import type { LevelDocument } from './level';
@@ -31,7 +32,7 @@ export function availableSwitchSlots(document: LevelDocument): number[] {
 }
 
 export function switchRequirements(document: LevelDocument, slot: number): boolean {
-  const masks = [...document.mechanisms.map(item => item.conditions),
+  const masks = [...activeNativeMechanisms(document).map(item => item.conditions),
     ...(document.roomSource.controllerCopies ?? []).map(item => copiedMechanismSettings(item).conditions),
     ...document.roomSource.rooms.flatMap(room => room.moving ? [sourceMovingSettings(room.moving).conditions] : [])];
   return masks.some(mask => (mask & (1 << (slot + 4))) !== 0);

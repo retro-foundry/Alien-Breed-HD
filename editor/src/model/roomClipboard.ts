@@ -63,8 +63,9 @@ export function pasteRooms(document: LevelDocument, clipboard: RoomClipboard, x:
   const boundary = added.some(room => room.boundaryMaterials);
   const portals = added.some(room => room.portals?.length);
   const authored = added.some(room => room.upperStorey !== undefined || room.sky || room.planeSources);
-  const painted = added.some(room => room.retiredCopiedSwitches?.length) || cornerLights || wallSettings || water || authored || moving || polygons || boundary || added.some(room => room.wallMaterials?.length);
-  const roomSource = restoreRoomSource(document, { ...snapshot, version: Math.max(snapshot.version, added.some(room => room.retiredCopiedSwitches?.length || room.switches?.some(item => item.settings !== undefined)) ? 23 : added.some(room => room.switches?.some(item => item.native !== undefined)) ? 22 : added.some(room => room.portals?.some(item => item.barrier)) ? 21 : cornerLights ? 20 : wallRepeat ? 19 : wallSettings ? 18 : switches ? 17 : water || waterGroups.length ? 16 : portals ? 13 : authored ? 12 : moving ? 10 : polygons ? 9 : boundary ? 8 : painted ? 7 : 4),
+  const staticPoses = added.some(room => room.staticMechanisms?.length);
+  const painted = staticPoses || added.some(room => room.retiredCopiedSwitches?.length) || cornerLights || wallSettings || water || authored || moving || polygons || boundary || added.some(room => room.wallMaterials?.length);
+  const roomSource = restoreRoomSource(document, { ...snapshot, version: Math.max(snapshot.version, staticPoses ? 24 : added.some(room => room.retiredCopiedSwitches?.length || room.switches?.some(item => item.settings !== undefined)) ? 23 : added.some(room => room.switches?.some(item => item.native !== undefined)) ? 22 : added.some(room => room.portals?.some(item => item.barrier)) ? 21 : cornerLights ? 20 : wallRepeat ? 19 : wallSettings ? 18 : switches ? 17 : water || waterGroups.length ? 16 : portals ? 13 : authored ? 12 : moving ? 10 : polygons ? 9 : boundary ? 8 : painted ? 7 : 4),
     ...(painted ? { controllerCopies: snapshot.controllerCopies ?? [], switchCopies: snapshot.switchCopies ?? [] } : {}),
     ...(waterGroups.length ? { waterGroups } : {}), rooms: [...document.roomSource.rooms, ...added], nextId: document.roomSource.nextId + added.length });
   validateRoomInteriors(roomSource.rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));

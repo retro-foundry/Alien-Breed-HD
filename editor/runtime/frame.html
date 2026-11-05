@@ -206,6 +206,12 @@
       if (loaded && request.type === 'player-state') {
         send('player-state', {id:request.id, zone:engine._editor_player_zone(), x:engine._editor_player_x(), z:engine._editor_player_z(), feetFixed:engine._editor_player_feet_fixed(), conditions:engine._editor_conditions(), ammunition:Array.from({length:8}, (_, gun) => engine._editor_ammunition(gun)), weapons:Array.from({length:8}, (_, gun) => Boolean(engine._editor_weapon_owned(gun))), playing});
       }
+      if (loaded && request.type === 'zone-planes') {
+        const zone = Number(request.zone);
+        if (!Number.isInteger(zone) || engine._editor_zone_value(zone, 0) < 0) throw new Error('Invalid room plane inspection zone.');
+        const value = field => engine._editor_zone_value(zone, field) / 256;
+        send('zone-planes', {id:request.id, planes:{floor:value(9), ceiling:value(10), upperFloor:value(11), upperCeiling:value(12)}});
+      }
       if (loaded && request.type === 'zone-properties') {
         const zone = request.zone;
         if (!Number.isInteger(zone) || zone < 0) throw new Error('Invalid room property inspection index.');

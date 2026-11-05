@@ -121,7 +121,7 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
     checkedInteger(walls.length, 0, 64, 'Generated moving wall count');
     return walls;
   };
-  const moving = (records: readonly MovingRoomAnimation[] | null, kind: 'door' | 'lift') => records?.map(record => {
+  const moving = (records: readonly MovingRoomAnimation[] | null, kind: 'door' | 'lift') => records?.filter((_, id) => !document.roomSource.removedNativeMechanisms?.some(item => item.kind === kind && item.id === id)).map(record => {
     const zone = singleRoom(record.zone, kind, kind === 'lift');
     choose(record.graphic, { kind, zone });
     const walls = attachMovingWalls(record, zone, `${kind} room ${record.zone}`, graphic => targets.get(graphic) ?? [], line => lines.get(line) ?? []);

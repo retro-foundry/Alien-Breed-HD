@@ -1,3 +1,4 @@
+import { activeNativeMechanisms } from './nativeMechanisms';
 import { activeNativeSwitches } from './nativeSwitches';
 import type { LevelDocument } from './level';
 import { mechanismDependencies } from './mechanismDependencies';
@@ -12,7 +13,7 @@ export function roomCopyDependencies(document: LevelDocument, ids: readonly stri
   const sourceRooms = new Map(document.roomSource.rooms.map(room => [room.id, room]));
   const original = (zone: number) => document.roomSource.rooms.find(room => room.originZone === zone)?.id;
   type Binding = { control: string | undefined; rooms: (string | undefined)[]; portals: (string | undefined)[]; label: string };
-  const bindings: Binding[] = document.mechanisms.map(item => {
+  const bindings: Binding[] = activeNativeMechanisms(document).map(item => {
     const dependencies = mechanismDependencies(document, item.kind, item.id);
     return { control: original(dependencies.room), rooms: [...new Set([...dependencies.graphicsRooms, ...dependencies.walls.flatMap(wall => wall.collisionRooms)])].map(original),
       portals: [original(dependencies.room)], label: `${item.kind} ${item.id}` };

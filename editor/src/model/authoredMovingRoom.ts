@@ -1,3 +1,4 @@
+import { activeNativeMechanisms, nativeWallIsMoving } from './nativeMechanisms';
 import { activeNativeSwitches } from './nativeSwitches';
 import { resolveAnimationRoom } from './animationRooms';
 import type { PlayableLevel } from './playableBuild';
@@ -90,8 +91,13 @@ export function attachAuthoredMovingRoom(document: LevelDocument, graphics: Cell
     throw new Error('A new moving room needs one complete lower floor/ceiling polygon. Partial surfaces need synchronized animation targets.');
   if (cell.neighbours.every(id => id < 0)) throw new Error('Connect the new door/lift room to another room before creating its moving wall attachments.');
   const streams = new Map(graphics.streams), references = new Map(graphics.pointReferences), links: { line: number; base: number; owner: number; item: GraphicsRecordInput }[] = [];
-  const nativeTargets = new Set([...document.mechanisms.flatMap(item => item.walls.map(wall => wall.graphic)),
-    ...activeNativeSwitches(document).map(item => item.graphic - 10)]);
+  const ownsAnimatedWall = (owner: number, record: number) => {
+    const cell = topology.cells.find(cell => cell.id === owner), room = document.roomSource.rooms.find(room => room.id === cell?.sourceId);
+    if (!room) throw new Error('A moving band has lost its source graphics owner.');
+    return nativeWallIsMoving(document, room, record)
+      || room.originZone !== null && activeNativeSwitches(document).some(item => item.graphic - 10 === record)
+      || document.roomSource.switchCopies?.some(copy => copy.graphicsRoom === room.id && document.switches[copy.id]!.graphic - 10 === record);
+  };
   const update = (id: number, items: readonly GraphicsRecordInput[]) => {
     streams.set(id, { ...streams.get(id)!, lower: items });
     references.set(id, [...new Set([...(references.get(id) ?? []), ...items.flatMap(item => read(item).points)])]);
@@ -117,7 +123,7 @@ export function attachAuthoredMovingRoom(document: LevelDocument, graphics: Cell
     if (matches.length > 1) throw new Error('Several decorative walls overlap a moving band. Assign their animation ownership before building.');
     const existing = matches.length ? items[matches[0]!] : undefined;
     const index = matches[0] ?? items.reduce((position, item, index) => [0, 5, 13].includes(read(item).type) ? index + 1 : position, 0);
-    if (existing?.sourceOffset !== undefined && nativeTargets.has(existing.sourceOffset)) throw new Error('A new moving band overlaps an existing animated wall. Reassign that mechanism before building.');
+    if (existing?.sourceOffset !== undefined && ownsAnimatedWall(owner, existing.sourceOffset)) throw new Error('A new moving band overlaps an existing animated wall. Reassign that mechanism before building.');
     const { sourceOffset, ...metadata } = existing ?? {};
     const item = { ...metadata, ...(sourceOffset !== undefined && read(existing!).type === wall.type ? { sourceOffset } : {}), bytes: encodeWallSurface(wall) };
     if (existing) items[index] = item; else items.splice(index, 0, item);
@@ -169,7 +175,7 @@ export function buildAuthoredMovingRooms(document: LevelDocument, graphics: Cell
   let movingGraphics = graphics;
   const authored: { kind: 'door' | 'lift'; animation: MovingRoomAnimation }[] = [];
   const occupied = new Set(plans.map(plan => plan.room));
-  for (const control of document.mechanisms) {
+  for (const control of activeNativeMechanisms(document)) {
     const origin = resolveAnimationRoom(document, control.zone, control.kind === 'lift');
     for (const cell of topology.cells) if (cell.originZone === origin) occupied.add(cell.sourceId);
   }
