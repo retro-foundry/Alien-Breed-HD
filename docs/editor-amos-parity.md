@@ -77,7 +77,11 @@ replace the AB3D I source as the format/behaviour authority.
   `LEVELSAVE`'s panel and activation-pair geometry (901, 1413/1445, 1962) are
   compiled into the current native format; real SwitchRoutine condition bits,
   panel picking and switch-gated door movement are verified in both browsers.
-  Reassignment/removal of imported switch controllers remains a separate gap.
+  Imported controllers now support room/wall reassignment and removal too:
+  the same condition number remains connected, retired panels/controllers are
+  removed without breaking independent copies, and native settings/provenance
+  survive project saves, Undo and further room copies. Copied native-controller
+  reassignment/removal remains open.
 - Control-point procedures and `CPTNEARTOZONE` / `CPTNEARTOUPPERZONE` retain
   distinct navigation semantics; rendering visibility is a different system.
 - Zone output writes `BSFX` at byte 28 and echo at byte 37. Footstep sounds,

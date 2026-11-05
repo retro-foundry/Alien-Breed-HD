@@ -1,3 +1,4 @@
+import { activeNativeSwitches } from './nativeSwitches';
 import type { LevelDocument } from './level';
 import { mechanismDependencies } from './mechanismDependencies';
 import { compileRoomTopology } from './roomTopology';
@@ -16,7 +17,7 @@ export function roomCopyDependencies(document: LevelDocument, ids: readonly stri
     return { control: original(dependencies.room), rooms: [...new Set([...dependencies.graphicsRooms, ...dependencies.walls.flatMap(wall => wall.collisionRooms)])].map(original),
       portals: [original(dependencies.room)], label: `${item.kind} ${item.id}` };
   });
-  for (const item of document.switches.filter(item => item.zone >= 0)) {
+  for (const item of activeNativeSwitches(document)) {
     const owner = document.zones.find(zone => [...zone.lower, ...zone.upper].some(record => record.offset === item.graphic - 10));
     const rooms = [original(item.zone), owner ? original(owner.id) : undefined];
     bindings.push({ control: original(item.zone), rooms, portals: rooms, label: `Switch ${item.id + 1}` });

@@ -107,6 +107,7 @@ export function planRoomReferences(document: LevelDocument, source: RoomSource, 
   const cellTeleports = new Map(topology.cells.map(cell => [cell.id, sourceTeleports.get(cell.sourceId)!]));
   const switches = new Map<number, number | null>();
   for (const item of document.switches) {
+    if (source.removedNativeSwitches?.includes(item.id)) { switches.set(item.id, -1); continue; }
     if (item.zone < 0) { switches.set(item.id, item.zone); continue; }
     const a = document.points[item.point], b = document.points[item.point + 1];
     if (!a || !b) { error(`Switch ${item.id}`, 'Its activation point pair is missing. Repair the switch before building.'); switches.set(item.id, null); continue; }

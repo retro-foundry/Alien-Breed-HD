@@ -1,3 +1,4 @@
+import { activeNativeSwitches } from './nativeSwitches';
 import { authoredMovingSurfaceOwner } from './authoredMovingRoom';
 import { BinaryReader, checkedInteger } from './binary';
 import type { LevelDocument } from './level';
@@ -79,7 +80,7 @@ export function wallMaterialTarget(built: PlayableLevel, zone: number, pick: Nat
   const template = built.source.zones.find(zone => zone.id === room.recordZone);
   const original = (pick.upper ? template?.upper : template?.lower)?.find(item => item.offset === record && item.wall);
   if (record === undefined || !original || original.wall!.texture === switchTexture
-    || built.source.switches.some(control => control.zone >= 0 && control.graphic - 10 === record)) return;
+    || activeNativeSwitches(built.source).some(control => control.zone >= 0 && control.graphic - 10 === record)) return;
   return Object.freeze({ room: room.id, upper: pick.upper, record });
 }
 
@@ -164,7 +165,7 @@ export function setWallMaterial(document: LevelDocument, target: WallMaterialTar
   if (!record) throw new Error('The wall source record is missing. Restore the source wall or reset its material.');
   let materials = (room.wallMaterials ?? []).filter(material => key(material) !== key(target));
   if (style !== null) {
-    if (record.wall!.texture === switchTexture || document.switches.some(item => item.zone >= 0 && item.graphic - 10 === target.record))
+    if (record.wall!.texture === switchTexture || activeNativeSwitches(document).some(item => item.zone >= 0 && item.graphic - 10 === target.record))
       throw new Error('This wall carries switch graphics. Keep its native switch material.');
     const selected = wallMaterialChoices(document).find(record => record.offset === style)?.wall;
     if (!selected) throw new Error('Choose an available native wall material style.');
@@ -206,7 +207,7 @@ export function paintCellWalls(document: LevelDocument, source: RoomSource, grap
       if (!material) return item;
       const wall = readGraphicRecord(new BinaryReader(item.bytes, 'painted wall'), 0, 2048).wall;
       if (!wall || wall.texture === switchTexture || material.texture === switchTexture
-        || ('record' in material && document.switches.some(control => control.zone >= 0 && control.graphic - 10 === material.record))) throw new Error(`Room ${room.id} has an incompatible painted switch/control wall. Reset its material before building.`);
+        || ('record' in material && activeNativeSwitches(document).some(control => control.zone >= 0 && control.graphic - 10 === material.record))) throw new Error(`Room ${room.id} has an incompatible painted switch/control wall. Reset its material before building.`);
       if ('record' in material) { applied.add(`${room.id}:${key(material)}`); validateSourceSampling(document, wall, material, room.id); }
       else { applied.add(`${room.id}:boundary:${upper}:${material.edge}`);
         const settings = room.wallSettings?.find(item => 'boundary' in item && item.boundary === material.edge && item.upper === upper);

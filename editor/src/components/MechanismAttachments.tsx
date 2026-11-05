@@ -1,5 +1,6 @@
 import type { LevelDocument, Mechanism } from '../model/level';
 import { mechanismDependencies } from '../model/mechanismDependencies';
+import { switchSourceRoom } from '../model/nativeSwitches';
 
 export function MechanismAttachments({ document, mechanism, onShowRoom }: {
   document: LevelDocument; mechanism: Mechanism; onShowRoom: (room: string) => void;
@@ -23,7 +24,10 @@ export function MechanismAttachments({ document, mechanism, onShowRoom }: {
       </tr>)}</tbody>
     </table>
     {!!dependencies.keys.length && <p className="field-note">Requires {dependencies.keys.map(number => `Key ${number}`).join(', ')}.</p>}
-    {!!dependencies.switches.length && <ul>{dependencies.switches.map(item => <li key={item.number}>Switch {item.number}: {item.room !== null && item.room >= 0 ? link(item.room) : 'not placed'}</li>)}</ul>}
+    {!!dependencies.switches.length && <ul>{dependencies.switches.map(item => {
+      const room = switchSourceRoom(document, item.number - 1);
+      return <li key={item.number}>Switch {item.number}: {room ? <button className="small-button" onClick={() => onShowRoom(room)}>Room {room.replace(/^room-/, '')}</button> : 'not placed'}</li>;
+    })}</ul>}
     <p className="field-note">Room links frame the room while keeping this mechanism selected. Key and switch requirements above must all be met; wall attachments determine where movement and touch/use activation happen.</p>
   </details>;
 }

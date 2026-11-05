@@ -3,9 +3,49 @@ import type { LevelDocument } from '../model/level';
 import type { SourceRoom } from '../model/roomSource';
 import type { EditCommand } from '../model/commands';
 import { setSwitchAutomaticReset, setCopiedSwitchAutomaticReset } from '../model/switchSettings';
-import { availableSwitchSlots, setSourceSwitch, switchRequirements } from '../model/sourceSwitches';
+import { availableSwitchSlots, setSourceSwitch, switchRequirements, reassignNativeSwitch, moveSourceSwitch } from '../model/sourceSwitches';
+import { activeNativeSwitches } from '../model/nativeSwitches';
 import { applyCommand, editRoomSource } from '../model/commands';
 import { buildPlayableLevel } from '../model/playableBuild';
+
+function SwitchPlacement({ document, slot, room, native, edit }: {
+  document: LevelDocument; slot: number; room?: SourceRoom; native: boolean;
+  edit: (command: EditCommand | (() => EditCommand)) => void;
+}) {
+  const [destination, setDestination] = useState(room?.id ?? ''), [edge, setEdge] = useState(''), [error, setError] = useState('');
+  const target = document.roomSource.rooms.find(room => room.id === destination);
+  const apply = (remove = false) => {
+    try {
+      const placement = remove ? null : { room: destination, edge: Number(edge) };
+      const change = native ? reassignNativeSwitch(document, slot, placement) : moveSourceSwitch(document, slot, placement!);
+      const command = editRoomSource(change);
+      buildPlayableLevel(applyCommand(document, command), -1);
+      edit(command); setError(''); setEdge('');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+  };
+  const required = switchRequirements(document, slot);
+  return <>
+    <details><summary>Move switch {slot + 1} to another wall or room</summary>
+      <p className="field-note">Choose the destination room and its solid lower wall. The switch moves to the wall centre. Its number and door/lift requirements stay the same. Apply is one Undo.</p>
+      <label className="select-field"><span>Destination room</span><select aria-label={`Switch ${slot + 1} destination room`} value={destination} onChange={event => { setDestination(event.target.value); setEdge(''); }}>
+        <option value="">Choose a room</option>{document.roomSource.rooms.map(room => <option key={room.id} value={room.id}>Room {room.id.replace(/^room-/, '')}</option>)}
+      </select></label>
+      <label className="select-field"><span>Destination wall</span><select aria-label={`Switch ${slot + 1} destination wall`} value={edge} onChange={event => setEdge(event.target.value)}>
+        <option value="">Choose a solid wall edge</option>{target?.vertices.flatMap((a, index) => {
+          if (target.boundaryMaterials && target.boundaryMaterials.edges.indexOf(target.boundaryMaterials.edges[index]!) !== index) return [];
+          const b = target.vertices[(index + 1) % target.vertices.length]!;
+          return [<option key={index} value={index}>Edge {index + 1}: ({a.x}, {a.z}) to ({b.x}, {b.z})</option>];
+        })}
+      </select></label>
+      <button className="small-button" disabled={!target || edge === ''} onClick={() => apply()}>Move switch {slot + 1}</button>
+    </details>
+    {native && <>
+      <button className="small-button" disabled={required} onClick={() => apply(true)}>Remove switch {slot + 1}</button>
+      {required && <p className="field-note">A door or lift requires this switch. Clear that requirement before removing it. Moving keeps the requirement connected.</p>}
+    </>}
+    {error && <p role="alert" className="field-note">{error}</p>}
+  </>;
+}
 
 function AuthorSwitches({ document, room, edit }: { document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void }) {
   const [slot, setSlot] = useState(''), [edge, setEdge] = useState(''), [error, setError] = useState('');
@@ -57,6 +97,7 @@ function AuthorSwitches({ document, room, edit }: { document: LevelDocument; roo
           {!edges.length && <option value="">Wall missing — choose a wall</option>}{walls}
         </select></label>
         <ResetControl enabled={item.automatic} prefix={`authored switch ${item.slot + 1}`} change={automatic => change(item.slot, { edge: edges[0]!, automatic })} />
+        <SwitchPlacement document={document} slot={item.slot} room={room} native={false} edit={edit} />
         <button type="button" className="small-button" disabled={used} onClick={() => change(item.slot, null)}>Remove switch {item.slot + 1}</button>
         {used && <p className="field-note">A door or lift requires this switch. Clear that requirement before removing it.</p>}
       </div>;
@@ -85,9 +126,10 @@ export function SwitchesInspector({ document, room, zone, edit, frameRoom }: {
 }) {
   return <>
     {room && <AuthorSwitches key={room.id} document={document} room={room} edit={edit} />}
-    {document.switches.filter(item => item.zone >= 0 && item.zone === zone).map(item => <section className="property-section" key={`original-${item.id}`} aria-label={`Switch ${item.id + 1}`}>
+    {activeNativeSwitches(document).filter(item => item.zone === zone).map(item => <section className="property-section" key={`original-${item.id}`} aria-label={`Switch ${item.id + 1}`}>
       <h3>Switch {item.id + 1}</h3>
       <ResetControl enabled={item.type !== 0} prefix={`switch ${item.id + 1}`} change={enabled => edit(() => setSwitchAutomaticReset(document, item.id, enabled))} />
+      <SwitchPlacement document={document} slot={item.id} room={room} native edit={edit} />
       <p className="field-note">Stand near the switch and press Space in Build &amp; play. To require it on a door or lift, select Switch {item.id + 1} under Requires all selected.</p>
     </section>)}
     {document.roomSource.switchCopies?.filter(item => item.room === room?.id).map(item => {

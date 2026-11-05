@@ -1,3 +1,4 @@
+import { activeNativeSwitches } from './nativeSwitches';
 import type { LevelDocument } from './level';
 import { checkedInteger } from './binary';
 import { editRoomSource, numberPatch, type EditCommand } from './commands';
@@ -12,7 +13,7 @@ function resetType(current: number, enabled: boolean): number {
 
 export function setSwitchAutomaticReset(document: LevelDocument, id: number, enabled: boolean): EditCommand {
   checkedInteger(id, 0, 7, 'Switch slot');
-  const item = document.switches.find(item => item.id === id && item.zone >= 0);
+  const item = activeNativeSwitches(document).find(item => item.id === id && item.zone >= 0);
   if (!item) throw new Error('That active switch no longer exists.');
   return { label: `Change switch ${id + 1} reset mode`, patches: [numberPatch(document, 'graphics', item.offset + 2, resetType(item.type, enabled), 1, false)] };
 }

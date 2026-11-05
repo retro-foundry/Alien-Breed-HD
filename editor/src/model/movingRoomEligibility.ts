@@ -1,3 +1,4 @@
+import { activeNativeSwitches } from './nativeSwitches';
 import type { LevelDocument } from './level';
 import type { SourceRoom } from './roomSource';
 import { mechanismDependencies } from './mechanismDependencies';
@@ -8,6 +9,8 @@ import { mechanismDependencies } from './mechanismDependencies';
 export interface MovingRoomOwnership { reason: string; kind?: 'door' | 'lift' | 'switch'; room?: string }
 export function movingRoomOwnership(document: LevelDocument, room: SourceRoom): MovingRoomOwnership | undefined {
   if (room.switches?.length) return { reason: 'This room contains authored wall switches. Remove or move them before converting the room.', kind: 'switch', room: room.id };
+  const copiedSwitch = document.roomSource.switchCopies?.find(copy => copy.room === room.id || copy.graphicsRoom === room.id);
+  if (copiedSwitch) return { reason: 'This room contains an independent copied switch attachment. Keep its activation and graphics rooms static.', kind: 'switch', room: copiedSwitch.room };
   if (document.roomSource.controllerCopies?.some(copy => copy.room === room.id)) return { reason: 'This room already has a copied controller. Edit its existing settings below.' };
   if (room.originZone === null) return;
   for (const mechanism of document.mechanisms) {
@@ -19,7 +22,7 @@ export function movingRoomOwnership(document: LevelDocument, room: SourceRoom): 
   }
   const zone = document.zones.find(zone => zone.id === room.originZone)!;
   const graphics = new Set([...zone.lower, ...zone.upper].map(record => record.offset));
-  const linkedSwitch = document.switches.find(item => item.zone >= 0 && (item.zone === room.originZone || graphics.has(item.graphic - 10)));
+  const linkedSwitch = activeNativeSwitches(document).find(item => item.zone >= 0 && (item.zone === room.originZone || graphics.has(item.graphic - 10)));
   if (linkedSwitch) return { reason: 'This room contains an existing switch attachment. Reassign that switch before converting the room.', kind: 'switch', room: document.roomSource.rooms.find(item => item.originZone === linkedSwitch.zone)?.id };
 }
 export function movingRoomConflict(document: LevelDocument, room: SourceRoom): string | undefined {

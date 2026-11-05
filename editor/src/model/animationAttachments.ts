@@ -184,7 +184,10 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
     pair.forEach((position, index) => { points.push(position); addedLighting.set(point + index, { kind: 'copy', source: record.point + index }); });
     return { ...record, zone, point };
   };
-  const switches = tables.switches?.map(record => {
+  const switches = tables.switches?.map((record, slot) => {
+    // SwitchRoutine's timer runs before its zone check. Clear every mutable
+    // byte and pointer when retiring an imported controller.
+    if (document.roomSource.removedNativeSwitches?.includes(slot)) return { bytes: new Uint8Array(14), zone: -1, point: 0, graphic: 0 };
     if (record.zone < 0) return record;
     const zone = singleRoom(record.zone, 'Switch'), target = choose(record.graphic, { kind: 'switch', zone }, 10);
     return attachSwitch(record, zone, target);

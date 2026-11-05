@@ -3405,3 +3405,52 @@ showed direct texture controls and rendered its native preview without page
 errors or engine alerts. Historical hashed assets remain available; the
 unrelated website archive was preserved. This advances authoring and delivery,
 but the current completion audit remains open.
+
+
+### Imported switch reassignment and removal
+
+Room-source version 22 records retired original switch slots and native settings
+provenance on adopted wall switches. Original binary records remain the source
+for independent copies and Undo; they are not patched into inactive templates.
+The compiler omits retired panels from their original owners, clears every
+runtime timer/state/pointer byte before disabling the controller, and can reuse
+that condition number for a fresh panel. `Anims.s SwitchRoutine` and the current
+`objects.c:switch_routine` timer-before-zone order require that complete clear.
+Independent copied controllers retain their own graphics and raw settings.
+Copying an already stripped room cannot resurrect an orphan switch panel.
+
+Original-switch settings now expose a destination room and wall, a validated
+Move action and requirement-protected removal. Adopted and newly authored
+switches can subsequently move between rooms without clearing their mechanism
+requirements. The switch number stays fixed, so existing key/switch condition
+masks are unchanged. Every Apply builds the whole proposal before committing
+one Undo. Mechanism attachment links follow the actual authored/copied switch
+room. Static-room eligibility now distinguishes a fresh room from its native
+material template and continues protecting copied switch attachments after
+retiring their original controller.
+
+The native inspection bridge reports an inactive slot with a null panel phase
+instead of treating inspection as an engine failure or reading a stale pointer.
+Runtime gameplay remains the existing native switch routine.
+
+Twenty-one model cases include every active switch across all sixteen original
+levels, exact opaque settings preservation, original-panel removal, new-slot
+reuse, copied templates surviving original retirement, clipboard capture across
+Undo, further adopted-switch moves, strict source-version validation and
+portable saves. The full model suite passed 1,156 tests across 100 files before
+the final copied-attachment guard; focused model checks cover that guard too.
+The final proposal passed thirty focused model checks after the attachment and
+fresh-template eligibility corrections. The package passed twelve exact
+Chromium/Firefox checks for imported-switch move/remove, native switch-gated
+door movement, saved source/Undo, copied-switch independence, direct textures,
+skylights, upper-floor walking and falling through an opening. The preceding
+broader package run passed twenty-four browser checks including authored and
+copied switches, reset timers, default textures and retained native barriers.
+
+Delivery package: `index-D1YRsso5.js` with runtime
+`r-3a3fddd130e89f0e`. All eighty package files match the staged website blobs,
+including the exact native runtime hashes. Source and website delivery/public
+verification are recorded below once pushed.
+
+The complete R0-R12 audit remains open, including native copied-controller
+reassignment/removal, door/lift controller groups and the other recorded gaps.

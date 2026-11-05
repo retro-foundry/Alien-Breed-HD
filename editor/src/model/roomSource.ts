@@ -1,3 +1,4 @@
+import { restoreRemovedNativeSwitches } from './nativeSwitches';
 import { restoreCornerLights, type CornerLight } from './cornerLights';
 import { restoreWallSettings, type WallSettings } from './wallSettings';
 import { restoreSourceSwitches, type SourceSwitch } from './sourceSwitches';
@@ -42,7 +43,7 @@ export interface SourceRoom {
   readonly switches?: readonly SourceSwitch[];
   readonly waterSurface?: SourceWaterSurface | false;
 }
-export interface RoomSource { readonly rooms: readonly SourceRoom[]; readonly nextId: number; readonly waterGroups?: readonly SourceWaterGroup[]; readonly navigation?: Navigation; readonly exitRoom?: string; readonly controllerCopies?: readonly SourceControllerCopy[]; readonly switchCopies?: readonly SourceSwitchCopy[] }
+export interface RoomSource { readonly rooms: readonly SourceRoom[]; readonly nextId: number; readonly removedNativeSwitches?: readonly number[]; readonly waterGroups?: readonly SourceWaterGroup[]; readonly navigation?: Navigation; readonly exitRoom?: string; readonly controllerCopies?: readonly SourceControllerCopy[]; readonly switchCopies?: readonly SourceSwitchCopy[] }
 export interface RoomChange { readonly label: string; readonly before: RoomSource; readonly after: RoomSource }
 export interface RoomHistory { readonly source: RoomSource; readonly past: readonly RoomChange[]; readonly future: readonly RoomChange[] }
 export interface RoomDraft { readonly base: RoomSource; readonly roomId: string | null; readonly recordZone: number; readonly vertices: readonly Position[] }
@@ -82,8 +83,9 @@ function frozenRoom(id: string, recordZone: number, vertices: readonly Position[
     outline.map((start, index) => ({ start, end: outline[(index + 1) % outline.length]! })));
   return Object.freeze({ ...(cornerLights?.some(light => outline.some(point => point.x === light.x && point.z === light.z)) ? { cornerLights: restoreCornerLights(cornerLights.filter(light => outline.some(point => point.x === light.x && point.z === light.z)), outline) } : {}), ...(wallSettings?.length ? { wallSettings: restoreWallSettings(wallSettings) } : {}), ...(switches?.length ? { switches: restoreSourceSwitches(switches) } : {}), ...(waterSurface !== undefined ? { waterSurface: restoreWaterSurface(waterSurface) } : {}), ...(portals?.length ? { portals: restorePortalStates(portals, boundary?.nextId) } : {}), ...(planeSources ? { planeSources: restorePlaneSources(planeSources) } : {}), ...(upperStorey !== undefined ? { upperStorey: restoreStorey(upperStorey) } : {}), ...(sky ? { sky: Object.freeze([...sky]) } : {}), id, recordZone, originZone, vertices: Object.freeze(outline.map(point => Object.freeze(point))), wallSources: Object.freeze(walls), ...(heights ? { heights } : {}), ...(properties ? { properties } : {}), ...(wallMaterials?.length ? { wallMaterials: restoreWallMaterials(wallMaterials) } : {}), ...(boundary ? { boundaryMaterials: boundary } : {}), ...(polygonMaterials?.length ? { polygonMaterials: restorePolygonMaterials(polygonMaterials) } : {}), ...(moving ? { moving: restoreSourceMovingRoom(moving) } : {}) });
 }
-function source(rooms: readonly SourceRoom[], nextId: number, plans?: Pick<RoomSource, 'controllerCopies' | 'switchCopies' | 'exitRoom' | 'navigation' | 'waterGroups'>): RoomSource {
+function source(rooms: readonly SourceRoom[], nextId: number, plans?: Pick<RoomSource, 'controllerCopies' | 'switchCopies' | 'exitRoom' | 'navigation' | 'waterGroups' | 'removedNativeSwitches'>): RoomSource {
   return Object.freeze({ rooms: Object.freeze([...rooms]), nextId,
+    ...(plans?.removedNativeSwitches?.length ? { removedNativeSwitches: plans.removedNativeSwitches } : {}),
     ...(plans?.waterGroups?.length ? { waterGroups: plans.waterGroups } : {}),
     ...(plans?.navigation ? { navigation: plans.navigation } : {}),
     ...(plans?.exitRoom !== undefined ? { exitRoom: plans.exitRoom } : {}),
@@ -102,8 +104,9 @@ export function roomSourceSnapshot(current: RoomSource) {
   const moving = current.rooms.some(room => room.moving);
   const polygons = current.rooms.some(room => room.polygonMaterials?.length);
   const boundary = current.rooms.some(room => room.boundaryMaterials);
-  const painted = current.rooms.some(room => room.cornerLights?.length || room.wallSettings?.length || room.switches?.length || room.waterSurface !== undefined || room.upperStorey !== undefined || room.sky || room.planeSources) || moving || polygons || boundary || current.rooms.some(room => room.wallMaterials?.length);
-  return { format: 'alien-breed-room-source', version: current.rooms.some(room => room.portals?.some(item => item.barrier)) ? 21 : current.rooms.some(room => room.cornerLights?.length) ? 20 : current.rooms.some(room => room.wallSettings?.some(item => item.repeat)) ? 19 : current.rooms.some(room => room.wallSettings?.length) ? 18 : current.rooms.some(room => room.switches?.length) ? 17 : current.waterGroups?.length || current.rooms.some(room => room.waterSurface !== undefined) ? 16 : current.navigation ? 15 : current.exitRoom !== undefined ? 14 : current.rooms.some(room => room.portals?.length) ? 13 : current.rooms.some(room => room.upperStorey !== undefined || room.sky || room.planeSources) ? 12 : modes ? 11 : moving ? 10 : polygons ? 9 : boundary ? 8 : painted ? 7 : current.switchCopies?.length ? 6 : current.controllerCopies?.length ? 5 : current.rooms.some(room => room.properties) ? 4 : current.rooms.some(room => room.heights) ? 3 : 2, nextId: current.nextId, rooms: current.rooms,
+  const painted = !!current.removedNativeSwitches?.length || current.rooms.some(room => room.cornerLights?.length || room.wallSettings?.length || room.switches?.length || room.waterSurface !== undefined || room.upperStorey !== undefined || room.sky || room.planeSources) || moving || polygons || boundary || current.rooms.some(room => room.wallMaterials?.length);
+  return { format: 'alien-breed-room-source', version: current.removedNativeSwitches?.length || current.rooms.some(room => room.switches?.some(item => item.native !== undefined)) ? 22 : current.rooms.some(room => room.portals?.some(item => item.barrier)) ? 21 : current.rooms.some(room => room.cornerLights?.length) ? 20 : current.rooms.some(room => room.wallSettings?.some(item => item.repeat)) ? 19 : current.rooms.some(room => room.wallSettings?.length) ? 18 : current.rooms.some(room => room.switches?.length) ? 17 : current.waterGroups?.length || current.rooms.some(room => room.waterSurface !== undefined) ? 16 : current.navigation ? 15 : current.exitRoom !== undefined ? 14 : current.rooms.some(room => room.portals?.length) ? 13 : current.rooms.some(room => room.upperStorey !== undefined || room.sky || room.planeSources) ? 12 : modes ? 11 : moving ? 10 : polygons ? 9 : boundary ? 8 : painted ? 7 : current.switchCopies?.length ? 6 : current.controllerCopies?.length ? 5 : current.rooms.some(room => room.properties) ? 4 : current.rooms.some(room => room.heights) ? 3 : 2, nextId: current.nextId, rooms: current.rooms,
+    ...(current.removedNativeSwitches?.length ? { removedNativeSwitches: restoreRemovedNativeSwitches(current.removedNativeSwitches) } : {}),
     ...(current.waterGroups?.length ? { waterGroups: restoreWaterGroups(current.waterGroups) } : {}),
     ...(current.navigation ? { navigation: restoreNavigation(current.navigation) } : {}),
     ...(current.exitRoom !== undefined ? { exitRoom: current.exitRoom } : {}),
@@ -112,7 +115,7 @@ export function roomSourceSnapshot(current: RoomSource) {
 }
 
 export function roomSourceMatchesLevel(document: LevelDocument): boolean {
-  return !document.roomSource.waterGroups?.length && !document.roomSource.navigation && document.roomSource.exitRoom === undefined && !document.roomSource.controllerCopies?.length && !document.roomSource.switchCopies?.length && JSON.stringify(document.roomSource.rooms) === JSON.stringify(importRoomSource(document).rooms);
+  return !document.roomSource.removedNativeSwitches?.length && !document.roomSource.waterGroups?.length && !document.roomSource.navigation && document.roomSource.exitRoom === undefined && !document.roomSource.controllerCopies?.length && !document.roomSource.switchCopies?.length && JSON.stringify(document.roomSource.rooms) === JSON.stringify(importRoomSource(document).rooms);
 }
 
 /** All editable source must match before using the imported runtime files. */
@@ -125,15 +128,16 @@ export function sourceMatchesLevel(document: LevelDocument): boolean {
  * dependency baseline; missing templates cannot be silently substituted. */
 export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSource {
   if (!value || typeof value !== 'object' || !('format' in value) || value.format !== 'alien-breed-room-source'
-    || !('version' in value) || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21].includes(value.version as number) || !('rooms' in value) || !Array.isArray(value.rooms)
+    || !('version' in value) || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22].includes(value.version as number) || !('rooms' in value) || !Array.isArray(value.rooms)
     || !('nextId' in value) || typeof value.nextId !== 'number') throw new Error('Unsupported or damaged room source.');
-  if (Object.keys(value).some(key => !['format', 'version', 'rooms', 'nextId', ...((value.version as number) >= 5 ? ['controllerCopies'] : []), ...((value.version as number) >= 6 ? ['switchCopies'] : []), ...((value.version as number) >= 14 ? ['exitRoom'] : []), ...((value.version as number) >= 15 ? ['navigation'] : []), ...((value.version as number) >= 16 ? ['waterGroups'] : [])].includes(key))) throw new Error('Room source contains unsupported fields; it has not been replaced or discarded.');
+  if (Object.keys(value).some(key => !['format', 'version', 'rooms', 'nextId', ...((value.version as number) >= 5 ? ['controllerCopies'] : []), ...((value.version as number) >= 6 ? ['switchCopies'] : []), ...((value.version as number) >= 14 ? ['exitRoom'] : []), ...((value.version as number) >= 15 ? ['navigation'] : []), ...((value.version as number) >= 16 ? ['waterGroups'] : []), ...((value.version as number) >= 22 ? ['removedNativeSwitches'] : [])].includes(key))) throw new Error('Room source contains unsupported fields; it has not been replaced or discarded.');
   const waterGroups = 'waterGroups' in value ? restoreWaterGroups(value.waterGroups) : undefined;
   const navigation = 'navigation' in value ? restoreNavigation(value.navigation) : undefined;
   const exitRoom = 'exitRoom' in value ? value.exitRoom : undefined;
   if (exitRoom !== undefined && (typeof exitRoom !== 'string' || !value.rooms.some(room => room?.id === exitRoom))) throw new Error('Choose an existing source room for the level exit.');
   if ((value.version as number) >= 5 && !('controllerCopies' in value)) throw new Error('Room source is missing its copied controller records.');
   if ((value.version as number) >= 6 && !('switchCopies' in value)) throw new Error('Room source is missing its copied switch records.');
+  const removedNativeSwitches = 'removedNativeSwitches' in value ? restoreRemovedNativeSwitches(value.removedNativeSwitches) : undefined;
   const controllerCopies = (value.version as number) >= 5 && 'controllerCopies' in value ? restoreControllerCopies(value.controllerCopies) : undefined;
   const switchCopies = (value.version as number) >= 6 && 'switchCopies' in value ? restoreSwitchCopies(value.switchCopies) : undefined;
   const nextId = checkedInteger(value.nextId, 0, Number.MAX_SAFE_INTEGER - 1, 'Next room identity');
@@ -179,6 +183,7 @@ export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSo
         }) ?? null;
       });
     }
+    if ((value.version as number) < 22 && 'switches' in item && Array.isArray(item.switches) && item.switches.some((control: unknown) => control && typeof control === 'object' && 'native' in control)) throw new Error('Reassigned native switches require room-source version 22.');
     if ((value.version as number) < 21 && 'portals' in item && Array.isArray(item.portals) && item.portals.some((portal: unknown) => portal && typeof portal === 'object' && 'barrier' in portal)) throw new Error('See-through barriers require room-source version 21.');
     if ((value.version as number) < 19 && 'wallSettings' in item && Array.isArray(item.wallSettings) && item.wallSettings.some((settings: unknown) => settings && typeof settings === 'object' && 'repeat' in settings)) throw new Error('Wall repeat and fit require room-source version 19.');
     if ((value.version as number) < 11 && 'polygonMaterials' in item && Array.isArray(item.polygonMaterials) && item.polygonMaterials.some((material: unknown) => material && typeof material === 'object' && 'mode' in material)) throw new Error('Material modes require room-source version 11.');
@@ -195,7 +200,7 @@ export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSo
     if (room.sky?.[1] && !upper || room.sky?.[0] && upper) throw new Error('Sky openings must belong to the top storey.');
     if (room.planeSources || room.upperStorey) { roomPlaneRecords(document, room, false); roomPlaneRecords(document, room, true); }
   }
-  return source(rooms, nextId, { controllerCopies, switchCopies, navigation, waterGroups, exitRoom: exitRoom as string | undefined });
+  return source(rooms, nextId, { removedNativeSwitches, controllerCopies, switchCopies, navigation, waterGroups, exitRoom: exitRoom as string | undefined });
 }
 
 /** Drafts are separate from committed source: Escape/tool changes simply drop

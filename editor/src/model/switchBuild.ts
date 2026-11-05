@@ -1,3 +1,4 @@
+import { activeNativeSwitches } from './nativeSwitches';
 import { BinaryReader, checkedInteger } from './binary';
 import { readGraphicRecord } from './graphics';
 import { encodeWallSurface } from './surfaces';
@@ -5,6 +6,7 @@ import type { CellGraphics } from './cellGraphics';
 import type { LevelDocument } from './level';
 import type { PointLightingBinding } from './pointLighting';
 import type { AnimationTables, SwitchAnimation } from './animationBuild';
+import { importedAnimationTables } from './animationBuild';
 import { roomSettings } from './roomHeights';
 import type { Position } from './geometry';
 
@@ -18,10 +20,16 @@ const on = (p: Position, a: Position, b: Position) => Math.abs((p.x - a.x) * (b.
 export function buildAuthoredSwitches(document: LevelDocument, input: CellGraphics, lighting: ReadonlyMap<number, PointLightingBinding>) {
   const points = [...input.topology.points], streams = new Map(input.streams), pointReferences = new Map(input.pointReferences);
   const addedLighting = new Map<number, PointLightingBinding>(), records = new Map<number, SwitchAnimation>();
-  const occupied = new Set([...document.switches.filter(item => item.zone >= 0).map(item => item.id), ...(document.roomSource.switchCopies ?? []).map(item => item.slot)]);
+  const occupied = new Set([...activeNativeSwitches(document).map(item => item.id), ...(document.roomSource.switchCopies ?? []).map(item => item.slot)]);
   for (const room of document.roomSource.rooms) for (const item of room.switches ?? []) {
     if (occupied.has(item.slot)) throw new Error(`Switch ${item.slot + 1} is already used. Choose an unused switch number.`);
     occupied.add(item.slot);
+    const template = item.native === undefined ? undefined : importedAnimationTables(document).tables.switches?.[item.native];
+    if (item.native !== undefined && (!template || template.zone < 0)) throw new Error(`Switch ${item.slot + 1} lost its native settings template.`);
+    const bytes = template?.bytes.slice() ?? new Uint8Array(14);
+    bytes[2] = item.automatic ? bytes[2] || 1 : 0;
+    const originalPanel = template && document.zones.flatMap(zone => [...zone.lower, ...zone.upper]).find(record => record.offset === template.graphic - 10)?.wall;
+    if (template && !originalPanel) throw new Error(`Switch ${item.slot + 1} lost its native panel template.`);
     const edges = room.boundaryMaterials?.edges, first = edges?.findIndex((edge, index) => edge === item.boundary && edges[(index + edges.length - 1) % edges.length] !== edge) ?? -1;
     if (first < 0) throw new Error(`Switch ${item.slot + 1} lost its wall. Reassign it to an existing wall or remove it before building.`);
     const indices = Array.from({ length: room.vertices.length }, (_, step) => (first + step) % room.vertices.length).filter(index => edges![index] === item.boundary);
@@ -64,7 +72,7 @@ export function buildAuthoredSwitches(document: LevelDocument, input: CellGraphi
       addedLighting.set(point + index, binding);
     });
     const panel = { bytes: encodeWallSurface({ type: 0, points: [point, point + 1], stripStart: 0, stripEnd: 31,
-      horizontalOffset: 0, verticalOffset: (-settings.floor) & 31, texture: 11, verticalMask: 31, verticalShift: 5, horizontalMask: 31,
+      horizontalOffset: ((originalPanel?.horizontalOffset ?? 0) & 0x7c) | (bytes[10] ? 2 : 0), verticalOffset: (-settings.floor) & 31, texture: 11, verticalMask: 31, verticalShift: 5, horizontalMask: 31,
       topFixed, bottomFixed, brightness: target.wall.brightness }) };
     // Insert just after the supporting wall, before the original plane/object
     // commands. Recompute earlier authored indices in the same stream.
@@ -72,7 +80,6 @@ export function buildAuthoredSwitches(document: LevelDocument, input: CellGraphi
     for (const record of records.values()) if (record.target?.room === target.cell.id && record.target.index >= index) record.target = { ...record.target, index: record.target.index + 1 };
     streams.set(target.cell.id, { ...target.stream, lower: [...target.stream.lower.slice(0, index), panel, ...target.stream.lower.slice(index)] });
     pointReferences.set(target.cell.id, [...(pointReferences.get(target.cell.id) ?? []), point, point + 1]);
-    const bytes = new Uint8Array(14); bytes[2] = item.automatic ? 1 : 0;
     records.set(item.slot, { bytes, zone: target.cell.id, point, graphic: 0, target: { room: target.cell.id, upper: false, index } });
   }
   return { graphics: { ...input, streams, pointReferences, topology: { ...input.topology, points } } satisfies CellGraphics, records, addedLighting };

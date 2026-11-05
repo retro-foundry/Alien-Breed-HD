@@ -1,3 +1,4 @@
+import { activeNativeSwitches } from './nativeSwitches';
 import { resolveAnimationRoom } from './animationRooms';
 import type { PlayableLevel } from './playableBuild';
 import { resolveEngineSurface, type NativeSurfacePick } from './engineSurfacePick';
@@ -90,7 +91,7 @@ export function attachAuthoredMovingRoom(document: LevelDocument, graphics: Cell
   if (cell.neighbours.every(id => id < 0)) throw new Error('Connect the new door/lift room to another room before creating its moving wall attachments.');
   const streams = new Map(graphics.streams), references = new Map(graphics.pointReferences), links: { line: number; base: number; owner: number; item: GraphicsRecordInput }[] = [];
   const nativeTargets = new Set([...document.mechanisms.flatMap(item => item.walls.map(wall => wall.graphic)),
-    ...document.switches.filter(item => item.zone >= 0).map(item => item.graphic - 10)]);
+    ...activeNativeSwitches(document).map(item => item.graphic - 10)]);
   const update = (id: number, items: readonly GraphicsRecordInput[]) => {
     streams.set(id, { ...streams.get(id)!, lower: items });
     references.set(id, [...new Set([...(references.get(id) ?? []), ...items.flatMap(item => read(item).points)])]);

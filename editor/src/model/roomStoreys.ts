@@ -1,3 +1,4 @@
+import { activeNativeSwitches } from './nativeSwitches';
 import { mechanismsForRoom } from './mechanismDependencies';
 import { roomPlaneRecords } from './roomPlanes';
 import { checkedInteger } from './binary';
@@ -29,9 +30,10 @@ export function storeyMaterials(document: LevelDocument, room: SourceRoom) {
 }
 
 export function assertStaticRoom(document: LevelDocument, room: SourceRoom) {
-  if (room.switches?.length || room.moving || mechanismsForRoom(document, room.recordZone).length > 0
-    || document.switches.some(item => item.zone === room.recordZone && item.zone >= 0)
-    || document.roomSource.controllerCopies?.some(item => item.room === room.id))
+  if (room.switches?.length || room.moving || room.originZone !== null && mechanismsForRoom(document, room.originZone).length > 0
+    || room.originZone !== null && activeNativeSwitches(document).some(item => item.zone === room.originZone)
+    || document.roomSource.controllerCopies?.some(item => item.room === room.id)
+    || document.roomSource.switchCopies?.some(item => item.room === room.id || item.graphicsRoom === room.id))
     throw new Error('This room belongs to a door, lift or switch. Remove its mechanism before changing storeys or ceiling openings.');
 }
 

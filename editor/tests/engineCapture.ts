@@ -49,7 +49,7 @@ export async function enginePickDetails(page: Page, points: readonly { x: number
     if (!points.length) { clearTimeout(timer); window.removeEventListener('message', receive); resolve([]); }
   }), points);
 }
-export async function engineSwitchState(page: Page, index: number): Promise<{ zone: number; active: boolean; phase: number; countdown: number }> {
+export async function engineSwitchState(page: Page, index: number): Promise<{ zone: number; active: boolean; phase: number | null; countdown: number }> {
   return page.evaluate(index => new Promise((resolve, reject) => {
     const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();
     const timer = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('Engine switch query timed out')); }, 10000);

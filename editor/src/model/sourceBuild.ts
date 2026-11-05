@@ -1,3 +1,4 @@
+import { activeNativeSwitches, validateRemovedNativeSwitches } from './nativeSwitches';
 import { buildWallSettings, syncWallSettingsAnimations } from './wallSettingsBuild';
 import { authorSeeThroughBarriers, barrierCollisionTopology } from './seeThroughBarriers';
 import type { AnimationGraphicTarget } from './animationBuild';
@@ -51,6 +52,7 @@ export interface SourceBuildOptions {
  * Every geometry-dependent table is rebuilt before validated openLevel.
  */
 export function buildSourceLevel(document: LevelDocument, options: SourceBuildOptions) {
+  validateRemovedNativeSwitches(document);
   const source = document.roomSource;
   const controllerCopies = options.controllerCopies ?? compileControllerCopies(source.controllerCopies ?? []);
   validateMovingControllerCopies(document, controllerCopies);
@@ -66,7 +68,7 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
       const owners = [...new Set(dependencies.flatMap(item => item.graphicsRooms))].sort((a, b) => a - b);
       throw new Error(`Room ${room.id} copies a moving door or lift. Allocate its independent controller and wall attachments before building; the original controller cannot drive a room copy. Its live graphics belong to ${owners.map(id => `Zone ${id}`).join(', ')}. Inspect Attachments on the original mechanism to locate its moving walls and trigger boundaries.`);
     }
-    if (document.switches.some(item => item.zone === room.recordZone && !switchCopies.some(copy => copy.room === room.id && copy.id === item.id))) throw new Error(`Room ${room.id} copies a switch. Allocate and link its independent activation record before building.`);
+    if (activeNativeSwitches(document).some(item => item.zone === room.recordZone && !switchCopies.some(copy => copy.room === room.id && copy.id === item.id))) throw new Error(`Room ${room.id} copies a switch. Allocate and link its independent activation record before building.`);
   }
   for (const copy of controllerCopies) {
     const cells = topology.cells.filter(cell => cell.sourceId === copy.room);

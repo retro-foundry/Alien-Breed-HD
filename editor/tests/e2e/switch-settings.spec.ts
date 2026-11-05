@@ -35,7 +35,7 @@ test('switch inspectors explain condition numbers and edit independent reset mod
   await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
   await preview.getByRole('button', { name: 'Build & play', exact: true }).click(); await expect(preview.getByRole('status')).toHaveText('Playtest running');
   const initial = await engineSwitchState(page, source.id);
-  await expect.poll(async () => (await engineSwitchState(page, source.id)).phase).toBe(initial.phase & 0x7c);
+  await expect.poll(async () => (await engineSwitchState(page, source.id)).phase).toBe(initial.phase! & 0x7c);
   const original = await engineSwitchState(page, source.id);
   await page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas').focus();
   await page.keyboard.down('Space');

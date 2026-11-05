@@ -1,3 +1,4 @@
+import { removedNativeSwitchPanel } from './nativeSwitches';
 import { BinaryReader } from './binary';
 import { readWallSurface } from './surfaces';
 import { mechanismsForRoom } from './mechanismDependencies';
@@ -104,7 +105,7 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
           }).flat();
         });
       }
-      const original = records.filter(record => record.wall).flatMap(record => {
+      const original = records.filter(record => record.wall && !removedNativeSwitchPanel(document, room, record.offset)).flatMap(record => {
         const original = record.wall!, floor = upper ? 'upperFloor' : 'floor', roof = upper ? 'upperCeiling' : 'ceiling';
         // The draw stream owns the storey. Match that storey's authored air
         // boundaries exactly; other decorative world heights stay authored.

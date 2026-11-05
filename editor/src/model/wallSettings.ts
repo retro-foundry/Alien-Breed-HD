@@ -1,3 +1,4 @@
+import { activeNativeSwitches } from './nativeSwitches';
 import { checkedInteger } from './binary';
 import { restoreBoundaryMaterials } from './boundaryMaterials';
 import type { LevelDocument } from './level';
@@ -44,7 +45,7 @@ export function setWallSettings(document: LevelDocument, target: SurfaceMaterial
   const template = document.zones.find(zone => zone.id === room.recordZone)!;
   const wall = 'record' in target ? (target.upper ? template.upper : template.lower).find(record => record.offset === target.record)?.wall : surfaceMaterialCurrent(document, target);
   if (!wall) throw new Error('The wall no longer has a straight source face. Restore it or choose another wall.');
-  if (wall.texture === 11 || 'record' in target && document.switches.some(item => item.zone >= 0 && item.graphic - 10 === target.record)) throw new Error('Switch panels keep their native control graphics. Select the wall behind the panel instead.');
+  if (wall.texture === 11 || 'record' in target && activeNativeSwitches(document).some(item => item.zone >= 0 && item.graphic - 10 === target.record)) throw new Error('Switch panels keep their native control graphics. Select the wall behind the panel instead.');
   const previous = wallSettingsCurrent(document, target);
   let boundaryMaterials = room.boundaryMaterials;
   if (value && 'index' in target) boundaryMaterials ??= restoreBoundaryMaterials({ nextId: room.vertices.length, edges: room.vertices.map((_, index) => index), overrides: [] }, room.vertices.length);

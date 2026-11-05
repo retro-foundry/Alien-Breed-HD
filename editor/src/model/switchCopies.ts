@@ -1,3 +1,4 @@
+import { activeNativeSwitches } from './nativeSwitches';
 import type { LevelDocument } from './level';
 import { checkedInteger } from './binary';
 import { nativeRoomTranslation } from './roomTranslation';
@@ -66,7 +67,7 @@ export function validateSwitchCopies(document: LevelDocument, copies: readonly S
     const wall = `${original.graphic}:${copy.graphicsRoom}`;
     if (walls.has(wall)) throw new Error('Copied switches need independent graphics attachments.');
     walls.add(wall);
-    if (!destination || destination.zone >= 0 || slots.has(copy.slot)) throw new Error('A copied switch needs its own unused native slot. The level supports eight switches.');
+    if (!destination || activeNativeSwitches(document).some(item => item.id === copy.slot) || slots.has(copy.slot)) throw new Error('A copied switch needs its own unused native slot. The level supports eight switches.');
     slots.add(copy.slot);
     if (copy.bytes && copy.bytes.length !== 14) throw new Error('Copied switch settings need a complete 14-byte native record.');
     const room = document.roomSource.rooms.find(room => room.id === copy.room);

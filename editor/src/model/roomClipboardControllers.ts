@@ -1,3 +1,4 @@
+import { activeNativeSwitches } from './nativeSwitches';
 import type { SourceSwitch } from './sourceSwitches';
 import { sourceMovingSettings, setSourceMovingRoom } from './sourceMovingRoom';
 import type { LevelDocument } from './level';
@@ -34,7 +35,7 @@ export function copyRoomControllers(destination: LevelDocument, source: LevelDoc
             return [wall.line, mapRoom(candidates[0], `${mechanism.kind} collision`)];
           })) });
       }
-      for (const item of source.switches.filter(item => item.zone === room.originZone)) {
+      for (const item of activeNativeSwitches(source).filter(item => item.zone === room.originZone)) {
         const owner = source.zones.find(zone => [...zone.lower, ...zone.upper].some(record => record.offset === item.graphic - 10))!;
         switches.push({ previousSlot: item.id, copy: { id: item.id, slot: -1, room: mapped,
           graphicsRoom: mapRoom(originalRoom(owner.id), 'Switch graphics'), bytes: tables.switches![item.id]!.bytes.slice() } });
@@ -55,7 +56,7 @@ export function copyRoomControllers(destination: LevelDocument, source: LevelDoc
     ...destination.roomSource.rooms.flatMap(room => room.moving ? [sourceMovingSettings(room.moving).conditions & ~(mappedRooms.has(room.id) ? internalMask : 0)] : []),
     ...(destination.roomSource.controllerCopies ?? []).map(copy => copiedMechanismSettings(copy).conditions),
     ...motions.map(copy => new DataView(copy.header!.buffer, copy.header!.byteOffset, copy.header!.byteLength).getUint16(14) & ~internalMask)];
-  const free = Array.from({ length: 8 }, (_, id) => id).filter(id => !destination.switches.some(item => item.id === id && item.zone >= 0) && !occupied.has(id) && !claimed.some(mask => mask & (1 << (id + 4))));
+  const free = Array.from({ length: 8 }, (_, id) => id).filter(id => !activeNativeSwitches(destination).some(item => item.id === id && item.zone >= 0) && !occupied.has(id) && !claimed.some(mask => mask & (1 << (id + 4))));
   if (switches.length + independent.length > free.length) throw new Error(`The copied group needs ${switches.length + independent.length} switch slots, but only ${free.length} are unclaimed. Active switches and existing requirements reserve condition numbers. The native limit is eight switches. No rooms were pasted.`);
   const slots = new Map<number, number>();
   switches.forEach((item, index) => { item.copy.slot = free[index]!; slots.set(item.previousSlot, item.copy.slot); });

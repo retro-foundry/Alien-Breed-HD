@@ -17,7 +17,7 @@ test('using a copied native switch changes its own condition bit and wall withou
   await preview.getByRole('button', { name: 'Build & play', exact: true }).click();
   await expect(preview.getByRole('status')).toHaveText('Playtest running');
   const initial = await engineSwitchState(page, source.id);
-  await expect.poll(async () => (await engineSwitchState(page, source.id)).phase).toBe(initial.phase & 0x7c);
+  await expect.poll(async () => (await engineSwitchState(page, source.id)).phase).toBe(initial.phase! & 0x7c);
   const original = await engineSwitchState(page, source.id), copied = await engineSwitchState(page, copy.slot);
   expect(original.active).toBe(false); expect(copied.active).toBe(false);
   expect((await enginePlayerInventory(page)).conditions).toBe(0);
@@ -25,7 +25,7 @@ test('using a copied native switch changes its own condition bit and wall withou
   await page.keyboard.down('Space');
   try { await expect.poll(async () => (await enginePlayerInventory(page)).conditions).toBe(1 << (copy.slot + 4)); }
   finally { await page.keyboard.up('Space'); }
-  expect(await engineSwitchState(page, copy.slot)).toMatchObject({ active: true, phase: (copied.phase & 0x7c) | 2 });
+  expect(await engineSwitchState(page, copy.slot)).toMatchObject({ active: true, phase: (copied.phase! & 0x7c) | 2 });
   expect(await engineSwitchState(page, source.id)).toEqual(original);
   await preview.getByRole('button', { name: 'Stop', exact: true }).click();
   const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
