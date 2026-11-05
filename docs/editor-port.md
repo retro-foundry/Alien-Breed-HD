@@ -3522,3 +3522,56 @@ original retained its own native record. All four live checks rendered more
 than one million nonblack pixels with no page errors or engine alerts.
 The historical website assets and unrelated archive were preserved. The broader
 completion audit remains active.
+
+
+### Controller settings transfer and authored reassignment
+
+`DEFDOOR`/`DEFLIFT` in `amiga/archive/amos/leveld.asc:4659/4728` implement the
+original </> copy-settings operation. The new workflow transfers selected
+supported native settings between original, copied and authored controllers of
+the same kind. Trigger rules are selected by default, while destinations and
+key/switch requirements are explicit choices. Destination current/direction,
+room/graphics/collision attachments and material remain its own. A captured
+settings value contains no native pointers or generated identities and remains
+independent of later source edits.
+
+The current native 18-byte header is the format authority. Final range,
+requirement and endpoint validation happens together before constructing the
+command, so a legal combined edit does not pass through an invalid intermediate
+state. Each native destination emits only the selected range/rule/mask patches;
+copied and authored destinations retain their own source metadata. The UI builds
+the complete proposal before applying one Undo, and rejects physical geometry
+conflicts without changing the document. Reset transfer draft/Escape discards
+pending choices. Native source labels resolve lift file-ID aliases to actual
+editable room identities.
+
+Authored doors/lifts can also move to another connected static room. Source
+removal and destination assignment are one source transaction; the compiler
+regenerates moving bands, plane and collision attachments in their new owners.
+The original room returns to its editable static geometry, and the destination
+is selected automatically. Existing native/copied ownership is protected.
+Cancel move draft/Escape discards the target; Undo/Redo and project archives
+preserve the assignment. No new project/source format is needed.
+
+This closes settings transfer and authored reassignment, with instructions in
+README and in-app help. Original/copied-controller retirement/reassignment,
+synchronized groups, grouped planes and the broader R0-R12 audit remain open.
+The original AMOS multi-zone group model cannot be represented by simply
+copying the current runtime's one-plane-per-controller record; synchronization
+still needs its own compiler/runtime contract and acceptance evidence.
+
+
+Final validation passed all 1,187 model tests across 102 files. Twenty-four
+transfer-focused model cases include the original/copied/authored matrix for
+both kinds, exact target identity/state preservation, selected fields,
+captured values after source edits, joint range/requirement validation, valid
+and invalid authored moves, saves/history and native owner names/settings over
+all sixteen original levels. Eighteen exact packaged Chromium/Firefox checks
+passed settings transfer and native motion, authored moves and regenerated
+attachments, destination selection, draft cancellation, Undo/Redo and saved
+projects, plus default room textures, direct surface editing and storey openings.
+The preceding sixteen-check browser run also passed existing creation/removal
+and copied-controller settings workflows. Typecheck/build and source whitespace
+checks pass. The release entry is `index-LDPwhi-m.js`, using the unchanged
+`r-3a3fddd130e89f0e` native runtime. All eighty staged website files match their
+local package SHA-256. Deployment/public verification follows the checkpoint.

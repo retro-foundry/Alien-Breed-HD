@@ -9,6 +9,7 @@ import { editRoomSource, type EditCommand } from '../model/commands';
 import { buildPlayableLevel } from '../model/playableBuild';
 import { MechanismRulesInspector } from './MechanismRulesInspector';
 import { WallStyleBrowser } from './WallStyleBrowser';
+import { CopyMechanismSettings, MoveAuthoredMechanism } from './MechanismTransfers';
 
 export function AuthoredMechanismInspector({ document, room, edit, onShowRoom }: { document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void; onShowRoom: (id: string) => void }) {
   const existing = room.moving && sourceMovingSettings(room.moving), settings = roomSettings(document, room);
@@ -57,5 +58,6 @@ export function AuthoredMechanismInspector({ document, room, edit, onShowRoom }:
         <button type="submit" className="small-button" title="Validate geometry, create movement links and commit all settings as one undoable edit.">Apply mechanism</button>
       </form>}
     {existing && <button type="button" className="danger-button" title="Return this room to a static volume with its editable floor/ceiling heights. Undo restores the controller." onClick={() => edit(() => editRoomSource(setSourceMovingRoom(document, room.id, null)))}>Remove mechanism</button>}
+    {existing && <><CopyMechanismSettings document={document} owner={{ type: 'authored', kind: existing.kind, room: room.id }} edit={edit} /><MoveAuthoredMechanism document={document} room={room} edit={edit} onShowRoom={onShowRoom} /></>}
   </section>;
 }

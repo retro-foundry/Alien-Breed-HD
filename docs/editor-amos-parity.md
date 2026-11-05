@@ -34,10 +34,10 @@ replace the AB3D I source as the format/behaviour authority.
 | 11 | Set Player Start / End Zone | Implemented: authored starts and original/new-room exits with stable source references, save/Undo/export and native completion from every section of a concave exit room; disabled and original-slot exits verified in both browsers |
 | 12 | Upper Floor Height | Implemented: independent upper floor, relationship validation and preview |
 | 13 | Upper Floor Point Brightness | Partial: as ID 10 |
-| 14 | Define Door Zone | Partial: independent eligible original/new connected convex lower doors can be created/removed, start closed, save/Undo/copy and run natively; controller reassignment and grouped/multi-plane geometry remain required |
+| 14 | Define Door Zone | Partial: independent eligible original/new connected convex lower doors can be created/removed, start closed, save/Undo/copy and run natively; authored controllers move between rooms and original/copied/authored controllers transfer selected settings; original/copied reassignment and grouped/multi-plane geometry remain required |
 | 15 | Define Roof Height | Implemented: lower-storey ceiling numerical/graphical editing and native checks |
 | 16 | Lower Roof Point Brightness | Partial: as ID 10 |
-| 17 | Define Lift Zone | Partial: independent eligible original/new connected convex lower lifts can be created/removed, save/Undo/copy and run natively; controller reassignment and full grouping remain required |
+| 17 | Define Lift Zone | Partial: independent eligible original/new connected convex lower lifts can be created/removed, save/Undo/copy and run natively; authored controllers move between rooms and original/copied/authored lift controllers transfer selected settings; original/copied reassignment and full grouping remain required |
 | 18 | Define Floor Height | Implemented: lower floor editing, stairs and native standing/crouched collision checks |
 | 19 | Lower Floor Point Brightness | Partial: as ID 10 |
 | 20 | Define Teleporter | Implemented source links/destinations and native teleport checks; retains explicit invalid-link diagnostics |
@@ -69,7 +69,13 @@ replace the AB3D I source as the format/behaviour authority.
   No-roof/sky authoring now has saved source controls and native rendering/movement verification. Native opcodes 8/9 and 10/11
   preserve the floor/ceiling role; the smooth bank uses one fixed texture.
 - `DEFDOOR` / `DEFLIFT` at 4659/4728 assign controller groups and copy settings.
-  Existing controller copies do not replace independent group creation.
+  The current editor now transfers selected range/rule/requirement settings
+  among original, copied and authored controllers of the same kind. Rules are
+  the default selection, while range and requirements are explicit choices;
+  targets retain their own current/direction and attachments. Authored
+  controllers can move between connected static rooms with regenerated native
+  attachments, save/Undo and native movement checks. This does not implement
+  synchronized groups, or original/copied-controller reassignment.
 - `DEFSWITCH` at 3905 selects one of eight slots, assigns a wall and toggles
   automatic reset. Independent lower-wall switches now have a numbered room
   diagram, creation/reassignment/reset/removal controls, source/Undo persistence,

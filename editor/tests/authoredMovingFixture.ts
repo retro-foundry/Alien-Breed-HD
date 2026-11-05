@@ -6,9 +6,10 @@ import { roomAppearanceChoices, roomAppearanceBuildOptions } from '../src/model/
 import { importedAnimationTables } from '../src/model/animationBuild';
 import { buildSourceLevel } from '../src/model/sourceBuild';
 import type { AuthoredMovingRoom } from '../src/model/authoredMovingRoom';
+import type { LevelDocument } from '../src/model/level';
 
-export function authoredMovingFixture(kind: 'door' | 'lift') {
-  const fixture = roomHeightFixture();
+export function authoredMovingFixture(kind: 'door' | 'lift', original?: LevelDocument) {
+  const fixture = roomHeightFixture(0, original);
   let document = applyCommand(fixture.document, editRoomSource(translateSourceRooms(fixture.document.roomSource, [fixture.to.id], -744, 0)));
   const settings = roomSettings(document, fixture.from);
   if (kind === 'lift') document = applyCommand(document, editRoomSource(setRoomHeights(document, document.roomSource, fixture.from.id,

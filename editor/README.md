@@ -278,7 +278,7 @@ an explicit Wall repair appearance, just as redrawn boundaries do.
 ## Current working workflows
 
 - Select a connected original or newly drawn room with no inward corners.
-  Apply room appearance for a newly drawn room, then select **Make door** or
+  New rooms already have saved starter materials. Select **Make door** or
   **Make lift** in the inspector. Set destinations,
   starting endpoint and trigger rules, then **Apply mechanism**. Smaller height
   numbers are higher. Doors initially use the room's ceiling/floor as open and
@@ -289,7 +289,21 @@ an explicit Wall repair appearance, just as redrawn boundaries do.
   room copy automatically includes adjoining rooms and creates independent
   controllers. Original room identities and their starts/actors remain linked. Existing
   movement/switch ownership is protected; its inspector links to the current
-  controller when needed. Reassignment and grouped moving volumes remain gaps.
+  controller when needed. An authored mechanism exposes **Move this door/lift
+  to another room**. Choose a connected static room and **Move mechanism**;
+  the destination is selected automatically and the original room returns to its
+  editable static heights. Destinations, starting height, requirements, trigger
+  rules and material move together as one Undo. Cancel move draft or Escape
+  discards the pending target. Original/copied-controller reassignment and
+  grouped moving volumes remain in progress.
+  **Copy settings from another door/lift** works on original, copied and authored
+  controllers of the same kind. Choose a source, select the setting groups and
+  **Copy selected settings**. Trigger rules are selected by default; destinations
+  and key/switch requirements are optional. The target retains its starting
+  height and attachments. Copied destinations must contain that starting height;
+  invalid native triggers or geometry reject the whole edit. Reset transfer
+  draft or Escape discards pending choices. Each copy is one Undo and saves in
+  the project. Copying settings does not synchronize controllers.
 
 - **Wall switches** in the room inspector adds an independent switch to a solid
   lower-storey wall. Choose an unused switch number, click a numbered edge in

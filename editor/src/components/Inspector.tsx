@@ -27,6 +27,7 @@ import { MechanismRangeInspector } from './MechanismRangeInspector';
 import { MechanismAttachments } from './MechanismAttachments';
 import { MechanismRulesInspector } from './MechanismRulesInspector';
 import { CopiedMechanismInspector } from './CopiedMechanismInspector';
+import { CopyMechanismSettings } from './MechanismTransfers';
 import { SwitchesInspector } from './SwitchesInspector';
 import { mechanismsForRoom } from '../model/mechanismDependencies';
 import { ObjectTypeInspector } from './ObjectTypeInspector';
@@ -113,6 +114,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
           <MechanismRulesInspector mechanism={mechanism} prefix={`${mechanism.kind} ${mechanism.id}`}
             change={(conditions, openRule, closeRule) => edit(() => setMechanismRules(document, mechanism.kind, mechanism.id, conditions, openRule, closeRule))} />
           <MechanismAttachments document={document} mechanism={mechanism} onShowRoom={onShowDestination} />
+          <CopyMechanismSettings document={document} owner={{ type: 'native', kind: mechanism.kind, id: mechanism.id }} edit={edit} />
         </section>)}
         <section className="property-section"><h3>Visibility</h3><InfoRow label="Visible zones" value={zone.visibleZones.length} /><InfoRow label="Lower graphics" value={zone.lower.length} /><InfoRow label="Upper graphics" value={zone.upper.length} /></section>
       </>}

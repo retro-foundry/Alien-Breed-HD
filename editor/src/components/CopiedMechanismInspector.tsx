@@ -4,6 +4,7 @@ import { editRoomSource, type EditCommand } from '../model/commands';
 import { copiedMechanismSettings, setCopiedMechanismRange, setCopiedMechanismRules } from '../model/movingControllerCopies';
 import { MovementRangeForm } from './MechanismRangeInspector';
 import { MechanismRulesInspector } from './MechanismRulesInspector';
+import { CopyMechanismSettings } from './MechanismTransfers';
 
 export function CopiedMechanismInspector({ document, room, edit }: {
   document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void;
@@ -18,6 +19,7 @@ export function CopiedMechanismInspector({ document, room, edit }: {
       <MechanismRulesInspector mechanism={mechanism} prefix={prefix}
         change={(conditions, openRule, closeRule) => edit(() => editRoomSource(setCopiedMechanismRules(document, room.id, copy.kind, conditions, openRule, closeRule)))} />
       <p className="field-note">Key and switch requirements refer to this level's shared conditions. Build &amp; play tests the current settings from the initial position.</p>
+      <CopyMechanismSettings document={document} owner={{ type: 'copy', kind: copy.kind, room: room.id }} edit={edit} />
     </section>;
   })}</>;
 }

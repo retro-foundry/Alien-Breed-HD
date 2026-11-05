@@ -48,6 +48,16 @@ export function setSourceMovingRoom(document: LevelDocument, id: string, value: 
   return { label: moving ? `Make ${moving.kind}` : 'Remove door/lift', before, after: Object.freeze({ ...before, rooms: Object.freeze(before.rooms.map(item => item.id === id ? updated : item)) }) };
 }
 
+export function moveSourceMovingRoom(document: LevelDocument, from: string, to: string): RoomChange {
+  const before = document.roomSource, source = before.rooms.find(room => room.id === from), target = before.rooms.find(room => room.id === to);
+  if (!source?.moving) throw new Error('Select an authored door or lift to move.');
+  if (!target || to === from) throw new Error('Choose another existing room for this mechanism.');
+  if (target.moving) throw new Error('The destination already has an authored controller. Choose an empty static room.');
+  const removed = setSourceMovingRoom(document, from, null).after;
+  const after = setSourceMovingRoom({ ...document, roomSource: removed }, to, source.moving).after;
+  return { label: `Move authored ${source.moving.kind}`, before, after };
+}
+
 
 export interface MovingRoomDraft { kind: 'door' | 'lift'; top: number; bottom: number; current: number; wall: number; conditions: number; openRule: number; closeRule: number }
 /** level.c's 18-byte native source header: quarter-height words, stationary
