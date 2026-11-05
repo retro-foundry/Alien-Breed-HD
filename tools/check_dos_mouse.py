@@ -89,6 +89,8 @@ def main():
     env = dict(os.environ, PATH=str(compiler.parent) + os.pathsep + os.environ['PATH'])
     sdl = Path(deps['sdl'])
     events = (sdl / 'SDL/src/video/dos/SDL_dosevents.c').read_text()
+    if 'static void DOSVESA_SendButton(' not in events:
+        parser.error('DOS mouse-button patch is missing; run tools/setup_dos.ps1')
     start = events.index('static void DOSVESA_SendButton(')
     end = events.index('\nvoid DOSVESA_PumpEvents(', start)
     mouse_header = (sdl / 'SDL/src/events/SDL_mouse_c.h').read_text()

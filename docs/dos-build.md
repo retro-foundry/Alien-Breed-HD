@@ -1762,3 +1762,42 @@ mouse probe was stopped when foreground ownership could not be retained;
 that physical probe is not counted as passing. The optional physical test
 also checks a released 30 ms host click across a 1,500 ms polling gap.
 Repeated dependency setup recognizes the cached fourth patch correctly.
+
+The final packages were built from committed DOS source `f4dce86` in
+`build/dos-enemies-source`. A concurrent edit to the main worktree's game
+loop invalidated an earlier training run; the detached checkout keeps the
+compiler inputs fixed and leaves that separate engine/editor work intact.
+Both compiler training and the 22 ordinary/optimized capture checks pass.
+The indexed build matches all 22 original captures as well.
+
+Matched optimized-object diagnostics retain all 192 per-frame simulation
+hashes and 15 enemy-view images. With detailed profiling disabled, mean
+loop times over frames 8-63 change as follows at normal/486_slow, 40,000
+cycles, 4 MB, SB16 and mouse, with host sound muted:
+
+| Level-1 view | Previous loop ms | Updated loop ms |
+| --- | ---: | ---: |
+| Starting room | 39.03 | 38.80 |
+| Close barrel / approaching enemies | 44.18 | 42.81 |
+| Pool north shore | 74.58 | 73.75 |
+
+These are modest whole-frame improvements: larger sprites and scene work
+still cost time. They are separate from the real-time 128-frame starting-view
+benchmark, which now measures 26.00 FPS (38.46 ms frame, 32.46 ms render,
+3.13 ms present, 38.98 ms p95). Button-counter polling raises input time
+from 0.31 to 0.36 ms while preserving per-frame polling and short presses.
+
+Native 4 MB full exercises on levels 1/4/15, the real-time level-4 exercise,
+and the indexed level-4 exercise all pass without profile audio underruns.
+Maps and all six saved level/map payloads remain exact. Both 238-entry
+packages preserve all 231 prepared assets, generated defaults and ZIP CRCs;
+diagnostic markers are absent. Local mouse-look preferences are retained.
+Windows Release and the feedback suite pass, including 40 current-aim shot
+cases. The queued-input/driver-boundary tests pass; the live host-click
+probe remains unverified because it lost foreground ownership.
+
+Native text/data/BSS are 1,180,696/22,016/315,392 bytes; total static RAM is
+unchanged. Final EXE SHA-256 is
+`070f7c4a0db8673f27a89280a061d42ee957c9e60a6ef0102e36133e338a1722`.
+Local checks and comparisons are in `build/dos/enemies-performance.json`
+and `build/dos/enemies-validation.json`. Physical 486 hardware is unmeasured.
