@@ -3619,3 +3619,21 @@ Corrected package: `index-Cp8vFwv4.js` with runtime
 `r-969287ddd046f5e9` (full revision
 `969287ddd046f5e9a33770befe19211c1a632b20fdc3220f97c293f476e1c264`).
 The full R0-R12 completion audit remains open.
+
+
+Corrected delivery: source commit
+`40c0dde4495c5fc3863a6b166565baef76d0d340` and website commit
+`b36f66e00efbdd1f826d93af4d4f4d321d4ed483` were pushed. GitHub Pages run
+`42101871773` completed successfully. All eighty public files match the exact
+local package SHA-256, including its versioned native engine/bridge.
+
+Live Chromium and Firefox each opened four saved projects: transferred door
+settings, transferred lift settings, moved authored door and moved authored
+lift. All eight checks reported paused plane equal to controller position,
+unchanged zero velocity and initial door timer (lifts have no timer), correctly
+selected inspection air, real rendered surface samples and synchronized moving
+walls. The closed copied door was inspected from adjoining Zone 140 while its
+own Zone 139 remained selected in the inspector. After Build & play, every
+controller moved with matching plane/wall state. There were no page errors or
+engine alerts. Historical website assets and the unrelated archive were
+preserved. The complete authoring audit remains active.
