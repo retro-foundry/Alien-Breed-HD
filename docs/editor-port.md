@@ -3388,3 +3388,20 @@ until the user explicitly changes that connection.
 
 The source checkpoint includes the preceding deployed authoring work and this
 import fix. It is an incremental checkpoint, with the R0–R12 audit still open.
+
+Checkpoint delivery: source commit
+`27e3ce959ab96e49bb95d370d3a8c2c154562354` was pushed to the game repository's
+main branch. The final closure correction passed all 1,135 model tests and
+sixteen packaged Chromium/Firefox checks covering imported/authored barriers,
+ordinary wall closure, default textures, direct surface editing and storey
+openings. Earlier packaged checks also verified all sixteen original maps.
+
+Website commit `5c3c3061273d090e278f73aca7cca6d975fd06c0` publishes
+`index-BHtgFhjG.js` with the unchanged matching native runtime `r-e08a341fc410c623`.
+GitHub Pages run `42086233780` completed successfully. All eighty public package
+files matched their local SHA-256. Both live browsers loaded the tested saved
+native-barrier project, recognised its derived barrier after the height edit,
+showed direct texture controls and rendered its native preview without page
+errors or engine alerts. Historical hashed assets remain available; the
+unrelated website archive was preserved. This advances authoring and delivery,
+but the current completion audit remains open.
