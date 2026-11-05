@@ -169,6 +169,10 @@ static int input_axis_to_menu_dir(int16_t axis)
  * Mouse state
  * ----------------------------------------------------------------------- */
 static MouseState g_mouse = {0};
+#ifdef AB3D_DOS
+/* Keep a short press until the next control update consumes mouse input. */
+static uint8_t g_mouse_presses;
+#endif
 static MenuMouseState g_menu_mouse = {0};
 static bool g_menu_mouse_active = false;
 static JoyState g_joy1 = {0};
@@ -255,6 +259,10 @@ static void input_merge_key_sources(uint8_t *key_map)
     for (int i = 0; i < 128; i++) {
         key_map[i] = (uint8_t)(g_keyboard_keys[i] || g_mouse_keys[i] || g_gamepad_keys[i]);
     }
+#ifdef AB3D_DOS
+    if (g_mouse_presses & 1) key_map[AMIGA_KEY_RALT] = 1;
+    if (g_mouse_presses & 2) key_map[AMIGA_KEY_SPACE] = 1;
+#endif
 }
 
 static void input_clear_key_sources(void)
@@ -262,6 +270,9 @@ static void input_clear_key_sources(void)
     memset(g_keyboard_keys, 0, sizeof(g_keyboard_keys));
     memset(g_keyboard_pressed, 0, sizeof(g_keyboard_pressed));
     memset(g_mouse_keys, 0, sizeof(g_mouse_keys));
+#ifdef AB3D_DOS
+    g_mouse_presses = 0;
+#endif
     memset(g_gamepad_keys, 0, sizeof(g_gamepad_keys));
 }
 
@@ -755,10 +766,16 @@ static void input_update_impl(uint8_t *key_map, uint8_t *last_pressed)
             /* Mouse buttons only affect gameplay while captured */
             if (ev.button.button == SDL_BUTTON_LEFT) {
                 g_mouse.left_button = true;
+#ifdef AB3D_DOS
+                g_mouse_presses |= 1;
+#endif
                 input_set_key_state(g_mouse_keys, AMIGA_KEY_RALT, true);
             }
             if (ev.button.button == SDL_BUTTON_RIGHT) {
                 g_mouse.right_button = true;
+#ifdef AB3D_DOS
+                g_mouse_presses |= 2;
+#endif
                 input_set_key_state(g_mouse_keys, AMIGA_KEY_SPACE, true);
             }
             break;
@@ -854,6 +871,10 @@ void input_read_mouse(MouseState *out)
 {
     if (out) {
         *out = g_mouse;
+#ifdef AB3D_DOS
+        out->left_button |= (g_mouse_presses & 1) != 0;
+        out->right_button |= (g_mouse_presses & 2) != 0;
+#endif
         out->dx = input_add_i16_clamped(out->dx, g_gamepad_mouse_dx);
         out->dy = input_add_i16_clamped(out->dy, g_gamepad_mouse_dy);
     }
@@ -874,6 +895,9 @@ void input_consume_menu_mouse_events(void)
 
 void input_consume_mouse_deltas(void)
 {
+#ifdef AB3D_DOS
+    g_mouse_presses = 0;
+#endif
     g_mouse.dx = 0;
     g_mouse.dy = 0;
     g_mouse.wheel_y = 0;

@@ -1736,3 +1736,29 @@ ordinary-build profiles reduce sprite work from 1.517/15.364/4.576 ms to
 Those profiles include diagnostic overhead; whole-frame timings and the
 final compiler-feedback package are checked separately. Shooting rules,
 including PlayerShoot.s's distance-based instant-hit accuracy roll, are unchanged.
+
+### Preserve short DOS mouse presses across long frames
+
+The SDL DOS backend previously sampled only the current INT 33h/03h button
+state. A complete press/release during an enemy draw could disappear. The
+new `cmake/dos-mouse-buttons.patch` queries the driver's latched press counts
+with INT 33h/05h, emits a press edge and restores the actual held state.
+This follows the [FreeDOS mouse API](https://github.com/FDOS/mouse/blob/master/wheelapi.txt).
+The DOS SDL adapter drains old counts at capture transitions. Per-frame
+event polling cadence, raw movement and mouse sensitivity are unchanged.
+
+DOS game input also retains received left/right press edges until the next
+control update consumes mouse input. Otherwise DOWN and UP events dequeued
+together would still erase the press. Menu/capture changes clear pending
+presses; a held physical button remains held after consuming its edge.
+This does not buffer a shot past the original weapon cooldown or change
+PlayerShoot.s's distance-based random hit roll, damage or target rules.
+
+The 4 MB mouse regression passes capture/release/recapture, rapid queued taps,
+holds and missing-driver checks. It compiles the installed SDL button helper
+with a scripted INT 33h boundary and the real SDL event queue/game input,
+checking latched counts, released taps and menu transitions. A live Windows
+mouse probe was stopped when foreground ownership could not be retained;
+that physical probe is not counted as passing. The optional physical test
+also checks a released 30 ms host click across a 1,500 ms polling gap.
+Repeated dependency setup recognizes the cached fourth patch correctly.

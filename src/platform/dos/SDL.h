@@ -9,6 +9,7 @@
 #endif
 #include <SDL3/SDL_main.h>
 #include <sys/nearptr.h>
+#include <dpmi.h>
 #include "ui_dos.h"
 #define SDL_Renderer DosUiRenderer
 #define SDL_Texture DosUiImage
@@ -263,7 +264,17 @@ static inline int Ab3dDos_SetRelativeMouseMode(bool enabled) {
     SDL_SetError("No DOS SDL window for relative mouse mode");
     return -1;
   }
-  return SDL_SetWindowRelativeMouseMode(window, enabled) ? 0 : -1;
+  bool changed = SDL_GetWindowRelativeMouseMode(window) != enabled;
+  if (!SDL_SetWindowRelativeMouseMode(window, enabled)) return -1;
+  if (changed) {
+    /* Drop menu/capture presses at the same transition that drops motion. */
+    __dpmi_regs regs = {0};
+    for (unsigned button=0; button<3; button++) {
+      regs.x.ax=5; regs.x.bx=button;
+      __dpmi_int(0x33,&regs);
+    }
+  }
+  return 0;
 }
 
 static inline bool Ab3dDos_GetRelativeMouseMode(void) {

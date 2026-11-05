@@ -55,6 +55,23 @@ def exercise_host_mouse(process, case):
             raise RuntimeError('Mouse test lost focus; refusing to send input to another application')
         user32.mouse_event(1, dx & 0xffffffff, dy & 0xffffffff, 0, 0)
         time.sleep(0.1)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        log = (case / 'MOUSE.LOG').read_text(errors='replace')
+        if 'READY: native DOS button gap' in log:
+            break
+        if process.poll() is not None:
+            raise RuntimeError('DOS mouse test exited before button test')
+        time.sleep(0.02)
+    else:
+        raise RuntimeError('DOS mouse test did not reach its button gap')
+    owner = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(owner))
+    if owner.value != process.pid:
+        raise RuntimeError('Mouse test lost focus; refusing to click another application')
+    user32.mouse_event(2, 0, 0, 0, 0)
+    time.sleep(0.03)
+    user32.mouse_event(4, 0, 0, 0, 0)
 
 
 def main():
@@ -71,12 +88,19 @@ def main():
     compiler = Path(deps['djgpp']) / 'bin/i586-pc-msdosdjgpp-gcc.exe'
     env = dict(os.environ, PATH=str(compiler.parent) + os.pathsep + os.environ['PATH'])
     sdl = Path(deps['sdl'])
+    events = (sdl / 'SDL/src/video/dos/SDL_dosevents.c').read_text()
+    start = events.index('static void DOSVESA_SendButton(')
+    end = events.index('\nvoid DOSVESA_PumpEvents(', start)
+    mouse_header = (sdl / 'SDL/src/events/SDL_mouse_c.h').read_text()
+    default_id = next(line for line in mouse_header.splitlines()
+                      if line.startswith('#define SDL_DEFAULT_MOUSE_ID'))
+    (build / 'dos_mouse_buttons.h').write_text(default_id + '\n' + events[start:end])
     executable = build / 'MOUSE.EXE'
     subprocess.run([
         str(compiler), '-march=i486', '-mtune=i486', '-O2', '-flto', '-std=gnu11',
         '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',
         '-DAB3D_DOS', '-DAB3D_NATIVE_RGB565', '-DAB3D_NO_THREADS', '-DSDL_MAIN_HANDLED',
-        '-Isrc/platform/dos', '-Isrc', '-I' + str(sdl / 'SDL/include'),
+        '-Isrc/platform/dos', '-Isrc', '-I' + str(sdl / 'SDL/include'), '-I' + str(build),
         'tests/dos_mouse.c', 'src/logging.c', str(sdl / 'SDL-build/libSDL3.a'),
         '-lm', '-o', str(executable),
     ], cwd=root, env=env, check=True)

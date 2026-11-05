@@ -1,0 +1,39 @@
+--- a/src/video/dos/SDL_dosevents.c
++++ b/src/video/dos/SDL_dosevents.c
+@@ -252,6 +252,21 @@
+ static int keyevents_head = 0;
+ static int keyevents_tail = 0;
+ 
++// INT 33h/05h retains a press/release pair that occurred between pumps.
++// Send at least one edge, then restore the driver's actual held state.
++static void DOSVESA_SendButton(SDL_Mouse *mouse, unsigned index, Uint8 button)
++{
++    __dpmi_regs press = {0};
++    press.x.ax = 0x5;
++    press.x.bx = index;
++    __dpmi_int(0x33, &press);
++    if (press.x.bx != 0) {
++        SDL_SendMouseButton(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, button, false);
++        SDL_SendMouseButton(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, button, true);
++    }
++    SDL_SendMouseButton(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, button, (press.x.ax & (1u << index)) != 0);
++}
++
+ void DOSVESA_PumpEvents(SDL_VideoDevice *device)
+ {
+     /* Gloom DOS pumps events once per rendered frame; yielding here turns
+@@ -328,11 +343,9 @@
+ 
+         regs.x.ax = 0x3; // read mouse buttons and position.
+         __dpmi_int(0x33, &regs);
+-        const Uint16 buttons = (int)(Sint16)regs.x.bx;
+-
+-        SDL_SendMouseButton(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, SDL_BUTTON_LEFT, (buttons & (1 << 0)) != 0);
+-        SDL_SendMouseButton(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, SDL_BUTTON_RIGHT, (buttons & (1 << 1)) != 0);
+-        SDL_SendMouseButton(0, mouse->focus, SDL_DEFAULT_MOUSE_ID, SDL_BUTTON_MIDDLE, (buttons & (1 << 2)) != 0);
++        DOSVESA_SendButton(mouse, 0, SDL_BUTTON_LEFT);
++        DOSVESA_SendButton(mouse, 1, SDL_BUTTON_RIGHT);
++        DOSVESA_SendButton(mouse, 2, SDL_BUTTON_MIDDLE);
+ 
+         if (!mouse->relative_mode) {
+             const int x = (int)(Sint16)regs.x.cx; // part of function 0x3's return value.
