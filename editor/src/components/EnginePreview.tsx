@@ -36,6 +36,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
   const [spawnZone, setSpawnZone] = useState<number>();
   const revisionRef = useRef(0), pendingPlay = useRef(false);
   const hasLoadedFrame = useRef(false);
+  const loadedNotice = useRef(''), inspectionUnavailable = useRef(false);
   const pickedViewTarget = useRef<{ source: LevelDocument; zone?: number; room?: string; object?: number; layer: Props['layer'] } | undefined>(undefined);
   const reloadTimer = useRef<number | undefined>(undefined);
   const failedDocument = useRef<LevelDocument | undefined>(undefined);
@@ -67,20 +68,17 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
         return { x: Math.round(points.reduce((sum, point) => sum + point.x, 0) / points.length),
           z: Math.round(points.reduce((sum, point) => sum + point.z, 0) / points.length) };
       };
-      let view = cell, angle = 0;
-      const dimensions = document.zones.find(zone => zone.id === cell.id)!;
-      // A closed door has no interior air for an inspection camera. Keep its
-      // inspector selected while looking toward it from an adjoining room.
-      if (layer === 'lower' && dimensions.floor === dimensions.ceiling && source.roomSource.rooms.find(item => item.id === room)?.moving?.kind === 'door') {
-        const adjacent = cell.neighbours.map(id => built.topology!.cells.find(item => item.id === id)).find(item => item && document.zones[item.id]!.floor > document.zones[item.id]!.ceiling);
-        if (adjacent) {
-          view = adjacent;
-          const target = center(cell), origin = center(view);
-          angle = Math.round(Math.atan2(target.x - origin.x, target.z - origin.z) * 8192 / (Math.PI * 2)) & 8191;
-        }
-      }
-      send('camera', { camera: { zone: view.id, ...center(view),
-        upper: layer === 'upper' && document.zones.find(zone => zone.id === view.id)!.upper.length > 0 ? 1 : 0, angle } });
+      const camera = { zone: cell.id, ...center(cell), upper: layer === 'upper' && document.zones[cell.id]!.upper.length > 0 ? 1 : 0, angle: 0 };
+      const views = cell.neighbours.flatMap(id => {
+        const adjacent = built.topology!.cells.find(item => item.id === id);
+        if (!adjacent) return [];
+        const target = center(cell), origin = center(adjacent);
+        return [{ zone: adjacent.id, ...origin, upper: layer === 'upper' && document.zones[adjacent.id]!.upper.length > 0 ? 1 : 0,
+          angle: Math.round(Math.atan2(target.x - origin.x, target.z - origin.z) * 8192 / (Math.PI * 2)) & 8191 }];
+      });
+      // Native inspection chooses a view using live air heights, including
+      // imported/copied doors and controllers paused after a playtest.
+      send('camera', { camera, views });
       return;
     }
     const zoneId = selection?.kind === 'zone' ? selection.id : object?.zone ?? start?.zone;
@@ -90,7 +88,16 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
     if (lines.length === 0) return;
     const x = Math.round(object?.x ?? start?.x ?? lines.reduce((sum, line) => sum + line.x, 0) / lines.length);
     const z = Math.round(object?.z ?? start?.z ?? lines.reduce((sum, line) => sum + line.z, 0) / lines.length);
-    send('camera', { camera: { zone: zone.id, x, z, upper: layer === 'upper' && zone.upper.length > 0 ? 1 : 0, angle: 0 } });
+    const views = !object && !start ? [...new Set(lines.map(line => line.connect).filter(id => id >= 0 && id !== zone.id))].flatMap(id => {
+      const adjacent = document.zones.find(zone => zone.id === id);
+      if (!adjacent) return [];
+      const boundary = adjacent.boundaryIds.map(id => document.lines[id]!).filter(Boolean);
+      if (!boundary.length) return [];
+      const origin = { x: Math.round(boundary.reduce((sum, line) => sum + line.x, 0) / boundary.length), z: Math.round(boundary.reduce((sum, line) => sum + line.z, 0) / boundary.length) };
+      return [{ zone: id, ...origin, upper: layer === 'upper' && adjacent.upper.length > 0 ? 1 : 0,
+        angle: Math.round(Math.atan2(x - origin.x, z - origin.z) * 8192 / (Math.PI * 2)) & 8191 }];
+    }) : undefined;
+    send('camera', { camera: { zone: zone.id, x, z, upper: layer === 'upper' && zone.upper.length > 0 ? 1 : 0, angle: 0 }, ...(views ? { views } : {}) });
   }
 
   async function load(play = false) {
@@ -139,7 +146,8 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
         setActualSlot(message.slot ?? -1);
         setActualExit(message.exitZone);
         setSpawnZone(message.zone);
-        setLoaded(true); setNotice(`${message.zones} zones loaded · Game engine`);
+        loadedNotice.current = `${message.zones} zones loaded · Game engine`; inspectionUnavailable.current = false;
+        setLoaded(true); setNotice(loadedNotice.current);
         if (pendingPlay.current) { pendingPlay.current = false; setPlaying(true); setStarting(false); send('play', { playing: true }); }
         else positionCamera();
       }
@@ -149,7 +157,11 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
         setError(message.message ?? 'The engine preview stopped.'); setStarting(false); setPlaying(false); setLoaded(false);
       }
       if (message.type === 'stopped') { setPlaying(false); setStarting(false); setNotice('Playtest ended. Build and play again to restart.'); }
-      if (message.type === 'view-changed') setPickedSurface(undefined);
+      if (message.type === 'camera-unavailable') { inspectionUnavailable.current = true; setNotice('The selected room has no open interior or adjoining inspection view. Select an open room to visit it.'); }
+      if (message.type === 'view-changed') {
+        setPickedSurface(undefined);
+        if (inspectionUnavailable.current) { inspectionUnavailable.current = false; setNotice(loadedNotice.current); }
+      }
       if (message.type === 'pick') {
         const built = artifact.current;
         setPickedSurface(built?.source === current.current.document && message.zone !== undefined

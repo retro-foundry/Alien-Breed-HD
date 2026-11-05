@@ -6,7 +6,7 @@ import { setCopiedMechanismRules } from '../../src/model/movingControllerCopies'
 import { captureMechanismSettings } from '../../src/model/mechanismSettingsTransfer';
 import { encodeProject, decodeProject } from '../../src/model/project';
 import { buildPlayableLevel } from '../../src/model/playableBuild';
-import { engineMechanismState, engineMechanismTrace } from '../engineCapture';
+import { engineMechanismState, engineMechanismTrace, engineMechanismControlState, enginePlayerState } from '../engineCapture';
 
 for (const kind of ['door', 'lift'] as const) {
   test(`copies selected ${kind} settings across all controller types and runs the transferred native rules`, async ({ page }, info) => {
@@ -56,8 +56,21 @@ for (const kind of ['door', 'lift'] as const) {
       expect(captureMechanismSettings(saved, owner)).toMatchObject({ openRule: source.openRule, closeRule: source.closeRule, conditions: 0 });
     const offset = document.mechanisms[0]!.offset;
     expect(saved.files.graphics.slice(offset + 4, offset + 14)).toEqual(document.files.graphics.slice(offset + 4, offset + 14));
+    await page.getByRole('button', { name: new RegExp(`^Room ${copy.room.replace(/^room-/, '')}(?:\\s|$)`) }).click();
     await page.getByRole('button', { name: 'Engine view', exact: true }).click(); const preview = page.getByRole('region', { name: '3D game engine preview' });
     await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
+    for (const index of [0, 1, 2]) {
+      const state = await engineMechanismState(page, kind, index);
+      expect(state).toMatchObject({ plane: state.current, unsynchronizedWalls: 0 });
+      expect(await engineMechanismControlState(page, kind, index)).toEqual({ velocity: 0, timer: kind === 'door' ? 0 : null });
+    }
+    if (kind === 'door') {
+      const built = buildPlayableLevel(saved, -1), controlled = (await engineMechanismState(page, kind, 1)).zone;
+      const neighbours = new Set(built.topology!.cells.find(cell => cell.id === controlled)!.neighbours.filter(id => id >= 0));
+      await expect.poll(async () => neighbours.has((await enginePlayerState(page)).zone)).toBe(true);
+      await expect(page.locator('.inspector h2')).toHaveText(`Room ${copy.room.replace(/^room-/, '')}`);
+    }
+    await expect.poll(async () => Number(await preview.getAttribute('data-rendered-pixels'))).toBeGreaterThan(1000);
     await preview.getByRole('button', { name: 'Build & play', exact: true }).click(); await expect(preview.getByRole('status')).toHaveText('Playtest running');
     const trace = await engineMechanismTrace(page, kind, 1, false);
     expect(trace.some(state => state.current !== fixture.copied.mechanism.current)).toBe(true);
@@ -90,7 +103,7 @@ for (const kind of ['door', 'lift'] as const) {
     expect(built.topology!.cells.find(cell => cell.id === mechanism.zone)!.sourceId).toBe(fixture.neighbour.id);
     await page.getByRole('button', { name: 'Engine view', exact: true }).click(); const preview = page.getByRole('region', { name: '3D game engine preview' });
     await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
-    expect(await engineMechanismState(page, kind, mechanism.id)).toMatchObject({ zone: mechanism.zone, current: mechanism.current });
+    expect(await engineMechanismState(page, kind, mechanism.id)).toMatchObject({ zone: mechanism.zone, current: mechanism.current, plane: mechanism.current, unsynchronizedWalls: 0 });
     await preview.getByRole('button', { name: 'Build & play', exact: true }).click(); await expect(preview.getByRole('status')).toHaveText('Playtest running');
     const trace = await engineMechanismTrace(page, kind, mechanism.id, true);
     expect(new Set(trace.map(state => state.current)).size).toBeGreaterThan(1);

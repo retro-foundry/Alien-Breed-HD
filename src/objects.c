@@ -5024,6 +5024,47 @@ static uint32_t door_wall_texture_words(uint32_t legacy_base, int32_t door_pos)
     return (tile << 16) | (uint16_t)(base_yoff + scroll);
 }
 
+/* Pure Anims.s DoorRoutine/LiftRoutine geometry projection. Keeping this
+ * separate lets paused editor inspection show a loaded controller's position
+ * without advancing timers, velocity, trigger flags, players or audio. */
+static void moving_wall_apply_position(LevelState *level, const uint8_t *entry,
+                                       int32_t position, bool lift)
+{
+    int32_t graphic = (int32_t)be32(entry + 2);
+    if (graphic < 0) return;
+    uint8_t *wall = level->graphics + (uint32_t)graphic;
+    wbe32(wall + (lift ? 20 : 24), position);
+    if (!lift) {
+        uint32_t texture = door_wall_texture_words((uint32_t)be32(entry + 6), position);
+        wbe32(wall + 10, (int32_t)texture);
+    }
+    /* Lift texture references stay decoded; the renderer synthesizes their
+     * packed phase from the native wall list instead of replacing these words. */
+}
+
+void objects_apply_moving_positions(GameState *state)
+{
+    LevelState *level = &state->level;
+    for (int lift = 0; lift <= 1; lift++) {
+        const uint8_t *table = lift ? level->lift_data : level->door_data;
+        const uint8_t *walls = lift ? level->lift_wall_list : level->door_wall_list;
+        const uint32_t *offsets = lift ? level->lift_wall_list_offsets : level->door_wall_list_offsets;
+        int count = lift ? level->num_lifts : level->num_doors;
+        if (!table) continue;
+        for (int index = 0; index < count; index++) {
+            const uint8_t *record = table + index * (lift ? 20 : 22);
+            int16_t zone = be16(record);
+            if (zone < 0) break;
+            int32_t position = be32(record + 4);
+            if (lift) level_set_zone_floor(level, zone, position);
+            else level_set_zone_roof(level, zone, position);
+            if (!walls || !offsets || !level->graphics) continue;
+            for (uint32_t wall = offsets[index]; wall < offsets[index + 1]; wall++)
+                moving_wall_apply_position(level, walls + wall * DOOR_WALL_ENT_SIZE, position, lift != 0);
+        }
+    }
+}
+
 /* -----------------------------------------------------------------------
  * Door routine
  *
@@ -5157,8 +5198,6 @@ void door_routine(GameState *state)
             for (uint32_t j = start; j < end; j++) {
                 const uint8_t *ent = state->level.door_wall_list + j * DOOR_WALL_ENT_SIZE;
                 int16_t fline = be16(ent);
-                int32_t gfx_off = (int32_t)be32(ent + 2);
-                int32_t gfx_base = (int32_t)be32(ent + 6);
                 if (state->level.floor_lines && fline >= 0 && (int32_t)fline < state->level.num_floor_lines) {
                     uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fline * 16u;
                     uint16_t old_flags = (uint16_t)be16(fl + 14);
@@ -5166,12 +5205,7 @@ void door_routine(GameState *state)
                         triggered = true;
                     wbe16(fl + 14, clear_touch_flags ? (int16_t)0 : (int16_t)(uint16_t)0x8000);
                 }
-                if (gfx_off >= 0) {
-                    uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
-                    wbe32(wall_rec + 24, door_pos);   /* Amiga: move.l d3,24(a1) = door height for this wall */
-                    uint32_t texture = door_wall_texture_words((uint32_t)gfx_base, door_pos);
-                    wbe32(wall_rec + 10, (int32_t)texture);
-                }
+                moving_wall_apply_position(&state->level, ent, door_pos, false);
             }
             if (!triggered && (plr1_door_press_near || plr2_door_press_near))
                 triggered = true;
@@ -5409,8 +5443,6 @@ void lift_routine(GameState *state)
             for (uint32_t j = start; j < end; j++) {
                 const uint8_t *ent = state->level.lift_wall_list + j * DOOR_WALL_ENT_SIZE;
                 int16_t fline = be16(ent);
-                int32_t gfx_off = (int32_t)be32(ent + 2);
-                int32_t gfx_base = (int32_t)be32(ent + 6);
                 if (state->level.floor_lines && fline >= 0 && (int32_t)fline < state->level.num_floor_lines) {
                     uint8_t *fl = state->level.floor_lines + (uint32_t)(int16_t)fline * 16u;
                     uint16_t old_flags = (uint16_t)be16(fl + 14);
@@ -5418,14 +5450,7 @@ void lift_routine(GameState *state)
                         triggered = true;
                     wbe16(fl + 14, clear_touch_flags ? (int16_t)0 : (int16_t)(uint16_t)0x8000);
                 }
-                if (gfx_off >= 0) {
-                    uint8_t *wall_rec = state->level.graphics + (uint32_t)gfx_off;
-                    /* Amiga LiftRoutine also does move.l a2,10(a1) for the packed texture reference.
-                     * The PC renderer needs the stable decoded texture id from the level stream, so it
-                     * synthesizes that packed lift texture reference at draw time from the wall list. */
-                    (void)gfx_base;
-                    wbe32(wall_rec + 20, lift_pos);
-                }
+                moving_wall_apply_position(&state->level, ent, lift_pos, true);
             }
             if (triggered)
                 lift_vel = trigger_vel;

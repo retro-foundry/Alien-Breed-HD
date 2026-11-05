@@ -3575,3 +3575,47 @@ and copied-controller settings workflows. Typecheck/build and source whitespace
 checks pass. The release entry is `index-LDPwhi-m.js`, using the unchanged
 `r-3a3fddd130e89f0e` native runtime. All eighty staged website files match their
 local package SHA-256. Deployment/public verification follows the checkpoint.
+
+
+### Paused native controller projection and closed-room inspection
+
+The transfer checkpoint (`3461526c09927b71e867ce64fe73625f66a1a212`, website
+`4b9ceb2398e5d34004b32fbf8dbda96a74ea2bc4`, Pages run `42096848944`)
+passed public file hashes. Expanded live verification then exposed an existing
+paused-preview mismatch: a copied door reported current height 0 while its
+room roof remained at -96 until the first play tick. Source archives and native
+playback retained the correct settings, but paused inspection was incomplete.
+
+`objects_apply_moving_positions` now projects the normalized native current
+positions into live room planes and wall records before the first editor draw.
+It reuses the same extracted wall transform as DoorRoutine/LiftRoutine,
+including door texture phase and the lift renderer's existing phase ownership.
+It does not run triggers, advance positions or timers, change velocity or floor
+line event flags, move players, or play audio. Normal simulation applies the
+same wall writes in its original per-wall order. The preview host invokes only
+the geometry projection on load. Read-only velocity/timer inspection supports
+regression proof without advancing a fake initialization tick.
+
+Room visits now provide adjoining views and let the native bridge choose using
+live lower/upper air heights. This extends the existing authored closed-door
+camera workflow to original/copied doors and controllers paused after play.
+The inspector remains selected on the requested room. If no usable view exists,
+the camera stays put and the preview explains how to select an open room,
+without entering renderer failure state. Visiting valid air restores normal
+status. Object/start and explicit capture requests retain their own camera
+contracts. README and in-app help describe paused poses and closed-room visits.
+
+Twenty native/browser checks first passed pose initialization, unchanged
+velocity/timers for every controller in all sixteen maps, movement cycles and
+wall texture/brightness behavior. A broader thirty-check run passed that native
+runtime with closed-room visits and the existing room/texture/opening scenarios.
+The final exact package then passed ten focused Chromium/Firefox checks with
+stronger adjoining-view coordinates, no-air status recovery, original/copied/
+authored paused-state checks, transfers, moves and native motion. The model
+suite remains the validated 1,187 tests; model authoring code did not change in
+this native projection correction.
+
+Corrected package: `index-Cp8vFwv4.js` with runtime
+`r-969287ddd046f5e9` (full revision
+`969287ddd046f5e9a33770befe19211c1a632b20fdc3220f97c293f476e1c264`).
+The full R0-R12 completion audit remains open.

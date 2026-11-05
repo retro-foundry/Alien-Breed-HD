@@ -22,6 +22,11 @@ Engine view requires WebGL2. If its renderer cannot start, the editor shows
 recovery steps and keeps the map editable and saveable. After enabling browser
 hardware acceleration, updating the graphics driver or changing browsers, use
 **Reload engine** to retry. A failed renderer does not count as a loaded map.
+Paused Engine view applies saved door/lift positions before drawing, including
+original and copied controllers. Timers and movement start only with Build &
+play. Selecting a closed room keeps its inspector selected and views it from
+adjoining open air when available. If no such view exists, select an open room;
+the preview stays usable.
 
 ## Publish a static web build
 

@@ -11,6 +11,7 @@
 #include "renderer.h"
 #include "visibility.h"
 #include "game_data.h"
+#include "objects.h"
 
 static GameLoopCtx preview_loop;
 static bool copper_ready;
@@ -47,6 +48,7 @@ EMSCRIPTEN_KEEPALIVE int editor_load_level(int slot)
     g_state.cfg_start_level = slot;
     play_game_apply_front_menu_result(&g_state, GAME_LOOP_FRONT_MENU_NEW_GAME);
     play_the_game_prepare_level(&g_state, &copper_ready);
+    objects_apply_moving_positions(&g_state);
     display_clear_text_screen();
     g_state.cfg_show_fps = false;
     g_state.cfg_weapon_draw = false;
@@ -332,6 +334,8 @@ EMSCRIPTEN_KEEPALIVE int editor_mechanism_value(int lift, int index, int field)
     case 1: return obj_l(record + 4);
     case 2: return obj_l(record + 10);
     case 3: return obj_l(record + 14);
+    case 11: return obj_w(record + 8);
+    case 12: return lift ? INT32_MIN : obj_w(record + 18);
     case 4: case 6: {
         const uint32_t *offsets = lift ? g_state.level.lift_wall_list_offsets : g_state.level.door_wall_list_offsets;
         const uint8_t *walls = lift ? g_state.level.lift_wall_list : g_state.level.door_wall_list;
@@ -421,6 +425,10 @@ EMSCRIPTEN_KEEPALIVE int editor_zone_value(int zone, int field)
     case 6: return obj_w(room + 36) != 0;
     case 7: return obj_w(room + 44);
     case 8: return obj_w(room + 46);
+    case 9: return obj_l(room + ZONE_OFF_FLOOR);
+    case 10: return obj_l(room + ZONE_OFF_ROOF);
+    case 11: return obj_l(room + ZONE_OFF_UPPER_FLOOR);
+    case 12: return obj_l(room + ZONE_OFF_UPPER_ROOF);
     default: return 0;
     }
 }

@@ -126,8 +126,13 @@
         loaded = true;
       }
       if (loaded && request.type === 'camera') {
-        const c = request.camera;
+        let c = request.camera;
         if (!c || ![c.zone,c.x,c.z,c.upper,c.angle].every(Number.isInteger)) throw new Error('Invalid preview camera.');
+        if (request.views !== undefined) {
+          if (!Array.isArray(request.views) || request.views.length > 256 || request.views.some(view => !view || ![view.zone,view.x,view.z,view.upper,view.angle].every(Number.isInteger))) throw new Error('Invalid adjoining inspection views.');
+          c = [c,...request.views].find(view => engine._editor_zone_value(view.zone,0) >= 0 && engine._editor_zone_value(view.zone,view.upper ? 11 : 9) > engine._editor_zone_value(view.zone,view.upper ? 12 : 10));
+          if (!c) { send('camera-unavailable', {revision:currentRevision}); return; }
+        }
         if (!engine._editor_camera(c.zone,c.x,c.z,c.upper,c.angle)) throw new Error('Place the preview camera inside the selected zone.');
         cameraChanged();
       }
@@ -164,6 +169,11 @@
       }
       if (loaded && request.type === 'mechanism-state') {
         send('mechanism-state', {id:request.id, mechanism:mechanismState(request.kind, request.index)});
+      }
+      if (loaded && request.type === 'mechanism-control-state') {
+        mechanismState(request.kind, request.index);
+        const value = field => engine._editor_mechanism_value(request.kind === 'lift' ? 1 : 0, request.index, field);
+        send('mechanism-control-state', {id:request.id, velocity:value(11), timer:request.kind === 'lift' ? null : value(12)});
       }
       if (loaded && request.type === 'mechanism-wall-state') {
         const state = mechanismState(request.kind, request.index);

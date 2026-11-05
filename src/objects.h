@@ -64,6 +64,7 @@ void object_handle_big_gun(GameObject *obj, GameState *state);
 void object_handle_bullet(GameObject *obj, GameState *state);
 
 /* Level mechanics */
+void objects_apply_moving_positions(GameState *state);
 void door_routine(GameState *state);
 void lift_routine(GameState *state);
 void switch_routine(GameState *state);

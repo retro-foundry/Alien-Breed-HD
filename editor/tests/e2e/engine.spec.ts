@@ -1,5 +1,38 @@
 import { expect, test } from '@playwright/test';
 import oracles from '../fixtures/original-levels.json' with { type: 'json' };
+import { openLevel } from '../../src/model/level';
+import { originalFiles } from '../helpers';
+import { engineMechanismState, engineMechanismControlState, enginePlayerState, enginePickDetails } from '../engineCapture';
+
+test('visits a closed original door from adjoining air while retaining the selected inspector', async ({ page }) => {
+  const original = openLevel('Closed-door camera', originalFiles(1));
+  const door = original.mechanisms.find(item => item.kind === 'door' && item.current === original.zones[item.zone]!.floor && original.zones[item.zone]!.boundaryIds.some(id => original.lines[id]!.connect >= 0))!;
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
+  const preview = page.getByRole('region', { name: '3D game engine preview' }); await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
+  await page.getByRole('button', { name: new RegExp(`^Zone ${String(door.zone).padStart(3, '0')}(?:\\s|$)`) }).click();
+  await expect(page.locator('.inspector h2')).toHaveText(`Zone ${door.zone}`);
+  const neighbours = new Set(original.zones[door.zone]!.boundaryIds.map(id => original.lines[id]!.connect).filter(id => id >= 0 && id !== door.zone));
+  await expect.poll(async () => {
+    const player = await enginePlayerState(page), adjacent = original.zones.find(zone => zone.id === player.zone);
+    if (!adjacent || !neighbours.has(player.zone)) return false;
+    const lines = adjacent.boundaryIds.map(id => original.lines[id]!);
+    return player.x === Math.round(lines.reduce((sum, line) => sum + line.x, 0) / lines.length)
+      && player.z === Math.round(lines.reduce((sum, line) => sum + line.z, 0) / lines.length);
+  }).toBe(true);
+  expect(await engineMechanismState(page, 'door', door.id)).toMatchObject({ current: door.current, plane: door.current, unsynchronizedWalls: 0 });
+  const samples = await enginePickDetails(page, Array.from({ length: 49 }, (_, index) => ({ x: (index % 7 + 1) / 8, y: (Math.floor(index / 7) + 1) / 8 })));
+  expect(samples.some(sample => sample.pixel > 0 && sample.surface)).toBe(true);
+  await expect(preview.getByRole('alert')).toHaveCount(0);
+  const view = await enginePlayerState(page);
+  await page.evaluate(zone => {
+    document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'camera', camera: { zone, x: 0, z: 0, upper: 0, angle: 0 }, views: [] }, location.origin);
+  }, door.zone);
+  await expect(preview.getByRole('status')).toContainText('no open interior');
+  expect(await enginePlayerState(page)).toEqual(view); await expect(preview.getByRole('alert')).toHaveCount(0);
+  await page.getByRole('button', { name: new RegExp(`^Zone ${String(original.starts[0]!.zone).padStart(3, '0')}(?:\\s|$)`) }).click();
+  await expect(preview.getByRole('status')).toContainText('zones loaded');
+});
 
 test('the actual engine reloads edits, visits zones and playtests without touching game saves', async ({ page }, testInfo) => {
   test.setTimeout(90000);
@@ -59,6 +92,12 @@ test('all sixteen untouched original maps load and draw in the actual game engin
     await expect(preview).toHaveAttribute('data-level-slot', String(level - 1));
     await expect.poll(async () => Number(await preview.getAttribute('data-rendered-pixels'))).toBeGreaterThan(1000);
     await expect(preview.getByRole('alert')).toHaveCount(0);
+    const original = openLevel(`Original ${level}`, originalFiles(level));
+    for (const control of original.mechanisms) {
+      const state = await engineMechanismState(page, control.kind, control.id);
+      expect(state).toMatchObject({ current: control.current, plane: control.current, unsynchronizedWalls: 0 });
+      expect(await engineMechanismControlState(page, control.kind, control.id)).toEqual({ velocity: control.direction, timer: control.kind === 'door' ? 0 : null });
+    }
   }
   expect(errors).toEqual([]);
 });

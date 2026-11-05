@@ -87,6 +87,19 @@ export async function engineMechanismTrace(page: Page, kind: 'door' | 'lift', in
     frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'mechanism-trace', id, kind, index, cycle }, location.origin);
   }), { kind, index, cycle });
 }
+export async function engineMechanismControlState(page: Page, kind: 'door' | 'lift', index: number): Promise<{ velocity: number; timer: number | null }> {
+  return page.evaluate(({ kind, index }) => new Promise((resolve, reject) => {
+    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();
+    const timer = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('Engine mechanism control query timed out')); }, 10000);
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'mechanism-control-state' || event.data.id !== id) return;
+      clearTimeout(timer); window.removeEventListener('message', receive); resolve({ velocity: event.data.velocity, timer: event.data.timer });
+    };
+    window.addEventListener('message', receive);
+    frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'mechanism-control-state', id, kind, index }, location.origin);
+  }), { kind, index });
+}
+
 export async function engineMechanismState(page: Page, kind: 'door' | 'lift', index: number): Promise<{ zone: number; current: number; top: number; bottom: number; wallCount: number; plane: number; unsynchronizedWalls: number }> {
   return page.evaluate(({ kind, index }) => new Promise((resolve, reject) => {
     const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();
