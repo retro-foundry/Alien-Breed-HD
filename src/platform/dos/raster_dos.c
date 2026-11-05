@@ -12,6 +12,51 @@ static void fill_words(int16_t *out, unsigned count, uint16_t value)
 }
 
 #ifdef AB3D_NATIVE_RGB565
+static uint32_t water_brighten[22][256];
+static int8_t water_blend_delta[256][32];
+static RendererPixel water_rg[256],water_blue[16];
+
+void dos_raster_prepare_water(const uint8_t *brighten)
+{
+    for(unsigned row=0;row<22;row++)for(unsigned sample=0;sample<256;sample++) {
+        unsigned i=(row*256+sample)*2;
+        unsigned color=((unsigned)brighten[i]<<8)|brighten[i+1];
+        /* One nibble in each byte lets a single subtraction produce all
+         * three foreground-minus-background differences without borrowing. */
+        water_brighten[row][sample]=((color&0xf00)<<8)|((color&0xf0)<<4)|(color&15);
+    }
+    for(unsigned alpha=0;alpha<256;alpha++)for(int difference=-15;difference<=15;difference++) {
+        /* floor((17*(255*bg + difference*alpha)/255 + 8)/17)
+         * = bg + floor((difference*alpha + 120)/255).
+         * C division truncates negative values, so adjust to floor. */
+        int n=difference*(int)alpha+120;
+        water_blend_delta[alpha][difference+16]=(int8_t)(n>=0?n/255:-((-n+254)/255));
+    }
+    for(unsigned rg=0;rg<256;rg++)water_rg[rg]=renderer_pixel_from_c12((uint16_t)(rg<<4));
+    for(unsigned b=0;b<16;b++)water_blue[b]=renderer_pixel_from_c12((uint16_t)b);
+}
+
+void dos_raster_water(RendererPixel *out,unsigned count,
+                        const RendererPixel *background0,const RendererPixel *background1,
+                        const uint8_t *phase,unsigned shade,unsigned offset,unsigned alpha,
+                        uint32_t u,uint32_t v,uint32_t du,uint32_t dv)
+{
+    const uint32_t (*brighten)[256]=water_brighten+shade;
+    const int8_t *blend=water_blend_delta[alpha];
+    for(unsigned x=0;x<count;x++,u+=du,v+=dv) {
+        uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
+        uv=(uint16_t)(uv+offset);
+        unsigned level=phase[((uv>>2)&0xfc0)|(uv&63)];
+        uint32_t c0=brighten[level][renderer_pixel_gb_index(background0[x])];
+        uint32_t c1=brighten[level][renderer_pixel_gb_index(background1[x])];
+        uint32_t difference=(c1|0x101010u)-c0;
+        unsigned r=(c0>>16)+blend[(difference>>16)&31];
+        unsigned g=((c0>>8)&15)+blend[(difference>>8)&31];
+        unsigned b=(c0&15)+blend[difference&31];
+        out[x]=water_rg[(r<<4)|g]|water_blue[b];
+    }
+}
+
 DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out,unsigned width,
                                         unsigned height,unsigned pitch,
                                         const DosSpriteRows *sprite)

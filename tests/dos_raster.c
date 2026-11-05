@@ -25,6 +25,62 @@ static uint32_t next_value(void)
     return random_state;
 }
 
+static RendererPixel reference_water_pixel(RendererPixel p0,RendererPixel p1,
+                                           const uint8_t *brighten,unsigned row,unsigned alpha)
+{
+    unsigned s0=renderer_pixel_gb_index(p0),s1=renderer_pixel_gb_index(p1);
+    const uint8_t *b0=brighten+(row*256+s0)*2,*b1=brighten+(row*256+s1)*2;
+    unsigned c0=(b0[0]<<8)|b0[1],c1=(b1[0]<<8)|b1[1],result=0;
+    for(unsigned shift=0;shift<=8;shift+=4) {
+        unsigned a=((c0>>shift)&15)*17,b=((c1>>shift)&15)*17;
+        unsigned byte=(a*(255-alpha)+b*alpha)/255;
+        result|=((byte+8)/17)<<shift;
+    }
+    return renderer_pixel_from_c12((uint16_t)result);
+}
+
+static void check_water(void)
+{
+    enum { PITCH=324, ROWS=5 };
+    static uint8_t brighten[22*512],phase[4096];
+    static RendererPixel actual[PITCH*ROWS],expected[PITCH*ROWS];
+    for(unsigned row=0;row<22;row++)for(unsigned sample=0;sample<256;sample++) {
+        unsigned color=row?((row*197+sample*37)&4095):
+            ((((sample*3)&15)<<8)|(((sample*7)&15)<<4)|(sample&15));
+        brighten[(row*256+sample)*2]=(uint8_t)(color>>8);
+        brighten[(row*256+sample)*2+1]=(uint8_t)color;
+    }
+    dos_raster_prepare_water(brighten);
+    for(unsigned pair=0;pair<256;pair++) {
+        actual[pair]=renderer_pixel_from_c12((uint16_t)(pair>>4));
+        actual[PITCH+pair]=renderer_pixel_from_c12((uint16_t)(pair&15));
+    }
+    memset(phase,0,sizeof(phase));
+    for(unsigned alpha=0;alpha<256;alpha++) {
+        dos_raster_water(actual+PITCH*2,256,actual,actual+PITCH,phase,0,0,alpha,0,0,0,0);
+        for(unsigned pair=0;pair<256;pair++)
+            assert(actual[PITCH*2+pair]==reference_water_pixel(actual[pair],actual[PITCH+pair],brighten,0,alpha));
+    }
+    for(unsigned i=0;i<sizeof(phase);i++)phase[i]=(uint8_t)(next_value()%10);
+    static const unsigned widths[]={0,1,2,3,7,17,159,319,320};
+    for(unsigned test=0;test<384;test++) {
+        for(unsigned i=0;i<PITCH*ROWS;i++)actual[i]=expected[i]=(RendererPixel)next_value();
+        unsigned count=widths[test%9],shade=next_value()%13,offset=test%64,alpha=test%256;
+        unsigned out=PITCH*2+2,src0=(test%5)*PITCH+2,src1=((test+1)%5)*PITCH+2;
+        uint32_t u=next_value(),v=next_value(),du=next_value(),dv=next_value(),ru=u,rv=v;
+        dos_raster_water(actual+out,count,actual+src0,actual+src1,phase,shade,offset,alpha,u,v,du,dv);
+        for(unsigned x=0;x<count;x++,ru+=du,rv+=dv) {
+            uint8_t ub=(uint8_t)(ru>>16),vb=(uint8_t)(rv>>16);
+            uint16_t uv=(uint16_t)(((uint16_t)vb<<8)|ub);
+            uv=(uint16_t)(uv+offset);uv&=0x3f3f;
+            unsigned level=phase[((uv>>8)<<6)|(uv&63)];
+            expected[out+x]=reference_water_pixel(expected[src0+x],expected[src1+x],brighten,shade+level,alpha);
+        }
+        assert(!memcmp(actual,expected,sizeof(actual)));
+    }
+    printf("Water: 65536 alpha/colour pairs and 384 wrapping/alias/clip spans passed\n");
+}
+
 __attribute__((noinline)) static int64_t reference_divide(int64_t n, int64_t d) { return n / d; }
 
 static void check_sprite_rows(void)
@@ -742,6 +798,7 @@ int main(void)
     check_sky_step_cache();
     check_word_offset_bounds(); check_projection_rounding(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_solid_floor_rows(); check_edges(); check_walls();
     check_sprite_rows();
+    check_water();
     check_objects();
     puts("DOS raster regression passed");
     return 0;

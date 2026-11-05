@@ -1648,3 +1648,28 @@ the existing stack. Windows Release and feedback regressions pass. Real
 hardware remains unmeasured. Final package hashes, diagnostic comparisons,
 live exercises and timing are in `build/dos/effects-performance.json`; original
 image, package, asset and save checks are in `effects-validation.json`.
+
+### DOS water-surface conversion and interpolation
+
+The level-1 pool slowdown reproduces from the dry shores in zones 91, 89 and
+90. The old four-entry nibble-blend cache misses 115-157 times per frame in
+these views. The native DOS path now prepares the original OldBrightenFile
+colours as three byte-separated nibbles and uses an 8 KB difference table
+for exact channel interpolation. It follows AB3DI.s texturedwater sampling,
+including wateroff carrying from U into V, and retains the existing
+fractional vertical refraction, rounding, animation and painter order.
+
+The prepared data adds 31,264 bytes, including 544 bytes of native output
+colours. It avoids building a blend row for every water span and converting
+both tinted RGB565 samples back to Amiga12 for each pixel. The original
+path still handles indexed output and diagnostic water tracing.
+
+At normal/486_slow, 40,000 cycles, 4 MB, SB16 and mouse, with host sound muted,
+64-frame fixed-tick diagnostic runs preserve all 192 game-state hashes and
+15 selected full-frame images across the three shores. The 4 MB raster
+check also verifies all 65,536 alpha/colour pairs plus 384 spans covering
+UV wrap/carry, guards, clipping lengths and framebuffer aliasing. With
+detailed rendering profiling off, mean game-loop times after eight warmup
+frames fall from 110.35/98.96/111.72 ms to 81.11/76.19/84.70 ms. These
+ordinary-build diagnostic timings are not the main real-time FPS benchmark
+and do not establish physical 486 cache behaviour.

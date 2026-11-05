@@ -3068,6 +3068,9 @@ static void renderer_build_water_brighten_cw_lut(const uint8_t *water_brighten, 
         }
     }
 
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    dos_raster_prepare_water(water_brighten);
+#endif
     g_water_brighten_cw_lut_ready = 1;
 }
 
@@ -8212,6 +8215,17 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         const uint8_t *water_phase_lut = g_water_level_phase_lut_ready
             ? g_water_level_phase_lut[g_water_src_phase & 7u]
             : NULL;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+        if (!expand && water_has_file && water_has_brighten_cw_lut && water_phase_lut &&
+            water_has_next_refr && !water_trace_stats) {
+            unsigned shade = ((uint32_t)dist & 0xFF00u) >> 8;
+            if (shade > 12) shade = 12;
+            dos_raster_water(row16, span_len, cwbuf + bg_cw_i0, cwbuf + bg_cw_i1,
+                water_phase_lut, shade, g_water_off, water_refr_frac,
+                u_fp, v_fp, (uint32_t)u_step, (uint32_t)v_step);
+            return;
+        }
+#endif
         const uint8_t *water_blend_nibble_lut = amiga12_blend_nibble_lut_ready
             ? renderer_blend_lut(water_refr_frac & 0xFFu)
             : NULL;
