@@ -21,6 +21,18 @@ export async function enginePickSamples(page: Page, points: readonly { x: number
   return (await enginePickDetails(page, points)).map(pick => pick.zone);
 }
 export interface EnginePickSample { zone: number; surface: NativeSurfacePick | null; object: NativeObjectPick | null; pixel: number }
+export async function engineCornerLights(page: Page, points: readonly number[]): Promise<{ point: number; lower: number; upper: number; lowerValue: number; upperValue: number }[]> {
+  return page.evaluate(points => new Promise((resolve, reject) => {
+    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();
+    const timer = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('Engine corner lighting query timed out')); }, 10000);
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'corner-light-state' || event.data.id !== id) return;
+      clearTimeout(timer); window.removeEventListener('message', receive); resolve(event.data.points);
+    };
+    window.addEventListener('message', receive);
+    frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'corner-light-state', id, points }, location.origin);
+  }), points);
+}
 export async function enginePickDetails(page: Page, points: readonly { x: number; y: number }[]): Promise<EnginePickSample[]> {
   return page.evaluate(points => new Promise((resolve, reject) => {
     const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, prefix = crypto.randomUUID();
@@ -85,6 +97,18 @@ export async function engineMechanismState(page: Page, kind: 'door' | 'lift', in
     };
     window.addEventListener('message', receive);
     frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'mechanism-state', id, kind, index }, location.origin);
+  }), { kind, index });
+}
+export async function engineMechanismWallState(page: Page, kind: 'door' | 'lift', index: number): Promise<{ current: number; horizontal: number; vertical: number; base: number; brightness: number }> {
+  return page.evaluate(({ kind, index }) => new Promise((resolve, reject) => {
+    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!, id = crypto.randomUUID();
+    const timer = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('Engine wall alignment query timed out')); }, 10000);
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== 'mechanism-wall-state' || event.data.id !== id) return;
+      clearTimeout(timer); window.removeEventListener('message', receive); resolve(event.data.wall);
+    };
+    window.addEventListener('message', receive);
+    frame.contentWindow!.postMessage({ source: 'ab3d-editor', type: 'mechanism-wall-state', id, kind, index }, location.origin);
   }), { kind, index });
 }
 export async function engineObjectState(page: Page, object: number): Promise<{ id: number; cid: number; zone: number; type: number; x: number; z: number; yFixed: number; health: number }> {

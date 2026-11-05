@@ -36,7 +36,7 @@ export function interpolatePointBrightness(a: number, b: number, numerator: numb
   const flags = (word: number) => word >>> 8 & 255;
   const encoded = (word: number) => base(word) >= 0 && flags(word) !== 0;
   if (encoded(a) !== encoded(b) || (encoded(a) && flags(a) !== flags(b)))
-    throw new Error('This wall segment has incompatible point-light animation settings. Assign explicit lighting to its new point before building.');
+    throw new Error('This wall segment has incompatible point-light animation settings. Open Corner lighting in the room inspector and assign explicit values to the new corner before building.');
   // Integer geometry sampling truncates towards zero; BigInt avoids precision
   // loss for long rational spans. Animation bits never enter the arithmetic.
   const n = BigInt(numerator), d = BigInt(denominator);

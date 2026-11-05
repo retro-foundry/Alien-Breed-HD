@@ -10,6 +10,7 @@ import { readGraphicRecord } from './graphics';
 import { encodeWallSurface, type WallSurface } from './surfaces';
 import catalog from './nativeWalls.json' with { type: 'json' };
 import { restoreBoundaryMaterials } from './boundaryMaterials';
+import { wallSettingsCurrent } from './wallSettings';
 
 export interface WallMaterial {
   readonly record: number; readonly upper: boolean; readonly texture: number;
@@ -36,15 +37,18 @@ export function validateWallMaterialSampling(wall: WallSurface, material: Pick<W
   const lastByte = Math.floor(lastColumn / 3) * 2 ** (shift + 1) + mask * 2 + 1;
   if (!Number.isInteger(shift) || shift < 1 || shift > 14 || material.horizontalMask < 0
     || phase < 0 || lastByte >= sheet.size - 2048)
-    throw new Error('This material does not fit the wall’s retained texture alignment. Choose another material style or reset its material.');
+    throw new Error('This material does not fit the wall’s retained texture alignment. Choose a narrower repeat, a smaller horizontal tile offset or a compatible material style; Inherit original repeat clears the repeat override.');
 }
 
-function validateSourceSampling(document: LevelDocument, wall: WallSurface, material: WallMaterial) {
-  validateWallMaterialSampling(wall, material);
+function validateSourceSampling(document: LevelDocument, wall: WallSurface, material: WallMaterial, room: string) {
+  const settings = wallSettingsCurrent(document, { room, record: material.record, upper: material.upper });
+  const column = settings?.horizontalOffset, sampling = settings?.repeat ? { ...material, horizontalMask: settings.repeat.width - 1 } : material;
+  validateWallMaterialSampling(wall, sampling, column ?? wall.horizontalOffset);
+  if (column !== undefined) return; // The controller base is rebuilt with this explicit tile.
   // LiftRoutine may replace FROMTILE with the wall-list base phase.
   for (const mechanism of document.mechanisms) if (mechanism.kind === 'lift')
     for (const entry of mechanism.walls) if (entry.graphic === material.record)
-      validateWallMaterialSampling(wall, material, entry.base >> 16);
+      validateWallMaterialSampling(wall, sampling, entry.base >> 16);
 }
 
 export function restoreWallMaterials(value: unknown): readonly WallMaterial[] {
@@ -129,7 +133,8 @@ export function setSurfaceMaterial(document: LevelDocument, target: SurfaceMater
     if (wall.texture === switchTexture) throw new Error('This boundary uses switch graphics. Keep its native material.');
     const material = { edge, upper: target.upper, texture: selected.texture, verticalMask: selected.verticalMask,
       verticalShift: selected.verticalShift, horizontalMask: selected.horizontalMask };
-    validateWallMaterialSampling(wall, material);
+    const settings = room.wallSettings?.find(item => 'boundary' in item && item.boundary === edge && item.upper === target.upper);
+    validateWallMaterialSampling(wall, settings?.repeat ? { ...material, horizontalMask: settings.repeat.width - 1 } : material, settings?.horizontalOffset ?? wall.horizontalOffset);
     overrides = previous.overrides.some(item => item.edge === edge && item.upper === target.upper)
       ? previous.overrides.map(item => item.edge === edge && item.upper === target.upper ? material : item) : [...overrides, material];
   }
@@ -165,7 +170,7 @@ export function setWallMaterial(document: LevelDocument, target: WallMaterialTar
     if (!selected) throw new Error('Choose an available native wall material style.');
     const material = { record: target.record, upper: target.upper, texture: selected.texture,
       verticalMask: selected.verticalMask, verticalShift: selected.verticalShift, horizontalMask: selected.horizontalMask };
-    validateSourceSampling(document, record.wall!, material);
+    validateSourceSampling(document, record.wall!, material, room.id);
     materials = room.wallMaterials?.some(item => key(item) === key(target))
       ? room.wallMaterials.map(item => key(item) === key(target) ? material : item) : [...materials, material];
   }
@@ -202,8 +207,10 @@ export function paintCellWalls(document: LevelDocument, source: RoomSource, grap
       const wall = readGraphicRecord(new BinaryReader(item.bytes, 'painted wall'), 0, 2048).wall;
       if (!wall || wall.texture === switchTexture || material.texture === switchTexture
         || ('record' in material && document.switches.some(control => control.zone >= 0 && control.graphic - 10 === material.record))) throw new Error(`Room ${room.id} has an incompatible painted switch/control wall. Reset its material before building.`);
-      if ('record' in material) { applied.add(`${room.id}:${key(material)}`); validateSourceSampling(document, wall, material); }
-      else { applied.add(`${room.id}:boundary:${upper}:${material.edge}`); validateWallMaterialSampling(wall, material); }
+      if ('record' in material) { applied.add(`${room.id}:${key(material)}`); validateSourceSampling(document, wall, material, room.id); }
+      else { applied.add(`${room.id}:boundary:${upper}:${material.edge}`);
+        const settings = room.wallSettings?.find(item => 'boundary' in item && item.boundary === material.edge && item.upper === upper);
+        validateWallMaterialSampling(wall, settings?.repeat ? { ...material, horizontalMask: settings.repeat.width - 1 } : material, settings?.horizontalOffset ?? wall.horizontalOffset); }
       return { ...item, bytes: encodeWallSurface({ ...wall, texture: material.texture, verticalMask: material.verticalMask,
         verticalShift: material.verticalShift, horizontalMask: material.horizontalMask }) };
     });

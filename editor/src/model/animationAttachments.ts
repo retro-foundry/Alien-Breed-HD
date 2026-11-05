@@ -1,5 +1,6 @@
 import { importedAnimationTables, type AnimationTargetContext, type MovingRoomAnimation, type SwitchAnimation } from './animationBuild';
 import { BinaryReader, checkedInteger } from './binary';
+import { barrierCollisionTopology } from './seeThroughBarriers';
 import type { CellGraphics } from './cellGraphics';
 import type { CollisionGeometry } from './collisionBuild';
 import type { GeneratedGraphicsTarget, SelectGraphicsTarget } from './generatedGraphics';
@@ -78,6 +79,7 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
   const lines = new Map<number, { id: number; a: number; b: number }[]>();
   const copiedLines = new Map<number, { id: number; a: number; b: number; sourceId: string }[]>();
   const collisionReader = new BinaryReader(collision.bytes, 'compiled animation collision');
+  const collisionTopology = barrierCollisionTopology(document, topology);
   const lineIds = collision.boundaries.flat();
   if (lineIds.length * 16 !== collision.bytes.length || new Set(lineIds).size !== lineIds.length)
     throw new Error('Animation attachments need complete, unique compiled collision identities.');
@@ -89,7 +91,7 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
       const offset = id * 16;
       if (collisionReader.i16(offset) !== a.x || collisionReader.i16(offset + 2) !== a.z
         || collisionReader.i16(offset + 4) !== b.x - a.x || collisionReader.i16(offset + 6) !== b.z - a.z
-        || collisionReader.i16(offset + 8) !== cell.neighbours[edge])
+        || collisionReader.i16(offset + 8) !== collisionTopology.cells[index]!.neighbours[edge])
         throw new Error('Compiled collision coordinates or neighbours do not match their animation attachment identities.');
       if (source === null) return;
       const line = { id: collision.boundaries[index]![edge]!, a: cell.vertices[edge]!, b: cell.vertices[(edge + 1) % cell.vertices.length]! };
@@ -150,11 +152,14 @@ export function buildAnimationAttachments(document: LevelDocument, graphics: Cel
   // polygon and zone header. Material copies need distinct pointer attachments
   // in that same group, without borrowing the original room's runtime identity.
   const water = tables.water.map(group => ({ ...group, entries: group.entries.flatMap(entry => {
-    const retained = rooms(entry.zone, true).map(zone => {
+    const source = resolveAnimationRoom(document, entry.zone, true);
+    const retained = (source === undefined ? [] : origins.get(source) ?? []).filter(zone => sourceRooms.get(topology.cells.find(cell => cell.id === zone)!.sourceId)!.waterSurface === undefined).map(zone => {
       choose(entry.graphic, { kind: 'water', zone }); return { ...entry, zone };
     });
-    const source = resolveAnimationRoom(document, entry.zone, true);
-    const copies = (waterTargets.get(entry.graphic) ?? []).filter(target => topology.cells.find(cell => cell.id === target.room)!.originZone === null);
+    const copies = (waterTargets.get(entry.graphic) ?? []).filter(target => {
+      const cell = topology.cells.find(cell => cell.id === target.room)!;
+      return cell.originZone === null && sourceRooms.get(cell.sourceId)!.waterSurface === undefined;
+    });
     if (copies.some(target => topology.cells.find(cell => cell.id === target.room)!.recordZone !== source))
       throw new Error('Copied water has a cross-room animation attachment. Map its polygon and controlled room together before building.');
     return [...retained, ...[...new Set(copies.map(target => target.room))].map(zone => {

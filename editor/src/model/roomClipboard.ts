@@ -1,3 +1,5 @@
+import { importedAnimationTables } from './animationBuild';
+import { pasteNavigation } from './navigation';
 import type { LevelDocument } from './level';
 import { applyCommand, type EditCommand } from './commands';
 import { checkedInteger } from './binary';
@@ -38,19 +40,37 @@ export function pasteRooms(document: LevelDocument, clipboard: RoomClipboard, x:
   const mapping = new Map(clipboard.ids.map((id, index) => [id, `room-${document.roomSource.nextId + index}`]));
   const added = clipboard.ids.map(id => {
     const room = source.roomSource.rooms.find(room => room.id === id)!, settings = roomSettings(source, room);
-    return { ...room, id: mapping.get(id)!, originZone: null, vertices: room.vertices.map(point => ({ x: point.x + x, z: point.z + z })),
+    return { ...room, ...(room.cornerLights ? { cornerLights: room.cornerLights.map(light => ({ ...light, x: light.x + x, z: light.z + z })) } : {}), ...(room.portals ? { portals: room.portals.map(state => ({ ...state, neighbour: mapping.get(state.neighbour) ?? state.neighbour })) } : {}), id: mapping.get(id)!, originZone: null, vertices: room.vertices.map(point => ({ x: point.x + x, z: point.z + z })),
       heights: Object.fromEntries(roomHeightFields.map(field => [field, settings[field]])), properties: captureRoomProperties(settings) };
   });
   const snapshot = roomSourceSnapshot(document.roomSource);
+  const cornerLights = added.some(room => room.cornerLights?.length);
+  const wallRepeat = added.some(room => room.wallSettings?.some(item => item.repeat));
+  const wallSettings = added.some(room => room.wallSettings?.length);
+  const switches = added.some(room => room.switches?.length);
+  const water = added.some(room => room.waterSurface !== undefined);
+  const waterGroups = [...(document.roomSource.waterGroups ?? [])];
+  const nativeWater = importedAnimationTables(document).tables.water;
+  for (const room of added) {
+    const surface = room.waterSurface;
+    if (!surface || surface.group === null || waterGroups.some(group => group.id === surface.group) || nativeWater[surface.group]?.entries.length) continue;
+    const group = source.roomSource.waterGroups?.find(group => group.id === surface.group);
+    if (!group) throw new Error('The copied water animation group is missing. Restore it before pasting.');
+    waterGroups.push(group);
+  }
   const moving = added.some(room => room.moving);
   const polygons = added.some(room => room.polygonMaterials?.length);
   const boundary = added.some(room => room.boundaryMaterials);
-  const painted = moving || polygons || boundary || added.some(room => room.wallMaterials?.length);
-  const roomSource = restoreRoomSource(document, { ...snapshot, version: Math.max(snapshot.version, moving ? 10 : polygons ? 9 : boundary ? 8 : painted ? 7 : 4),
+  const portals = added.some(room => room.portals?.length);
+  const authored = added.some(room => room.upperStorey !== undefined || room.sky || room.planeSources);
+  const painted = cornerLights || wallSettings || water || authored || moving || polygons || boundary || added.some(room => room.wallMaterials?.length);
+  const roomSource = restoreRoomSource(document, { ...snapshot, version: Math.max(snapshot.version, added.some(room => room.portals?.some(item => item.barrier)) ? 21 : cornerLights ? 20 : wallRepeat ? 19 : wallSettings ? 18 : switches ? 17 : water || waterGroups.length ? 16 : portals ? 13 : authored ? 12 : moving ? 10 : polygons ? 9 : boundary ? 8 : painted ? 7 : 4),
     ...(painted ? { controllerCopies: snapshot.controllerCopies ?? [], switchCopies: snapshot.switchCopies ?? [] } : {}),
-    rooms: [...document.roomSource.rooms, ...added], nextId: document.roomSource.nextId + added.length });
+    ...(waterGroups.length ? { waterGroups } : {}), rooms: [...document.roomSource.rooms, ...added], nextId: document.roomSource.nextId + added.length });
   validateRoomInteriors(roomSource.rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
   let working: LevelDocument = { ...document, roomSource };
+  const navigation = pasteNavigation(working, source, mapping, x, z);
+  if (navigation) working = { ...working, roomSource: { ...working.roomSource, navigation } };
   for (const [id, mapped] of mapping) {
     const room = source.roomSource.rooms.find(room => room.id === id)!;
     const appearance = source.roomAppearances?.find(item => item.room === id);

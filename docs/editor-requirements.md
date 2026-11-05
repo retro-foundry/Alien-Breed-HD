@@ -32,7 +32,45 @@ LevelEditor v3.03 changelog reference still needs to be located and checked.
 | R11 | P1 | Unified project configuration, asset browser and dependency checking for level files, materials, objects, animations, enemies, weapons and sounds | A portable project opens independently of Amiga assigns/manual game-link setup; missing resources warn without preventing startup or losing source |
 | R12 | P2 | Expose supported port rendering/material/resource capabilities; strict original-engine export profile | Profile limits tied to actual engine/source declarations, compatible exports accepted, incompatible extensions rejected before writing files |
 
-## Current state
+## Current completion audit (2026-11-05)
+
+The full R0-R12 objective remains active. The table below supersedes stale
+feature-status statements in the historical notes that follow. Individual
+implemented workflows do not close the broader release gates.
+
+| Gate | Current evidence | Remaining evidence or implementation |
+| --- | --- | --- |
+| R0 | Original 38-operation menu inventory; source drawing, texture/height/storey/sky authoring, native wall connections and control-point/graph authoring | Every Partial/Missing entry in editor-amos-parity.md, remaining original options and full save/Undo/native acceptance |
+| R1 | Transactional draw/redraw/corners/delete, portal repair, explicit reciprocal open/close, cancelled drafts and native wall collision | Unattached/decorative geometry and all topology/controller dependency cases |
+| R2 | Automatic winding, shared/partial edges, original outline corpus, convex decomposition and explicit diagnostic paths | Full unrestricted decoration/curve reassignment and the complete original topology acceptance corpus |
+| R3 | Rebuilt original ordering/clip fixtures, map overlays and compiled original-view checks | Independent closed-door/corridor/occluded-room visibility proof over the required scope |
+| R4 | Source-preserving project archives/recovery, shared preview/export compiler, automatic saved starter room textures, playtest and stable new/concave-room exits | Complete authoring integration, all failure cases and final coherent published package |
+| R5 | Original untouched round trips and compiled original-source/native comparisons | Full relationships/material/mechanism parity across the remaining authoring cases |
+| R6 | Numerical/graphical planes, stairs, upper-storey creation/removal, sky and playable inter-storey shafts | Synchronized editing of controlled geometry, grouped moving planes and remaining original height options |
+| R7 | Static/new door/lift creation, ranges/rules, copied controllers/switches, independent lower-wall switch creation/reassignment/reset/removal, teleports, independent shared water groups and native movement | Door/lift controller reassignment/groups, imported switch reassignment and complete engine-profile constraints |
+| R8 | Wall PNG conversion and source retention, native material browser, direct floor/ceiling patterns, straight-wall alignment/repeat/brightness and native controller-base synchronization; authored and retained full-height native barriers with hole picking and separate collision/visibility | Bands/curves, compound/partial special-boundary reconstruction and remaining special-face lighting, new palettes and floor/other resource conversions |
+| R9 | Unlimited history regression, map/3D selection, object groups, room groups and same-workspace clipboards | Remaining transforms, cross-project resources and complete keyboard/responsive coverage |
+| R10 | Editable 3D plus native engine, wall/surface/object picking, four height handles, independent normal floor/ceiling corner lighting, all ten original room presets and native point selectors 1–15, portal overlays and both-storey control-point/link overlays | Original raw-lighting-word edge cases, curve/special-surface lighting and geometry editing, exact remaining overlays and complete upper/lower acceptance |
+| R11 | Portable levels, wall assets/PNG sources and named cross-level object library | Unified configuration/dependency browser for remaining resource classes and complete object/enemy parameters |
+| R12 | Shared current-runtime graphics limit and explicit port setup files | Capability declarations, strict original-engine export profile, all original limits and incompatible-extension rejection |
+
+User-requested unused bump options must remain disabled. Preserving imported
+bump records is required, but re-enabling those options is not a completion gate.
+
+Final delivery remains: finish the open gates; update user instructions and
+requirements evidence; commit and push the relevant source; build and validate
+a coherent runtime/editor package; deploy it to
+`retro-foundry.github.io/abhd-ed`; verify the public artifact and required
+browser/native scenarios. Keep unrelated ongoing DOS changes separate from
+editor commits. Do not publish the current partial state as full completion.
+
+Deployment cadence update: the user explicitly requested keeping
+`retro-foundry.github.io/abhd-ed` current while authoring work continues.
+Publish verified incremental editor/runtime packages without waiting for every
+release gate to close. Record package validation and public artifact checks;
+the deployments do not establish full authoring completion.
+
+## Historical implementation notes
 
 R8/R10 now include individual material painting on picked imported/copied
 straight native faces and new/repaired authored boundaries, with previews,

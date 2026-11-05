@@ -2690,3 +2690,701 @@ Pages run 41333976458 succeeded. All four public Edge/Brave group-height
 regressions passed, covering both 3D projections and all four planes with
 cancellation, saved relative values and one-step Undo. Remaining AMOS/R0-R12
 scope stays open.
+
+
+## Editor terminology and material choices (2026-11-05)
+
+The room inspector now explains zones as map areas rather than assuming each is
+an entire visible room. Height controls explain the two spaces sharing one
+outline and the template workflow for drawing a two-storey room. Toolbar
+buttons say Lower storey / Upper storey, and template options show their storey
+count. The existing labelled side diagram remains the height editing guide.
+Ceiling help distinguishes openings between storeys from sky openings and
+states that new opening authoring is unsupported; ceiling visibility changes
+only the editing view.
+
+At the user's request, unused chunky bump and smooth bump choices are disabled
+in the surface material selector. Existing saved materials remain readable and
+preserved; the native material model and renderer are unchanged. The picker,
+controls help and README use the same wording. Browser selectors follow the
+new storey button labels. No substitute geometry or rendering was added.
+
+Validation: TypeScript and production build pass. All 12 Chromium editing-view,
+height and ceiling regressions pass. All four floor/ceiling material scenarios
+pass in Chromium and Firefox, checking disabled bump options, normal painting,
+portable saves and Undo/Redo. Seven polygon-material model tests pass.
+`git diff --check` passes. New ceiling/sky opening authoring remains unsupported.
+
+
+## Room surface, storey and opening authoring (2026-11-05)
+
+This completes the authoring workflows raised in the editor feedback and
+supersedes the earlier ceiling/sky-authoring limitation above. Floor and ceiling
+textures now have direct inspector buttons, independently for each storey and
+source polygon. They open the same native material picker as 3D surface picking,
+including pattern thumbnails, repeat, Cancel, Apply and Undo. Imported outdoor
+rooms can create a missing ceiling from an explicit normal material reference.
+Unused bump choices remain disabled; existing saved material modes are retained.
+
+Add upper storey and Remove upper storey now edit actual source geometry.
+Creation records explicit straight-wall, normal floor/ceiling and corner-lighting
+references, plus validated independent upper heights. Starting pattern choices
+are available even when the lower room contains partial decorative surfaces.
+Upper surfaces retain independent paint and lighting without replacing lower
+records. The geometry-lighting planner distinguishes storey-specific authored
+claims when one original material supplies several surfaces.
+
+Ceiling open to sky removes the top ceiling from the saved graphics and emits
+the native backdrop marker. Rectangular opening authoring offers sky or a
+connection between storeys, with a plan preview and explicit wall/lighting
+choices. It partitions the footprint into the opening and surrounding native
+zones. An inter-storey opening has a tall single-storey shaft, so native portal
+movement permits falling from the upper floor. The shaft retains the upper
+ceiling pattern and lower floor pattern. Starts, objects and incoming teleport
+landings are reassigned by position. An upper object in the proposed shaft must
+be moved first. Native coordinate/zone limits, explicit exit ownership and
+moving mechanisms are validated before one atomic history entry. Concave
+outlines use existing convex decomposition; bounds must remain inside the room
+and cuts must meet whole native coordinates. No invisible collision floor or
+replacement game behavior is introduced.
+
+Original authority: leveld.asc DEFUPPERFLOORHEIGHT, DEFUPPERROOFHEIGHT,
+DEFFLOORGRAPH/DEFROOFGRAPH and RGPUT's NONE (SKY); current native renderer.c
+opcodes 1/2/12 and backdrop cache; level.c level_zone_has_upper_layer and
+movement.c checkotherwalls/FindRoom air-band selection. Room-source version 12
+stores the additional authoring data. Project saves/recovery, clipboard copies,
+playtest and export continue to use the shared source compiler. Other AMOS and
+R0-R12 requirements remain tracked separately.
+
+
+Verification for this checkpoint: production TypeScript/Vite build passes.
+The full model suite reports 975 passes and one pre-existing failure:
+wallTextures.test.ts expects io.c hash bb436acfb7680a3b954e27365341b294816862948486c9118fc5f3cd7af19933,
+while the committed HEAD source normalizes to b7bb7c82b7aaf1b5d7d711e88d31a8d53412d9f313970ff869791b3122f2b16c.
+Neither that source nor its oracle was changed by this editor task. Six new
+storey/opening model scenarios pass, including inherited-storey removal,
+clipboard/project round trips and adding a separately lit upper storey above a
+partial lower floor. The upper stream includes LEVELSAVE's dry ObjDraw tail
+(opcode 4, full-room clip mode 2), so upper objects have a native draw pass.
+
+All eight Chromium/Firefox authoring scenarios pass, including direct lower
+and upper floor/ceiling paint, Cancel, portable saves, Undo, missing-ceiling
+creation, rectangular skylights, sky/frame changes and opening creation. Native
+play walks from an upper landing onto the authored upper floor, then falls
+through the opening and settles on the lower floor. Four existing native height
+handle regressions also pass across both browsers. After moving direct texture
+controls above room-outline editing, both browser visibility checks pass without
+scrolling, and the inspector screenshots were visually reviewed. Existing
+material-bank and editable-3D scenarios passed earlier in this change.
+`git diff --check` passes. Remaining unrelated AMOS/R0-R12 work stays open.
+
+
+## Dotted zone connections (2026-11-05)
+
+Top view now has a solid-wall/dotted-connection legend and an expandable diagram
+with steps for drawing adjoining rooms. The room-outline inspector and controls
+help expose the same explanation: draw an ordinary room beside another room
+with an exactly shared edge, finish and apply appearance. Partial shared edges
+connect too; corner contact and overlapping rooms do not create a passage.
+Heights and doors still control passability, and solid boundaries between two
+imported zones remain preserved by the existing compiler rules.
+
+New/edited outlines previously drew every edge solid. Map connection strokes
+now use compileRoomTopology plus buildDrawTopology, matching export's actual
+exterior boundary pairing and omitting internal convex seams. Shared edges draw
+once, keep their dashes under selection and use selection priority. Invalid
+compiler geometry keeps editable outlines with an explicit connection diagnostic
+instead of guessed or stale portal classifications. Native game behavior and
+saved project formats are unchanged by this presentation change.
+
+Verification: production TypeScript/Vite build passes. Two model scenarios cover
+whole and partial edge pairing, corner contact and concave decomposition seams.
+All 18 Chromium/Firefox browser checks pass: selected authored-edge pixels have
+visible dash gaps; help and drawing cancellation leave history unchanged;
+existing room tools, recovery and native doorway walking/closure remain valid.
+The expanded guide screenshot was visually reviewed. No placeholder connections
+or game-engine changes were added.
+
+
+## Explicit existing wall connections (2026-11-05)
+
+The room inspector now exposes Wall connections (solid / dotted) for existing
+adjoining rooms. Open, Close and Use automatic update reciprocal source boundary
+states. Closing has explicit wall/lighting choices on each side and a cancellable
+draft; Apply rebuilds collision, graphics, visibility and clipping as one Undo.
+Opening also cuts a solid boundary re-imported from compiled game data. Door/lift
+and switch-owned rooms retain their mechanism protections. Normal drawing still
+pairs new shared edges automatically.
+
+Authority: leveld.asc DEFWALL (ordinary WT 0/1 toggle; special b/v wall types
+remain separate unfinished work). Room-source version 13 stores stable boundary
+IDs and neighbour-specific overrides. T-junction/corner insertion retains the
+connection identity; copied internal room relationships receive new neighbour
+IDs. Skylight/shaft partitions retarget outside connection ownership instead of
+reopening a previously closed boundary. Conflicting reciprocal states reject
+compilation rather than selecting one side. No native gameplay rule changed.
+
+Two model scenarios cover native close/reopen, strict game-data re-import,
+Undo/project/clipboard round trips, inserted corners and skylight ownership.
+All 70 targeted model checks pass. All 10 Chromium/Firefox dotted-edge,
+portal-opening/closure and explicit-wall checks pass, including blocked movement
+against the closed wall and crossing the re-imported solid wall after opening.
+TypeScript/Vite build passes. Broader R0-R12 requirements remain open in the
+current completion audit; no final deployment is claimed.
+
+The pre-existing native wall-oracle hash failure was investigated against the
+committed io.c changes (17ce3d8 and 0e1e505). The standalone dump harness now
+includes the actual renderer_pixel.h used by native palette conversion. Rebuilt
+the independent C =SB= unpacker and reran editor_wall_oracles.py with clang.
+All 14 unpacked sheet hashes, dimensions and RGBA hashes are identical to the
+previous oracle; only the reviewed source hash and new pixel-header hash differ.
+The model guards both dependencies, and all 17 wall texture checks now pass.
+
+
+Checkpoint verification after wall connection and oracle integration: all 980
+model tests pass (88 files) with two workers and a 30-second per-test limit.
+The prior native-source hash failure is resolved by reviewed C regeneration,
+not by suppressing or weakening the assertion. The relevant 10 native-browser
+scenarios pass in Chromium and Firefox. Final commit/push/deployment remains
+pending completion of the remaining authoring and R0-R12 gates; the public site
+has not been replaced with this partial checkpoint.
+
+The dotted-line help now leads with the existing-room workflow: select either
+room, expand Wall connections (solid / dotted), and choose Open edge beside the
+neighbour. A separate illustrated sequence covers drawing an adjoining room.
+It explicitly defines a zone as a room or room section, explains the missing
+neighbour case, and directs ceiling/sky holes to Storeys and openings. README
+instructions match the in-editor guide. The targeted connection/storey model
+checks and both browsers' dotted-line and native wall open/close checks pass.
+
+### Source-room exit authoring
+
+Level exit now includes newly drawn rooms and lists each current room once.
+Room-source v14 stores the selected stable exitRoom identity; choosing a numeric,
+original-slot or disabled exit clears that override atomically with Undo.
+Geometry edits and room copies retain the one project exit. Deleting its room
+or partitioning it into an opening requires reassignment first. Missing imported
+exit rooms produce a visible selector diagnostic and a failed build.
+
+The compiler maps the source exit to its generated representative and retains
+the existing ABEX v2 draw-room membership. Native game_loop.c uses that explicit
+membership for completion: all collision cells of one concave authored room
+form one exit. Without draw groups this remains AB3DI.s addExit/ENDZONES's exact
+room comparison. No original binary level fields or completion conditions change.
+
+Rebuilt the real single-threaded preview. The C feedback_draw_rooms check passes,
+including disabled, unrelated, grouped and legacy identities. All 983 model tests
+pass. Chromium and Firefox each verify source selection, Undo/Redo, source save,
+game export, completion from every generated cell, disabled free playtesting,
+and original-slot/numeric exits. The broader audit and final release remain open.
+
+After the selector cleanup, all four exit browser scenarios pass again. Ten
+additional Chromium/Firefox storey, shaft, direct texture and reciprocal wall
+collision scenarios pass against the rebuilt native preview.
+
+Next control-point work must distinguish LEVELSAVE's eight-byte runtime
+coordinates at data +54 and room control bytes +26/+27 from LEVELSAVE/LEVELLOAD's
+separate 100x100 twolev.links source graph. readAmosProject/writeAmosProject
+already preserve that source graph. Native level.connect_table is the rendering
+point/clip table consumed in AB3DI.s and renderer.c, not navigation links; it
+must not be repurposed for this authoring feature.
+
+### Control-point and link-graph authoring
+
+Room-source v15 now stores stable control identities, owned lower/upper points,
+explicit room assignments and an optional original-format 100x100 link bank.
+An absent graph is distinct from an explicitly empty bank. The inspector imports
+the matching twolev.links or creates a new graph on request; native maps cannot
+supply the missing source graph. Download writes the actual bank, while project
+saves retain all metadata and inactive imported bank bytes until compaction.
+
+Implemented PLACECONTPT/CPTMOVE diagram gestures, exact room/coordinate/storey
+editing, independent lower/upper assignments, all CONNECTCONT physical and
+visual link pairs, AUTOLINK preserving physical pairs, and CPTNEARTOZONE's nearest
+visible lower assignment (single/all rooms). The automatic tests use geometric
+shared-edge traversal independent of wall type, doors and heights, as the AMOS
+routines do; concave outlines are handled through convex clipping. Failed
+all-room assignment applies nothing. Graphical/numerical edits, source saves,
+Undo, point deletion/link compaction, copied room controls, whole-room movement
+and skylight rebinding preserve stable relationships. Upper shaft points must
+be moved off the removed floor first. The table limit is 100 points.
+
+The compiler writes LEVELSAVE's point coordinates/height/storey records at data
++54, recomputes owned midpoint heights and maps assignments to bytes +26/+27.
+After object/start relocation, it relocates every absolute prefix pointer for
+the new control count, then lets normal room/graphics assembly resolve fresh
+zone offsets. The original object/shot pools and renderer connect_table remain
+unchanged in meaning. These edits preserve original authoring data and do not
+introduce new AI/gameplay behavior.
+
+The Top-view control overlay shows both storeys, physical direction arrows and
+visual dashes, with all/physical/visual/none link filters from the original menu.
+The inspector's room diagram is editable; its Escape handler owns cancellation.
+Point labels follow current table order while persisted identities remain stable.
+User instructions in Help and README cover placement, assignments, links and
+the source/runtime distinction.
+
+The full model-suite checkpoint passes 1008 checks (90 files). The current
+navigation target passes 26 checks, including a subsequent inherited native
+reference-compaction case, the sixteen original maps, relocation, graph
+validation, copies, height changes, room moves/partitions, occluded bends,
+concavity and corner-only contacts. All
+14 Chromium/Firefox navigation, dotted-connection, storey/texture/shaft and exit
+scenarios pass. The navigation workflow includes real native rendering and
+player movement after export compilation. Broader R0-R12 work and final
+commit/push/deployment remain open.
+
+### Independent water surfaces and animation groups
+
+Room-source v16 adds per-room water coverage/height/group settings and overrides
+for the native 21 water-animation slots. The controls follow DEFWATERANIM and
+LEVELSAVE in leveld.asc, Anims.s DoWaterAnims, and objects.c do_water_anims.
+Static lower-storey water can retain existing partial polygon shapes/patterns or
+cover a complete authored outline using an explicitly selected pattern. Room
+assignments can join, leave or change groups independently. Disabling a group
+holds its members at the configured starting height; enabling it restores the
+attachments. Removing water also moves the collision plane below the floor,
+using the original dry-room convention. Template inheritance is undoable.
+
+Group top/bottom/current values retain native 24.8 precision and initial signed
+velocity. The game retains its original fixed +/-128 velocity after reversal.
+Polygon heights use the same arithmetic-shift quarter-unit rounding as the
+native routine. Initial collision and polygon heights agree to that native
+precision in paused inspection as well as play. Invalid/missing group settings,
+material references and ranges produce actionable diagnostics before writing.
+
+The water pass writes LEVELSAVE's object-below/water/object-above sequence,
+preserves existing pool geometry when requested, and generates convex pieces
+for whole concave rooms. Direct compiler-owned graphics targets bind every
+water polygon to its controlled runtime cell. Explicit overrides remove old
+inherited group writes; untouched originals and native-material copies retain
+their existing sharing. The native limit is 256 animated polygon attachments
+per group; decomposition counts towards it and over-limit builds stop clearly.
+If the imported level has no lift/animation table, assembly writes the required
+lift 999 terminator followed by all 21 slots so the native loader finds WaterList.
+
+Project saves/Undo preserve source settings. Copies retain shared group IDs and
+restore captured settings when the target workspace predates group creation.
+Room deletion drops its generated water attachments, and normal room partition
+metadata carries water into the resulting rooms. Native water picks now direct
+users to Water and animation groups rather than claiming no authoring control.
+Inspector height readouts use authored water settings. Closed water/group drafts
+are unmounted, so empty unused form fields cannot block Save project.
+
+Eight water model scenarios cover static/dynamic creation, shared membership,
+pause/reassignment/removal, existing pool preservation, missing native tables,
+copies/concavity/deletion/Undo, damaged source and native phase precision. The
+full model-suite checkpoint passes 1017 tests in 91 files. The 104-check targeted
+animation/source regression and 18 Chromium/Firefox authoring/import/navigation
+checks pass. Both browsers verify shared polygon/collision motion and a map
+whose imported baseline has no animation tables. Full editor completion and
+final commit/push/deployment remain governed by the open R0-R12 audit.
+
+Final water browser checks additionally capture a valid inspection camera,
+sample native picks to find a rendered opcode-7 surface, click it and verify the
+water-authoring guidance. Both Chromium and Firefox pass the visual/picking,
+shared-motion, pause/removal and no-animation-table scenarios. The source-water
+target also rejects a restored room assignment whose group is unconfigured;
+no unused-slot default can become an implicit runtime animation.
+
+### Automatic starter textures for new rooms
+
+The user requested automatic defaults so finishing a room immediately gives a
+working textured preview. The user-facing finishRoomDraft command now commits
+the outline and a saved RoomAppearance together as one Undo. It selects real
+wall styles, normal floor/ceiling material records and actual lighting, preferring
+the selected template and using level materials for missing styles. Two-storey
+rooms get independent lower/upper surface references. Missing resources fail
+before committing the new room; no placeholder texture or unsaved preview-only
+material is generated.
+
+The appearance's optional surfaces recipe creates complete planes for the new
+outline, so partial template decorations or independent control geometry cannot
+prevent a fresh room from compiling. Imported rooms retain their original
+geometry. Draw order retains the appropriate object/water clips; inherited sky
+settings apply only to the active top storey. Wall-style changes and redraws
+retain the saved surface recipe. Individual textures remain paintable; stairs,
+room copies and opening partitions preserve the recipe. Older manually authored
+appearance files remain readable without silently replacing their geometry.
+
+Inspector sections now use distinct React keys per section and room. Shared
+keys had left duplicate floor/ceiling controls after changing selections; the
+new-room browser test checks that only one pair is present. Help, the drawing
+tooltip, dotted-line guide and README no longer require a separate Apply
+appearance step for new rooms.
+
+The full model checkpoint passes 1035 tests in 92 files. The current 20-check
+creation target additionally covers both-storey defaults, opening partitions,
+independent control geometry and material choices for every template in all
+16 maps. The 26 Chromium/Firefox default-texture, painting, stair, opening and
+storey checks pass, plus ten room-tool scenarios. Native frame picking verifies
+real walls and planes without an appearance setup step. TypeScript/Vite build
+and diff checks pass. The broader authoring/release audit remains open; this
+checkpoint has not been committed, pushed or deployed as a finished editor.
+
+### Independent lower-wall switches
+
+The room inspector now creates numbered wall switches independently of imported
+switch templates. A keyboard-accessible numbered room diagram selects the wall;
+the inspector supports wall reassignment, manual/automatic reset and removal.
+Instructions explain using Space nearby and linking the same switch number in a
+door or lift's requirements. Native surface picking identifies the switch and
+links to its activation room, including imported cross-room graphics owners.
+
+The source contract is `leveld.asc`'s `DEFSWITCH` (3905) and `LEVELSAVE`'s
+activation points (901), panel (1413/1445), and eight slots (1962), encoded for
+the current native format. Panels use actual texture 11, 32 strips, a 64-unit
+consecutive point pair and heights floor-64 through floor-32. Native
+`objects.c:switch_routine` retains ownership of condition bit 4+slot, phase and
+timer behaviour; no new game rules or placeholder resources are introduced.
+
+Room-source version 17 stores slot, stable boundary identity and reset mode.
+Whole-room moves and safe straight-wall corner insertion preserve the panel;
+missing, shortened, bent or open backing walls give explicit build diagnostics.
+The compiler requires full solid backing in one generated cell, respects the
+2,048-point/eight-switch limits and preserves explicit moving-surface identities
+when inserting the panel. Converting a switch room into a moving room and
+deleting it are protected. A required switch must be unlinked before removal.
+
+Room clipboard copies allocate independent slots and remap copied internal door
+and lift requirements. Captured clipboard source survives Undo of the original
+switch. Maps without any imported switch table can create and copy switches;
+unused native records remain inactive. Save/Undo retain editable identities,
+never generated graphics addresses or runtime activation state. Reassigning or
+removing imported switch controllers remains unfinished, as do the wider
+controller grouping and authoring audit requirements.
+
+Validation: all 1043 model tests in 93 files pass. Six switch model scenarios
+cover native records, save/Undo/Redo, split-wall moves, reassignment/removal,
+slot protection, absent imported tables, independent copies and gated-controller
+requirement remapping. Twelve Chromium/Firefox switch/door/lift regression
+checks pass. Sixteen additional browser checks cover new-switch rendering and
+picking, native activation and gated synchronized door motion, automatic starter
+textures, direct floor/ceiling textures, skylights, upper-storey shafts and
+solid/dotted wall collision. TypeScript/Vite builds and diff checks pass. This
+checkpoint does not close the release audit or publish an incomplete editor.
+
+### Independent straight-wall alignment and brightness
+
+The wall paint dialog now has an Alignment and brightness section for signed
+per-face brightness, horizontal tile offset and vertical row offset. Empty fields
+inherit source values. Texture, alignment and brightness apply together as one
+validated Undo transaction; material reset and alignment/brightness reset are
+independent. The room inspector also clears settings whose walls were removed
+by an outline edit, allowing the source to be repaired without a working preview.
+README and in-app help explain the units and the effect on corner lighting.
+
+`wallSettings.ts` owns the editable settings and strict room-source version 18
+schema. Source faces and stable authored boundary IDs have independent lower and
+upper values. Saves retain original game files; room moves, corner insertion,
+clipboard capture/paste and opening partitions preserve only the relevant face
+settings. Removing an upper storey removes its settings. Opening partitions use
+actual generated provenance to retain imported face overrides, and validate the
+original settings before partitioning rather than dropping broken source.
+
+`wallSettingsBuild.ts` applies settings after geometry/material assembly, keeping
+points, strip spans, heights, transparency and draw order intact. Its contracts
+are AMOS `DEFLOWERWALLBRIGHT`/`DEFUPPERWALLBRIGHT` (3825/3789) and the current
+native WallRoutine's signed `wallbrightoff`, FROMTILE (*16 columns), and totalyoff
+(rows). Newly selected columns are checked against the actual painted sheet.
+Brightness/row-only edits preserve retained legacy sampling. No replacement
+textures, guessed lighting or game rules are introduced.
+
+Native animation bases are synchronized separately. DoorRoutine decodes a
+4096-byte legacy tile base and adds absolute height scroll; the compiler inverts
+that scroll for the chosen initial row. LiftRoutine keeps a stable decoded base
+in the current renderer, so the lift list stores the chosen tile/row directly.
+Signed legacy door base bit patterns survive row-only changes. Unedited original
+controllers keep their own bases, requirements and collision relationships.
+The preview bridge adds read-only native wall phase/base/brightness inspection
+for these checks; gameplay routines have not changed.
+
+Validation: all 1050 model tests in 94 files pass, including seven new settings
+scenarios covering independent storeys, saves/history, copied controllers,
+signed legacy bases, material resets, safe boundary splits, opening partitions
+and missing-wall recovery. Twenty Chromium/Firefox checks pass for boundary
+painting, editable 3D and actual native door/lift phase/base/brightness during
+synchronized motion. Eight additional wall-paint/settings checks pass for modal
+cancellation, atomic history, portable source and isolated native pixel changes
+from brightness and row alignment. The native preview was rebuilt; current
+TypeScript/Vite and diff checks pass.
+
+The broader gates remain open: original repeat-window/fit options, transparency,
+bands, curves, special-face lighting and the full WB/ZZ mapping still need their
+complete workflows and evidence. This checkpoint is not a finished-editor
+commit, push or deployment.
+
+### Original wall repeat/fit and explicit corner lighting
+
+The wall paint dialog now exposes the original 2, 4, 8, 16, 32, 64, 128 and
+256-column repeat windows and natural/up/down fit. `wallRepeat.ts` follows
+`leveld.asc` WGPUT and LEVELSAVE's half-world-unit column count. Up adds a full
+repeat even on an exact multiple; down keeps at least one full repeat. Source
+room version 19 records the explicit width/fit without inferring it from an
+imported strip span. Choosing Inherit original repeat clears that override.
+Texture and settings still commit together as one Undo. Reset wall settings
+restores repeat/alignment/brightness while keeping the saved material.
+
+Fitting uses the complete source face or stable authored boundary, including
+deformed chains, imported partial/decorative faces, source copies and moving-wall
+attachments. Generated pieces share texture columns at cut endpoints. Widths
+are checked against the actual selected sheet; a narrow sheet is not silently
+substituted when the user chooses a wide window. The normal source/clipboard
+schema upgrade survives pasting captured settings after Undo of the original.
+
+The deformed-native-face test exposed the existing need for explicit lighting
+when an inserted point leaves its old straight gradient. `cornerLights.ts` and
+the new Corner lighting inspector provide that authoring path. Users choose both
+native brightness words or copy an existing point, optionally scope the values
+to an individual normal floor/ceiling/wall, and choose Static/Pulse/Flicker/Fire
+with a native 1/16–16/16 blend. Source version 20 retains coordinates, scope and
+exact words. Values move/copy with the corner; removing a corner, sky ceiling or
+upper storey removes only its obsolete assignments. Opening partitions preserve
+the scopes which actually draw that corner. Reset/inherit and draft cancellation
+are available even when another geometry error prevents preview.
+
+`geometryLighting.ts` consumes explicit values before trying inherited gradients
+and separates coincident graphics identities for scoped values. Each normal
+lower floor, lower ceiling, upper floor and upper ceiling can therefore retain
+its own lighting at the same physical corner. Native `level_get_point_brightness`
+and the normal Gouraud floor/wall shaders consume the rebuilt words. Copying a
+native point preserves unknown retained word bits until a user deliberately
+edits its decoded controls. The animation encoding follows currentPointBrights:
+signed base byte, low-nibble effect and high-nibble blend-minus-one.
+
+These features do not close the full authoring audit. Original preset/selector
+options beyond the current native light effects, special-surface/curve controls,
+transparent walls/bands and the other R0–R12 gaps remain release requirements.
+
+Validation: the full model suite passed 1,100 tests across 96 files. A subsequent
+focused run passed all 94 room-creation, corner-lighting, geometry-lighting,
+wall-repeat and storey tests. Automatic starter materials passed again in both
+Chromium and Firefox: finish drawing, inspect textured 3D geometry, save/reload
+the appearance, Undo/Redo creation and render the room in the native preview.
+The browser run also completed the TypeScript and production-build checks.
+
+### Original static whole-room lighting presets
+
+`roomLightPresets.ts` implements `leveld.asc` PRESETS / UPPERPRESETS keys 1–6
+as one source transaction per storey. The six floor/ceiling word pairs are
+255/1, 1/255, 1/241, 241/1, 241/15 and 15/241. Keeping 255 and 241 preserves
+the original unsigned low-byte encoding of -1 and -15. The inspector exposes
+the original preset names under Corner lighting → Whole-room lighting.
+Individual normal plane scopes retain independent corner identities; wall
+lighting and the opposite native brightness word are preserved. Effective
+compiled lighting supplies that opposite word, including existing explicit
+overrides. The proposal validates both its input build and complete result
+before committing one Undo. Save/reopen retains source assignments.
+
+Fifteen model checks cover the six presets on each storey, preserved animated
+opposite words, shared lower/upper material references, concave new-room cells,
+invalid input, save/reopen and Undo/Redo. Chromium and Firefox both verify
+changed native floor/ceiling pixels on each storey, exact pixel restoration
+after Undo, Redo and the saved four-plane assignments. The existing four
+corner-lighting browser checks also pass. The initial preset browser failure
+was a test synchronization error: Undo must wait for the new preview revision
+before reading pixels. No renderer changes were needed.
+
+The four original glowing presets remain open. PRESETS / UPPERPRESETS keys
+7–0 derive selectors 1–5 from point numbers and their complements. The current
+native decoder only animates selectors 1–3. `Anims.s` BrightAnimHandler populates
+three entries of a twenty-word table; the remaining original table semantics
+and stable source point numbering require explicit parity evidence before
+exposing those presets. This does not close R0 or R10, or the broader release
+audit. User instructions and the parity inventory reflect the supported six.
+
+Final checkpoint validation: all 1,115 model tests across 97 files passed;
+TypeScript, the browser production build and `git diff --check` passed. The
+new preset checks passed in both browsers, as did all four existing native
+corner-lighting checks. Commit, push and deployment remain pending completion
+of the full release gates.
+
+### Original glowing presets and steady point-light selectors
+
+The four remaining PRESETS / UPPERPRESETS choices (keys 7, 8, 9 and 0) now
+author ceiling glow, floor glow, matching floor/ceiling glow and complementary
+floor/ceiling glow. The original formula is `(point mod 5) + 1`, with a zero
+base and full-strength `$F000` blend; out-of-sync floors substitute `1000-point`.
+The modern authoring point number is the current geometric corner identity,
+resolved before separate graphics lighting clones. Assignments store the
+resulting native words once, so moving/copying/rebuilding does not re-randomize
+the choice. Original out-of-sync numbering above 1,000 is rejected explicitly
+rather than inventing a negative-modulo extension. The other presets remain
+available in levels with higher current-runtime point numbers.
+
+Source audit resolved selectors 4–15: `Anims.s` reserves twenty zero words at
+brightAnimTable and BrightAnimHandler updates only the first three, terminated
+by the fourth pointer's -1. No other source writes that table. Original point
+decoding indexes its low-nibble selector and blends toward that entry. The C
+decoder previously kept the base for selectors above 3; it now blends toward
+zero for 4–15. Zone-level brightness encoding is separate and unchanged.
+The corner codec retains selectors 1–15; the normal picker names Pulse,
+Flicker and Fire, while advanced Original animation selector exposes the
+complete 0–15 selection. Steady selectors have an explicit descriptive label.
+
+`feedback_points.c`, now included in the native feedback runner, checks 61,440
+point evaluations (15 selectors × 16 strengths × 128 bases × two words), signed
+rounding and negative-base bypass. Model coverage adds all four glowing choices
+on each storey with exact compiled words, save/reopen, move and clipboard
+preservation. A read-only preview query reports native packed and evaluated
+point lighting; it does not advance animation or inject values. Browser
+acceptance observes the real playtest and then renders fixed inspection cameras
+to distinguish native animation from ordinary camera movement.
+
+All ten intended presets are authored. This does not close the full point-light
+audit: original raw-word edge cases (including selector-zero words carrying
+nonzero high-byte blend bits), unrestricted decorative/special geometry and
+other R0–R12 requirements remain open. Unused bump choices remain disabled.
+
+Validation: all 1,123 model tests across 97 files passed. The rebuilt native
+point harness passed all 61,440 evaluations. Chromium and Firefox passed all
+eight preset applications (four glowing choices × two storeys), source saves,
+the advanced selector-15 versus Static-0 exact pixel comparison and actual
+playtest animation on both storeys. The existing static-preset, independent
+corner-lighting, edit/reload/playtest-isolation and all-sixteen-original-map
+browser checks also passed with the corrected decoder. TypeScript, production
+build and whitespace checks passed.
+
+The animation test initially assumed toolbar Stop retained runtime lighting.
+EnginePreview intentionally reloads the editable artifact on Stop, resetting
+that table. The final check observes native values during real gameplay, then
+uses the existing play bridge to freeze the simulation while the React playtest
+remains mounted. Sixteen fixed cameras near floors/ceilings compare the actual
+animated frame before ordinary Stop restores the authored level. Pixel samples
+come from renderer_get_cw_buffer before SDL's damage overlay, so a red playtest
+tint cannot count as evidence of a lighting change. No animation values or game
+timesteps are injected by this check. This checkpoint remains uncommitted and
+undeployed while the full release audit is open.
+
+### Reciprocal see-through barriers
+
+AMOS DEFWALL's `b` and `v` choices toggle WT 0↔3 and 0↔4. LEVELSAVE emits
+the same opcode-13 graphics for both special types and exports their collision
+neighbour as -1. Rendering visibility still crosses those boundaries. Source
+version 21 adds `barrier:true` to an explicitly open visibility connection;
+both source owners must agree. Earlier versions reject the new field instead
+of treating it as an ordinary opening. Stable boundary IDs preserve inserted
+corners, copies, captured paste after Undo and skylight partitions.
+
+The compiler now projects barrier edges into a separate collision topology.
+Visibility/clip generation retains the connected graph; native collision and
+corner walls use the solid projection. Animation attachment validation checks
+the actual collision projection rather than assuming it equals visibility.
+`authorSeeThroughBarriers` creates full-height lower/upper opcode-13 faces from
+explicit saved wall recipes, removes their superseded boundary graphics and
+supplies real lighting provenance. Original material density stays continuous
+along split boundary chains, and independent paint/repeat/alignment/brightness
+continue through the normal boundary pipeline. Controlled volumes remain
+protected by their existing mechanism dependency rules.
+
+The renderer previously clamped opcode 13's brightness and disabled clipping,
+but still rasterized zero texels as opaque. Its new dedicated path follows
+WallRoutine3.ChipMem.s ScreenWallstripdrawthru PACK0/1/2: zero leaves colour,
+draw tags and pick provenance untouched. Solid runs alone mark picking. The
+path avoids artificial side/cap extension across holes. Opaque wall loops stay
+on their existing paths; DOS opaque fast paths are gated only for see-through
+faces. The context flag occupies an existing padding byte and is restored after
+each wall. This enables the original optional ENABLESEEWALL rendering behavior
+for the current port; strict original-engine capability profiles remain open.
+
+The room inspector provides See-through barrier alongside Open/Close edge,
+with explicit materials/lighting on both sides, draft cancellation and one Undo.
+Open edge removes the barrier, and Close edge makes it solid. An orange dash-dot
+map line distinguishes a visible-but-blocked boundary from a dotted passage.
+README, in-app controls and the map's connection help explain the workflow.
+
+Model checks cover collision versus visibility, both storeys, strict v21 restore,
+reciprocal diagnostics, saved source, Undo/Redo, default and explicit repeat
+continuity, captured clipboard and skylight partitions. Browser acceptance
+requires both foreground barrier picks and visible/pickable destination geometry,
+exact destination colour words through holes, blocked native walking and actual
+passage after reopening. Barrier/open colour comparisons keep the same saved
+appearance selections; undoing creation also removes those selections and is a
+different material/lighting baseline.
+
+This checkpoint does not finish the authoring audit. Imported raw special-wall
+provenance and unrestricted reconstruction, other wall bands/curves, remaining
+mechanism ownership and the other R0–R12 release requirements remain open.
+
+Validation: the full model run passed 1,126 tests across 98 files. After the
+final split-chain continuity adjustment and additional upper-storey/skylight
+case, the focused barrier/portal/animation-attachment run passed all 25 checks.
+The rebuilt native preview passed sixteen Chromium/Firefox checks covering
+barriers, lower/upper wall and boundary paint, repaired doorways, engine edit
+reload/playtest isolation and all sixteen original maps. Ordinary wall closure
+and reopening also passed in both browsers. TypeScript, production build and
+`git diff --check` passed. No commit, push or deployment occurred at this
+checkpoint; the full release gates above remain authoritative.
+
+### Incremental deployment requested by the user
+
+The user requested keeping the `abhd-ed` deployment current during ongoing
+authoring work. This supersedes waiting for the full audit before publishing
+incremental packages; it does not close any unfinished authoring gate.
+
+Built the matching native preview and `npm run build:web` package with runtime
+revision `e08a341fc410c6231f753bfed26af951122b5dbd43a72d538b297338fde0d4d4`.
+Thirty Chromium/Firefox authoring checks passed against that exact packaged
+build using `EDITOR_USE_PACKAGED_BUILD=1`: automatic textures, direct plane
+editing, dotted connections, upper storeys/openings, lighting presets,
+see-through barriers, navigation, switches, exits and animated water.
+
+Copied the eighty package files into the website checkout's `abhd-ed` folder,
+retaining old hashed assets for existing tabs. Verified destination and staged
+runtime bytes against the manifest, then committed/pushed only that folder as
+website commit `7a4a6d71ea3eab6eb28d423aeb1ac7bb1e1eeb96`. Added deployment-local
+Git attributes for binary native payloads. The unrelated `abhd/abhd.zip` was
+preserved. Generated Emscripten JavaScript retains its exact compiler bytes;
+Git's whitespace checker reports its existing trailing line-ending whitespace.
+
+GitHub Pages run `42081405269` completed successfully. Every one of the eighty
+public package files matched its local SHA-256. The live
+https://retro-foundry.github.io/abhd-ed/ editor loaded Level 1, direct floor
+texture controls and the matching versioned native engine in both Chromium and
+Firefox, with rendered pixels and no page errors or engine alerts. README and
+requirements now record the incremental deployment workflow. The source
+authoring audit remains active; source checkpoint commit/push is still pending.
+
+### Retained full-height native barriers
+
+`importedBarriers.ts` derives native WT3/4-style boundaries from full-height
+opcode-13 records covering a solid collision line and an opposing shared native
+boundary. Contiguous face intervals may cover the line together. The source
+snapshot stays unchanged: no guessed portal overrides, material choices or
+lighting words are inserted on import. Raw, untouched levels still retain
+their original files through the existing matching-source path.
+
+Room topology and imported visibility now retain sight connections across these
+boundaries while the collision projection preserves each side's actual native
+neighbour word. One-sided native collision is retained rather than made
+reciprocal by inference. Explicit modern Open/Close actions still update both
+sides. A retained barrier is not mistaken for a newly opened doorway requiring
+a repair recipe during unrelated height/property edits. Native graphics remain
+source-owned and keep their material/lighting identities.
+
+Explicit Open trims the old face into the destination air bands; any retained
+frame uses the ordinary wall opcode. Generated opcode changes require an
+explicit override on that original barrier's source boundary. Explicit Close
+uses the normal two-sided repair appearance workflow. Removing the adjoining
+room now requests a repair style and replaces the old barrier with solid
+graphics. Partial decorative strips do not establish a full-room visibility
+connection; unrestricted compound/partial graphics remain an open gate.
+
+Eight model checks cover untouched source import, unrelated property rebuilds,
+both storeys' exact native wall fields, legacy visibility, explicit open/close,
+portable saves and Undo/Redo, inserted corners, independent group copies,
+one-sided collision, decorative-strip exclusion and deletion repairs. The final
+model run passed all 1,135 tests across 99 files. Six Chromium/Firefox
+checks passed imported-barrier height edits and real hole picking, blocked
+walking, opening and Undo alongside authored barriers and ordinary closures.
+Instructions now explain automatic recognition and retained native settings.
+
+The closure regression also verifies choosing a texture style whose original
+face was see-through. Appearance recipes now supply texture/sampling while the
+connection mode owns opacity: normal perimeter/repair walls emit opcode 0 and
+explicit barriers emit 13. Close no longer accidentally inherits transparency
+from a material prototype. Retained imported graphics keep their native opcode
+until the user explicitly changes that connection.
+
+The source checkpoint includes the preceding deployed authoring work and this
+import fix. It is an incremental checkpoint, with the R0–R12 audit still open.

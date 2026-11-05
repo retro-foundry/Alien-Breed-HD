@@ -13,6 +13,7 @@ import { roomSettings } from './roomHeights';
 import { hasNativeWallMaterials } from './roomMaterials';
 import { nativeRoomTranslation, outlineTranslation } from './roomTranslation';
 import { sourceBoundaryIndex } from './boundaryMaterials';
+import { importedBarrierModeOverride, importedBarrierModeAt } from './importedBarriers';
 
 export interface CellWalls { lower: GraphicsRecordInput[]; upper: GraphicsRecordInput[] }
 export interface NewRoomWallMaterials { lower: readonly WallSurface[]; upper?: readonly WallSurface[] }
@@ -65,7 +66,7 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
     const changed = [...changedPortalEdges(document, topology, cell), ...unassigned], closing = closingMaterials.get(room.id);
     if (unassigned.length && !closing?.walls.lower.length) throw new Error(`Room ${room.id.replace(/^room-/, '')} has new boundary walls needing a wall style. Select the room and apply its wall repair appearance before building.`);
     if (changed.length && !closing?.walls.lower.length) throw new Error(`Room ${room.id.replace(/^room-/, '')} has a changed doorway needing a wall style. Select the room and apply its wall repair appearance before building.`);
-    if (changed.length && hasUpperLayer(document, template) && !closing?.walls.upper?.length)
+    if (changed.length && !room.upperStorey && hasUpperLayer(document, settings) && !closing?.walls.upper?.length)
       throw new Error(`Room ${room.id.replace(/^room-/, '')} needs an upper wall style for its changed doorway. Apply its upper wall repair appearance before building.`);
     const outline = cell.vertices.map(id => {
       const point = points[id]; if (!point) throw new Error(`Room ${cell.sourceId} has a missing wall corner.`); return point;
@@ -126,7 +127,8 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
         }
         const opened = cell.vertices.some((_, edge) => cell.sourceLines[edge] === lineId && newPortalTarget(document, topology, cell, edge));
         const changedLine = changed.some(edge => cell.sourceLines[edge] === lineId);
-        if (unchanged && retained(record) && !opened && !changedLine && !heightChanged) return [{ sourceOffset: record.offset, bytes: document.files.graphics.slice(record.offset, record.offset + record.size) }];
+        const modeChanged = importedBarrierModeOverride(document, room, record);
+        if (unchanged && retained(record) && !opened && !changedLine && !heightChanged && !modeChanged) return [{ sourceOffset: record.offset, bytes: document.files.graphics.slice(record.offset, record.offset + record.size) }];
         if (lineId === undefined) {
           if (translatedWholeRoom) return [{ sourceOffset: record.offset, bytes: encodeWallSurface({ ...material,
             points: [pointId({ x: a.x + dx, z: a.z + dz }), pointId({ x: b.x + dx, z: b.z + dz })] }) }];
@@ -147,7 +149,8 @@ export function buildCellWallGeometry(document: LevelDocument, source: RoomSourc
           const position = (arc: number) => ({ x: start.x + (end.x - start.x) * (arc - edgeStart) / (edgeEnd - edgeStart),
             z: start.z + (end.z - start.z) * (arc - edgeStart) / (edgeEnd - edgeStart) });
           const from = last > first ? low : high, to = last > first ? high : low;
-          const bound = wallForSpan(material, distance(a, b), [pointId(position(from)), pointId(position(to))], Math.abs(from - first), Math.abs(to - first));
+          const bound = wallForSpan(modeChanged && importedBarrierModeAt(document, room, start, end) ? { ...material, type: 0 } : material,
+            distance(a, b), [pointId(position(from)), pointId(position(to))], Math.abs(from - first), Math.abs(to - first));
           uncut.push(bound);
           if (changed.includes(index)) continue;
           const target = newPortalTarget(document, topology, cell, index);

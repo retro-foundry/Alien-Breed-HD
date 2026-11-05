@@ -1,13 +1,16 @@
+import { finishRoomDraft } from './model/roomCreation';
+import { LevelExitPicker } from './components/LevelExitPicker';
+import { roomSettings } from './model/roomHeights';
 import { addRoomCorner, deleteRoomCorner } from './model/roomCorners';
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { openLevel, objectName, sameBytes, zoneContainsPoint, type LevelDocument, type LevelFiles } from './model/level';
-import { execute, redo, undo, moveObject, removeObject, setStart, setSourceStart, setSourceObject, setPlaytestSlot, setExitZone, editRoomSource, type EditCommand, type History } from './model/commands';
+import { execute, redo, undo, moveObject, removeObject, setStart, setSourceStart, setSourceObject, setPlaytestSlot, editRoomSource, type EditCommand, type History } from './model/commands';
 import { editableStarts } from './model/sourceStarts';
 import { editableObjects, objectIsActive, objectDestinationRoom } from './model/sourceObjects';
 import { pointInRoomOutline } from './model/geometry';
 import { decodeProject, encodeGameLevel, encodeProject, readFiles, openProjectCandidate, type ProjectCandidate } from './model/project';
-import { sourceMatchesLevel, beginRoomDraft, setDraftCorners, commitRoomDraft, removeSourceRooms, moveSourceCorner, type RoomDraft } from './model/roomSource';
+import { sourceMatchesLevel, beginRoomDraft, setDraftCorners, removeSourceRooms, moveSourceCorner, type RoomDraft } from './model/roomSource';
 import { listWorkspaces, saveWorkspace, type SavedWorkspace } from './persistence';
 import { SpatialViewport } from './components/SpatialViewport';
 import { editingViews, type EditingView } from './model/editorCamera';
@@ -237,21 +240,21 @@ export function App() {
   const finishRoom = useCallback(() => {
     if (!document || !roomDraft) return;
     try {
-      const change = commitRoomDraft(document.roomSource, roomDraft);
-      edit(editRoomSource(change)); visitRoom(roomDraft.roomId ?? `room-${document.roomSource.nextId}`);
+      const command = finishRoomDraft(document, roomDraft);
+      edit(command); visitRoom(roomDraft.roomId ?? `room-${document.roomSource.nextId}`);
       setRoomDraft(null); setTool('select');
     } catch (error) { fail(error); }
   }, [document, roomDraft, edit, selectRoom, fail]);
   function beginRoom() {
     if (!document || template === undefined) return;
     setRoomDraft(beginRoomDraft(document, document.roomSource, template)); setTool('room'); setView('map'); setEditingView('top');
-    setStatus('Click corners in either direction. Enter finishes; Backspace removes the last corner; Escape cancels.');
+    setStatus('Draw beside another room with an exactly shared edge to create a dotted connection. Enter finishes; Backspace removes the last corner; Escape cancels.');
   }
   function redrawRoom() {
     if (!document || !selectedRoom) return;
     setRoomDraft(setDraftCorners(beginRoomDraft(document, document.roomSource, selectedRoom.recordZone, selectedRoom.id), []));
     setTool('room'); setView('map'); setEditingView('top');
-    setStatus('Redraw the outline in either direction. Enter applies it as one edit; Escape or changing tools keeps the original room. New walls need a wall repair appearance.');
+    setStatus('Redraw the outline in either direction. Enter applies it as one edit; Escape or changing tools keeps the original room. Starter textures and authored paints are retained; changed imported doorways may need wall repair.');
   }
   function addRoomPoint(x: number, z: number) {
     if (!roomDraft) return;
@@ -507,7 +510,7 @@ export function App() {
 
   const filteredZones = document?.zones.filter(zone => document.roomSource.rooms.some(room => room.originZone === zone.id) && String(zone.id).includes(search)).map(zone => {
     const room = document.roomSource.rooms.find(room => room.originZone === zone.id);
-    return room?.heights ? { ...zone, ...room.heights } : zone;
+    return room ? roomSettings(document, room) : zone;
   }) ?? [];
   const newRooms = document?.roomSource.rooms.filter(room => room.originZone === null && room.id.toLowerCase().includes(search.toLowerCase())) ?? [];
   const objects = useMemo(() => document ? editableObjects(document) : [], [document]);
@@ -527,9 +530,9 @@ export function App() {
     <div className="workspace">
       <aside className="navigator"><div className="panel-title">PROJECT <span className="eyebrow">LOCAL</span></div><div className="project-picker"><Icon name="layers" /><div><strong>{document?.name ?? 'Opening…'}</strong><span>{document?.roomSource.rooms.length ?? 0} rooms · {activeObjects} objects</span></div></div>
         <label className="reference-picker"><span>Target game slot</span><select aria-label="Target game slot" title="Saved with this project. Build & play uses this game slot; Export level writes its matching level directory. Undo restores the previous slot." disabled={!document} value={document?.playtestSlot ?? 0} onChange={event => { if (document) edit(() => setPlaytestSlot(document, Number(event.target.value))); }}>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>Level slot {i + 1}</option>)}</select></label>
-        <label className="reference-picker"><span>Level exit</span><select aria-label="Level exit" title="Finish the level when player one enters this zone. Original uses the chosen game slot's built-in exit. No exit is useful for testing. Custom exits are supported by the updated game port." disabled={!document} value={document?.exitZone ?? 'original'} onChange={event => { if (document) edit(() => setExitZone(document, event.target.value === 'original' ? null : Number(event.target.value))); }}><option value="original">Original slot exit</option><option value="-1">No exit (playtest freely)</option>{document?.zones.map(zone => <option key={zone.id} value={zone.id}>Zone {zone.id}</option>)}</select></label>
+        <LevelExitPicker document={document} onEdit={command => edit(() => command)} />
         <label className="reference-picker"><span>Original levels</span><select aria-label="Original level" title="Open one of the sixteen shipped maps. Your current edits are saved in this browser first." value={/^Level (\d+)$/.exec(document?.name ?? '')?.[1] ?? ''} disabled={!!busy} onChange={event => { if (event.target.value) void loadOriginal(Number(event.target.value)); }}><option value="">Choose a reference level</option>{Array.from({ length: 16 }, (_, i) => <option key={i} value={i + 1}>Level {String(i + 1).padStart(2, '0')}</option>)}</select></label>
-        <div className="navigator-tabs" role="tablist" aria-label="Map contents">{(['zones', 'objects', 'starts'] as const).map(value => <button key={value} role="tab" title={value === 'starts' ? 'Find and select player starting positions.' : value === 'zones' ? 'Find and select rooms by zone number.' : 'Find enemies, pickups and scenery by name.'} aria-selected={tab === value} className={tab === value ? 'active' : ''} onClick={() => { setTab(value); setSearch(''); }}>{value === 'starts' ? 'Starts' : value[0]?.toUpperCase() + value.slice(1)}</button>)}</div>
+        <div className="navigator-tabs" role="tablist" aria-label="Map contents">{(['zones', 'objects', 'starts'] as const).map(value => <button key={value} role="tab" title={value === 'starts' ? 'Find and select player starting positions.' : value === 'zones' ? 'Find map areas by zone number. A zone may be a room, corridor or part of a larger room.' : 'Find enemies, pickups and scenery by name.'} aria-selected={tab === value} className={tab === value ? 'active' : ''} onClick={() => { setTab(value); setSearch(''); }}>{value === 'starts' ? 'Starts' : value[0]?.toUpperCase() + value.slice(1)}</button>)}</div>
         <label className="search-box"><Icon name="search" size={15} /><input ref={searchInput} aria-label="Search map contents" title="Find a zone number or object name. Press / from the map to focus search." value={search} onChange={event => setSearch(event.target.value)} placeholder={tab === 'zones' ? 'Find a zone…' : 'Find an object…'} /><kbd>/</kbd></label>
         <div className="contents-list" ref={contentsList}>
           {tab === 'objects' && <button className="small-button" disabled={!selectableIds.length || !!busy} title="Select all active objects matching this search, across both floors. Player avatars are excluded. Shortcut: Ctrl/Command+A outside text fields. On the map the shortcut selects only the displayed floor."
@@ -554,8 +557,8 @@ export function App() {
         <button className="recent-button" title="Open a workspace previously saved in this browser." onClick={() => { listWorkspaces().then(setRecents).catch(fail); setShowRecents(true); }}><Icon name="open" size={15} />Recent workspaces<span>↗</span></button>
       </aside>
       <main className="map-main"><div className="map-toolbar"><div className="tool-group"><button className={`icon-button ${tool === 'select' ? 'active' : ''}`} aria-label="Select tool" aria-pressed={tool === 'select'} title="Click to select; drag a box to select zones. Shift adds zones. Move geometry only with explicit handles. Shortcut: V." onClick={() => setTool('select')}><Icon name="select" /></button><button className={`icon-button ${tool === 'pan' ? 'active' : ''}`} aria-label="Pan tool" aria-pressed={tool === 'pan'} title="Navigate with middle/right drag; left drag still selects zones. Shortcut H hides editing handles." onClick={() => setTool('pan')}><Icon name="hand" /></button></div><span className="toolbar-divider" />
-        <label className="grid-select"><select aria-label="Room settings template" title="Copy room settings from this original zone when drawing a new outline. Available even after deleting all outlines. Selecting a room also picks its settings." disabled={!document || !!roomDraft} value={template ?? 0} onChange={event => { setRoomTemplate(Number(event.target.value)); select(null); }}>{document?.zones.map(zone => <option key={zone.id} value={zone.id}>Template {zone.id}</option>)}</select></label>
-        <button className={`small-button ${tool === 'room' ? 'active' : ''}`} aria-label="Draw room" aria-pressed={tool === 'room'} disabled={template === undefined} title="Draw an editable room outline using the chosen settings template, in either direction. Enter finishes; Escape cancels. Game geometry compilation is still in progress." onClick={beginRoom}>Draw room</button>
+        <label className="grid-select"><select aria-label="Room settings template" title="New rooms copy heights, storeys and settings from this template. Choose a template marked 2 storeys to draw a room with an upper level. Selecting an existing room also picks its template." disabled={!document || !!roomDraft} value={template ?? 0} onChange={event => { setRoomTemplate(Number(event.target.value)); select(null); }}>{document?.zones.map(zone => <option key={zone.id} value={zone.id}>Template {zone.id}: {zone.upper.length > 0 && zone.upperFloor > zone.upperCeiling ? '2 storeys' : '1 storey'}</option>)}</select></label>
+        <button className={`small-button ${tool === 'room' ? 'active' : ''}`} aria-label="Draw room" aria-pressed={tool === 'room'} disabled={template === undefined} title="Draw a room using the chosen template's heights and storeys. Enter finishes; Escape cancels. Starter wall, floor and ceiling textures are assigned automatically. Change them later in the inspector." onClick={beginRoom}>Draw room</button>
         <button className="small-button" disabled={!document || template === undefined || !!busy} title="Create adjoining steps from endpoints, width and floor heights. Preview the whole flight and apply it as one undoable edit." onClick={() => { setRoomDraft(null); setTool('select'); setStairsOpen(true); }}>Build stairs</button>
         <button className="small-button" disabled={!document || !!busy} aria-pressed={tool === 'box'} title="Drag a rectangle in either direction to select objects on the displayed floor. Hold Shift to add to the selection. Escape cancels the rectangle. Shortcut: B." onClick={beginBoxSelection}>Box select objects</button>
         <button className="small-button" disabled={!document || !!busy} title="Choose an object, then click the map to place it. Escape cancels placement." onClick={() => { setRoomDraft(null); setTool('select'); setObjectOpen(true); }}>Add object</button>
@@ -570,7 +573,7 @@ export function App() {
         <button className="small-button" disabled={!objectClipboard || !document || objectClipboard.source.original !== document.original || !!busy || !!roomDraft} title="Choose the first copied object's destination before pasting the whole selection. Spacing and heights are retained. Escape cancels. Shortcut: Ctrl/Command+Shift+V." onClick={() => setPasteOpen(true)}>Place pasted objects</button>
         {roomDraft && <><button className="small-button" disabled={roomDraft.vertices.length < 3} title="Validate and commit this whole outline as one undoable edit. Shortcut: Enter on the map." onClick={finishRoom}>Finish room</button><button className="small-button" title="Discard this unfinished outline. No project geometry changes. Shortcut: Escape." onClick={() => { setRoomDraft(null); setTool('select'); }}>Cancel room</button></>}
         <button className="icon-button" aria-label="Undo" title={`Undo ${workspace?.history.past.at(-1)?.label ?? ''} (Ctrl+Z)`} disabled={!workspace?.history.past.length} onClick={() => historyAction('undo')}><Icon name="undo" /></button><button className="icon-button" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled={!workspace?.history.future.length} onClick={() => historyAction('redo')}><Icon name="redo" /></button><span className="toolbar-divider" />
-        <div className="layer-toggle"><button className={layer === 'lower' ? 'active' : ''} title="Inspect the lower floor of each zone." onClick={() => setLayer('lower')}>Lower</button><button className={layer === 'upper' ? 'active' : ''} title="Inspect upper-floor geometry where a zone has two floors." onClick={() => setLayer('upper')}>Upper</button></div><span className="toolbar-spacer" />
+        <div className="layer-toggle" role="group" aria-label="Storey to edit"><button className={layer === 'lower' ? 'active' : ''} title="Edit the lower storey and place objects on its floor. This selects an existing storey; it does not create one." onClick={() => setLayer('lower')}>Lower storey</button><button className={layer === 'upper' ? 'active' : ''} title="Edit the upper storey where one already exists. To draw a new two-storey room, choose a template marked 2 storeys, then Draw room." onClick={() => setLayer('upper')}>Upper storey</button></div><span className="toolbar-spacer" />
         <label className="grid-select"><Icon name="grid" size={15} /><select aria-label="Grid spacing" title="Set snapping for dragged objects and starts. Hold Alt to bypass snapping; Grid off uses whole coordinates." value={grid} onChange={event => setGrid(Number(event.target.value))}>{[0, 8, 16, 32, 64, 128].map(value => <option key={value} value={value}>{value === 0 ? 'Grid off' : `Grid ${value}`}</option>)}</select></label><button className={`icon-button ${showObjects ? 'active' : ''}`} aria-label="Show objects" title="Show or hide enemies, pickups and scenery on the map." aria-pressed={showObjects} onClick={() => setShowObjects(show => !show)}><Icon name="eye" /></button><button className="icon-button" title="Fit the whole level into the map view. Shortcut: F." aria-label="Frame map" onClick={() => setFitKey(key => key + 1)}><Icon name="fit" /></button>
       </div>
         <div className="view-tabs" role="group" aria-label="Viewport layout"><button className="project-toggle" aria-label="Toggle project navigator" title="Show or hide the level picker and map contents. Shortcut / opens search." aria-expanded={navigatorOpen} onClick={() => setNavigatorOpen(open => !open)}><Icon name="layers" size={14} />Project</button>{(['map', 'split', 'engine'] as const).map(mode => <button key={mode} aria-pressed={view === mode} className={view === mode ? 'active' : ''} title={mode === 'map' ? 'Edit the level using axis, orthographic or perspective views.' : mode === 'split' ? 'Show the map and actual game renderer together.' : 'Inspect and playtest the level in the actual game engine.'} onClick={() => { setView(mode); }}>{mode === 'map' ? 'Editor view' : mode === 'split' ? 'Split view' : 'Engine view'}</button>)}{view !== 'engine' && <label className="editing-view-select"><span>Editing view</span><select aria-label="Editing view" title="Top/bottom look along Y; front/back along Z; left/right along X. Both 3D views show both storeys, textures and editable floor/ceiling handles. All views share selection, inspector and Undo." value={editingView} onChange={event => { setEditingView(event.target.value as EditingView); if (tool === 'room' || tool === 'box') { setTool('select'); setRoomDraft(null); } }}>{editingViews.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select></label>}</div>

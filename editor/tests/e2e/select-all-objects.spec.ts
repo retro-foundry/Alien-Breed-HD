@@ -20,7 +20,7 @@ test('select all follows search or displayed floor without hijacking text input 
   await inspector.getByRole('button', { name: 'Clear object selection', exact: true }).click();
   await page.getByRole('button', { name: 'Select all matching objects', exact: true }).focus(); await page.keyboard.press('Control+a');
   await expect(inspector.getByRole('heading', { name: `${searched.length} selected objects` })).toBeVisible();
-  await page.getByRole('button', { name: 'Upper', exact: true }).click();
+  await page.getByRole('button', { name: 'Upper storey', exact: true }).click();
   const map = page.locator('canvas[aria-label="Level map"]');
   await map.focus(); await page.keyboard.press('Control+a');
   await expect(inspector.getByRole('heading', { name: `${upper.length} selected objects` })).toBeVisible();

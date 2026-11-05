@@ -291,6 +291,15 @@ EMSCRIPTEN_KEEPALIVE void editor_play(int playing)
 /* Read-only playtest inspection: report the actual simulation position,
  * including teleports, rather than the imported header's spawn metadata. */
 EMSCRIPTEN_KEEPALIVE int editor_player_zone(void) { return preview_loaded ? g_state.plr1.zone : -1; }
+/* Read-only native point words and evaluated lighting for editor inspection. */
+EMSCRIPTEN_KEEPALIVE int editor_point_light_value(int point, int field)
+{
+    LevelState *level = &g_state.level;
+    if (!preview_loaded || point < 0 || point >= level_point_count(level) || !level->point_brights) return INT32_MIN;
+    if (field == 0 || field == 1) return obj_w(level->point_brights + point * 4 + field * 2);
+    if (field == 2 || field == 3) return level_get_point_brightness(level, (int16_t)point, field - 2);
+    return INT32_MIN;
+}
 EMSCRIPTEN_KEEPALIVE int editor_conditions(void) { return (uint16_t)game_conditions; }
 /* Read-only SwitchRoutine state and its actual wall phase write. */
 EMSCRIPTEN_KEEPALIVE int editor_switch_value(int index, int field)
@@ -341,6 +350,19 @@ EMSCRIPTEN_KEEPALIVE int editor_mechanism_value(int lift, int index, int field)
     case 5: {
         uint8_t *zone = level_get_zone_data_ptr(&g_state.level, obj_w(record));
         return zone ? obj_l(zone + (lift ? ZONE_OFF_FLOOR : ZONE_OFF_ROOF)) : 0;
+    }
+    case 7: case 8: case 9: case 10: {
+        /* Read the first real moving-wall attachment for alignment evidence.
+         * These are native words after DoorRoutine/LiftRoutine have run. */
+        const uint32_t *offsets = lift ? g_state.level.lift_wall_list_offsets : g_state.level.door_wall_list_offsets;
+        const uint8_t *walls = lift ? g_state.level.lift_wall_list : g_state.level.door_wall_list;
+        if (!offsets || !walls || offsets[index] == offsets[index + 1]) return INT32_MIN;
+        const uint8_t *entry = walls + offsets[index] * 10u;
+        if (field == 9) return obj_l(entry + 6);
+        int32_t graphic = obj_l(entry + 2);
+        if (!g_state.level.graphics || graphic < 0 || g_state.level.graphics_byte_count < 30u ||
+            (size_t)graphic > g_state.level.graphics_byte_count - 30u) return INT32_MIN;
+        return obj_w(g_state.level.graphics + graphic + (field == 7 ? 10 : field == 8 ? 12 : 28));
     }
     default: return 0;
     }

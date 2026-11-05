@@ -23,30 +23,44 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
   newRoomLighting: ReadonlyMap<string, PointLightingBinding> = new Map()) {
   for (const id of newRoomLighting.keys()) if (!source.rooms.some(room => room.id === id))
     throw new Error(`Initial geometry lighting refers to missing room ${id}.`);
-  const claims: { id: number; binding: PointLightingBinding; recordOffset?: number }[] = [];
-  const assigned = new Set<number>(); let activeRecord: number | undefined;
+  const claims: { id: number; binding: PointLightingBinding; recordOffset?: number; upper?: boolean }[] = [];
+  const assigned = new Set<number>(); let activeRecord: number | undefined, activeUpper: boolean | undefined;
+  const matched = new Set<object>();
+  const explicit = (owner: string, id: number) => {
+    const room = source.rooms.find(room => room.id === owner)!, point = graphics.topology.points[id]!;
+    const choices = room.cornerLights?.filter(light => light.x === point.x && light.z === point.z);
+    const light = choices?.find(light => light.record !== undefined && light.record === activeRecord) ?? choices?.find(light => light.record === undefined);
+    if (!light) return undefined;
+    matched.add(light);
+    return { kind: 'value' as const, lowerBrightness: light.lowerBrightness, upperBrightness: light.upperBrightness };
+  };
   const claim = (id: number, binding: PointLightingBinding, _owner: string) => {
+    binding = explicit(_owner, id) ?? binding;
     resolvePointLighting(document, binding);
-    claims.push({ id, binding, recordOffset: activeRecord }); assigned.add(id);
+    claims.push({ id, binding, recordOffset: activeRecord, upper: activeUpper }); assigned.add(id);
   };
   const points = graphics.topology.points;
   for (const room of source.rooms) {
     const cells = graphics.topology.cells.filter(cell => cell.sourceId === room.id);
     if (!cells.length) continue;
     const references = new Set(cells.flatMap(cell => [...cell.vertices, ...graphics.pointReferences.get(cell.id)!]));
-    if (!hasNativeWallMaterials(room.originZone, room.wallSources)) {
+    const native = hasNativeWallMaterials(room.originZone, room.wallSources);
+    if (!native) {
       const selection = newRoomLighting.get(room.id);
       if (!selection) throw new Error(`Room ${room.id} needs its initial point-lighting selection before building.`);
-      references.forEach(id => claim(id, selection, room.id)); continue;
+      references.forEach(id => claim(id, selection, room.id));
     }
-    activeRecord = undefined;
     for (const cell of cells) {
       const stream = graphics.streams.get(cell.id)!;
-      for (const item of [...stream.lower, ...(stream.upper ?? [])]) if (item.sourceOffset === undefined && item.lightingPoint !== undefined) {
-        const generated = readGraphicRecord(new BinaryReader(item.bytes, 'closing wall lighting'), 0, points.length);
-        generated.points.forEach(id => claim(id, { kind: 'copy', source: item.lightingPoint! }, room.id));
-      }
+      for (const [upper, records] of [[false, stream.lower], [true, stream.upper ?? []]] as const)
+        for (const item of records) if (item.lightingPoint !== undefined) {
+          activeRecord = item.sourceOffset; activeUpper = upper;
+          const generated = readGraphicRecord(new BinaryReader(item.bytes, 'authored surface lighting'), 0, points.length);
+          generated.points.forEach(id => claim(id, { kind: 'copy', source: item.lightingPoint! }, room.id));
+        }
     }
+    activeRecord = undefined; activeUpper = undefined;
+    if (!native) continue;
     const template = document.zones.find(zone => zone.id === room.recordZone)!;
     const translation = nativeRoomTranslation(document, room);
     const records = [...template.lower, ...template.upper], sourcePoints = new Set(records.flatMap(record => record.points));
@@ -65,7 +79,7 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
       activeRecord = record.offset;
       const emittedInputs = cells.flatMap(cell => {
         const stream = graphics.streams.get(cell.id)!;
-        return [...stream.lower, ...(stream.upper ?? [])].filter(item => item.sourceOffset === record.offset);
+        return [...stream.lower, ...(stream.upper ?? [])].filter(item => item.sourceOffset === record.offset && item.lightingPoint === undefined);
       });
       const emitted = emittedInputs.map(item => readGraphicRecord(new BinaryReader(item.bytes, 'generated lighting target'), 0, points.length));
       if (!emitted.length) continue;
@@ -82,11 +96,13 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
       const from = record.points[0]!, to = record.points[1]!, a = supplied?.[0] ?? points[first[0]!]!, b = supplied?.[1] ?? points[last[0]!]!;
       const lower = resolvePointLighting(document, { kind: 'copy', source: from }), upper = resolvePointLighting(document, { kind: 'copy', source: to });
       for (const id of new Set(segments.flat())) {
-        if (supplied ? points[id]!.x === a.x && points[id]!.z === a.z : id === first[0]) claim(id, { kind: 'copy', source: from }, room.id);
+        const authored = explicit(room.id, id);
+        if (authored) claim(id, authored, room.id);
+        else if (supplied ? points[id]!.x === a.x && points[id]!.z === a.z : id === first[0]) claim(id, { kind: 'copy', source: from }, room.id);
         else if (supplied ? points[id]!.x === b.x && points[id]!.z === b.z : id === last[0]) claim(id, { kind: 'copy', source: to }, room.id);
         else if (same(lower, upper)) claim(id, { kind: 'copy', source: from }, room.id);
         else {
-          if (!on(points[id]!, a, b)) throw new Error(`Room ${room.id} needs explicit lighting along its bent material wall.`);
+          if (!on(points[id]!, a, b)) throw new Error(`Room ${room.id} needs explicit lighting along its bent material wall. Open Corner lighting in the room inspector and assign the moved corner values.`);
           const dx = b.x - a.x, dz = b.z - a.z;
           claim(id, { kind: 'segment', from, to, numerator: (points[id]!.x - a.x) * dx + (points[id]!.z - a.z) * dz,
             denominator: dx * dx + dz * dz }, room.id);
@@ -94,6 +110,7 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
       }
     }
     const boundaryBinding = (id: number, candidates = sourcePoints): PointLightingBinding => {
+      const authored = explicit(room.id, id); if (authored) return authored;
       const point = points[id]!;
       if (candidates.has(id) && document.points[id]!.x === point.x && document.points[id]!.z === point.z) return { kind: 'copy', source: id };
       const initial = newRoomLighting.get(room.id);
@@ -106,7 +123,7 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
       const last = indices.filter(index => room.wallSources[(index + 1) % room.wallSources.length] !== lineId);
       if (first.length !== 1 || last.length !== 1) throw new Error(`Room ${room.id} has an ambiguous source lighting chain.`);
       const a = room.vertices[first[0]!]!, b = room.vertices[(last[0]! + 1) % room.vertices.length]!;
-      if (!on(point, a, b)) throw new Error(`Room ${room.id} needs explicit lighting along its bent source wall.`);
+      if (!on(point, a, b)) throw new Error(`Room ${room.id} needs explicit lighting along its bent source wall. Open Corner lighting in the room inspector and assign the moved corner values.`);
       const dx = b.x - a.x, dz = b.z - a.z, denominator = dx * dx + dz * dz;
       const numerator = (point.x - a.x) * dx + (point.z - a.z) * dz;
       return { kind: 'segment', from: originalAt(line, candidates), to: originalAt({ x: line.x + line.dx, z: line.z + line.dz }, candidates), numerator, denominator };
@@ -116,7 +133,7 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
       const candidates = new Set(record.points);
       for (const cell of cells) {
         const stream = graphics.streams.get(cell.id)!;
-        for (const item of [...stream.lower, ...(stream.upper ?? [])].filter(item => item.sourceOffset === record.offset)) {
+        for (const item of [...stream.lower, ...(stream.upper ?? [])].filter(item => item.sourceOffset === record.offset && item.lightingPoint === undefined)) {
           const generated = readGraphicRecord(new BinaryReader(item.bytes, 'polygon lighting'), 0, points.length);
           generated.points.forEach((id, index) => {
             const original = document.points[record.points[index]!];
@@ -133,6 +150,8 @@ export function planGeometryLighting(document: LevelDocument, source: RoomSource
       claim(id, boundaryBinding(id), room.id);
     }
   }
+  for (const room of source.rooms) for (const light of room.cornerLights ?? []) if (light.record !== undefined && !matched.has(light))
+    throw new Error(`Room ${room.id} no longer draws that face at its lit corner. In Corner lighting, select that face and use Inherit corner lighting, or Reset room corner lighting.`);
   return claims;
 }
 
@@ -149,10 +168,11 @@ export function buildGeometryLighting(document: LevelDocument, source: RoomSourc
   const points = graphics.topology.points.map(point => ({ ...point })), bindings = new Map<number, PointLightingBinding>();
   const copies = new Map<string, number>(), streams = new Map(graphics.streams), pointReferences = new Map(graphics.pointReferences);
   for (const room of source.rooms) {
-    const selection = newRoomLighting.get(room.id), replacements = new Map<number | undefined, Map<number, number>>();
+    const selection = newRoomLighting.get(room.id), replacements = new Map<string, Map<number, number>>();
+    const keyFor = (record: number | undefined, upper?: boolean) => `${upper === undefined ? 'both' : upper}:${record ?? 'new'}`;
     const planned = planGeometryLighting(document, { ...source, rooms: [room] }, graphics,
       selection ? new Map([[room.id, selection]]) : new Map());
-    for (const { id, binding, recordOffset } of planned) {
+    for (const { id, binding, recordOffset, upper } of planned) {
       const value = resolvePointLighting(document, binding), previous = bindings.get(id);
       let target = id;
       if (!previous || same(value, resolvePointLighting(document, previous))) {
@@ -166,13 +186,13 @@ export function buildGeometryLighting(document: LevelDocument, source: RoomSourc
         }
         target = copy;
       }
-      const mapping = replacements.get(recordOffset) ?? new Map<number, number>();
-      mapping.set(id, target); replacements.set(recordOffset, mapping);
+      const key = keyFor(recordOffset, upper), mapping = replacements.get(key) ?? new Map<number, number>();
+      mapping.set(id, target); replacements.set(key, mapping);
     }
     if (!replacements.size) continue;
-    const rewrite = (item: GraphicsRecordInput): GraphicsRecordInput => {
+    const rewrite = (item: GraphicsRecordInput, upper: boolean): GraphicsRecordInput => {
       const record = readGraphicRecord(new BinaryReader(item.bytes, 'graphics lighting identities'), 0, points.length);
-      const mapping = replacements.get(item.sourceOffset) ?? replacements.get(undefined);
+      const mapping = replacements.get(keyFor(item.sourceOffset, upper)) ?? replacements.get(keyFor(item.sourceOffset)) ?? replacements.get(keyFor(undefined, upper)) ?? replacements.get(keyFor(undefined));
       if (!mapping || (!record.points.some(id => mapping.get(id) !== undefined && mapping.get(id) !== id)
         && !(record.polygon && mapping.has(record.polygon.closingPoint) && mapping.get(record.polygon.closingPoint) !== record.polygon.closingPoint))) return item;
       const bytes = item.bytes.slice(), view = new DataView(bytes.buffer);
@@ -181,7 +201,7 @@ export function buildGeometryLighting(document: LevelDocument, source: RoomSourc
       return { ...item, bytes };
     };
     for (const cell of graphics.topology.cells.filter(cell => cell.sourceId === room.id)) {
-      const stream = streams.get(cell.id)!, lower = stream.lower.map(rewrite), upper = stream.upper?.map(rewrite);
+      const stream = streams.get(cell.id)!, lower = stream.lower.map(item => rewrite(item, false)), upper = stream.upper?.map(item => rewrite(item, true));
       streams.set(cell.id, { lower, ...(upper === undefined ? {} : { upper }) });
       pointReferences.set(cell.id, [...new Set([...lower, ...(upper ?? [])].flatMap(item =>
         readGraphicRecord(new BinaryReader(item.bytes, 'lit graphics'), 0, points.length).points))]);

@@ -2210,7 +2210,8 @@ typedef AB3D_CACHELINE_ALIGN struct {
     int8_t  fill_screen_water;
     int8_t  update_column_clip;
     uint8_t profile_collect_stats;
-    uint8_t _profile_pad[3];
+    uint8_t transparent_wall;
+    uint8_t _profile_pad[2];
     const RendererWorldZonePrepass *zone_prepass;
     RendererWorkloadStats workload_stats;
 
@@ -2280,6 +2281,7 @@ static void render_slice_context_init(RenderSliceContext *ctx,
     render_slice_context_reset(ctx, left, right, top, bot);
     ctx->wall_cache_block_off = 0xFFFFu;
     ctx->update_column_clip = 1;
+    ctx->transparent_wall = 0;
 }
 
 static inline uint8_t *renderer_active_buf(void)
@@ -7001,14 +7003,14 @@ static void draw_wall_rasterize_segment(
     }
 
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
-    if (!inv_z_step_acc && has_tex_pal && !foreground_floor_occlude_top && !pick_capture_active) {
+    if (!ctx->transparent_wall && !inv_z_step_acc && has_tex_pal && !foreground_floor_occlude_top && !pick_capture_active) {
         renderer_wall_flat_rows(ctx, draw_start, draw_end, (int32_t)inv_z_start,
                                  tex_z_acc, tex_z_step_acc, bright_acc, bright_step_acc,
                                  top_proj, bot_proj, h_shifted, texture, pal, rows, valand,
                                  horand, fromtile, yoff_base_fp, d6_max);
         return;
     }
-    if (has_tex_pal && !pick_capture_active &&
+    if (!ctx->transparent_wall && has_tex_pal && !pick_capture_active &&
         top_proj >= INT32_MIN && top_proj <= INT32_MAX &&
         bot_proj >= INT32_MIN && bot_proj <= INT32_MAX && h_shifted <= UINT32_MAX &&
         inv_z_start >= 1 && inv_z_end >= 1 && inv_z_start <= INT32_MAX && inv_z_end <= INT32_MAX) {
@@ -7102,6 +7104,37 @@ static void draw_wall_rasterize_segment(
         if (wall_pixels < 1) wall_pixels = 1;
         int32_t tex_step = (int32_t)renderer_divide_i64_i32(h_shifted, wall_pixels);
         int32_t tex_y = (ct - y_top_scr) * tex_step + yoff_base_fp;
+
+        if (ctx->transparent_wall && has_tex_pal && strip_offset >= 0 && (unsigned)pack_mode < 3u) {
+            /* WallRoutine3.ChipMem.s ScreenWallstripdrawthru PACK0/1/2:
+             * packed texel zero leaves the destination untouched. Do not
+             * extend coverage across holes or mark them as picked geometry. */
+            const uint8_t *strip = texture + strip_offset;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+            const RendererPixel *palette = (const RendererPixel *)(const void *)(pal + lut_block_off);
+#else
+            const RendererPixel *palette = ctx->wall_cache_cw;
+#endif
+            int run = -1;
+            for (int y = ct; y <= cb; ++y) {
+                const int row = ((int)(tex_y >> 16) & valand) * 2;
+                const uint16_t packed = ((uint16_t)strip[row] << 8) | strip[row + 1];
+                const unsigned texel = (packed >> pack_shift) & 31u;
+                if (texel) {
+                    const size_t at = renderer_cw_index_xy(x, y, width, height);
+                    RENDER_TAG_STORE(buf[(size_t)y * wstride + x], 2);
+                    cw[at] = palette[texel];
+                    if (expand) rgb[(size_t)y * wstride + x] = ctx->wall_cache_rgb[texel];
+                    if (run < 0) run = y;
+                } else if (run >= 0) {
+                    if (pick_capture_active) renderer_pick_mark_wall_column(ctx, x, run, y - 1, 0, 0, 0, 0);
+                    run = -1;
+                }
+                tex_y += tex_step;
+            }
+            if (run >= 0 && pick_capture_active) renderer_pick_mark_wall_column(ctx, x, run, cb, 0, 0, 0, 0);
+            continue;
+        }
 
         /* Edge extension only on segment boundary columns.  Interior columns
          * of the same segment are consecutive, so the ±1 extension from one
@@ -15886,6 +15919,8 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                     {
                         /* See-through/sky wall polys should not occlude billboards. */
                         int8_t prev_wall_update_column_clip = ctx->update_column_clip;
+                        uint8_t prev_transparent_wall = ctx->transparent_wall;
+                        ctx->transparent_wall = entry_type == 13;
                         if (entry_type == 13) ctx->update_column_clip = 0;
                         renderer_draw_wall_ctx(ctx, rx1, rz1, rx2, rz2,
                                                wall_top, wall_bot,
@@ -15899,6 +15934,7 @@ static void renderer_draw_zone_ctx(RenderSliceContext *ctx, GameState *state, in
                                                    (int32_t)wall_height_for_tex * 65536,
                                                wall_d6_max);
                         ctx->update_column_clip = prev_wall_update_column_clip;
+                        ctx->transparent_wall = prev_transparent_wall;
                     }
                 }
             }

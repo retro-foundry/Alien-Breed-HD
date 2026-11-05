@@ -145,6 +145,15 @@
         if (!Number.isFinite(request.x) || !Number.isFinite(request.y)) throw new Error('Invalid preview pick coordinates.');
         send('pick-sample', {id:request.id, ...pickAt(request.x, request.y)});
       }
+      if (loaded && request.type === 'corner-light-state') {
+        if (!Array.isArray(request.points) || request.points.length > 128 || request.points.some(point => !Number.isInteger(point) || point < 0 || point > 2047)) throw new Error('Invalid point lighting query.');
+        const points = request.points.map(point => {
+          const lower = engine._editor_point_light_value(point, 0);
+          if (lower === -2147483648) throw new Error('Point lighting query refers to a missing native point.');
+          return {point, lower, upper:engine._editor_point_light_value(point, 1), lowerValue:engine._editor_point_light_value(point, 2), upperValue:engine._editor_point_light_value(point, 3)};
+        });
+        send('corner-light-state', {id:request.id, points});
+      }
       if (loaded && request.type === 'capture') {
         const c = request.camera;
         if (!c || ![c.zone,c.x,c.z,c.upper,c.angle].every(Number.isInteger)) throw new Error('Invalid capture camera.');
@@ -155,6 +164,12 @@
       }
       if (loaded && request.type === 'mechanism-state') {
         send('mechanism-state', {id:request.id, mechanism:mechanismState(request.kind, request.index)});
+      }
+      if (loaded && request.type === 'mechanism-wall-state') {
+        const state = mechanismState(request.kind, request.index);
+        if (!state.wallCount) throw new Error('The inspected mechanism has no moving wall attachments.');
+        const value = field => engine._editor_mechanism_value(request.kind === 'lift' ? 1 : 0, request.index, field);
+        send('mechanism-wall-state', {id:request.id, wall:{current:state.current, horizontal:value(7), vertical:value(8), base:value(9), brightness:value(10)}});
       }
       if (loaded && request.type === 'switch-state') {
         if (!Number.isInteger(request.index) || request.index < 0 || request.index >= 8) throw new Error('Invalid switch inspection slot.');

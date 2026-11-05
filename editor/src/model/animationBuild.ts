@@ -8,8 +8,8 @@ import { resolveAnimationRoom } from './animationRooms';
 export interface AnimationGraphicTarget { readonly room: number; readonly upper: boolean; readonly index: number }
 export interface AnimationWall { line: number; graphic: number; base: number; target?: AnimationGraphicTarget }
 export interface MovingRoomAnimation { header: Uint8Array; zone: number; graphic: number; walls: readonly AnimationWall[]; target?: AnimationGraphicTarget }
-export interface WaterAnimation { header: Uint8Array; entries: readonly { zone: number; graphic: number }[] }
-export interface SwitchAnimation { bytes: Uint8Array; zone: number; point: number; graphic: number }
+export interface WaterAnimation { header: Uint8Array; entries: readonly { zone: number; graphic: number; target?: AnimationGraphicTarget }[] }
+export interface SwitchAnimation { bytes: Uint8Array; zone: number; point: number; graphic: number; target?: AnimationGraphicTarget }
 export interface AnimationTables {
   doors: readonly MovingRoomAnimation[] | null;
   lifts: readonly MovingRoomAnimation[] | null;
@@ -154,7 +154,7 @@ export function buildAnimationTables(tables: AnimationTables, base: number, reso
     if (group.header.length !== 14) throw new Error('A water animation needs a complete 14-byte header.');
     checkedInteger(group.entries.length, 0, 256, 'Water animation room count');
     output.write(group.header);
-    for (const entry of group.entries) { output.word(checkedInteger(entry.zone, 0, 255, 'Water animation room')); output.long(pointer(entry.graphic, { kind: 'water', zone: entry.zone })); }
+    for (const entry of group.entries) { output.word(checkedInteger(entry.zone, 0, 255, 'Water animation room')); output.long(pointer(entry.graphic, { kind: 'water', zone: entry.zone, ...(entry.target ? { target: entry.target } : {}) })); }
     output.word(-1);
   }
   let switches = 0;
@@ -166,7 +166,7 @@ export function buildAnimationTables(tables: AnimationTables, base: number, reso
       output.patchWord(offset, checkedInteger(record.zone, -32768, 255, 'Switch room'));
       output.patchWord(offset + 4, checkedInteger(record.point, record.zone >= 0 ? 0 : -32768, record.zone >= 0 ? 2046 : 32767, 'Switch point pair'));
       // Inactive graphics fields are stored data, not live relocation targets.
-      output.patchLong(offset + 6, record.zone >= 0 ? pointer(record.graphic, { kind: 'switch', zone: record.zone })
+      output.patchLong(offset + 6, record.zone >= 0 ? pointer(record.graphic, { kind: 'switch', zone: record.zone, ...(record.target ? { target: record.target } : {}) })
         : checkedInteger(record.graphic, -2147483648, 2147483647, 'Inactive switch graphics field'));
     }
   }

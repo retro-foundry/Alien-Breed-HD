@@ -39,6 +39,7 @@ def main():
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "renderer_pixel.h"
 #ifdef _WIN32
 #include <direct.h>
 #define MKDIR(path) _mkdir(path)
@@ -77,7 +78,7 @@ int main(int argc, char **argv) {
         work = Path(temporary)
         harness = work / 'oracle.c'; harness.write_text(declarations + native + driver, encoding='utf-8')
         executable = work / 'oracle.exe'
-        subprocess.run([args.cc, '-std=c11', str(harness), '-o', str(executable)], check=True)
+        subprocess.run([args.cc, '-std=c11', '-I', str(root / 'src'), str(harness), '-o', str(executable)], check=True)
         paths = []
         for index, (name, _) in enumerate(entries):
             path = work / f'{index}.wad'
@@ -99,7 +100,9 @@ int main(int argc, char **argv) {
                 'unpackedSha256': hashlib.sha256(paths[index].read_bytes()).hexdigest(), 'rgbaSha256': hashlib.sha256(rgba).hexdigest()})
     output = root / args.output
     output.write_text(json.dumps({'authority': 'src/io.c native io_dump_textures at palette level 16; src/sb_decompress.c via unpacker',
-        'nativeSourceSha256': hashlib.sha256(source.encode()).hexdigest(), 'walls': fixtures}, indent=2) + '\n', encoding='utf-8')
+        'nativeSourceSha256': hashlib.sha256(source.encode()).hexdigest(),
+        'nativePixelSourceSha256': hashlib.sha256((root / 'src/renderer_pixel.h').read_text(encoding='utf-8').encode()).hexdigest(),
+        'walls': fixtures}, indent=2) + '\n', encoding='utf-8')
     print(f'Recorded {len(fixtures)} native texture sheet pixel oracles.')
 
 

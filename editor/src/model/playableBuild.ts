@@ -41,7 +41,7 @@ export function preparePlayableLevel(source: LevelDocument): Promise<PlayableLev
     if (sourceMatchesLevel(source)) return buildPlayableLevel(source, -1);
     // Yield so controls can show the build state before the synchronous compiler.
     await new Promise(resolve => setTimeout(resolve, 0));
-    return buildPlayableLevel(source, source.exitZone ?? await defaultExit(source.playtestSlot));
+    return buildPlayableLevel(source, source.roomSource.exitRoom !== undefined ? -1 : source.exitZone ?? await defaultExit(source.playtestSlot));
   })().catch(error => { artifacts.delete(source); throw error; });
   artifacts.set(source, promise); return promise;
 }

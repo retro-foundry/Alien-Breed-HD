@@ -143,7 +143,15 @@ export function setPlaytestSlot(document: LevelDocument, slot: number): EditComm
 
 export function setExitZone(document: LevelDocument, zone: number | null): EditCommand {
   if (zone !== null && zone !== -1 && !document.zones.some(item => item.id === zone)) throw new Error('Choose an existing exit zone.');
-  return { label: zone === null ? 'Use original slot exit' : zone === -1 ? 'Disable level exit' : `Exit at zone ${zone}`, patches: [], exitZone: { before: document.exitZone, after: zone } };
+  const { exitRoom: _exitRoom, ...source } = document.roomSource;
+  return { label: zone === null ? 'Use original slot exit' : zone === -1 ? 'Disable level exit' : `Exit at zone ${zone}`, patches: [], exitZone: { before: document.exitZone, after: zone },
+    ...(document.roomSource.exitRoom !== undefined ? { roomSource: { before: document.roomSource, after: Object.freeze(source) } } : {}) };
+}
+
+export function setSourceExit(document: LevelDocument, room: string): EditCommand {
+  if (!document.roomSource.rooms.some(item => item.id === room)) throw new Error('Choose an existing source room for the level exit.');
+  return { label: `Exit at ${room}`, patches: [], roomSource: { before: document.roomSource,
+    after: document.roomSource.exitRoom === room ? document.roomSource : Object.freeze({ ...document.roomSource, exitRoom: room }) } };
 }
 
 export function editRoomSource(change: RoomChange): EditCommand {

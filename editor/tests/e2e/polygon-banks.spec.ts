@@ -5,7 +5,7 @@ import { encodeProject, decodeProject } from '../../src/model/project';
 import { captureEngine, enginePickDetails } from '../engineCapture';
 import { readFile } from 'node:fs/promises';
 
-for (const type of [1,2]) test(`native ${type===1?'floor':'ceiling'} normal, bump and smooth banks paint, save and undo`,async({page},testInfo)=>{
+for (const type of [1,2]) test(`native ${type===1?'floor':'ceiling'} normal materials paint, save and undo while unused bump choices stay disabled`,async({page},testInfo)=>{
   test.setTimeout(90000);
   const {document,copy}=nativeRoomCopyFixture(), built=buildPlayableLevel(document,-1), cell=built.topology!.cells.find(c=>c.sourceId===copy.id)!, zone=built.document.zones[cell.id]!;
   const camera={zone:cell.id,x:Math.round(copy.vertices.reduce((n,p)=>n+p.x,0)/copy.vertices.length),z:Math.round(copy.vertices.reduce((n,p)=>n+p.z,0)/copy.vertices.length),upper:0,angle:0,height:type===1?zone.floor-1:zone.ceiling+1};
@@ -17,15 +17,18 @@ for (const type of [1,2]) test(`native ${type===1?'floor':'ceiling'} normal, bum
   let checksum=await captureEngine(page,camera);
   const points=Array.from({length:361},(_,i)=>({x:(i%19+1)/20,y:(Math.floor(i/19)+1)/20}));
   const canvas=page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas');
-  for(const [mode,opcode] of [['bump',type+7],['smooth',type+9],['normal',type]] as const){
+  for(const [mode,opcode] of [['normal',type]] as const){
     const picks=await enginePickDetails(page,points), index=picks.findIndex(p=>p.zone===cell.id && p.surface && [type,type+7,type+9].includes(p.surface.type));
     expect(index).toBeGreaterThanOrEqual(0); const bounds=(await canvas.boundingBox())!;
     await canvas.click({position:{x:points[index]!.x*bounds.width,y:points[index]!.y*bounds.height}});
     await page.getByRole('button',{name:'Paint this surface',exact:true}).click();
     const dialog=page.getByRole('dialog',{name:'Paint floor or ceiling material'});
-    await dialog.getByRole('combobox',{name:'Surface material mode'}).selectOption(mode);
-    if(mode !== 'smooth') await dialog.getByRole('combobox',{name:'Surface pattern',exact:true}).selectOption(mode==='bump'?'771':'257');
-    await expect(dialog.getByRole('group',{name:'Floor pattern choices'}).getByRole('img')).toHaveCount(mode==='smooth'?1:16);
+    const modes=dialog.getByRole('combobox',{name:'Surface material mode'});
+    await expect(modes.locator('option[value=bump]')).toHaveJSProperty('disabled',true);
+    await expect(modes.locator('option[value=smooth]')).toHaveJSProperty('disabled',true);
+    await modes.selectOption(mode);
+    await dialog.getByRole('combobox',{name:'Surface pattern',exact:true}).selectOption('257');
+    await expect(dialog.getByRole('group',{name:'Floor pattern choices'}).getByRole('img')).toHaveCount(16);
     const revision=(await preview.getAttribute('data-revision'))!;
     await dialog.getByRole('button',{name:'Apply surface material',exact:true}).click();
     await expect(preview).not.toHaveAttribute('data-revision',revision); await expect(preview.getByRole('status')).toContainText('zones loaded');

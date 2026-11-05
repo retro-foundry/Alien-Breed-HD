@@ -3,7 +3,7 @@ import { checkedInteger } from './binary';
 import type { EditCommand } from './commands';
 import type { Position } from './geometry';
 import type { LevelDocument } from './level';
-import { validateRoomAppearances, type RoomAppearance } from './roomAppearance';
+import { defaultRoomAppearance, validateRoomAppearances, type RoomAppearance } from './roomAppearance';
 import { addSourceRooms, type SourceRoom } from './roomSource';
 import { compileRoomTopology } from './roomTopology';
 
@@ -54,7 +54,7 @@ export function createStairFlight(document: LevelDocument, flight: StairFlight):
   const source = addSourceRooms(document, document.roomSource, drafts).after;
   const rooms = source.rooms.slice(-flight.steps);
   const appearances = validateRoomAppearances({ ...document, roomSource: source }, [
-    ...(document.roomAppearances ?? []), ...rooms.map(room => ({ ...flight.appearance, room: room.id })),
+    ...(document.roomAppearances ?? []), ...rooms.map(room => ({ ...flight.appearance, room: room.id, surfaces: flight.appearance.surfaces ?? defaultRoomAppearance({ ...document, roomSource: source }, room).surfaces })),
   ]);
   compileRoomTopology(document, source);
   return { rooms, rises, command: { label: `Create ${flight.steps} stair steps`, patches: [],

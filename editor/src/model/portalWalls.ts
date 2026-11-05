@@ -4,6 +4,8 @@ import type { CompiledRoomCell, RoomTopology } from './roomTopology';
 import type { WallSurface } from './surfaces';
 import { airHeightsChanged } from './roomHeights';
 import { hasNativeWallMaterials } from './roomMaterials';
+import { importedBarrierConnection, importedBarrierHasNeighbour } from './importedBarriers';
+import { portalStateAt } from './portalStates';
 
 /** Existing imported openings keep their authored draw records. New openings
  * are determined by the generated neighbour and original collision identity,
@@ -16,6 +18,11 @@ export function newPortalTarget(document: LevelDocument, topology: RoomTopology,
   if (target.sourceId === cell.sourceId) return undefined;
   const line = cell.sourceLines[edge];
   const targetOrigin = target.originZone ?? (hasNativeWallMaterials(target.originZone, target.sourceLines) ? target.recordZone : null);
+  const room = document.roomSource.rooms.find(room => room.id === cell.sourceId), other = document.roomSource.rooms.find(room => room.id === target.sourceId);
+  if (room && other) {
+    const a = topology.points[cell.vertices[edge]!]!, b = topology.points[cell.vertices[(edge + 1) % cell.vertices.length]!]!;
+    if (portalStateAt(room, a, b, other.id) === undefined && importedBarrierConnection(document, room, other, a, b)) return;
+  }
   return hasNativeWallMaterials(cell.originZone, cell.sourceLines) && line !== null && line !== undefined && document.lines[line]!.connect === targetOrigin
     && !airHeightsChanged(document, cell) && !airHeightsChanged(document, target) ? undefined : target;
 }
@@ -35,7 +42,7 @@ export function closedPortalEdges(document: LevelDocument, cell: CompiledRoomCel
   if (!hasNativeWallMaterials(cell.originZone, cell.sourceLines)) return [];
   return cell.neighbours.flatMap((neighbour, edge) => {
     const line = cell.sourceLines[edge];
-    return neighbour < 0 && line != null && document.lines[line]!.connect >= 0 ? [edge] : [];
+    return neighbour < 0 && line != null && (document.lines[line]!.connect >= 0 || importedBarrierHasNeighbour(document, line)) ? [edge] : [];
   });
 }
 
@@ -45,8 +52,9 @@ export function changedPortalEdges(document: LevelDocument, topology: RoomTopolo
   if (!hasNativeWallMaterials(cell.originZone, cell.sourceLines)) return [];
   return cell.neighbours.flatMap((neighbour, edge) => {
     const line = cell.sourceLines[edge];
-    return line != null && document.lines[line]!.connect >= 0
-      && (neighbour < 0 || newPortalTarget(document, topology, cell, edge) && !heightPortalTarget(document,topology,cell,edge)) ? [edge] : [];
+    return line != null && (document.lines[line]!.connect >= 0
+      && (neighbour < 0 || newPortalTarget(document, topology, cell, edge) && !heightPortalTarget(document,topology,cell,edge))
+      || neighbour < 0 && importedBarrierHasNeighbour(document, line)) ? [edge] : [];
   });
 }
 
@@ -60,7 +68,7 @@ export function unassignedBoundaryEdges(topology: RoomTopology, cell: CompiledRo
 
 export function hasUpperLayer(document: LevelDocument, zone: Zone): boolean {
   const reader = new BinaryReader(document.files.graphics, 'portal layer table');
-  return reader.i32(reader.i32(12) + zone.id * 8 + 4) > 0 && zone.upperFloor > zone.upperCeiling;
+  return zone.upper.length > 0 && (zone.upper !== document.zones.find(item => item.id === zone.id)?.upper || reader.i32(reader.i32(12) + zone.id * 8 + 4) > 0) && zone.upperFloor > zone.upperCeiling;
 }
 
 /** Match src/level.c level_zone_has_upper_layer and movement.c's lower/upper

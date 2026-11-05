@@ -11,6 +11,8 @@ const hash = (bytes: Uint8Array | Uint8ClampedArray) => createHash('sha256').upd
 it('records the current native dump implementation so renderer-side IO changes require reviewed oracle regeneration', () => {
   const source = readFileSync(new URL('../../src/io.c', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   expect(createHash('sha256').update(source).digest('hex')).toBe(oracle.nativeSourceSha256);
+  const pixels = readFileSync(new URL('../../src/renderer_pixel.h', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  expect(createHash('sha256').update(pixels).digest('hex')).toBe(oracle.nativePixelSourceSha256);
 });
 for (const wall of oracle.walls) it(`matches native C decompression and every dumped RGBA pixel for ${wall.name}`, () => {
   const sheet = parseWallCatalog(envelope(catalog))[wall.id]!;

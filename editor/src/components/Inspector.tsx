@@ -1,3 +1,10 @@
+import { WaterInspector } from './WaterInspector';
+import { CornerLightInspector } from './CornerLightInspector';
+import { waterStartHeight } from '../model/sourceWater';
+import { NavigationInspector } from './NavigationInspector';
+import { RoomPortalInspector } from './RoomPortalInspector';
+import { RoomSurfaceInspector } from './RoomSurfaceInspector';
+import { ceilingIsSky } from '../model/roomStoreys';
 import { AuthoredMechanismInspector } from './AuthoredMechanismInspector';
 import { useEffect, useState } from 'react';
 import { objectName, type LevelDocument } from '../model/level';
@@ -50,6 +57,12 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
   if (!selection && !sourceRoom) return <aside className="inspector"><div className="panel-title">INSPECTOR</div><div className="empty-inspector"><Icon name="select" size={32} /><h2>Select something</h2><p>Click a zone, object or player start to inspect it.</p><p className="muted">Drag objects and starts to reposition them. Hold Alt to ignore the grid.</p></div></aside>;
   const zone = selection?.kind === 'zone' ? document.zones.find(zone => zone.id === selection.id) : undefined;
   const dimensions = sourceRoom ? roomSettings(document, sourceRoom) : zone;
+  let waterHeight: number | string | undefined = zone?.water;
+  if (sourceRoom) {
+    try { waterHeight = waterStartHeight(document, sourceRoom); }
+    catch (reason) { waterHeight = reason instanceof Error ? reason.message : String(reason); }
+  }
+  const outdoorSky = sourceRoom ? ceilingIsSky(document, sourceRoom, !!dimensions?.upper.length && dimensions.upperFloor > dimensions.upperCeiling) : zone?.backdrop;
   const object = selection?.kind === 'object' ? editableObjects(document).find(object => object.id === selection.id) : undefined;
   const sourceAvatar = object && !sourceMatchesLevel(document) ? objectPlayer(document, object) : undefined;
   const start = selection?.kind === 'start' ? editableStarts(document).find(start => start.player === selection.id) : undefined;
@@ -58,11 +71,17 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
   const title = zone ? `Zone ${zone.id}` : object ? objectName(object.type) : start ? `Player ${start.player} start` : point ? `Point ${point.id}` : sourceRoom ? `Room ${sourceRoom.id.replace(/^room-/, '')}` : 'Selection';
   return <aside className="inspector">
     <div className="panel-title">INSPECTOR <span className="eyebrow">{selection?.kind.toUpperCase() ?? 'ROOM'}</span></div>
-    <div className="inspector-heading"><span className="selection-symbol"><Icon name={zone || sourceRoom ? 'layers' : start ? 'pin' : 'object'} size={24} /></span><div><h2>{title}</h2><span className="muted">{zone ? `${zone.boundaryIds.length} edges · ${zone.upper.length > 0 ? 'two floors' : 'single floor'}` : object ? `Object ${object.id} · ${object.room === null ? 'Deleted' : object.room ? `Room ${object.room.replace(/^room-/, '')}` : `Zone ${object.zone}`}` : sourceRoom ? 'Editable room outline' : 'Level spawn point'}</span></div></div>
+    <div className="inspector-heading"><span className="selection-symbol"><Icon name={zone || sourceRoom ? 'layers' : start ? 'pin' : 'object'} size={24} /></span><div><h2>{title}</h2><span className="muted">{zone ? `${zone.boundaryIds.length} edges · ${dimensions!.upper.length > 0 && dimensions!.upperFloor > dimensions!.upperCeiling ? 'two storeys' : 'one storey'}` : object ? `Object ${object.id} · ${object.room === null ? 'Deleted' : object.room ? `Room ${object.room.replace(/^room-/, '')}` : `Zone ${object.zone}`}` : sourceRoom ? 'Editable room outline' : 'Level spawn point'}</span></div></div>
     <div className="inspector-scroll">
+      {(zone || sourceRoom) && <p className="field-note">A zone is a map area with its own heights and settings. It can be a whole room, a corridor, or part of a larger room, such as a step. One visible room can contain several zones.</p>}
+      {sourceRoom && <RoomSurfaceInspector key={`surfaces:${sourceRoom.id}`} document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onInsertCorner={onRoomCornerInsert} onRemoveCorner={onRoomCornerRemove} onRedraw={onRoomRedraw} onDelete={onRoomDelete} />}
+      {sourceRoom && <CornerLightInspector key={`corner-lights:${sourceRoom.id}`} document={document} room={sourceRoom} edit={edit} />}
+      {sourceRoom && <RoomPortalInspector key={`portals:${sourceRoom.id}`} document={document} room={sourceRoom} edit={edit} onInspect={onInspectRoom} />}
+      {sourceRoom && <NavigationInspector key={`navigation:${sourceRoom.id}`} document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && <RoomAppearanceInspector document={document} room={sourceRoom} edit={edit} onPaintTextures={onPaintRoomTextures} />}
       {sourceRoom && <RoomHeightInspector document={document} room={sourceRoom} edit={edit} onViewSide={onViewRoomSide} />}
+      {sourceRoom && <WaterInspector key={`water:${sourceRoom.id}`} document={document} room={sourceRoom} edit={edit} onInspect={onInspectRoom} />}
       {sourceRoom && <AuthoredMechanismInspector document={document} room={sourceRoom} edit={edit} onShowRoom={onInspectRoom} />}
       {sourceRoom && <CopiedMechanismInspector document={document} room={sourceRoom} edit={edit} />}
       <SwitchesInspector document={document} room={sourceRoom} zone={zone?.id} edit={edit} frameRoom={onShowDestination} />
@@ -71,8 +90,8 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
       {zone && <>
         <section className="property-section"><h3>Geometry</h3><InfoRow label="Floor height" value={dimensions!.floor} /><InfoRow label="Ceiling height" value={dimensions!.ceiling} /><InfoRow label="Clearance" value={dimensions!.floor - dimensions!.ceiling} />
           {dimensions!.upper.length > 0 && <><InfoRow label="Upper floor" value={dimensions!.upperFloor} /><InfoRow label="Upper ceiling" value={dimensions!.upperCeiling} /></>}
-          <InfoRow label="Water height" value={zone.water < zone.floor && zone.water > zone.ceiling ? zone.water : 'Dry'} />
-          <InfoRow label="Outdoor sky" value={zone.backdrop ? 'Yes' : 'No'} />
+          <InfoRow label="Water height" value={typeof waterHeight === 'string' ? waterHeight : waterHeight !== undefined && waterHeight < dimensions!.floor ? waterHeight : 'Dry'} />
+          <InfoRow label="Outdoor sky" value={outdoorSky ? 'Yes' : 'No'} />
         </section>
         {!sourceRoom?.properties && <section className="property-section"><h3>Lighting</h3>
           {(['brightness', 'upperBrightness'] as const).filter(property => property === 'brightness' || zone.upper.length > 0).map(property => {

@@ -6,6 +6,7 @@ import { assertRoomReferences, planRoomReferences, type RoomReferencePlan } from
 import { runtimeObjectPosition } from './sourceObjects';
 import { roomHeightFields } from './roomHeights';
 import { writeRoomProperties } from './roomProperties';
+import { waterStartHeight } from './sourceWater';
 
 export interface RoomDataReferences {
   data: Uint8Array;
@@ -76,6 +77,9 @@ export function buildRoomDataReferences(document: LevelDocument, source: RoomSou
     const header = document.files.data.slice(template.offset, template.offset + 48), headerView = new DataView(header.buffer);
     if (cell.properties) writeRoomProperties(header, cell.properties);
     headerView.setInt16(0, cell.id);
+    const room = source.rooms.find(room => room.id === cell.sourceId)!;
+    if (room.waterSurface !== undefined || source.waterGroups?.length) headerView.setInt32(18, waterStartHeight(document, room) * 256);
+    if (room.sky?.some(Boolean)) headerView.setInt16(36, 1);
     // Defs.i / level.c: lower floor/roof and upper floor/roof are 24.8
     // LONGs at +2/+6/+10/+14. Water (+18) is separately authored.
     if (cell.heights) roomHeightFields.forEach((field, index) => headerView.setInt32(2 + index * 4, cell.heights![field] * 256));

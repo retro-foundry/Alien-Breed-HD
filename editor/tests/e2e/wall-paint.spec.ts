@@ -22,7 +22,7 @@ for (const upper of [false, true]) test(`3D ${upper ? 'upper' : 'lower'} wall pa
   await page.getByRole('button', { name: 'Engine view', exact: true }).click(); // Native rendering verification; editable 3D painting has its own scenarios.
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
-  if (upper) await page.getByRole('button', { name: 'Upper', exact: true }).click();
+  if (upper) await page.getByRole('button', { name: 'Upper storey', exact: true }).click();
   const originalHash = await captureEngine(page, originalCamera), beforeHash = await captureEngine(page, camera);
   const points = Array.from({ length: 361 }, (_, index) => ({ x: (index % 19 + 1) / 20, y: (Math.floor(index / 19) + 1) / 20 }));
   const before = await enginePickDetails(page, points), index = before.findIndex(pick => pick.surface && pick.surface.upper === upper && wallMaterialTarget(built, pick.zone, pick.surface)?.room === copy.id);
@@ -35,7 +35,7 @@ for (const upper of [false, true]) test(`3D ${upper ? 'upper' : 'lower'} wall pa
   await page.getByRole('button', { name: 'Paint this wall', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Paint wall material' });
   await dialog.getByRole('combobox', { name: 'Picked wall material style' }).selectOption(String(style.offset));
-  await dialog.locator('summary').click();
+  await dialog.locator('summary').filter({ hasText: 'Browse picked wall materials' }).click();
   await expect(dialog.getByRole('group', { name: 'picked wall material choices' })).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Apply wall material', exact: true })).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath('wall-material-draft.png'), fullPage: true });

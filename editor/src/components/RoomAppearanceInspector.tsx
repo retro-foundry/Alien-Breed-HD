@@ -6,6 +6,7 @@ import { roomAppearanceChoices } from '../model/roomAppearance';
 import type { SourceRoom } from '../model/roomSource';
 import { WallStyleBrowser } from './WallStyleBrowser';
 import { clearRoomWallMaterials } from '../model/wallMaterials';
+import { clearRoomWallSettings } from '../model/wallSettings';
 import { clearRoomPolygonMaterials } from '../model/polygonMaterials';
 
 export function RoomAppearanceInspector({ document, room, edit, onPaintTextures }: {
@@ -27,9 +28,11 @@ export function RoomAppearanceInspector({ document, room, edit, onPaintTextures 
     edit(command);
   };
   const paintedCount = ((room.wallMaterials?.length ?? 0) + (room.boundaryMaterials?.overrides.length ?? 0));
-  return <section className="property-section"><h3>Textures</h3>
+  return <section className="property-section"><h3>Wall textures</h3>
     <p className="field-note">Paint walls, floors and ceilings directly in the textured 3D editing view. Click a surface, choose Paint this wall or Paint this surface, pick a material, then Apply. Undo restores the previous material.</p>
     <button className="small-button" onClick={onPaintTextures} title="Frame this room in the textured 3D editor. Click the wall, floor or ceiling you want to paint; its surface panel opens the material picker.">Paint room textures</button>
+    {!!room.wallSettings?.length && <div><p className="field-note">{room.wallSettings.length} wall faces have independent repeat, alignment or brightness. Reset also clears settings for walls removed by outline edits.</p>
+      <button type="button" className="small-button" onClick={() => edit(() => editRoomSource(clearRoomWallSettings(document, room.id)))}>Reset room wall settings</button></div>}
     <h4>{imported ? 'Wall repair appearance' : 'Room appearance'}</h4>
     {!!room.polygonMaterials?.length && <div><p className="field-note">{room.polygonMaterials.length} floor/ceiling surfaces have independent patterns and repeat.</p>
       <button type="button" className="small-button" title="Restore this room's original floor-bank materials, including missing painted surfaces, as one undoable action."
@@ -39,13 +42,13 @@ export function RoomAppearanceInspector({ document, room, edit, onPaintTextures 
         onClick={() => edit(() => editRoomSource(clearRoomWallMaterials(document, room.id)))}>Reset painted room walls</button></div>}
     <p className="field-note">{imported
       ? 'Choose the style and lighting for new boundary walls and changed doorways. Steps and lintels follow the destination heights; other wall styles stay as authored.'
-      : "Choose wall styles and template lighting for the new perimeter. Walls fill this room's floor-to-ceiling height."}</p>
+      : selected?.surfaces ? "Starter wall, floor and ceiling textures are already assigned. You can change them here or paint individual surfaces; no extra appearance step is needed to preview this room." : "Choose wall styles and template lighting for the new perimeter. Walls fill this room's floor-to-ceiling height."}</p>
     <form onSubmit={event => { event.preventDefault(); edit(() => editRoomAppearance(document, {
       room: room.id, lowerWall: Number(lower), upperWall: hasUpper ? Number(upper) : null, lightingPoint: Number(light),
     })); }}>
       {[{ label: 'Lower wall style', records: choices.lower, value: lower, change: setLower },
         ...(hasUpper ? [{ label: 'Upper wall style', records: choices.upper, value: upper, change: setUpper }] : [])].map(field =>
-        <label className="select-field" key={field.label}><span>{field.label}</span><select required aria-label={field.label} title="Choose an existing straight-wall style from this room's selected template. Texture, alignment and sampling are retained." value={field.value} onChange={event => field.change(event.target.value)}>
+        <label className="select-field" key={field.label}><span>{field.label}</span><select required aria-label={field.label} title="Choose a real wall style from the selected template, or from the level when that template has no straight walls. Texture, alignment and sampling are retained." value={field.value} onChange={event => field.change(event.target.value)}>
           <option value="">Choose a wall style</option>{field.records.map((record, index) => <option key={record.offset} value={record.offset}>Texture {record.texture} · Style {index + 1}</option>)}
         </select></label>)}
       <WallStyleBrowser key={`${room.id}:lower`} label="lower wall" records={choices.lower} value={lower} onChange={setLower}

@@ -74,7 +74,7 @@ export function RoomHeightSection({ settings, baseline, onCommit }: { settings: 
       </g>)}
     </svg>
     {fields.length === 4 && <p className="field-note">{sharedPlane ? 'The upper floor and lower ceiling meet at the same height. Left handle: lower ceiling. Right handle: upper floor.' : gap > 0 ? `The two rooms have ${gap} units between the lower ceiling and upper floor.` : 'The storey planes overlap. Move them back into a valid order.'}</p>}
-    <p className="field-note">The ceiling closes the top of this room. Hiding ceilings in an editing view only helps you look inside; the game keeps them.</p>
+    <p className="field-note">Each storey has its own floor and ceiling heights. Hiding ceilings in an editing view only helps you look inside; it does not change the game.</p>
     {draft && <p className="field-note" role="status">{error || `Lower clearance ${heights.floor - heights.ceiling}. Release to apply; Escape to cancel.`}</p>}
   </div>;
 }

@@ -1,0 +1,75 @@
+import { expect, test } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import { nativeRoomCopyFixture } from '../nativeRoomCopyFixture';
+import { roomHeightFixture, twoStoreyHeightTemplate } from '../roomHeightFixture';
+import { encodeProject, decodeProject } from '../../src/model/project';
+import { buildPlayableLevel } from '../../src/model/playableBuild';
+import { surfaceMaterialTarget, validateWallMaterialSampling, wallMaterialChoices } from '../../src/model/wallMaterials';
+import { captureEngine, enginePickDetails } from '../engineCapture';
+import { wallRepeatColumns } from '../../src/model/wallRepeat';
+
+for (const authored of [false, true]) for (const upper of [false, true]) test(`authors ${authored ? 'new-boundary' : 'native-face'} ${upper ? 'upper' : 'lower'} wall repeat and full-pattern fit with native pixels and source history`, async ({ page }, info) => {
+  test.setTimeout(120000);
+  const template = upper ? twoStoreyHeightTemplate() : 0;
+  const fixture = authored ? roomHeightFixture(template) : nativeRoomCopyFixture(template), document = fixture.document;
+  const room = 'from' in fixture ? fixture.from : fixture.copy, built = buildPlayableLevel(document, -1);
+  const cell = built.topology!.cells.find(cell => cell.sourceId === room.id)!;
+  const camera = { zone: cell.id, x: Math.round(room.vertices.reduce((sum, p) => sum + p.x, 0) / room.vertices.length),
+    z: Math.round(room.vertices.reduce((sum, p) => sum + p.z, 0) / room.vertices.length), upper: upper ? 1 : 0, angle: 0 };
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.locator('input[type=file]').setInputFiles({ name: 'wall-repeat.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
+  await expect(page.locator('.project-picker strong')).toHaveText(document.name);
+  await page.getByRole('button', { name: new RegExp(`^Room ${room.id.replace(/^room-/, '')}(?:\\s|$)`) }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
+  const preview = page.getByRole('region', { name: '3D game engine preview' }); await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
+  if (upper) await page.getByRole('button', { name: 'Upper storey', exact: true }).click();
+  const initialHash = await captureEngine(page, camera), revision = await preview.getAttribute('data-revision');
+  const samples = Array.from({ length: 361 }, (_, index) => ({ x: (index % 19 + 1) / 20, y: (Math.floor(index / 19) + 1) / 20 }));
+  const picks = await enginePickDetails(page, samples), index = picks.findIndex(pick => pick.surface?.upper === upper && surfaceMaterialTarget(built, pick.zone, pick.surface)?.room === room.id);
+  expect(index).toBeGreaterThanOrEqual(0);
+  const picked = picks[index]!, point = samples[index]!, target = surfaceMaterialTarget(built, picked.zone, picked.surface!)!;
+  expect('index' in target).toBe(authored);
+  const canvas = page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas'), bounds = (await canvas.boundingBox())!;
+  const open = async () => { await canvas.click({ position: { x: point.x * bounds.width, y: point.y * bounds.height } }); await page.getByRole('button', { name: 'Paint this wall', exact: true }).click(); };
+  const dialog = page.getByRole('dialog', { name: 'Paint wall material' });
+  await open(); await dialog.locator('summary').filter({ hasText: 'Texture repeat' }).click();
+  await expect(dialog.getByRole('combobox', { name: 'Wall repeat fit', exact: true })).toBeDisabled();
+  await dialog.getByRole('combobox', { name: 'Wall repeat width', exact: true }).selectOption('64');
+  await dialog.getByRole('combobox', { name: 'Wall repeat fit', exact: true }).selectOption('up');
+  await page.keyboard.press('Escape'); await expect(dialog).not.toBeVisible(); await expect(preview).toHaveAttribute('data-revision', revision!);
+  await open(); await dialog.locator('summary').filter({ hasText: 'Texture repeat' }).click();
+  await expect(dialog.getByRole('combobox', { name: 'Wall repeat width', exact: true })).toHaveValue('');
+  const style = wallMaterialChoices(document).find(item => {
+    try { validateWallMaterialSampling(item.wall!, { ...item.wall!, horizontalMask: 63 }, 0); return true; } catch { return false; }
+  })!;
+  await dialog.getByRole('combobox', { name: 'Picked wall material style', exact: true }).selectOption(String(style.offset));
+  await dialog.locator('summary').filter({ hasText: 'Alignment and brightness' }).click();
+  await dialog.getByRole('spinbutton', { name: 'Wall horizontal tile offset', exact: true }).fill('0');
+  await dialog.getByRole('combobox', { name: 'Wall repeat width', exact: true }).selectOption('64');
+  await dialog.getByRole('combobox', { name: 'Wall repeat fit', exact: true }).selectOption('natural');
+  await dialog.getByRole('button', { name: 'Apply wall material', exact: true }).click(); await expect(dialog).not.toBeVisible();
+  await expect(preview.getByRole('status')).toContainText('zones loaded'); const naturalHash = await captureEngine(page, camera);
+  await open(); await dialog.locator('summary').filter({ hasText: 'Texture repeat' }).click();
+  await dialog.getByRole('combobox', { name: 'Wall repeat fit', exact: true }).selectOption('up');
+  await dialog.getByRole('button', { name: 'Apply wall material', exact: true }).click(); await expect(dialog).not.toBeVisible();
+  await expect(preview.getByRole('status')).toContainText('zones loaded'); const upHash = await captureEngine(page, camera); expect(upHash).not.toBe(naturalHash);
+  const pending = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const path = info.outputPath('wall-repeat-up.ab3d'); await (await pending).saveAs(path);
+  const saved = decodeProject(new Uint8Array(await readFile(path))), result = buildPlayableLevel(saved, -1);
+  expect(saved.files).toEqual(document.files); expect(saved.roomSource.rooms.find(item => item.id === room.id)!.wallSettings![0]!.repeat).toEqual({ width: 64, fit: 'up' });
+  const identity = result.surfaceSources!.find(item => item.room === cell.id && item.upper === upper && ('record' in target ? item.sourceOffset === target.record : item.boundaryIndex === target.index))!;
+  const wall = (upper ? result.document.zones[cell.id]!.upper : result.document.zones[cell.id]!.lower).find(item => item.offset === identity.offset)!.wall!;
+  const [a, b] = wall.points.map(id => result.document.points[id]!);
+  expect(wall.horizontalMask).toBe(63); expect(wall.stripEnd).toBe(wallRepeatColumns(Math.hypot(b!.x - a!.x, b!.z - a!.z), { width: 64, fit: 'up' }));
+  await page.getByRole('button', { name: 'Undo', exact: true }).click(); await expect(preview.getByRole('status')).toContainText('zones loaded'); expect(await captureEngine(page, camera)).toBe(naturalHash);
+  await page.getByRole('button', { name: 'Redo', exact: true }).click(); await expect(preview.getByRole('status')).toContainText('zones loaded'); expect(await captureEngine(page, camera)).toBe(upHash);
+  await open(); await dialog.locator('summary').filter({ hasText: 'Texture repeat' }).click(); await dialog.getByRole('combobox', { name: 'Wall repeat fit', exact: true }).selectOption('down');
+  await dialog.getByRole('button', { name: 'Apply wall material', exact: true }).click(); await expect(dialog).not.toBeVisible(); await expect(preview.getByRole('status')).toContainText('zones loaded');
+  const downHash = await captureEngine(page, camera), downColumns = wallRepeatColumns(Math.hypot(b!.x - a!.x, b!.z - a!.z), { width: 64, fit: 'down' });
+  // Short faces use the same single full repeat for both rounding modes.
+  if (downColumns === wall.stripEnd) expect(downHash).toBe(upHash); else expect(downHash).not.toBe(upHash);
+  await open(); await dialog.getByRole('button', { name: 'Reset wall settings', exact: true }).click(); await expect(dialog).not.toBeVisible(); await expect(preview.getByRole('status')).toContainText('zones loaded');
+  await expect(preview.getByRole('alert')).toHaveCount(0);
+  expect(initialHash).toBeGreaterThan(0);
+  await page.screenshot({ path: info.outputPath('wall-repeat-native.png') });
+});

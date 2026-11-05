@@ -1543,9 +1543,12 @@ int16_t level_get_point_brightness(const LevelState *level, int16_t point_id, in
             if (d3 != 0) {
                 uint8_t anim = (uint8_t)(d3 & 0x0Fu);             /* and.w #$f,d3 */
                 uint8_t blend = (uint8_t)((d3 >> 4) + 1u);        /* lsr.w #4,d4 ; addq #1,d4 */
-                if (anim >= 1u && anim <= 3u) {
+                /* Anims.s reserves twenty zero-initialized table words and
+                 * BrightAnimHandler updates only the first three. The editor
+                 * permits selectors 1..15; the remaining entries target zero. */
+                if (anim >= 1u && anim <= 15u) {
                     int16_t base = (int16_t)(int8_t)(d2 & 0xFF);  /* ext.w d2 */
-                    int16_t target = (int16_t)level->bright_anim_values[anim - 1u];
+                    int16_t target = anim <= 3u ? level->bright_anim_values[anim - 1u] : 0;
                     int32_t delta = (int32_t)(target - base) * (int32_t)blend;
                     /* ASR #4 semantics (round toward -inf), not C /16 (toward zero). */
                     int32_t scaled = (delta >= 0) ? (delta / 16) : -(((-delta) + 15) / 16);

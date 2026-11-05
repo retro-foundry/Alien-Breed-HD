@@ -7,6 +7,7 @@ import { mechanismDependencies } from './mechanismDependencies';
  * not need a destructive imported-to-fresh identity conversion. */
 export interface MovingRoomOwnership { reason: string; kind?: 'door' | 'lift' | 'switch'; room?: string }
 export function movingRoomOwnership(document: LevelDocument, room: SourceRoom): MovingRoomOwnership | undefined {
+  if (room.switches?.length) return { reason: 'This room contains authored wall switches. Remove or move them before converting the room.', kind: 'switch', room: room.id };
   if (document.roomSource.controllerCopies?.some(copy => copy.room === room.id)) return { reason: 'This room already has a copied controller. Edit its existing settings below.' };
   if (room.originZone === null) return;
   for (const mechanism of document.mechanisms) {

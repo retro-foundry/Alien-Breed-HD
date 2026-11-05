@@ -1,8 +1,16 @@
+import { restoreCornerLights, type CornerLight } from './cornerLights';
+import { restoreWallSettings, type WallSettings } from './wallSettings';
+import { restoreSourceSwitches, type SourceSwitch } from './sourceSwitches';
+import { restoreWaterSurface, restoreWaterGroups, type SourceWaterSurface, type SourceWaterGroup } from './sourceWater';
+import { restoreNavigation, type Navigation } from './navigation';
+import { restorePortalStates, type PortalState } from './portalStates';
+import { restorePlaneSources, roomPlaneRecords, type RoomPlaneSource } from './roomPlanes';
+import { restoreStorey, type UpperStorey } from './roomStoreys';
 import { restoreSourceMovingRoom, type SourceMovingRoom } from './sourceMovingRoom';
 import { convexParts, normaliseRoomOutline, validateRoomInteriors, type Position } from './geometry';
 import type { LevelDocument } from './level';
 import { checkedInteger } from './binary';
-import { restoreRoomHeights, roomHeightFields, type RoomHeights } from './roomHeights';
+import { restoreRoomHeights, roomHeightFields, roomSettings, type RoomHeights } from './roomHeights';
 import { restoreRoomProperties, type RoomProperties } from './roomProperties';
 import { restoreControllerCopies, type SourceControllerCopy } from './movingControllerCopies';
 import { restoreSwitchCopies, type SourceSwitchCopy } from './switchCopies';
@@ -19,14 +27,22 @@ export interface SourceRoom {
   readonly originZone: number | null;
   readonly vertices: readonly Position[];
   readonly wallSources: readonly (number | null)[];
+  readonly cornerLights?: readonly CornerLight[];
+  readonly wallSettings?: readonly WallSettings[];
   readonly wallMaterials?: readonly WallMaterial[];
   readonly polygonMaterials?: readonly PolygonMaterial[];
   readonly boundaryMaterials?: BoundaryMaterials;
   readonly moving?: SourceMovingRoom;
   readonly heights?: RoomHeights;
   readonly properties?: RoomProperties;
+  readonly upperStorey?: UpperStorey | false;
+  readonly sky?: readonly boolean[];
+  readonly planeSources?: readonly RoomPlaneSource[];
+  readonly portals?: readonly PortalState[];
+  readonly switches?: readonly SourceSwitch[];
+  readonly waterSurface?: SourceWaterSurface | false;
 }
-export interface RoomSource { readonly rooms: readonly SourceRoom[]; readonly nextId: number; readonly controllerCopies?: readonly SourceControllerCopy[]; readonly switchCopies?: readonly SourceSwitchCopy[] }
+export interface RoomSource { readonly rooms: readonly SourceRoom[]; readonly nextId: number; readonly waterGroups?: readonly SourceWaterGroup[]; readonly navigation?: Navigation; readonly exitRoom?: string; readonly controllerCopies?: readonly SourceControllerCopy[]; readonly switchCopies?: readonly SourceSwitchCopy[] }
 export interface RoomChange { readonly label: string; readonly before: RoomSource; readonly after: RoomSource }
 export interface RoomHistory { readonly source: RoomSource; readonly past: readonly RoomChange[]; readonly future: readonly RoomChange[] }
 export interface RoomDraft { readonly base: RoomSource; readonly roomId: string | null; readonly recordZone: number; readonly vertices: readonly Position[] }
@@ -43,9 +59,14 @@ export function sourceWallForEdge(room: SourceRoom, start: Position, end: Positi
   return index < 0 ? null : room.wallSources[index]!;
 }
 
+function restoreSky(value: unknown): readonly boolean[] {
+  if (!Array.isArray(value) || value.length !== 2 || value.some(item => typeof item !== 'boolean')) throw new Error('Sky settings need lower and upper ceiling choices.');
+  return value;
+}
+
 function frozenRoom(id: string, recordZone: number, vertices: readonly Position[], originZone: number | null,
-  wallSources: readonly (number | null)[] = vertices.map(() => null), heights?: RoomHeights, properties?: RoomProperties, materials: Pick<SourceRoom, 'wallMaterials' | 'boundaryMaterials' | 'polygonMaterials' | 'moving'> = {}): SourceRoom {
-  const { wallMaterials, boundaryMaterials, polygonMaterials, moving } = materials;
+  wallSources: readonly (number | null)[] = vertices.map(() => null), heights?: RoomHeights, properties?: RoomProperties, materials: Pick<SourceRoom, 'wallMaterials' | 'boundaryMaterials' | 'polygonMaterials' | 'moving' | 'upperStorey' | 'sky' | 'planeSources' | 'portals' | 'waterSurface' | 'switches' | 'wallSettings' | 'cornerLights'> = {}): SourceRoom {
+  const { wallMaterials, boundaryMaterials, polygonMaterials, moving, upperStorey, sky, planeSources, portals, waterSurface, switches, wallSettings, cornerLights } = materials;
   if (wallSources.length !== vertices.length) throw new Error(`Room ${id} has an incomplete wall-source list.`);
   const outline = normaliseRoomOutline(vertices);
   const walls = outline.map((a, i) => {
@@ -59,10 +80,13 @@ function frozenRoom(id: string, recordZone: number, vertices: readonly Position[
   });
   const boundary = boundaryMaterials && remapBoundaryMaterials({ vertices, boundaryMaterials },
     outline.map((start, index) => ({ start, end: outline[(index + 1) % outline.length]! })));
-  return Object.freeze({ id, recordZone, originZone, vertices: Object.freeze(outline.map(point => Object.freeze(point))), wallSources: Object.freeze(walls), ...(heights ? { heights } : {}), ...(properties ? { properties } : {}), ...(wallMaterials?.length ? { wallMaterials: restoreWallMaterials(wallMaterials) } : {}), ...(boundary ? { boundaryMaterials: boundary } : {}), ...(polygonMaterials?.length ? { polygonMaterials: restorePolygonMaterials(polygonMaterials) } : {}), ...(moving ? { moving: restoreSourceMovingRoom(moving) } : {}) });
+  return Object.freeze({ ...(cornerLights?.some(light => outline.some(point => point.x === light.x && point.z === light.z)) ? { cornerLights: restoreCornerLights(cornerLights.filter(light => outline.some(point => point.x === light.x && point.z === light.z)), outline) } : {}), ...(wallSettings?.length ? { wallSettings: restoreWallSettings(wallSettings) } : {}), ...(switches?.length ? { switches: restoreSourceSwitches(switches) } : {}), ...(waterSurface !== undefined ? { waterSurface: restoreWaterSurface(waterSurface) } : {}), ...(portals?.length ? { portals: restorePortalStates(portals, boundary?.nextId) } : {}), ...(planeSources ? { planeSources: restorePlaneSources(planeSources) } : {}), ...(upperStorey !== undefined ? { upperStorey: restoreStorey(upperStorey) } : {}), ...(sky ? { sky: Object.freeze([...sky]) } : {}), id, recordZone, originZone, vertices: Object.freeze(outline.map(point => Object.freeze(point))), wallSources: Object.freeze(walls), ...(heights ? { heights } : {}), ...(properties ? { properties } : {}), ...(wallMaterials?.length ? { wallMaterials: restoreWallMaterials(wallMaterials) } : {}), ...(boundary ? { boundaryMaterials: boundary } : {}), ...(polygonMaterials?.length ? { polygonMaterials: restorePolygonMaterials(polygonMaterials) } : {}), ...(moving ? { moving: restoreSourceMovingRoom(moving) } : {}) });
 }
-function source(rooms: readonly SourceRoom[], nextId: number, plans?: Pick<RoomSource, 'controllerCopies' | 'switchCopies'>): RoomSource {
+function source(rooms: readonly SourceRoom[], nextId: number, plans?: Pick<RoomSource, 'controllerCopies' | 'switchCopies' | 'exitRoom' | 'navigation' | 'waterGroups'>): RoomSource {
   return Object.freeze({ rooms: Object.freeze([...rooms]), nextId,
+    ...(plans?.waterGroups?.length ? { waterGroups: plans.waterGroups } : {}),
+    ...(plans?.navigation ? { navigation: plans.navigation } : {}),
+    ...(plans?.exitRoom !== undefined ? { exitRoom: plans.exitRoom } : {}),
     ...(plans?.controllerCopies?.length ? { controllerCopies: plans.controllerCopies } : {}),
     ...(plans?.switchCopies?.length ? { switchCopies: plans.switchCopies } : {}) });
 }
@@ -78,14 +102,17 @@ export function roomSourceSnapshot(current: RoomSource) {
   const moving = current.rooms.some(room => room.moving);
   const polygons = current.rooms.some(room => room.polygonMaterials?.length);
   const boundary = current.rooms.some(room => room.boundaryMaterials);
-  const painted = moving || polygons || boundary || current.rooms.some(room => room.wallMaterials?.length);
-  return { format: 'alien-breed-room-source', version: modes ? 11 : moving ? 10 : polygons ? 9 : boundary ? 8 : painted ? 7 : current.switchCopies?.length ? 6 : current.controllerCopies?.length ? 5 : current.rooms.some(room => room.properties) ? 4 : current.rooms.some(room => room.heights) ? 3 : 2, nextId: current.nextId, rooms: current.rooms,
-    ...(painted || current.controllerCopies?.length || current.switchCopies?.length ? { controllerCopies: restoreControllerCopies(current.controllerCopies ?? []) } : {}),
-    ...(painted || current.switchCopies?.length ? { switchCopies: restoreSwitchCopies(current.switchCopies ?? []) } : {}) };
+  const painted = current.rooms.some(room => room.cornerLights?.length || room.wallSettings?.length || room.switches?.length || room.waterSurface !== undefined || room.upperStorey !== undefined || room.sky || room.planeSources) || moving || polygons || boundary || current.rooms.some(room => room.wallMaterials?.length);
+  return { format: 'alien-breed-room-source', version: current.rooms.some(room => room.portals?.some(item => item.barrier)) ? 21 : current.rooms.some(room => room.cornerLights?.length) ? 20 : current.rooms.some(room => room.wallSettings?.some(item => item.repeat)) ? 19 : current.rooms.some(room => room.wallSettings?.length) ? 18 : current.rooms.some(room => room.switches?.length) ? 17 : current.waterGroups?.length || current.rooms.some(room => room.waterSurface !== undefined) ? 16 : current.navigation ? 15 : current.exitRoom !== undefined ? 14 : current.rooms.some(room => room.portals?.length) ? 13 : current.rooms.some(room => room.upperStorey !== undefined || room.sky || room.planeSources) ? 12 : modes ? 11 : moving ? 10 : polygons ? 9 : boundary ? 8 : painted ? 7 : current.switchCopies?.length ? 6 : current.controllerCopies?.length ? 5 : current.rooms.some(room => room.properties) ? 4 : current.rooms.some(room => room.heights) ? 3 : 2, nextId: current.nextId, rooms: current.rooms,
+    ...(current.waterGroups?.length ? { waterGroups: restoreWaterGroups(current.waterGroups) } : {}),
+    ...(current.navigation ? { navigation: restoreNavigation(current.navigation) } : {}),
+    ...(current.exitRoom !== undefined ? { exitRoom: current.exitRoom } : {}),
+    ...(current.waterGroups?.length || current.navigation || current.exitRoom !== undefined || painted || current.controllerCopies?.length || current.switchCopies?.length ? { controllerCopies: restoreControllerCopies(current.controllerCopies ?? []) } : {}),
+    ...(current.waterGroups?.length || current.navigation || current.exitRoom !== undefined || painted || current.switchCopies?.length ? { switchCopies: restoreSwitchCopies(current.switchCopies ?? []) } : {}) };
 }
 
 export function roomSourceMatchesLevel(document: LevelDocument): boolean {
-  return !document.roomSource.controllerCopies?.length && !document.roomSource.switchCopies?.length && JSON.stringify(document.roomSource.rooms) === JSON.stringify(importRoomSource(document).rooms);
+  return !document.roomSource.waterGroups?.length && !document.roomSource.navigation && document.roomSource.exitRoom === undefined && !document.roomSource.controllerCopies?.length && !document.roomSource.switchCopies?.length && JSON.stringify(document.roomSource.rooms) === JSON.stringify(importRoomSource(document).rooms);
 }
 
 /** All editable source must match before using the imported runtime files. */
@@ -98,9 +125,13 @@ export function sourceMatchesLevel(document: LevelDocument): boolean {
  * dependency baseline; missing templates cannot be silently substituted. */
 export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSource {
   if (!value || typeof value !== 'object' || !('format' in value) || value.format !== 'alien-breed-room-source'
-    || !('version' in value) || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(value.version as number) || !('rooms' in value) || !Array.isArray(value.rooms)
+    || !('version' in value) || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21].includes(value.version as number) || !('rooms' in value) || !Array.isArray(value.rooms)
     || !('nextId' in value) || typeof value.nextId !== 'number') throw new Error('Unsupported or damaged room source.');
-  if (Object.keys(value).some(key => !['format', 'version', 'rooms', 'nextId', ...((value.version as number) >= 5 ? ['controllerCopies'] : []), ...((value.version as number) >= 6 ? ['switchCopies'] : [])].includes(key))) throw new Error('Room source contains unsupported fields; it has not been replaced or discarded.');
+  if (Object.keys(value).some(key => !['format', 'version', 'rooms', 'nextId', ...((value.version as number) >= 5 ? ['controllerCopies'] : []), ...((value.version as number) >= 6 ? ['switchCopies'] : []), ...((value.version as number) >= 14 ? ['exitRoom'] : []), ...((value.version as number) >= 15 ? ['navigation'] : []), ...((value.version as number) >= 16 ? ['waterGroups'] : [])].includes(key))) throw new Error('Room source contains unsupported fields; it has not been replaced or discarded.');
+  const waterGroups = 'waterGroups' in value ? restoreWaterGroups(value.waterGroups) : undefined;
+  const navigation = 'navigation' in value ? restoreNavigation(value.navigation) : undefined;
+  const exitRoom = 'exitRoom' in value ? value.exitRoom : undefined;
+  if (exitRoom !== undefined && (typeof exitRoom !== 'string' || !value.rooms.some(room => room?.id === exitRoom))) throw new Error('Choose an existing source room for the level exit.');
   if ((value.version as number) >= 5 && !('controllerCopies' in value)) throw new Error('Room source is missing its copied controller records.');
   if ((value.version as number) >= 6 && !('switchCopies' in value)) throw new Error('Room source is missing its copied switch records.');
   const controllerCopies = (value.version as number) >= 5 && 'controllerCopies' in value ? restoreControllerCopies(value.controllerCopies) : undefined;
@@ -111,7 +142,7 @@ export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSo
     if (!item || typeof item !== 'object' || !('id' in item) || typeof item.id !== 'string' || !item.id || item.id.length > 128 || ids.has(item.id))
       throw new Error('Room source contains an invalid or duplicate room identity.');
     ids.add(item.id);
-    if (Object.keys(item).some(key => !['id', 'recordZone', 'originZone', 'vertices', ...(value.version !== 1 ? ['wallSources'] : []), ...((value.version as number) >= 3 ? ['heights'] : []), ...((value.version as number) >= 4 ? ['properties'] : []), ...((value.version as number) >= 7 ? ['wallMaterials'] : []), ...((value.version as number) >= 8 ? ['boundaryMaterials'] : []), ...((value.version as number) >= 9 ? ['polygonMaterials'] : []), ...((value.version as number) >= 10 ? ['moving'] : [])].includes(key))) throw new Error(`Room ${item.id} contains unsupported source fields.`);
+    if (Object.keys(item).some(key => !['id', 'recordZone', 'originZone', 'vertices', ...(value.version !== 1 ? ['wallSources'] : []), ...((value.version as number) >= 3 ? ['heights'] : []), ...((value.version as number) >= 4 ? ['properties'] : []), ...((value.version as number) >= 7 ? ['wallMaterials'] : []), ...((value.version as number) >= 8 ? ['boundaryMaterials'] : []), ...((value.version as number) >= 9 ? ['polygonMaterials'] : []), ...((value.version as number) >= 10 ? ['moving'] : []), ...((value.version as number) >= 12 ? ['upperStorey', 'sky', 'planeSources'] : []), ...((value.version as number) >= 13 ? ['portals'] : []), ...((value.version as number) >= 16 ? ['waterSurface'] : []), ...((value.version as number) >= 17 ? ['switches'] : []), ...((value.version as number) >= 18 ? ['wallSettings'] : []), ...((value.version as number) >= 20 ? ['cornerLights'] : [])].includes(key))) throw new Error(`Room ${item.id} contains unsupported source fields.`);
     const numericId = /^room-(0|[1-9]\d*)$/.exec(item.id)?.[1];
     if (numericId !== undefined && Number(numericId) >= nextId) throw new Error('The next room identity would reuse an existing room.');
     if (!('recordZone' in item) || typeof item.recordZone !== 'number' || !records.has(item.recordZone)) throw new Error(`Room ${item.id} has a missing surface record.`);
@@ -148,11 +179,23 @@ export function restoreRoomSource(document: RoomRecords, value: unknown): RoomSo
         }) ?? null;
       });
     }
+    if ((value.version as number) < 21 && 'portals' in item && Array.isArray(item.portals) && item.portals.some((portal: unknown) => portal && typeof portal === 'object' && 'barrier' in portal)) throw new Error('See-through barriers require room-source version 21.');
+    if ((value.version as number) < 19 && 'wallSettings' in item && Array.isArray(item.wallSettings) && item.wallSettings.some((settings: unknown) => settings && typeof settings === 'object' && 'repeat' in settings)) throw new Error('Wall repeat and fit require room-source version 19.');
     if ((value.version as number) < 11 && 'polygonMaterials' in item && Array.isArray(item.polygonMaterials) && item.polygonMaterials.some((material: unknown) => material && typeof material === 'object' && 'mode' in material)) throw new Error('Material modes require room-source version 11.');
-    return frozenRoom(item.id, item.recordZone, vertices, origin, walls, 'heights' in item ? restoreRoomHeights(item.heights, template) : undefined,
-      'properties' in item ? restoreRoomProperties(item.properties) : undefined, { wallMaterials: 'wallMaterials' in item ? restoreWallMaterials(item.wallMaterials) : undefined, boundaryMaterials: 'boundaryMaterials' in item ? restoreBoundaryMaterials(item.boundaryMaterials, vertices.length) : undefined, polygonMaterials: 'polygonMaterials' in item ? restorePolygonMaterials(item.polygonMaterials) : undefined, moving: 'moving' in item ? restoreSourceMovingRoom(item.moving) : undefined });
+    return frozenRoom(item.id, item.recordZone, vertices, origin, walls, 'heights' in item ? restoreRoomHeights(item.heights, template, 'upperStorey' in item ? restoreStorey(item.upperStorey) : undefined) : undefined,
+      'properties' in item ? restoreRoomProperties(item.properties) : undefined, { cornerLights: 'cornerLights' in item ? restoreCornerLights(item.cornerLights, vertices) : undefined, wallSettings: 'wallSettings' in item ? restoreWallSettings(item.wallSettings) : undefined, switches: 'switches' in item ? restoreSourceSwitches(item.switches) : undefined, waterSurface: 'waterSurface' in item ? restoreWaterSurface(item.waterSurface) : undefined, portals: 'portals' in item ? restorePortalStates(item.portals, 'boundaryMaterials' in item ? restoreBoundaryMaterials(item.boundaryMaterials, vertices.length).nextId : undefined) : undefined, planeSources: 'planeSources' in item ? restorePlaneSources(item.planeSources) : undefined, upperStorey: 'upperStorey' in item ? restoreStorey(item.upperStorey) : undefined, sky: 'sky' in item ? restoreSky(item.sky) : undefined, wallMaterials: 'wallMaterials' in item ? restoreWallMaterials(item.wallMaterials) : undefined, boundaryMaterials: 'boundaryMaterials' in item ? restoreBoundaryMaterials(item.boundaryMaterials, vertices.length) : undefined, polygonMaterials: 'polygonMaterials' in item ? restorePolygonMaterials(item.polygonMaterials) : undefined, moving: 'moving' in item ? restoreSourceMovingRoom(item.moving) : undefined });
   });
-  return source(rooms, nextId, { controllerCopies, switchCopies });
+  for (const room of rooms) {
+    if (room.upperStorey === undefined && !room.sky && !room.planeSources) continue;
+    const settings = roomSettings(document, room), upper = settings.upper.length > 0 && settings.upperFloor > settings.upperCeiling;
+    if (room.upperStorey) {
+      const selection = room.upperStorey;
+      if (!room.heights || !document.zones.some(zone => [...zone.lower, ...zone.upper].some(record => record.type === 0 && record.offset === selection.wall))) throw new Error('An authored upper storey has a missing height or straight wall reference.');
+    }
+    if (room.sky?.[1] && !upper || room.sky?.[0] && upper) throw new Error('Sky openings must belong to the top storey.');
+    if (room.planeSources || room.upperStorey) { roomPlaneRecords(document, room, false); roomPlaneRecords(document, room, true); }
+  }
+  return source(rooms, nextId, { controllerCopies, switchCopies, navigation, waterGroups, exitRoom: exitRoom as string | undefined });
 }
 
 /** Drafts are separate from committed source: Escape/tool changes simply drop
@@ -288,7 +331,7 @@ export function moveSourceCorner(current: RoomSource, roomId: string, index: num
     if (!affected.has(room.id)) return room;
     const boundary = edges.filter(edge => edge.room === room.id);
     return frozenRoom(room.id, room.recordZone, boundary.map(edge => same(edge.start) ? point : edge.start), room.originZone,
-      boundary.map(edge => sourceWallForEdge(room, edge.start, edge.end)), room.heights, room.properties, { ...room, boundaryMaterials: remapBoundaryMaterials(room, boundary) });
+      boundary.map(edge => sourceWallForEdge(room, edge.start, edge.end)), room.heights, room.properties, { ...room, ...(room.cornerLights ? { cornerLights: room.cornerLights.map(light => same(light) ? { ...light, ...point } : light) } : {}), boundaryMaterials: remapBoundaryMaterials(room, boundary) });
   });
   validateRoomInteriors(rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
   return Object.freeze({ label: 'Move shared room corner', before: current, after: source(rooms, current.nextId, current) });
@@ -297,8 +340,11 @@ export function moveSourceCorner(current: RoomSource, roomId: string, index: num
 export function removeSourceRooms(current: RoomSource, ids: readonly string[]): RoomChange {
   const selected = new Set(ids);
   if (!selected.size || [...selected].some(id => !current.rooms.some(room => room.id === id))) throw new Error('Select existing rooms to delete.');
+  if (current.rooms.some(room => selected.has(room.id) && room.switches?.length)) throw new Error('Remove authored switches before deleting their room.');
+  if (current.navigation?.points.some(point => point.room !== undefined && selected.has(point.room))) throw new Error('Move or delete its control points before deleting the room.');
+  if (current.exitRoom !== undefined && selected.has(current.exitRoom)) throw new Error('Choose another level exit before deleting its room.');
   return Object.freeze({ label: 'Delete rooms', before: current, after: source(current.rooms.filter(room => !selected.has(room.id)), current.nextId,
-    { controllerCopies: current.controllerCopies?.filter(copy => !selected.has(copy.room)), switchCopies: current.switchCopies?.filter(copy => !selected.has(copy.room)) }) });
+    { ...current, ...(current.navigation ? { navigation: restoreNavigation({ ...current.navigation, assignments: current.navigation.assignments.filter(item => !selected.has(item.room)) }) } : {}), controllerCopies: current.controllerCopies?.filter(copy => !selected.has(copy.room)), switchCopies: current.switchCopies?.filter(copy => !selected.has(copy.room)) }) });
 }
 
 /** Translate all selected boundaries simultaneously. Shared portal vertices,
@@ -330,17 +376,18 @@ export function translateSourceRooms(current: RoomSource, ids: readonly string[]
     if (!points?.size) return room;
     const boundary = edges.filter(edge => edge.room === room.id);
     return frozenRoom(room.id, room.recordZone, boundary.map(edge => points.has(key(edge.start)) ? { x: edge.start.x + x, z: edge.start.z + z } : edge.start),
-      room.originZone, boundary.map(edge => sourceWallForEdge(room, edge.start, edge.end)), room.heights, room.properties, { ...room, boundaryMaterials: remapBoundaryMaterials(room, boundary) });
+      room.originZone, boundary.map(edge => sourceWallForEdge(room, edge.start, edge.end)), room.heights, room.properties, { ...room, ...(room.cornerLights ? { cornerLights: room.cornerLights.map(light => points.has(key(light)) ? { ...light, x: light.x + x, z: light.z + z } : light) } : {}), boundaryMaterials: remapBoundaryMaterials(room, boundary) });
   });
   validateRoomInteriors(rooms.map(room => ({ id: room.id, vertices: [...room.vertices] })));
-  return { label: `Move ${ids.length} rooms`, before: current, after: source(rooms, current.nextId, current) };
+  const navigation = current.navigation && restoreNavigation({ ...current.navigation, points: current.navigation.points.map(point => point.room !== undefined && selected.has(point.room) ? { ...point, x: point.x + x, z: point.z + z } : point) });
+  return { label: `Move ${ids.length} rooms`, before: current, after: source(rooms, current.nextId, { ...current, navigation }) };
 }
 
 export function setRoomHeights(document: Pick<LevelDocument, 'zones'>, current: RoomSource, id: string, value: unknown): RoomChange {
   const room = current.rooms.find(room => room.id === id);
   if (!room) throw new Error('Choose an existing room before changing heights.');
   const template = document.zones.find(zone => zone.id === room.recordZone)!;
-  const heights = restoreRoomHeights(value, template);
+  const heights = restoreRoomHeights(value, template, room.upperStorey);
   const selected = roomHeightFields.every(field => heights[field] === template[field]) ? undefined : heights;
   if (JSON.stringify(selected) === JSON.stringify(room.heights)) return { label: 'Change room heights', before: current, after: current };
   const { heights: _previous, ...unchanged } = room;

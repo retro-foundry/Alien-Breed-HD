@@ -1,3 +1,6 @@
+import { portalStateAt, portalBarrierAt } from './portalStates';
+import { importedBarrierConnection } from './importedBarriers';
+import type { UpperStorey } from './roomStoreys';
 import { buildRoomEdges, convexParts, type Position } from './geometry';
 import type { LevelDocument } from './level';
 import { sourceWallForEdge, type RoomSource, type SourceRoom } from './roomSource';
@@ -12,6 +15,7 @@ export interface CompiledRoomCell extends VisibilityRoom {
   originZone: number | null;
   heights?: RoomHeights;
   properties?: RoomProperties;
+  upperStorey?: UpperStorey | false;
   /** Original wall records supply materials; null denotes a new/internal edge. */
   sourceLines: (number | null)[];
 }
@@ -36,7 +40,7 @@ export function compileRoomTopology(document: LevelDocument, source: RoomSource)
     if (ids.has(room.id)) throw new Error('Each source room must have a unique identity.');
     ids.add(room.id);
     if (!records.has(room.recordZone)) throw new Error(`Room ${room.id} refers to missing surface record ${room.recordZone}.`);
-    if (room.heights) restoreRoomHeights(room.heights, records.get(room.recordZone)!);
+    if (room.heights) restoreRoomHeights(room.heights, records.get(room.recordZone)!, room.upperStorey);
     if (room.properties) restoreRoomProperties(room.properties);
     if (room.wallSources.length !== room.vertices.length || room.wallSources.some(line => line !== null && !records.get(room.recordZone)!.boundaryIds.includes(line)))
       throw new Error(`Room ${room.id} has invalid wall-source references. Restore or reassign its wall materials before building.`);
@@ -67,12 +71,20 @@ export function compileRoomTopology(document: LevelDocument, source: RoomSource)
     const neighbours = boundary.map((edge, index) => {
       if (edge.neighbour === null) return -1;
       const destination = Number(edge.neighbour), other = pieces[destination]!.room;
+      const explicit = portalStateAt(room, edge.start, edge.end, other.id);
+      const reciprocal = portalStateAt(other, edge.start, edge.end, room.id);
+      if (explicit !== undefined || reciprocal !== undefined) {
+        if (explicit !== reciprocal) throw new Error(`Rooms ${room.id} and ${other.id} disagree about their authored wall connection.`);
+        if (portalBarrierAt(room, edge.start, edge.end, other.id) !== portalBarrierAt(other, edge.start, edge.end, room.id)) throw new Error(`Rooms ${room.id} and ${other.id} disagree about their see-through barrier.`);
+        return explicit ? destination : -1;
+      }
       const line = sourceLines[index] ?? null;
-      if (line !== null && document.lines[line]!.connect === -1 && hasNativeWallMaterials(other.originZone, other.wallSources) && other.id !== room.id) return -1;
+      if (line !== null && document.lines[line]!.connect === -1 && hasNativeWallMaterials(other.originZone, other.wallSources) && other.id !== room.id
+        && !importedBarrierConnection(document, room, other, edge.start, edge.end)) return -1;
       return destination;
     });
     sourceCells.set(room.id, [...(sourceCells.get(room.id) ?? []), id]);
-    return { id, sourceId: room.id, recordZone: room.recordZone, originZone: room.originZone, ...(room.heights ? { heights: room.heights } : {}), ...(room.properties ? { properties: room.properties } : {}),
+    return { upperStorey: room.upperStorey, id, sourceId: room.id, recordZone: room.recordZone, originZone: room.originZone, ...(room.heights ? { heights: room.heights } : {}), ...(room.properties ? { properties: room.properties } : {}),
       vertices: boundary.map(edge => pointId(edge.start)), neighbours, sourceLines };
   });
   // A one-sided closed portal is not a playable join. Report it at the source

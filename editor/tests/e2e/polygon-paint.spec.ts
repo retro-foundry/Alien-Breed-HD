@@ -24,7 +24,7 @@ for (const upper of [false, true]) for (const type of [1, 2]) test(`paint a ${up
   await page.getByRole('button', { name: 'Engine view', exact: true }).click(); // Native rendering verification; editable 3D painting has its own scenarios.
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
-  if (upper) await page.getByRole('button', { name: 'Upper', exact: true }).click();
+  if (upper) await page.getByRole('button', { name: 'Upper storey', exact: true }).click();
   const originalHash = await captureEngine(page, originalCamera), beforeHash = await captureEngine(page, camera);
   const points = Array.from({ length: 361 }, (_, index) => ({ x: (index % 19 + 1) / 20, y: (Math.floor(index / 19) + 1) / 20 }));
   const before = await enginePickDetails(page, points), index = before.findIndex(pick => pick.surface?.type === type && polygonMaterialTarget(built, pick.zone, pick.surface)?.room === copy.id);

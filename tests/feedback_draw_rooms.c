@@ -18,6 +18,12 @@ int main(void)
     int16_t exit_zone = -9;
     assert(!level_apply_setup(&level, setup, 14, 1, &exit_zone));
     assert(exit_zone == 1); assert(level.draw_group_count == 2); assert(level_same_draw_room(&level, 0, 1));
+    /* Either collision cell of the authored exit room completes; disabled
+     * exits and cells from another room must never match. */
+    assert(level_same_draw_room(&level, 0, exit_zone));
+    assert(level_same_draw_room(&level, 1, exit_zone));
+    assert(!level_same_draw_room(&level, 2, exit_zone));
+    assert(!level_same_draw_room(&level, 0, -1));
     LevelState before = level;
     word(setup + 10, 1); /* cycle 0->1->0 */
     assert(level_apply_setup(&level, setup, 14, 1, &exit_zone)); assert(!memcmp(&level, &before, sizeof(level)));

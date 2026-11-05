@@ -1,3 +1,4 @@
+import { roomPlaneRecords } from './roomPlanes';
 import { BinaryReader, checkedInteger } from './binary';
 import type { LevelDocument } from './level';
 import type { RoomChange, RoomSource } from './roomSource';
@@ -38,29 +39,25 @@ export function polygonMaterialTarget(built: PlayableLevel, zone: number, pick: 
     : built.source.roomSource.rooms.find(room => room.originZone === zone);
   if (!room) return;
   const record = built.topology ? built.surfaceSources?.find(item => item.room === zone && item.upper === pick.upper && item.offset === pick.offset)?.sourceOffset : pick.offset;
-  const template = built.source.zones.find(zone => zone.id === room.recordZone);
-  if (record === undefined || !(pick.upper ? template?.upper : template?.lower)?.some(item => item.offset === record && isPaintablePolygon(item.type))) return;
+  if (record === undefined || !roomPlaneRecords(built.source, room, pick.upper).some(item => item.offset === record && isPaintablePolygon(item.type))) return;
   return Object.freeze({ room: room.id, upper: pick.upper, record });
 }
 
 export function polygonMaterialCurrent(document: LevelDocument, target: PolygonMaterialTarget) {
   const room = document.roomSource.rooms.find(room => room.id === target.room)!;
-  const template = document.zones.find(zone => zone.id === room.recordZone)!;
   return room.polygonMaterials?.find(item => key(item) === key(target))
-    ?? (target.upper ? template.upper : template.lower).find(item => item.offset === target.record)?.polygon;
+    ?? roomPlaneRecords(document, room, target.upper).find(item => item.offset === target.record)?.polygon;
 }
 
 export function polygonMaterialMode(document: LevelDocument, target: PolygonMaterialTarget): PolygonMaterialMode {
   const room = document.roomSource.rooms.find(room => room.id === target.room)!;
-  const template = document.zones.find(zone => zone.id === room.recordZone)!;
-  const polygon = (target.upper ? template.upper : template.lower).find(item => item.offset === target.record)!.polygon!;
+  const polygon = roomPlaneRecords(document, room, target.upper).find(item => item.offset === target.record)!.polygon!;
   return room.polygonMaterials?.find(item => key(item) === key(target))?.mode ?? polygonMaterialBank(polygon.type);
 }
 
 export function setPolygonMaterial(document: LevelDocument, target: PolygonMaterialTarget, value: Pick<PolygonMaterial, 'texture' | 'scale' | 'mode'> | null): RoomChange {
   const source = document.roomSource, room = source.rooms.find(room => room.id === target.room);
-  const template = document.zones.find(zone => zone.id === room?.recordZone);
-  const original = (target.upper ? template?.upper : template?.lower)?.find(item => item.offset === target.record)?.polygon;
+  const original = (room ? roomPlaneRecords(document, room, target.upper) : []).find(item => item.offset === target.record)?.polygon;
   if (!room || !original || !isPaintablePolygon(original.type)) throw new Error('Choose an existing floor or ceiling material surface.');
   let materials = (room.polygonMaterials ?? []).filter(item => key(item) !== key(target));
   if (value !== null) {

@@ -1,4 +1,5 @@
 import { polygonPlane } from './surfaces';
+import { roomPlaneRecords } from './roomPlanes';
 import { normaliseRoomOutline, type Position } from './geometry';
 import type { Graphic, LevelDocument } from './level';
 import type { RoomTopology } from './roomTopology';
@@ -34,6 +35,8 @@ export interface GeneratedPolygon {
   /** Original record identity retained for animation dependency remapping. */
   sourceOffset: number;
   bytes: Uint8Array;
+  /** Starter rooms use the selected real lighting point on complete planes. */
+  lightingPoint?: number;
 }
 export interface CellPolygons { lower: GeneratedPolygon[]; upper: GeneratedPolygon[] }
 export interface SurfaceTranslations {
@@ -59,6 +62,8 @@ export function buildCellPolygons(document: LevelDocument, topology: RoomTopolog
     if (result.has(cell.id)) throw new Error('Surface geometry contains duplicate runtime room identities.');
     const template = document.zones.find(zone => zone.id === cell.recordZone);
     if (!template) throw new Error(`Room ${cell.sourceId} has no surface settings template.`);
+    const room = document.roomSource.rooms.find(room => room.id === cell.sourceId);
+    const starter = document.roomAppearances?.find(item => item.room === cell.sourceId);
     const settings = roomSettings(document, cell);
     const outline = cell.vertices.map(id => {
       const point = topology.points[id];
@@ -67,7 +72,12 @@ export function buildCellPolygons(document: LevelDocument, topology: RoomTopolog
     });
     const originalKey = outlineKey(template.boundaryIds.map(id => ({ x: document.lines[id]!.x, z: document.lines[id]!.z })));
     const unchanged = outlineKey(outline) === originalKey;
-    const layer = (records: readonly Graphic[], upper: boolean): GeneratedPolygon[] => records.filter(record => record.polygon).map(record => {
+    const layer = (records: readonly Graphic[], upper: boolean): GeneratedPolygon[] => {
+      if (starter?.surfaces && room) return [...roomPlaneRecords(document, room, upper), ...records.filter(record => record.type === 7).slice(0, 1)].map(record => ({
+        sourceOffset: record.offset, lightingPoint: starter.lightingPoint,
+        bytes: encodePolygonSurface(polygonForCell(record.polygon!, cell.vertices, record.type === 7 ? Math.floor(settings.water * 4) / 4 : polygonPlane(record.type) === 'floor' ? settings[upper ? 'upperFloor' : 'floor'] : settings[upper ? 'upperCeiling' : 'ceiling'])),
+      }));
+      return records.filter(record => record.polygon).map(record => {
       const polygon = record.polygon!;
       const floor = upper ? 'upperFloor' : 'floor', roof = upper ? 'upperCeiling' : 'ceiling';
       const field = polygonPlane(polygon.type) === 'ceiling' ? roof : polygonPlane(polygon.type) === 'floor' ? floor : undefined;
@@ -93,7 +103,8 @@ export function buildCellPolygons(document: LevelDocument, topology: RoomTopolog
       if (polygon.points.length < 3 || outlineKey(polygon.points.map(id => document.points[id]!)) !== originalKey)
         throw new Error(`Room ${cell.sourceId} surface at byte ${record.offset} has a partial or degenerate footprint. Assign its geometry before compiling this room.`);
       return { sourceOffset: record.offset, bytes: encodePolygonSurface(polygonForCell(polygon, cell.vertices, height)) };
-    });
+      });
+    };
     result.set(cell.id, { lower: layer(template.lower, false), upper: layer(template.upper, true) });
   }
   return result;

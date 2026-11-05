@@ -1,3 +1,4 @@
+import { roomSettings } from './roomHeights';
 import { BinaryReader, checkedInteger } from './binary';
 import { pointInRoomOutline } from './geometry';
 import type { LevelDocument, LevelObject } from './level';
@@ -44,7 +45,7 @@ export function objectIsActive(object: EditableObject): boolean {
 export function objectDestinationRoom(document: LevelDocument, object: EditableObject, position: { x: number; z: number }) {
   const current = object.room ?? document.roomSource.rooms.find(room => room.originZone === object.zone)?.id;
   const contains = (room: LevelDocument['roomSource']['rooms'][number]) => pointInRoomOutline(room.vertices, position)
-    && (!object.upper || !!document.zones.find(zone => zone.id === room.recordZone)?.upper.length);
+    && (!object.upper || !!roomSettings(document, room).upper.length);
   return document.roomSource.rooms.find(room => room.id === current && contains(room)) ?? document.roomSource.rooms.find(contains);
 }
 
@@ -84,7 +85,7 @@ export function placeSourceObject(document: LevelDocument, id: number, room: str
     const target = document.roomSource.rooms.find(item => item.id === room);
     if (!target || !pointInRoomOutline(target.vertices, runtimeObjectPosition({ x, z }))) throw new Error('Place the object inside its selected editable room.');
     const object = document.objects.find(item => item.id === id)!;
-    if (object.upper && !document.zones.find(zone => zone.id === target.recordZone)?.upper.length)
+    if (object.upper && !roomSettings(document, target).upper.length)
       throw new Error('This object is on the upper floor. Choose a room with an upper floor before moving it.');
   }
   if (document.sourceObjects?.some(item => item.id === id && item.room === room && item.x === x && item.z === z)) return document.sourceObjects;

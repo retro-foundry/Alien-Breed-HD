@@ -1,3 +1,4 @@
+import { roomSettings } from './roomHeights';
 import { normaliseRoomOutline, type Position } from './geometry';
 import type { LevelDocument } from './level';
 import type { RoomSource } from './roomSource';
@@ -83,7 +84,7 @@ export function planRoomReferences(document: LevelDocument, source: RoomSource, 
     if (authored) {
       if (authored.room === null) return [object.id, -1];
       const cell = locateSource(authored.room, runtimeObjectPosition(authored), `Object ${object.id}`);
-      if (cell !== null && object.upper && !document.zones.find(zone => zone.id === topology.cells[cell]!.recordZone)!.upper.length)
+      if (cell !== null && object.upper && !roomSettings(document, topology.cells[cell]!).upper.length)
         error(`Object ${object.id}`, 'Its selected room has no upper floor. Choose a room with an upper floor before building.');
       return [object.id, cell];
     }

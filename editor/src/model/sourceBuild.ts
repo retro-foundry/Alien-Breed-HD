@@ -1,3 +1,10 @@
+import { buildWallSettings, syncWallSettingsAnimations } from './wallSettingsBuild';
+import { authorSeeThroughBarriers, barrierCollisionTopology } from './seeThroughBarriers';
+import type { AnimationGraphicTarget } from './animationBuild';
+import { buildAuthoredSwitches, appendAuthoredSwitches } from './switchBuild';
+import { authorWaterGraphics, appendSourceWater } from './waterBuild';
+import { buildNavigation } from './navigationBuild';
+import { authorRoomLayers, authorSkyCeilings } from './roomLayerGraphics';
 import { compileSourceMovingRoom } from './sourceMovingRoom';
 import { buildAuthoredMovingRooms, appendAuthoredMovingAnimations, initialMovingGraphics, type AuthoredMovingRoom } from './authoredMovingRoom';
 import { buildAnimationAttachments } from './animationAttachments';
@@ -88,30 +95,48 @@ export function buildSourceLevel(document: LevelDocument, options: SourceBuildOp
     if ((cell.originZone !== null && moving.has(cell.originZone)) || (target.originZone !== null && moving.has(target.originZone)))
       throw new Error('A new doorway into a moving door or lift needs synchronized wall animation attachments before building. Choose a static room boundary.');
   });
-  const geometry = paintCellPolygons(source, paintCellWalls(document, source, buildCellGraphics(document, source, topology, options.newRoomGraphics, options.closingRoomGraphics)));
+  const baseGraphics = buildCellGraphics(document, source, topology, options.newRoomGraphics, options.closingRoomGraphics);
+  const layerGraphics = authorSeeThroughBarriers(document, authorRoomLayers(document, baseGraphics));
+  const paintedGraphics = paintCellPolygons(source, paintCellWalls(document, source, layerGraphics));
+  const geometry = authorWaterGraphics(document, authorSkyCeilings(document, paintedGraphics));
   const lighting = buildGeometryLighting(document, source, geometry, options.newRoomLighting);
-  const collision = compileCollisionGeometry(lighting.graphics.topology);
+  const collision = compileCollisionGeometry(barrierCollisionTopology(document, lighting.graphics.topology));
   const authored = buildAuthoredMovingRooms(document, initialMovingGraphics(document, lighting.graphics, plans), collision, plans);
-  const attachments = buildAnimationAttachments(document, authored.graphics, collision, controllerCopies, switchCopies);
-  const animations = appendAuthoredMovingAnimations(attachments.tables, authored.authored);
+  const aligned = buildWallSettings(document, authored.graphics);
+  const switches = buildAuthoredSwitches(document, aligned, lighting.bindings);
+  const rebindMoving = (target: AnimationGraphicTarget) => {
+    const record = aligned.streams.get(target.room)!.lower[target.index]!;
+    const index = switches.graphics.streams.get(target.room)!.lower.indexOf(record);
+    if (index < 0) throw new Error('A switch replaced a moving controller attachment.');
+    return { ...target, index };
+  };
+  const movingAnimations = authored.authored.map(item => ({ ...item, animation: { ...item.animation,
+    target: rebindMoving(item.animation.target!), walls: item.animation.walls.map(wall => ({ ...wall, target: rebindMoving(wall.target!) })) } }));
+  const attachments = buildAnimationAttachments(document, switches.graphics, collision, controllerCopies, switchCopies);
+  const animations = syncWallSettingsAnimations(document, attachments.graphics, appendSourceWater(document, attachments.graphics, appendAuthoredSwitches(appendAuthoredMovingAnimations(attachments.tables, movingAnimations), switches.records)), attachments.selectTarget);
   const graphics = attachments.graphics;
-  const points = buildPointLighting(document, graphics.topology.points, new Map([...lighting.bindings, ...attachments.addedLighting]));
+  const points = buildPointLighting(document, graphics.topology.points, new Map([...lighting.bindings, ...switches.addedLighting, ...attachments.addedLighting]));
   const previousOrder = new Map(topology.cells.filter(cell => cell.originZone !== null).map(cell => [cell.id,
     document.zones.find(zone => zone.id === cell.originZone)!.visibleZones.flatMap(id => topology.cells.filter(target => target.originZone === id).map(target => target.id))]));
   const visibility = buildSourceVisibility(graphics.topology, graphics.pointReferences, previousOrder);
   const prefix = buildDataPrefix(document, { points, collision: collision.segments }, topology.cells.length);
-  const references = buildRoomDataReferences(document, source, graphics.topology, prefix);
+  const references = buildNavigation(document, graphics.topology, buildRoomDataReferences(document, source, graphics.topology, prefix));
   const rooms = buildZoneRecords(references.data, topology.cells.map((cell, index) => ({ id: cell.id,
     header: references.headers.get(cell.id)!, boundaries: collision.boundaries[index]!, cornerWalls: collision.cornerWalls[index]!,
     ...visibility.rooms.get(cell.id)! })));
   const generated = compileGeneratedGraphics(document, topology.cells.map(cell => ({ sourceId: cell.sourceId, id: cell.id, dataOffset: rooms.offsets[cell.id]!,
     ...graphics.streams.get(cell.id)! })), animations, attachments.selectTarget);
-  const originalExit = document.exitZone ?? checkedInteger(options.resolvedExit, -1, document.zones.length - 1, 'Source exit room');
+  const originalExit = source.exitRoom !== undefined ? -1 : document.exitZone ?? checkedInteger(options.resolvedExit, -1, document.zones.length - 1, 'Source exit room');
   let exitZone = originalExit;
   if (originalExit >= 0) {
     const destinations = topology.cells.filter(cell => cell.originZone === originalExit);
-    if (destinations.length !== 1) throw new Error('The exit room was deleted or split. Assign a single generated exit destination before building.');
+    if (!destinations.length) throw new Error('The exit room was deleted. Choose another level exit before building.');
     exitZone = destinations[0]!.id;
+  }
+  if (source.exitRoom !== undefined) {
+    const destination = topology.cells.find(cell => cell.sourceId === source.exitRoom);
+    if (!destination) throw new Error('The exit room was deleted. Choose another level exit before building.');
+    exitZone = destination.id;
   }
   const owners = buildDrawTopology(source, graphics.topology).owners;
   const groups = topology.cells.map(cell => owners.get(cell.id)!);

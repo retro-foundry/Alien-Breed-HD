@@ -30,8 +30,8 @@ for(const view of ['perspective','orthographic'])test(`${view} shows both storey
  await expect(page.locator('canvas[aria-label="Textured 3D geometry"]')).not.toHaveAttribute('data-material-count','0');await expect(page.getByRole('alert')).toHaveCount(0);
  const camera=await canvas.getAttribute('data-camera');
  for(const storey of ['lower','upper'])for(const plane of ['floor','ceiling'])await expect(page.getByRole('button',{name:`Drag ${storey} ${plane} height`,exact:true})).toBeVisible();
- await page.getByRole('button',{name:'Upper',exact:true}).click();await expect(canvas).toHaveAttribute('data-camera',camera!);await expect(page.getByRole('button',{name:'Drag lower floor height',exact:true})).toBeVisible();
- await page.getByRole('button',{name:'Lower',exact:true}).click();
+ await page.getByRole('button',{name:'Upper storey',exact:true}).click();await expect(canvas).toHaveAttribute('data-camera',camera!);await expect(page.getByRole('button',{name:'Drag lower floor height',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Lower storey',exact:true}).click();
  for(const [storey,plane,field] of [['lower','floor','floor'],['lower','ceiling','ceiling'],['upper','floor','upperFloor'],['upper','ceiling','upperCeiling']] as const){
   const handle=page.getByRole('button',{name:`Drag ${storey} ${plane} height`,exact:true}),rect=(await handle.boundingBox())!,before=(await pixels(page)).hash;
   await page.mouse.move(rect.x+rect.width/2,rect.y+rect.height/2);await page.mouse.down();await page.mouse.move(rect.x+rect.width/2,rect.y+rect.height/2+(plane==='floor'?-8:8),{steps:5});await page.mouse.up();

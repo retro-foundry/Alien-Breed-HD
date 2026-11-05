@@ -105,7 +105,7 @@ test('native upper-room picks resolve generated cell IDs after viewport resizing
   await expect(page.locator('.project-picker strong')).toHaveText(source.name);
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   await expect(page.getByRole('region', { name: '3D game engine preview' }).getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
-  await page.getByRole('button', { name: 'Upper', exact: true }).click();
+  await page.getByRole('button', { name: 'Upper storey', exact: true }).click();
   const canvas = page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas');
   for (const viewport of [{ width: 1440, height: 950 }, { width: 1100, height: 720 }]) {
     await page.setViewportSize(viewport); await captureEngine(page, camera);

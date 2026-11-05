@@ -80,6 +80,8 @@ int16_t level_get_zone_brightness(const LevelState *level, int16_t zone_id, int 
  * Get per-point brightness (pointBrights table) for a rotated level point.
  * use_upper: 0 = lower word at +0, 1 = upper word at +2.
  * Applies animated brightness encoding used by Amiga pointBrights entries.
+ * Selectors 1..3 use live animations; 4..15 blend toward the original table's
+ * unmodified zero entries. A negative base byte bypasses animation.
  * Returns 0 if point table is unavailable or point_id is out of range.
  */
 int16_t level_get_point_brightness(const LevelState *level, int16_t point_id, int use_upper);

@@ -114,7 +114,7 @@ test('orthographic upper-floor handles, source corners and orthographic click pl
   await openFixture(page, fixture.document); await selectRoom(page, fixture.from.id);
   await page.getByRole('combobox', { name: 'Editing view', exact: true }).selectOption('orthographic');
   const lowerCamera = await page.locator('canvas[aria-label="Editing viewport"]').getAttribute('data-camera');
-  await page.getByRole('button', { name: 'Upper', exact: true }).click();
+  await page.getByRole('button', { name: 'Upper storey', exact: true }).click();
   await expect(page.locator('canvas[aria-label="Editing viewport"]')).toHaveAttribute('data-camera',lowerCamera!);
   await page.getByRole('button', { name: 'Drag upper floor height', exact: true }).focus(); await page.keyboard.press('ArrowUp');
   await expect(page.getByRole('spinbutton', { name: 'Upper floor height', exact: true })).toHaveValue(String(baseline.upperFloor - .25));

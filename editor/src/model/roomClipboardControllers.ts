@@ -1,3 +1,4 @@
+import type { SourceSwitch } from './sourceSwitches';
 import { sourceMovingSettings, setSourceMovingRoom } from './sourceMovingRoom';
 import type { LevelDocument } from './level';
 import { importedAnimationTables } from './animationBuild';
@@ -45,22 +46,29 @@ export function copyRoomControllers(destination: LevelDocument, source: LevelDoc
     for (const copy of capturedSwitches.filter(copy => copy.room === id)) switches.push({ previousSlot: copy.slot,
       copy: { ...copy, room: mapped, graphicsRoom: mapRoom(copy.graphicsRoom, 'Copied switch graphics') } });
   }
-  const occupied = new Set(destination.roomSource.switchCopies?.map(copy => copy.slot));
-  const internalMask = switches.reduce((mask, item) => mask | (1 << (item.previousSlot + 4)), 0);
+  const independent = [...rooms].flatMap(([id, mapped]) => (source.roomSource.rooms.find(room => room.id === id)!.switches ?? []).map(item => ({ room: mapped, item, previousSlot: item.slot, slot: -1 })));
   const mappedRooms = new Set(rooms.values());
+  const occupied = new Set([...(destination.roomSource.switchCopies ?? []).map(copy => copy.slot),
+    ...destination.roomSource.rooms.filter(room => !mappedRooms.has(room.id)).flatMap(room => room.switches?.map(item => item.slot) ?? [])]);
+  const internalMask = [...switches, ...independent].reduce((mask, item) => mask | (1 << (item.previousSlot + 4)), 0);
   const claimed = [...destination.mechanisms.map(item => item.conditions),
     ...destination.roomSource.rooms.flatMap(room => room.moving ? [sourceMovingSettings(room.moving).conditions & ~(mappedRooms.has(room.id) ? internalMask : 0)] : []),
     ...(destination.roomSource.controllerCopies ?? []).map(copy => copiedMechanismSettings(copy).conditions),
     ...motions.map(copy => new DataView(copy.header!.buffer, copy.header!.byteOffset, copy.header!.byteLength).getUint16(14) & ~internalMask)];
-  const free = destination.switches.filter(item => item.zone < 0 && !occupied.has(item.id) && !claimed.some(mask => mask & (1 << (item.id + 4)))).map(item => item.id);
-  if (switches.length > free.length) throw new Error(`The copied group needs ${switches.length} switch slots, but only ${free.length} are unclaimed. Active switches and existing requirements reserve condition numbers. The native limit is eight switches. No rooms were pasted.`);
+  const free = Array.from({ length: 8 }, (_, id) => id).filter(id => !destination.switches.some(item => item.id === id && item.zone >= 0) && !occupied.has(id) && !claimed.some(mask => mask & (1 << (id + 4))));
+  if (switches.length + independent.length > free.length) throw new Error(`The copied group needs ${switches.length + independent.length} switch slots, but only ${free.length} are unclaimed. Active switches and existing requirements reserve condition numbers. The native limit is eight switches. No rooms were pasted.`);
   const slots = new Map<number, number>();
   switches.forEach((item, index) => { item.copy.slot = free[index]!; slots.set(item.previousSlot, item.copy.slot); });
+  independent.forEach((item, index) => { item.slot = free[switches.length + index]!; slots.set(item.previousSlot, item.slot); });
   for (const motion of motions) {
     const header = motion.header!, view = new DataView(header.buffer, header.byteOffset, header.byteLength);
     view.setUint16(14, remapSwitchConditions(view.getUint16(14), slots));
   }
   let working = destination;
+  if (independent.length) working = { ...working, roomSource: { ...working.roomSource, rooms: working.roomSource.rooms.map(room => {
+    const copied = independent.filter(item => item.room === room.id);
+    return copied.length ? { ...room, switches: copied.map((item): SourceSwitch => ({ ...item.item, slot: item.slot })) } : room;
+  }) } };
   if (motions.length) working = applyCommand(working, editRoomSource(setRoomControllerCopies(working,
     [...compileControllerCopies(working.roomSource.controllerCopies ?? []), ...motions])));
   if (switches.length) working = applyCommand(working, editRoomSource(setRoomSwitchCopies(working,

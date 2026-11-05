@@ -7,6 +7,7 @@ import type { LevelDocument } from './level';
 import { BinaryWriter } from './writer';
 import { relocateRecordPointer } from './graphicsRelocation';
 import { assertGraphicsRecordBudget } from './renderLimits';
+import { importedBarrierModeOverride } from './importedBarriers';
 
 export interface GeneratedGraphicsRoom extends GraphicsStreamInput { sourceId?: string; id: number; dataOffset: number }
 export interface GeneratedGraphicsTarget { room: number; upper: boolean; index: number }
@@ -54,8 +55,10 @@ export function compileGeneratedGraphics(document: LevelDocument, rooms: readonl
           const original = source.get(item.sourceOffset);
           if (!original) throw new Error('A generated graphics identity must name an existing source record.');
           if (original.type !== generated.type) {
-            const material = document.roomSource.rooms.find(source => source.id === room.sourceId)?.polygonMaterials?.find(material => material.record === item.sourceOffset && material.upper === upper);
-            if (!material?.mode || !original.polygon || !generated.polygon || polygonMaterialType(original.type, material.mode) !== generated.type) throw new Error('A generated graphics identity must retain its opcode or have an explicit same-plane material mode.');
+            const sourceRoom = document.roomSource.rooms.find(source => source.id === room.sourceId);
+            const material = sourceRoom?.polygonMaterials?.find(material => material.record === item.sourceOffset && material.upper === upper);
+            const wallMode = !!sourceRoom && original.type === 13 && generated.type === 0 && importedBarrierModeOverride(document, sourceRoom, original);
+            if (!wallMode && (!material?.mode || !original.polygon || !generated.polygon || polygonMaterialType(original.type, material.mode) !== generated.type)) throw new Error('A generated graphics identity must retain its opcode or have an explicit surface-mode or barrier override.');
           }
           targets.push({ key: { room: room.id, upper, index }, start: output.offset, original, generated });
         }

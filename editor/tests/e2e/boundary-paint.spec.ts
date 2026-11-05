@@ -22,7 +22,7 @@ for (const mode of ['authored lower', 'authored upper', 'repaired doorway'] as c
   await page.getByRole('button', { name: 'Engine view', exact: true }).click();
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
-  if (upper) await page.getByRole('button', { name: 'Upper', exact: true }).click();
+  if (upper) await page.getByRole('button', { name: 'Upper storey', exact: true }).click();
   const points = Array.from({ length: 361 }, (_, index) => ({ x: (index % 19 + 1) / 20, y: (Math.floor(index / 19) + 1) / 20 }));
   let beforeHash = 0, before: Awaited<ReturnType<typeof enginePickDetails>> = [], pickedIndex = -1;
   // A repaired doorway can face any cardinal direction. Inspect actual native

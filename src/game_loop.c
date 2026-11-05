@@ -1833,7 +1833,9 @@ void game_loop_tick(GameState *state, GameLoopCtx *ctx)
 
         if (state->mode == MODE_SINGLE || state->mp_mode == 1) {
             int16_t end_zone = state->end_zones[state->current_level & 0x0F];
-            if (end_zone >= 0 && state->plr1.zone == end_zone) {
+            /* AB3DI.s ENDZONES compares one room. Authored concave rooms use
+             * multiple collision cells with one explicit setup draw identity. */
+            if (level_same_draw_room(&state->level, state->plr1.zone, end_zone)) {
                 printf("[LOOP] Player 1 reached end zone %d - level complete!\n",
                        end_zone);
                 state->finished_level = 1;

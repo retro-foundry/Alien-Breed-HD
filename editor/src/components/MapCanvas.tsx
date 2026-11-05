@@ -1,3 +1,6 @@
+import { editableNavigation } from '../model/navigation';
+import { RoomConnectionHelp } from './RoomConnectionHelp';
+import { roomConnectionEdges } from '../model/roomConnections';
 import { mapRoomsInSelectionBox } from '../model/roomSelection';
 import { edgeCornerPoint } from '../model/roomCorners';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -37,12 +40,18 @@ function floorPolygons(zone: Zone, upper: boolean) {
 
 export function MapCanvas({ placementLabel, onObjectPlace, document, selection, objectIds, frameSelection, onObjectToggle, onObjectBoxSelect, onGroupMove, onSelect, onMove, tool, layer, grid, showObjects, onCursor, focusZone, fitKey, roomDraft, selectedRoom, roomGroup, onRoomSelect, onRoomBoxSelect, onRoomPoint, onRoomFinish, onRoomCornerMove, onRoomCornerInsert, focusRoom }: Props) {
   const visibility = useVisibilityInspection(document, selectedRoom?.id, selection?.kind === 'zone' ? selection.id : undefined);
+  const connections = useMemo(() => {
+    try { return { edges: roomConnectionEdges(document), error: '' }; }
+    catch (reason) { return { edges: null, error: reason instanceof Error ? reason.message : String(reason) }; }
+  }, [document]);
   const canvas = useRef<HTMLCanvasElement>(null), holder = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const lastFit = useRef<{ data: Uint8Array; fit: number } | null>(null);
   const [view, setView] = useState<MapView>({ x: 0, z: 0, scale: 0.15 });
   const space = useRef(false);
   const [spaceHeld, setSpaceHeld] = useState(false);
+  const [showControls, setShowControls] = useState(false);
+  const [controlLinks, setControlLinks] = useState('all');
   const [placementPoint, setPlacementPoint] = useState<{ x: number; z: number } | null>(null);
   const drag = useRef<{ x: number; y: number; view: MapView; selection: Selection; moved: boolean; offset?: {x:number;z:number} } | null>(null);
   const [ghost, setGhost] = useState<{ selection: Exclude<Selection, null>; x: number; z: number } | null>(null);
@@ -199,19 +208,7 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
         polygon(graphic.points); context.fillStyle = '#2e789033'; context.fill();
       }
     }
-    for (const zone of document.zones) {
-      if (sourceView.hidden.has(zone.id)) continue;
-      const selected = selection?.kind === 'zone' && selection.id === zone.id;
-      for (const id of zone.boundaryIds) {
-        const line = document.lines[id]; if (!line) continue;
-        const a = screen(line.x, line.z), b = screen(line.x + line.dx, line.z + line.dz);
-        context.strokeStyle = selected ? '#b2de7a' : line.connect >= 0 ? '#527080' : '#89939b';
-        context.lineWidth = selected ? 2.25 : line.connect >= 0 ? 1 : 1.5;
-        context.setLineDash(line.connect >= 0 && !selected ? [3, 4] : []);
-        context.beginPath(); context.moveTo(a.x, a.y); context.lineTo(b.x, b.y); context.stroke();
-      }
-    }
-    context.setLineDash([]);
+
     const drawVisibility = () => { if (visibility.enabled && visibility.inspection) {
       for (const polygon of visibility.inspection.polygons) {
         context.beginPath();
@@ -231,19 +228,41 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
       }
     }
     };
-    const outline = (vertices: readonly { x: number; z: number }[], fill: boolean, colour: string) => {
+    const outline = (vertices: readonly { x: number; z: number }[], fill: boolean, colour: string, stroke = true) => {
       context.beginPath(); vertices.forEach((point, index) => { const pixel = screen(point.x, point.z); if (index) context.lineTo(pixel.x, pixel.y); else context.moveTo(pixel.x, pixel.y); });
       if (vertices.length >= 3) context.closePath();
       if (fill) { context.fillStyle = '#36483d'; context.fill(); }
-      context.strokeStyle = colour; context.lineWidth = 2; context.stroke();
+      if (stroke) { context.strokeStyle = colour; context.lineWidth = 2; context.stroke(); }
       for (const point of vertices) { const pixel = screen(point.x, point.z); context.fillStyle = colour; context.fillRect(pixel.x - cornerHandleHalfSize, pixel.y - cornerHandleHalfSize, cornerHandleHalfSize * 2, cornerHandleHalfSize * 2); }
     };
     const previewVertices = (room: SourceRoom) => room.id === selectedRoom?.id && cornerGhost ? room.vertices.map((point, i) => i === cornerGhost.index ? { x: cornerGhost.x, z: cornerGhost.z } : point) : room.vertices;
     let cornerValid = true;
     if (selectedRoom && cornerGhost) try { normaliseRoomOutline(previewVertices(selectedRoom)); } catch { cornerValid = false; }
-    for (const room of sourceView.changed) outline(previewVertices(room), true, room.id === selectedRoom?.id ? cornerValid ? '#d0f6a5' : '#e98980' : '#84b99d');
-    if (selectedRoom && !sourceView.changed.some(room => room.id === selectedRoom.id)) outline(previewVertices(selectedRoom), false, cornerValid ? '#d0f6a5' : '#e98980');
-    if (roomGroup.length > 1) for (const room of roomGroup) outline(room.vertices, false, '#d0f6a5');
+    for (const room of sourceView.changed) outline(previewVertices(room), true, room.id === selectedRoom?.id ? cornerValid ? '#d0f6a5' : '#e98980' : '#84b99d', !!connections.error || !!cornerGhost && room.id === selectedRoom?.id);
+    if (selectedRoom && !sourceView.changed.some(room => room.id === selectedRoom.id)) outline(previewVertices(selectedRoom), false, cornerValid ? '#d0f6a5' : '#e98980', !!connections.error || !!cornerGhost);
+    if (roomGroup.length > 1) for (const room of roomGroup) outline(room.vertices, false, '#d0f6a5', !!connections.error);
+    if (connections.edges) {
+      const selectedIds = new Set([selectedRoom?.id, ...roomGroup.map(room => room.id)]);
+      const ordered = [...connections.edges].sort((a, b) => Number(selectedIds.has(b.room)) - Number(selectedIds.has(a.room)));
+      const drawn = new Set<string>();
+      for (const edge of ordered) {
+        if (cornerGhost && edge.room === selectedRoom?.id) continue;
+        const key = [`${edge.start.x},${edge.start.z}`, `${edge.end.x},${edge.end.z}`].sort().join(':');
+        if (drawn.has(key)) continue; drawn.add(key);
+        const selected = selectedIds.has(edge.room);
+        const changed = sourceView.changed.some(room => room.id === edge.room);
+        const a = screen(edge.start.x, edge.start.z), b = screen(edge.end.x, edge.end.z);
+        context.strokeStyle = edge.barrier ? '#e6b36b' : selected ? '#d0f6a5' : edge.neighbour ? '#527080' : changed ? '#84b99d' : '#89939b';
+        context.lineWidth = selected ? 2.25 : edge.neighbour ? 1 : 1.5;
+        context.setLineDash(edge.barrier ? [8, 3, 2, 3] : edge.neighbour ? [3, 4] : []);
+        context.beginPath(); context.moveTo(a.x, a.y); context.lineTo(b.x, b.y); context.stroke();
+      }
+      context.setLineDash([]);
+    } else {
+      // Keep invalid source outlines editable, with an explicit diagnostic.
+      // Do not invent or retain stale connection classifications.
+      for (const room of document.roomSource.rooms) outline(previewVertices(room), false, '#89939b');
+    }
     if (selectedRoom) {
       const teleport = editableTeleport(document, selectedRoom);
       if (teleport.destination !== null) {
@@ -270,6 +289,24 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
       const pixel = screen(point.x, point.z); context.fillStyle = '#adb6ba'; context.fillRect(pixel.x - 1.5, pixel.y - 1.5, 3, 3);
     }
     drawVisibility();
+    if (showControls) {
+      const navigation = editableNavigation(document);
+      navigation.points.forEach((a, i) => {
+        const from = screen(a.x, a.z);
+        navigation.points.slice(i + 1).forEach((b, offset) => {
+          const j = i + 1 + offset, forward = navigation.links?.[i * 100 + j], reverse = navigation.links?.[j * 100 + i];
+          if (!forward || controlLinks === 'none' || controlLinks === 'physical' && forward !== 1 && reverse !== 1 || controlLinks === 'visual' && (forward !== 2 || reverse !== 2)) return;
+          const to = screen(b.x, b.z); context.strokeStyle = '#82caff'; context.lineWidth = 1.5;
+          context.setLineDash(forward === 2 && reverse === 2 ? [4, 4] : []); context.beginPath(); context.moveTo(from.x, from.y); context.lineTo(to.x, to.y); context.stroke(); context.setLineDash([]);
+          if (forward !== reverse) {
+            const angle = Math.atan2(to.y - from.y, to.x - from.x) + (forward === 2 ? Math.PI : 0), x = (from.x + to.x) / 2, y = (from.y + to.y) / 2;
+            context.beginPath(); context.moveTo(x - 7 * Math.cos(angle - 0.5), y - 7 * Math.sin(angle - 0.5)); context.lineTo(x, y); context.lineTo(x - 7 * Math.cos(angle + 0.5), y - 7 * Math.sin(angle + 0.5)); context.stroke();
+          }
+        });
+        context.fillStyle = '#82caff'; context.strokeStyle = '#82caff'; context.lineWidth = 1.5; context.beginPath(); context.arc(from.x, from.y, 5, 0, Math.PI * 2); if (a.upper) context.stroke(); else context.fill();
+        context.font = '11px ui-monospace, monospace'; context.fillText(`C${i + 1}${a.upper ? 'U' : 'L'}`, from.x + 8, from.y - 8);
+      });
+    }
     if (showObjects) for (const object of editableObjects(document)) {
       if (!objectIsActive(object) || (layer === 'upper') !== object.upper) continue;
       const moving = ghost?.selection.kind === 'object' && ghost.selection.id === object.id;
@@ -311,7 +348,7 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
       context.fillStyle = '#82caff22'; context.strokeStyle = '#82caff'; context.lineWidth = 1.5; context.setLineDash([5, 3]);
       context.fillRect(a.x, a.y, b.x - a.x, b.y - a.y); context.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y); context.setLineDash([]);
     }
-  }, [tool, placementPoint, document, selection, objectIds, view, size, grid, showObjects, layer, ghost, groupGhost, boxGhost, screen, world, sourceView, roomDraft, selectedRoom, roomGroup, cornerGhost, visibility.enabled, visibility.inspection]);
+  }, [tool, placementPoint, document, selection, objectIds, view, size, grid, showObjects, showControls, controlLinks, layer, ghost, groupGhost, boxGhost, screen, world, sourceView, roomDraft, selectedRoom, roomGroup, cornerGhost, visibility.enabled, visibility.inspection]);
 
   function hit(x: number, y: number): Selection {
     const context = canvas.current!.getContext('2d');
@@ -448,7 +485,7 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
         groupDrag.current=selection.kind==='object'&&objectIds.length>1&&objectIds.includes(selection.id)?[...objectIds]:null;
         drag.current={x,y,view,selection,moved:false,offset:{x:moveAnchor.x-point.x,z:moveAnchor.z-point.z}};
         canvas.current!.focus();canvas.current!.setPointerCapture(event.pointerId);
-      }}>↔</button>}
+      }}>â†”</button>}
     {tool === 'select' && !spaceHeld && selectedRoom && selectedRoom.vertices.map((a, edge) => {
       const b = selectedRoom.vertices[(edge + 1) % selectedRoom.vertices.length]!;
       let point, reason = ''; try { point = edgeCornerPoint(a, b); } catch (error) { point = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }; reason = error instanceof Error ? error.message : String(error); }
@@ -457,9 +494,17 @@ export function MapCanvas({ placementLabel, onObjectPlace, document, selection, 
       return <button key={edge} className="room-edge-insert" style={{ left: pixel.x, top: pixel.y }} disabled={!!reason} aria-label={`Add corner on edge ${edge + 1}`} title={reason || "Insert a corner here. Adjoining edges update together. You can also double-click an edge, then drag the new corner."} onClick={() => onRoomCornerInsert(edge)}>+</button>;
     })}
     <div className="map-label"><span className="status-dot" /> ORTHOGRAPHIC <span className="muted">/</span> {layer.toUpperCase()} FLOOR</div>
+    <div className="map-connections" role="note" aria-label="Map line legend">
+      <div className="map-line-key"><span><i className="map-wall-swatch" />Solid: wall</span><span><i className="map-connection-swatch" />Dotted: zone connection</span></div>
+      {connections.edges?.some(edge => edge.barrier) && <p>Orange dash-dot: see-through barrier. It blocks walking.</p>}
+      <RoomConnectionHelp />
+      <label><input type="checkbox" checked={showControls} onChange={event => setShowControls(event.target.checked)} /> Show control points and links</label>
+      {showControls && <><label>Links <select aria-label="Control-point link overlay" value={controlLinks} onChange={event => setControlLinks(event.target.value)}><option value="all">All links</option><option value="physical">Physical links only</option><option value="visual">Visual links only</option><option value="none">No links</option></select></label><p>Blue C markers show both storeys: L lower, U upper. Arrows: physical link direction. Dashed blue: visual link. Edit under Control points and links in the room inspector.</p></>}
+      {connections.error && <p role="status">Connections unavailable: {connections.error}</p>}
+    </div>
     <div className="map-compass"><span>N</span><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 6 23-6-5-6 5z" fill="currentColor" /></svg></div>
     <VisibilityOverlay state={visibility} onFrame={() => framePoints(visibility.inspection?.polygons.flatMap(polygon => polygon.vertices) ?? [])} />
-    <div id="map-controls" className="map-help">{tool === 'object' ? <>Placing {placementLabel} - Click to place - Escape cancels - Alt bypasses snap</> : roomDraft ? <><strong>{roomDraft.vertices.length} corners</strong> · Click corners · Enter or first corner finishes · Backspace removes last · Esc cancels · Alt bypasses snap</> : tool === 'box' ? <>Drag a rectangle · Shift adds objects · Escape cancels · Returns to Select after completion</> : <>Left drag: select zones; Shift adds. Middle/right drag: pan <span>·</span> wheel to zoom <span>·</span> <kbd>F</kbd> fit <span>·</span> <kbd>?</kbd> controls</>}</div>
+    <div id="map-controls" className="map-help">{tool === 'object' ? <>Placing {placementLabel} - Click to place - Escape cancels - Alt bypasses snap</> : roomDraft ? <><strong>{roomDraft.vertices.length} corners</strong> Â· Click corners Â· Enter or first corner finishes Â· Backspace removes last Â· Esc cancels Â· Alt bypasses snap</> : tool === 'box' ? <>Drag a rectangle Â· Shift adds objects Â· Escape cancels Â· Returns to Select after completion</> : <>Left drag: select zones; Shift adds. Middle/right drag: pan <span>Â·</span> wheel to zoom <span>Â·</span> <kbd>F</kbd> fit <span>Â·</span> <kbd>?</kbd> controls</>}</div>
     <div className="map-scale"><Icon name="grid" size={14} /> {Math.round(view.scale * 100)}%</div>
   </div>;
 }

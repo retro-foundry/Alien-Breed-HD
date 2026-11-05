@@ -5,6 +5,7 @@
 import { buildRoomEdges, convexParts, type Position } from './geometry';
 import type { LevelDocument } from './level';
 import type { VisibilityRoom } from './visibilityGeometry';
+import { importedBarrierPair } from './importedBarriers';
 
 export function visibilityCells(document: LevelDocument): { points: Position[]; rooms: VisibilityRoom[]; owners: Map<number, number> } {
   const anchors = document.zones.flatMap(zone => zone.boundaryIds.map(id => { const line = document.lines[id]!; return { x: line.x, z: line.z }; }));
@@ -28,10 +29,15 @@ export function visibilityCells(document: LevelDocument): { points: Position[]; 
     const boundary = edges.filter(edge => edge.room === String(id)), source = document.zones.find(zone => zone.id === cell.owner)!;
     return { id, vertices: boundary.map(edge => pointId(edge.start)), neighbours: boundary.map(edge => {
       const original = source.boundaryIds.map(id => document.lines[id]!).find(line => contains(edge.start, line) && contains(edge.end, line));
-      if (original?.connect === -1) return -1;
+      if (original?.connect === -1) {
+        if (edge.neighbour === null) return -1;
+        const other = document.zones.find(zone => zone.id === owners.get(Number(edge.neighbour)))!;
+        const opposite = other.boundaryIds.map(id => document.lines[id]!).find(line => contains(edge.start, line) && contains(edge.end, line));
+        if (!opposite || !importedBarrierPair(document, original.id, opposite.id)) return -1;
+      }
       if (edge.neighbour === null) throw new Error(`Zone ${source.id} has an unmatched visibility portal.`);
       const neighbour = Number(edge.neighbour), destination = owners.get(neighbour)!;
-      if (original && destination !== original.connect) throw new Error(`Zone ${source.id} has a portal whose boundary disagrees with destination ${original.connect}.`);
+      if (original && original.connect >= 0 && destination !== original.connect) throw new Error(`Zone ${source.id} has a portal whose boundary disagrees with destination ${original.connect}.`);
       if (!original && destination !== cell.owner) throw new Error(`Zone ${source.id} has an internal visibility edge outside its source boundary.`);
       return neighbour;
     }) };

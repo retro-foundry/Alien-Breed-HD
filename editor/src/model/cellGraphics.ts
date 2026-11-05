@@ -1,4 +1,5 @@
 import { BinaryReader } from './binary';
+import { roomPlaneRecords } from './roomPlanes';
 import { readGraphicRecord, type Graphic } from './graphics';
 import type { GraphicsRecordInput, GraphicsStreamInput } from './graphicsBuild';
 import type { LevelDocument } from './level';
@@ -64,8 +65,10 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
     const translation = nativeRoomTranslation(document, room), dx = translation?.x ?? 0, dz = translation?.z ?? 0;
     const owner = draw.owners.get(cell.id)!, members = topology.cells.filter(target => target.sourceId === cell.sourceId);
     const polygonLayers = wholePolygons.get(owner) ?? { lower: members.flatMap(member => polygons.get(member.id)!.lower), upper: members.flatMap(member => polygons.get(member.id)!.upper) };
+    const starter = document.roomAppearances?.find(item => item.room === room.id)?.surfaces;
     const wallLayers = generated.walls.get(owner)!, selection = newRooms.get(room.id) ?? closures.get(room.id);
     const layer = (records: readonly Graphic[], upper: boolean): GraphicsRecordInput[] => {
+      if (starter) records = [...roomPlaneRecords(document, room, upper), ...records.filter(record => record.type === 7).slice(0, 1)];
       const wallRecords = upper ? wallLayers.upper : wallLayers.lower, polygonRecords = upper ? polygonLayers.upper : polygonLayers.lower;
       const insertion = upper ? selection?.wallInsertion.upper : selection?.wallInsertion.lower;
       const additions = wallRecords.filter(item => item.sourceOffset === undefined), explicitAdditions=additions.filter(item=>item.insertBefore===undefined);
@@ -79,7 +82,10 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
         result.push(...additions.filter(item=>item.insertBefore===record.offset));
         if (record.wall) {
           if (native) result.push(...wallRecords.filter(item => item.sourceOffset === record.offset));
-        } else if (record.polygon) result.push(...polygonRecords.filter(item => item.sourceOffset === record.offset));
+        } else if (record.polygon) {
+          if (starter && record.type === 7) result.push({ bytes: new Uint8Array([0, 4, 0, 0]) });
+          result.push(...polygonRecords.filter(item => item.sourceOffset === record.offset));
+        }
         else {
           const bytes = reader.bytes.slice(record.offset, record.offset + record.size);
           if (record.points.length) {
@@ -96,6 +102,7 @@ export function buildCellGraphics(document: LevelDocument, source: RoomSource, t
           result.push({ sourceOffset: record.offset, bytes });
         }
       }
+      if (starter) result.push({ bytes: new Uint8Array([0, 4, 0, records.some(record => record.type === 7) ? 1 : 2]) });
       assertGraphicsRecordBudget(room.id, upper, result.length);
       return result;
     };

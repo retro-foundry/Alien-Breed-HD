@@ -1,0 +1,47 @@
+import { expect, test } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import { decodeProject } from '../../src/model/project';
+import { buildPlayableLevel } from '../../src/model/playableBuild';
+import { captureEngine, enginePickDetails } from '../engineCapture';
+
+test('finishing a room assigns saved textures immediately, previews in 3D and the game, and undoes as one action', async ({ page }, info) => {
+  test.setTimeout(90000);
+  await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.getByRole('button', { name: /^Zone 000/ }).click(); await page.getByRole('button', { name: 'Frame map', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Grid spacing' }).selectOption('0');
+  await page.getByRole('button', { name: 'Draw room', exact: true }).click();
+  const map = page.locator('canvas[aria-label="Level map"]'), bounds = (await map.boundingBox())!;
+  for (const [x, y] of [[5, 5], [35, 5], [35, 35], [5, 35]]) await page.mouse.click(bounds.x + x!, bounds.y + y!);
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Room 138', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Edit floor texture', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Edit ceiling texture', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('combobox', { name: 'Lower wall style', exact: true })).not.toHaveValue('');
+  await expect(page.getByRole('combobox', { name: 'Room corner lighting', exact: true })).not.toHaveValue('');
+  const save = async (name: string) => {
+    const pending = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+    const path = info.outputPath(name); await (await pending).saveAs(path); return decodeProject(new Uint8Array(await readFile(path)));
+  };
+  const source = await save('automatic-room.ab3d'), room = source.roomSource.rooms.at(-1)!, appearance = source.roomAppearances!.find(item => item.room === room.id)!;
+  expect(appearance.surfaces).toBeDefined();
+  await page.getByRole('combobox', { name: 'Editing view', exact: true }).selectOption('perspective');
+  const textures = page.locator('canvas[aria-label="Textured 3D geometry"]');
+  await expect(textures).not.toHaveAttribute('data-material-count', '0'); await expect(textures).not.toHaveAttribute('data-textured-faces', '0');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.locator('canvas[aria-label="Editing viewport"]').focus(); await page.keyboard.press('Shift+F');
+  await page.screenshot({ path: info.outputPath('automatic-textured-room.png') });
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  const undone = await save('undone.ab3d'); expect(undone.roomSource.rooms).toHaveLength(138); expect(undone.roomAppearances).toBeUndefined();
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  const restored = await save('restored.ab3d'); expect(restored.roomAppearances).toEqual(source.roomAppearances);
+  const built = buildPlayableLevel(restored, -1), cell = built.topology!.cells.find(cell => cell.sourceId === room.id)!, zone = built.document.zones[cell.id]!;
+  expect(zone.lower.some(record => record.type === 1)).toBe(true); expect(zone.lower.some(record => record.type === 2)).toBe(true);
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
+  const preview = page.getByRole('region', { name: '3D game engine preview' }); await expect(preview).toHaveAttribute('data-level-slot', '0', { timeout: 60000 });
+  const x = Math.round(room.vertices.reduce((sum, p) => sum + p.x, 0) / room.vertices.length), z = Math.round(room.vertices.reduce((sum, p) => sum + p.z, 0) / room.vertices.length);
+  expect(await captureEngine(page, { zone: cell.id, x, z, angle: 0, upper: 0, height: zone.floor - Math.min(8, (zone.floor - zone.ceiling) / 4) })).toBeGreaterThan(0);
+  const picks = await enginePickDetails(page, Array.from({ length: 121 }, (_, i) => ({ x: (i % 11 + 1) / 12, y: (Math.floor(i / 11) + 1) / 12 })));
+  expect(picks.some(pick => pick.surface?.type === 0 || pick.surface?.type === 13)).toBe(true);
+  expect(picks.some(pick => [1, 2, 7].includes(pick.surface?.type ?? -1))).toBe(true);
+  await expect(preview.getByRole('alert')).toHaveCount(0);
+});
