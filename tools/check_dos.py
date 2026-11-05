@@ -143,7 +143,9 @@ exit
                     user32.ShowWindow(window, 0)
                 return True
         try:
-            deadline = time.monotonic() + 240
+            # Full quickloads plus disk-backed canvas/UI oracles can exceed
+            # four minutes at 40,000 cycles; this is outside the timed frames.
+            deadline = time.monotonic() + (360 if args.exercise else 240)
             while process.poll() is None:
                 if hide_windows is not None:
                     user32.EnumWindows(hide_windows, 0)
