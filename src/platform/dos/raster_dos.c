@@ -114,10 +114,12 @@ DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out,unsigned width,
                                         const DosSpriteRows *sprite)
 {
     enum { MAX_WIDTH=320 };
-    typedef struct { const uint8_t *source; unsigned limit,shift,end; } Group;
+    typedef struct { const uint8_t *source; unsigned limit,shift,width; } Group;
     Group groups[MAX_WIDTH];
     RendererPixel row[MAX_WIDTH];
-    uint16_t starts[MAX_WIDTH/2],lengths[MAX_WIDTH/2];
+    typedef struct { RendererPixel *source; unsigned count; } Span;
+    Span spans[MAX_WIDTH/2];
+    _Static_assert(sizeof(Group)==16 && sizeof(Span)==8,"486 sprite descriptor layout");
     DosSpriteCoverage result={0,0};
     if(!width || width>MAX_WIDTH || !height || !sprite->columns ||
        sprite->ptr_bytes<=sprite->ptr_offset)return result;
@@ -129,9 +131,9 @@ DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out,unsigned width,
         unsigned column=u>>16;
         if(column>=sprite->columns)column=sprite->columns-1;
         if(column>=available)column=available-1;
-        if(column==previous){groups[count-1].end=x+1;continue;}
+        if(column==previous){groups[count-1].width++;continue;}
         previous=column;
-        Group *g=&groups[count++];g->source=NULL;g->end=x+1;
+        Group *g=&groups[count++];g->source=NULL;g->width=1;
         const uint8_t *entry=sprite->ptr+sprite->ptr_offset+column*4u;
         unsigned mode=entry[0];
         uint32_t offset=((uint32_t)entry[1]<<16)|((uint32_t)entry[2]<<8)|entry[3];
@@ -142,37 +144,68 @@ DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out,unsigned width,
         g->limit=words-1-sprite->down_strip;
         g->shift=!mode?0:mode==1?5:10;
     }
-    unsigned start=0;
-    for(unsigned g=0;g<count;g++) {
-        if(groups[g].source)result.visible+=(groups[g].end-start)*height;
-        start=groups[g].end;
-    }
+    for(unsigned g=0;g<count;g++)if(groups[g].source)
+        result.visible+=groups[g].width*height;
     for(unsigned y=0;y<height;) {
         int source_row=sprite->rows[y];
         unsigned end_y=y+1;
         while(end_y<height && sprite->rows[end_y]==source_row)end_y++;
-        unsigned spans=0,opaque=0;int open=0;start=0;
-        for(unsigned i=0;i<count;i++) {
-            const Group *g=&groups[i];unsigned texel=0;
-            if(g->source && (unsigned)source_row<=g->limit) {
-                const uint8_t *p=g->source+(unsigned)source_row*2u;
-                texel=(((unsigned)p[0]<<8)|p[1])>>g->shift&31u;
+        Group *group=groups;
+        const Group *groups_end=groups+count;
+        RendererPixel *destination=row;
+        Span *span=spans;
+        unsigned open=0;
+        /* BitMapObj's packed sample and the run expansion stay in registers.
+         * Record alpha transitions once per group, including opaque black. */
+        __asm__ volatile(
+            "1: movl (%%esi),%%eax\n\t"
+            "testl %%eax,%%eax\n\t"
+            "jz 3f\n\t"
+            "movl %[y],%%edx\n\t"
+            "cmpl 4(%%esi),%%edx\n\t"
+            "ja 3f\n\t"
+            "movzwl (%%eax,%%edx,2),%%eax\n\t"
+            "rorw $8,%%ax\n\t"
+            "movl 8(%%esi),%%ecx\n\t"
+            "shrl %%cl,%%eax\n\t"
+            "andl $31,%%eax\n\t"
+            "jz 3f\n\t"
+            "movw (%%ebx,%%eax,2),%%ax\n\t"
+            "cmpl $0,%[open]\n\t"
+            "jne 2f\n\t"
+            "movl %%edi,(%[span])\n\t"
+            "movl $1,%[open]\n\t"
+            "2: movl 12(%%esi),%%ecx\n\t"
+            "rep stosw\n\t"
+            "jmp 5f\n\t"
+            "3: cmpl $0,%[open]\n\t"
+            "je 4f\n\t"
+            "movl %%edi,%%eax\n\t"
+            "subl (%[span]),%%eax\n\t"
+            "shrl $1,%%eax\n\t"
+            "movl %%eax,4(%[span])\n\t"
+            "addl $8,%[span]\n\t"
+            "movl $0,%[open]\n\t"
+            "4: movl 12(%%esi),%%eax\n\t"
+            "leal (%%edi,%%eax,2),%%edi\n\t"
+            "5: addl $16,%%esi\n\t"
+            "cmpl %[end],%%esi\n\t"
+            "jne 1b"
+            : "+&S"(group), "+&D"(destination), [span]"+&r"(span), [open]"+m"(open)
+            : "b"(sprite->palette), [y]"m"(source_row), [end]"m"(groups_end)
+            : "eax","ecx","edx","cc","memory");
+        if(open){span->count=(unsigned)(destination-span->source);span++;}
+        unsigned opaque=0;
+        for(Span *r=spans;r<span;r++) {
+            opaque+=r->count;
+            RendererPixel *target=out+y*pitch+(r->source-row);
+            for(unsigned dy=y;dy<end_y;dy++,target+=pitch) {
+                const RendererPixel *source=r->source;
+                RendererPixel *dest=target;
+                unsigned pairs=r->count/2u;
+                __asm__ volatile("rep movsl" : "+S"(source), "+D"(dest), "+c"(pairs) : : "memory", "cc");
+                if(r->count&1u)*dest=*source;
             }
-            if(texel) {
-                RendererPixel color=sprite->palette[texel];
-                for(unsigned x=start;x<g->end;x++)row[x]=color;
-                if(!open){starts[spans]=(uint16_t)start;lengths[spans++]=0;open=1;}
-                lengths[spans-1]+=(uint16_t)(g->end-start);
-                opaque+=g->end-start;
-            } else open=0;
-            start=g->end;
-        }
-        for(unsigned dy=y;dy<end_y;dy++)for(unsigned span=0;span<spans;span++) {
-            const RendererPixel *source=row+starts[span];
-            RendererPixel *destination=out+dy*pitch+starts[span];
-            unsigned pairs=lengths[span]/2u;
-            __asm__ volatile("rep movsl" : "+S"(source), "+D"(destination), "+c"(pairs) : : "memory", "cc");
-            if(lengths[span]&1u)*destination=*source;
         }
         result.drawn+=opaque*(end_y-y);y=end_y;
     }

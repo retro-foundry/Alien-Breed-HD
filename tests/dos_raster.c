@@ -142,8 +142,14 @@ static void check_sprite_rows(void)
         seed=seed*1664525u+1013904223u;wad[i]=(uint8_t)(seed>>24);
     }
     for(unsigned i=0;i<32;i++)palette[i]=(RendererPixel)(i==1?0:i*1973u);
-    for(unsigned test=0;test<144;test++) {
-        unsigned width=widths[test%9],height=test==143?240:1+(test%29);
+    for(unsigned test=0;test<288;test++) {
+        unsigned width=widths[test%9],height=test==287?240:1+(test%61);
+        for(unsigned i=1;i<32;i++) {
+            /* Adjacent opaque samples may share a colour, including black.
+             * Alpha still comes from the source texel rather than that colour. */
+            palette[i]=(RendererPixel)(test%4==0?0:test%4==1?1:
+                                       test%4==2?(i/8)*1973:i*1973);
+        }
         unsigned pitch=width+4;
         for(unsigned i=0;i<32;i++) {
             unsigned offset=2+i*64;
