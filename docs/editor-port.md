@@ -3632,8 +3632,8 @@ settings, transferred lift settings, moved authored door and moved authored
 lift. All eight checks reported paused plane equal to controller position,
 unchanged zero velocity and initial door timer (lifts have no timer), correctly
 selected inspection air, real rendered surface samples and synchronized moving
-walls. The closed copied door was inspected from adjoining Zone 140 while its
-own Zone 139 remained selected in the inspector. After Build & play, every
+walls. The closed copied door's native Zone 139 was inspected from adjoining
+Zone 140 while its source-room inspector remained selected. After Build & play, every
 controller moved with matching plane/wall state. There were no page errors or
 engine alerts. Historical website assets and the unrelated archive were
 preserved. The complete authoring audit remains active.
