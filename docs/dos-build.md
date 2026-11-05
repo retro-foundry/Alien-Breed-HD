@@ -1801,3 +1801,70 @@ unchanged. Final EXE SHA-256 is
 `070f7c4a0db8673f27a89280a061d42ee957c9e60a6ef0102e36133e338a1722`.
 Local checks and comparisons are in `build/dos/enemies-performance.json`
 and `build/dos/enemies-validation.json`. Physical 486 hardware is unmeasured.
+
+
+### Native billboard row expansion at every scale
+
+The DOS RGB565 row sampler now keeps BitMapObj packed-word extraction,
+palette lookup and horizontal run expansion in one 486 register loop.
+Opaque spans are recorded at alpha transitions and copied to repeated
+screen rows with REP MOVSL. Ordinary-size and reduced sprites use this
+path too when their existing screen, plane and geometric masks form
+rectangles. Spill sprites with a front wall retain the clipped column
+sampler. Source texel zero remains transparent; opaque black and equal
+palette colours retain their original coverage.
+
+The kernel uses approximately 7 KiB of bounded stack scratch at width 320,
+about 640 bytes more than the previous row sampler. It adds no heap
+allocation, static RAM, texture conversion cache or shade bank. The native
+4 MB raster oracle covers 288 row cases, including repeated rows, all
+packed modes, short WAD/PTR data, clipping origins, opaque black, shared
+colours, noncanonical RGB565 word one, and surrounding guards. The 768
+column cases and the existing wall, floor and water checks pass.
+
+
+Matched detailed renderer diagnostics reduce sprite time from
+1.069/13.095/3.124 ms to 0.853/8.022/2.233 ms in the level-1 starting,
+close-barrel/enemy and pool views: about 20-39% less billboard work.
+The following separate comparisons use the unchanged production renderer,
+raster and other engine object files from each optimized release, with
+only the diagnostic entry point relinked. Detailed profiling and captures
+are disabled during timing. These are normal/486_slow, fixed 40,000-cycle,
+4 MB, native 320x240, SB16/mouse runs with host sound muted; means cover
+frames 8-63 of the same 64 fixed game updates.
+
+| Level-1 view | Previous loop ms | Updated loop ms |
+| --- | ---: | ---: |
+| Starting room | 38.802 | 38.618 |
+| Close barrel / approaching enemies | 42.809 | 38.422 |
+| Pool north shore | 73.750 | 73.004 |
+| Close barrel after detonation | 75.501 | 65.702 |
+
+This is 11.4% more FPS in the close enemy view and 14.9% more during the
+burst. Its worst loop falls from 188.754 to 146.697 ms, with p95 falling
+from 186.978 to 145.403 ms; explosion frames still have visible stalls.
+The explosion comparison invokes the original lethal barrel handler on
+frame eight. All 256 optimized simulation hashes, 20 selected complete
+images and four final captures match, including the blast/debris sequence.
+
+The independently run real-time starting-view benchmark improves from
+26.00 to 26.11 FPS: frame 38.30 ms, render 32.29 ms, present 3.13 ms,
+input 0.36 ms, p95 38.81 ms. This lightly populated view sees much less
+benefit than the close-up and burst scenes.
+
+Both builds' 22 native captures match the original start/turn references.
+The optimized 4 MB level-1/4/15 full exercises and real-time level-4
+SB16/mouse exercise pass with zero profile audio underruns. Maps and all
+six saved level/map payloads remain exact. The indexed executable is
+byte-identical to its previously validated release. Windows Release and
+the feedback suite pass. Both packages preserve all 231 prepared assets,
+238 archive entries and generated defaults; diagnostic instrumentation
+is absent, and local mouse-look preferences are retained.
+
+The release is built from committed source `cd29e15` in
+`build/dos-billboards-source`, keeping concurrent editor/engine work out of
+compiler training. Native text/data/BSS are 1,179,672/22,016/315,392 bytes.
+The final native EXE SHA-256 is
+`0c9723ac5b4d3a26e8ea09f7546bfca975f599ef2a644c6fe542c857b69baac3`.
+Local evidence is in `build/dos/billboards-performance.json` and
+`build/dos/billboards-validation.json`. Physical 486 hardware is unmeasured.
