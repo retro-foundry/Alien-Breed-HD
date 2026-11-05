@@ -51,7 +51,7 @@ it('rejects damaged switch source without discarding the editable project', () =
   };
   expect(restore(input => { delete input.switchCopies; })).toThrow(/missing.*switch/);
   expect(restore(input => { delete input.controllerCopies; })).toThrow(/missing.*controller/);
-  expect(restore(input => { input.switchCopies[0].bytes.pop(); })).toThrow(/every native settings byte/);
+  expect(restore(input => { input.switchCopies[0].bytes.pop(); })).toThrow(/complete 14-byte native record/);
   expect(restore(input => { input.switchCopies[0].bytes[0] = 256; })).toThrow(/settings byte/);
   expect(restore(input => { input.switchCopies.push(input.switchCopies[0]); })).toThrow(/repeats.*slot/);
   expect(restore(input => { input.switchCopies[0].unexpected = true; })).toThrow(/unsupported fields/);

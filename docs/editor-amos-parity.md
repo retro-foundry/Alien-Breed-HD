@@ -80,8 +80,11 @@ replace the AB3D I source as the format/behaviour authority.
   Imported controllers now support room/wall reassignment and removal too:
   the same condition number remains connected, retired panels/controllers are
   removed without breaking independent copies, and native settings/provenance
-  survive project saves, Undo and further room copies. Copied native-controller
-  reassignment/removal remains open.
+  survive project saves, Undo and further room copies. Copied switch controllers
+  now have the same move/remove workflow, retaining their independent raw
+  settings and requirement number while retiring their old activation and
+  graphics attachments. Invalid destinations reject the complete proposal;
+  removal protects door/lift requirements. Group copies remap moved-copy gates.
 - Control-point procedures and `CPTNEARTOZONE` / `CPTNEARTOUPPERZONE` retain
   distinct navigation semantics; rendering visibility is a different system.
 - Zone output writes `BSFX` at byte 28 and echo at byte 37. Footstep sounds,

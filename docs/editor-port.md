@@ -3463,3 +3463,50 @@ The unrelated website archive and historical assets were preserved.
 
 The complete R0-R12 audit remains open, including native copied-controller
 reassignment/removal, door/lift controller groups and the other recorded gaps.
+
+
+### Copied switch reassignment and removal
+
+Copied switch settings now expose the same validated destination room/wall and
+requirement-protected Remove controls as original switches. A moved copy keeps
+its switch number, so its door/lift requirements remain connected. Its new
+panel appears under Wall switches in the destination room and supports further
+wall/room/reset edits. The original and other copies retain their own records.
+Every Apply builds the complete proposal before committing one Undo.
+
+Room-source version 23 stores retired copied activation/graphics attachments,
+explicit native slot clearing and the moved copy's complete fourteen settings
+bytes. A single decoder validates captured bytes for both copied and moved
+switches. Native pointers/points are rebuilt, while reset, timer and opaque
+state bytes remain independent. Retired slots are cleared before reuse because
+SwitchRoutine's timer precedes its active-zone check. Retiring a copy cannot
+clear an active original switch. The old panel is removed only from that copy's
+graphics owner, and later room copies cannot resurrect it. Separate activation
+and graphics owners are retired together. The sixteen shipped maps use matching
+owners; a valid explicit fixture using native points and independent native
+references covers the separate-owner format contract.
+
+Seven model scenarios cover movement, removal, active timers/opaque state,
+slot reuse, saved source/Undo/Redo, geometry edits, captured clipboard pastes
+after Undo, repeated moves and subsequent copied-group requirement remapping.
+A required copied door remains linked after movement; removal is rejected until
+its requirement is cleared. Damaged settings and unsupported source versions
+remain explicit errors. Browser checks exercise the actual copied native door,
+its moving-wall synchronization, visible panel picking and controller state,
+plus removal without disabling the original.
+
+README, in-app help and the parity/requirements audit describe the controls.
+The remaining R7 gate concerns door/lift controller reassignment/groups and
+engine-profile constraints. The complete R0-R12 objective remains open.
+
+
+Validation: the final model run passed all 1,163 tests across 101 files. Sixteen
+checks passed against the exact packaged editor in Chromium and Firefox,
+covering copied/original switch move/remove, native copied-door activation and
+moving walls, save/Undo, direct surface textures, skylights, upper-storey
+creation and native walking/falling through openings. An earlier fourteen-check
+browser run also passed existing copied circuits, clipboard gate remapping and
+reset timers. The production build/typecheck and source whitespace checks pass.
+All eighty files in `index-Bdn8KV3U.js`'s package match the staged website blobs;
+the native runtime remains `r-3a3fddd130e89f0e`. Delivery verification is recorded
+with the pushed checkpoint.

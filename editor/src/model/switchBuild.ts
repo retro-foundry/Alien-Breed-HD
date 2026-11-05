@@ -1,4 +1,4 @@
-import { activeNativeSwitches } from './nativeSwitches';
+import { activeNativeSwitches, restoreSwitchSettings } from './nativeSwitches';
 import { BinaryReader, checkedInteger } from './binary';
 import { readGraphicRecord } from './graphics';
 import { encodeWallSurface } from './surfaces';
@@ -26,7 +26,7 @@ export function buildAuthoredSwitches(document: LevelDocument, input: CellGraphi
     occupied.add(item.slot);
     const template = item.native === undefined ? undefined : importedAnimationTables(document).tables.switches?.[item.native];
     if (item.native !== undefined && (!template || template.zone < 0)) throw new Error(`Switch ${item.slot + 1} lost its native settings template.`);
-    const bytes = template?.bytes.slice() ?? new Uint8Array(14);
+    const bytes = item.settings ? new Uint8Array(restoreSwitchSettings(item.settings)) : template?.bytes.slice() ?? new Uint8Array(14);
     bytes[2] = item.automatic ? bytes[2] || 1 : 0;
     const originalPanel = template && document.zones.flatMap(zone => [...zone.lower, ...zone.upper]).find(record => record.offset === template.graphic - 10)?.wall;
     if (template && !originalPanel) throw new Error(`Switch ${item.slot + 1} lost its native panel template.`);

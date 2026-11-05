@@ -1,4 +1,4 @@
-import { activeNativeSwitches } from './nativeSwitches';
+import { activeNativeSwitches, restoreSwitchSettings } from './nativeSwitches';
 import type { LevelDocument } from './level';
 import { checkedInteger } from './binary';
 import { nativeRoomTranslation } from './roomTranslation';
@@ -23,8 +23,7 @@ export function restoreSwitchCopies(value: unknown): readonly SourceSwitchCopy[]
     if (slots.has(slot)) throw new Error('Copied switch source repeats a native destination slot.');
     slots.add(slot);
     for (const field of ['room', 'graphicsRoom']) if (typeof item[field] !== 'string' || !item[field].length || item[field].length > 128) throw new Error('Copied switch room identity is invalid.');
-    if (!Array.isArray(item.bytes) || item.bytes.length !== 14) throw new Error('Copied switch source needs every native settings byte.');
-    const bytes = Object.freeze(item.bytes.map((byte: number) => checkedInteger(byte, 0, 255, 'Copied switch settings byte')));
+    const bytes = restoreSwitchSettings(item.bytes);
     return Object.freeze({ id, slot, room: item.room as string, graphicsRoom: item.graphicsRoom as string, bytes });
   }));
 }

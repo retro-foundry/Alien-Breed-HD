@@ -302,14 +302,16 @@ an explicit Wall repair appearance, just as redrawn boundaries do.
   reassignment and removal support Undo and project saves. Room copies allocate
   independent switch numbers and remap requirements for mechanisms copied with
   them. The native limit is eight switches per level.
-  Original switches also expose **Move switch N to another wall or room**:
+  Original and copied switches expose **Move switch N to another wall or room**:
   choose a destination room and solid wall, then **Move switch N**. The old
   panel is removed and the same switch number keeps its existing door/lift
   requirements. Select the destination room to edit its wall or reset mode
   under **Wall switches**. You can move it again to another room there.
   **Remove switch N** is available after clearing all mechanism requirements;
   it removes the original panel and frees its number. Existing independent
-  copied switches keep working. Invalid destinations leave the source unchanged.
+  copied switches keep working. Moving or removing a copy preserves its original
+  and other copies; moved copies retain their own reset/timer settings.
+  Invalid destinations leave the source unchanged.
   These changes save in the project and each support Undo/Redo.
 
 - **Add object** opens a searchable library with one choice per supported variant:

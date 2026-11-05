@@ -6,19 +6,21 @@ import { roomSettings } from './roomHeights';
 import { mechanismsForRoom } from './mechanismDependencies';
 import { copiedMechanismSettings } from './movingControllerCopies';
 import { sourceMovingSettings } from './sourceMovingRoom';
-import { activeNativeSwitches, restoreRemovedNativeSwitches } from './nativeSwitches';
+import { activeNativeSwitches, restoreRemovedNativeSwitches, restoreSwitchSettings } from './nativeSwitches';
 
-export interface SourceSwitch { readonly slot: number; readonly boundary: number; readonly automatic: boolean; readonly native?: number }
+export interface SourceSwitch { readonly slot: number; readonly boundary: number; readonly automatic: boolean; readonly native?: number; readonly settings?: readonly number[] }
 
 export function restoreSourceSwitches(value: unknown): readonly SourceSwitch[] {
   if (!Array.isArray(value) || value.length > 8) throw new Error('A room can contain at most eight switches.');
   const slots = new Set<number>(), boundaries = new Set<number>();
   return Object.freeze(value.map(item => {
-    if (!item || typeof item !== 'object' || Object.keys(item).some(key => !['slot', 'boundary', 'automatic', 'native'].includes(key)) || !('slot' in item) || !('boundary' in item) || !('automatic' in item) || typeof item.automatic !== 'boolean') throw new Error('A switch needs its slot, wall identity and reset mode.');
+    if (!item || typeof item !== 'object' || Object.keys(item).some(key => !['slot', 'boundary', 'automatic', 'native', 'settings'].includes(key)) || !('slot' in item) || !('boundary' in item) || !('automatic' in item) || typeof item.automatic !== 'boolean') throw new Error('A switch needs its slot, wall identity and reset mode.');
     const slot = checkedInteger(item.slot, 0, 7, 'Switch slot'), boundary = checkedInteger(item.boundary, 0, 16777215, 'Switch wall identity');
     if (slots.has(slot) || boundaries.has(boundary)) throw new Error('Switches need independent numbered slots and walls.');
     slots.add(slot); boundaries.add(boundary);
-    return Object.freeze({ slot, boundary, automatic: item.automatic, ...('native' in item ? { native: checkedInteger(item.native, 0, 7, 'Native switch template') } : {}) });
+    if ('settings' in item && !('native' in item)) throw new Error('Captured switch settings need their native panel template.');
+    return Object.freeze({ slot, boundary, automatic: item.automatic, ...('native' in item ? { native: checkedInteger(item.native, 0, 7, 'Native switch template') } : {}),
+      ...('settings' in item ? { settings: restoreSwitchSettings(item.settings) } : {}) });
   }));
 }
 
@@ -93,4 +95,24 @@ export function moveSourceSwitch(document: LevelDocument, slot: number, target: 
   const after = Object.freeze({ ...created, rooms: Object.freeze(created.rooms.map(room => room.id !== target.room ? room : Object.freeze({ ...room,
     switches: restoreSourceSwitches(room.switches!.map(item => item.slot !== slot ? item : { ...existing, boundary: item.boundary })) }))) });
   return { label: `Move switch ${slot + 1}`, before, after };
+}
+
+export function reassignCopiedSwitch(document: LevelDocument, slot: number, target: { room: string; edge: number } | null): RoomChange {
+  checkedInteger(slot, 0, 7, 'Copied switch slot');
+  const before = document.roomSource, copy = before.switchCopies?.find(item => item.slot === slot);
+  if (!copy) throw new Error('That independent copied switch no longer exists.');
+  if (!target && switchRequirements(document, slot)) throw new Error(`Switch ${slot + 1} is required by a door or lift. Clear that requirement before removing it.`);
+  const owner = before.rooms.find(room => room.id === copy.graphicsRoom);
+  if (!owner) throw new Error('The copied switch graphics room is missing. Restore its attachment before changing the switch.');
+  const { switchCopies: _previous, ...retained } = before, copies = before.switchCopies!.filter(item => item.slot !== slot);
+  let after: RoomSource = Object.freeze({ ...retained, ...(copies.length ? { switchCopies: Object.freeze(copies) } : {}),
+    clearedSwitchSlots: restoreRemovedNativeSwitches([...new Set([...(before.clearedSwitchSlots ?? []), slot])], 'Retired copied switches'),
+    rooms: Object.freeze(before.rooms.map(room => room.id !== owner.id && room.id !== copy.room ? room : Object.freeze({ ...room,
+      retiredCopiedSwitches: restoreRemovedNativeSwitches([...new Set([...(room.retiredCopiedSwitches ?? []), copy.id])], 'Retired copied switch attachments') }))) });
+  if (target) {
+    after = setSourceSwitch({ ...document, roomSource: after }, target.room, slot, { edge: target.edge, automatic: copy.bytes[2] !== 0 }).after;
+    after = Object.freeze({ ...after, rooms: Object.freeze(after.rooms.map(room => room.id !== target.room ? room : Object.freeze({ ...room,
+      switches: restoreSourceSwitches(room.switches!.map(item => item.slot !== slot ? item : { ...item, native: copy.id, settings: copy.bytes })) }))) });
+  }
+  return { label: target ? `Move copied switch ${slot + 1}` : `Remove copied switch ${slot + 1}`, before, after };
 }
