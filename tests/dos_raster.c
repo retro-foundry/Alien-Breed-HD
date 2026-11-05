@@ -83,6 +83,53 @@ static void check_water(void)
 
 __attribute__((noinline)) static int64_t reference_divide(int64_t n, int64_t d) { return n / d; }
 
+static void check_sprite_columns(void)
+{
+    enum { CAPACITY=41*242+8 };
+    static RendererPixel actual[CAPACITY],expected[CAPACITY],palette[32];
+    static uint8_t packed[513],texels[256];
+    static int rows[240];
+    static const unsigned counts[]={0,1,2,3,7,31,127,239,240};
+    static const unsigned strides[]={1,2,3,7,41};
+    static const unsigned shifts[]={0,5,10};
+    for(unsigned i=0;i<sizeof(packed);i++)packed[i]=(uint8_t)next_value();
+    for(unsigned i=0;i<32;i++)palette[i]=(RendererPixel)(i==1?0:i*1973);
+    assert(!dos_raster_sprite_column(NULL,0,0,NULL,NULL,NULL,0,0));
+    assert(!dos_raster_sprite_texel_column(NULL,0,0,NULL,NULL,NULL,0));
+    for(unsigned test=0;test<384;test++) {
+        unsigned count=counts[test%9],stride=strides[test%5],shift=shifts[test%3];
+        unsigned limit=test%256,drawn=0;
+        const uint8_t *source=packed+1; /* Include unaligned packed words. */
+        for(unsigned i=0;i<256;i++) {
+            unsigned word=((unsigned)source[i*2]<<8)|source[i*2+1];
+            texels[i]=(uint8_t)((word>>shift)&31);
+        }
+        for(unsigned y=0;y<240;y++) {
+            rows[y]=(int)(next_value()%340);
+            if(y%31==0)rows[y]=-1;
+            if(y%47==0)rows[y]=INT_MAX;
+        }
+        for(unsigned i=0;i<CAPACITY;i++)actual[i]=expected[i]=(RendererPixel)next_value();
+        for(unsigned y=0;y<count;y++) {
+            if((unsigned)rows[y]>limit)continue;
+            const uint8_t *p=source+rows[y]*2;
+            unsigned word=((unsigned)p[0]<<8)|p[1],texel=(word>>shift)&31;
+            if(texel){expected[3+y*stride]=palette[texel];drawn++;}
+        }
+        assert(dos_raster_sprite_column(actual+3,count,stride,source,palette,rows,limit,shift)==drawn);
+        assert(!memcmp(actual,expected,sizeof(actual)));
+        /* Both source representations must write exactly the same pixels.
+         * Reset only the column so all surrounding guards remain checked. */
+        for(unsigned y=0;y<count;y++)actual[3+y*stride]=0x6b5a;
+        memcpy(expected,actual,sizeof(actual));
+        for(unsigned y=0;y<count;y++)if((unsigned)rows[y]<=limit && texels[rows[y]])
+            expected[3+y*stride]=palette[texels[rows[y]]];
+        assert(dos_raster_sprite_texel_column(actual+3,count,stride,texels,palette,rows,limit)==drawn);
+        assert(!memcmp(actual,expected,sizeof(actual)));
+    }
+    puts("PASS: 768 packed/decoded sprite columns preserve clipping, modes, cutouts, opaque black, bounds and guards");
+}
+
 static void check_sprite_rows(void)
 {
     static RendererPixel actual[324*242],expected[324*242];
@@ -798,6 +845,7 @@ int main(void)
     check_sky_step_cache();
     check_word_offset_bounds(); check_projection_rounding(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_solid_floor_rows(); check_edges(); check_walls();
     check_sprite_rows();
+    check_sprite_columns();
     check_water();
     check_objects();
     puts("DOS raster regression passed");

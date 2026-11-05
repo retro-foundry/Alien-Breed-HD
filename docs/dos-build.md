@@ -1718,3 +1718,21 @@ instrumentation. Native sections are text 1,182,232, data 22,016 and BSS
 `fbe3540543005aaf0d0a0ae7092bedbdf33c18e0d55e34187036571667273a8b`;
 local comparison and package evidence is in `build/dos/water-performance.json`
 and `build/dos/water-validation.json`. Physical 486 hardware is unmeasured.
+
+### Native clipped billboard columns
+
+Normal-size and wall-clipped sprites now use a compact 486 packed/decoded
+column sampler after the existing room, plane and wall clipping. It retains
+ObjDraw3.ChipRam.s BitMapObj source rows, packed shifts, authored palettes
+and texel-zero cutouts. Repeated screen columns also reuse their decoded
+source column. This adds no texture bank, heap allocation or static RAM.
+
+All 768 independent column cases pass at 4 MB, including packed/decoded
+sources, clipping origins, strides, short columns, odd addresses, opaque
+black, transparent texels and guards. Three real level-1 diagnostic views
+retain all 192 simulation hashes and 15 selected complete images. Separate
+ordinary-build profiles reduce sprite work from 1.517/15.364/4.576 ms to
+1.067/13.097/3.126 ms across the starting, close-barrel and pool views.
+Those profiles include diagnostic overhead; whole-frame timings and the
+final compiler-feedback package are checked separately. Shooting rules,
+including PlayerShoot.s's distance-based instant-hit accuracy roll, are unchanged.

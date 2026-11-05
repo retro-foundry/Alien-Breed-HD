@@ -10325,6 +10325,9 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     }
 #endif
 
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    int dos_decoded_column=-1;
+#endif
     /* --- Column loop ---
      * Spill geometry is a draw mask only; source columns still follow the
      * normal BitMapObj DDA across the full projected billboard. */
@@ -10380,7 +10383,13 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
             int decode_rows = max_src_row_col + 1;
             if (decode_rows > eff_rows) decode_rows = eff_rows;
             if (decode_rows > 0) {
-                for (int rr = 0; rr < decode_rows; rr++) {
+                int decode_column = 1;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+                /* A magnified source column can cover several screen columns. */
+                decode_column = dos_decoded_column != src_col;
+                dos_decoded_column = src_col;
+#endif
+                if (decode_column) for (int rr = 0; rr < decode_rows; rr++) {
                     const int src_byte = rr << 1;
                     const uint16_t w = (uint16_t)((src_base[src_byte] << 8) | src_base[src_byte + 1]);
                     col_texel_lut[rr] = (uint8_t)((w >> texel_shift) & 0x1F);
@@ -10615,6 +10624,23 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                 int row_lut_idx = col_top - draw_top;
                 size_t pix = (size_t)col_top * rw_stride + (size_t)screen_col;
                 size_t pix_cw = renderer_cw_index_xy(screen_col, col_top, rw, rh);
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565) && !AB3D_CW_COL_MAJOR
+                if(!have_pick && !pick_graphic && !spill_visualize && !mark_sprite_pick_zone_none) {
+                    unsigned count=(unsigned)(col_bot-col_top+1),drawn;
+                    const int *rows=row_src_lut+row_lut_idx;
+                    if(use_col_texel_lut) {
+                        unsigned limit=(unsigned)max_src_row_col;
+                        if(limit>=(unsigned)eff_rows)limit=(unsigned)eff_rows-1;
+                        drawn=dos_raster_sprite_texel_column(cw+pix_cw,count,(unsigned)rw,
+                            col_texel_lut,spr_cw,rows,limit);
+                    } else {
+                        drawn=dos_raster_sprite_column(cw+pix_cw,count,(unsigned)rw,
+                            src_base,spr_cw,rows,(unsigned)max_src_row_col,(unsigned)texel_shift);
+                    }
+                    if(profile_collect_stats)sprite_opaque_writes_total+=drawn;
+                    continue;
+                }
+#endif
                 if (fast_common_no_spill) {
                     const int *row_src_ptr = row_src_lut + row_lut_idx;
                     if (!need_src_row_bounds) {

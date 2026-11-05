@@ -61,6 +61,54 @@ void dos_raster_water(RendererPixel *out,unsigned count,
     }
 }
 
+/* All seven 486 registers keep the clipped column sampler in one loop.
+ * Bounds are unsigned so an invalid negative row is rejected too. */
+#define SPRITE_COLUMN_SAMPLE(SAMPLE_) \
+    do { \
+        if(!count)return 0; \
+        const int *end=rows+count; \
+        unsigned bytes=stride*sizeof(*out),drawn; \
+        __asm__ volatile( \
+            "xorl %%edx,%%edx\n\t" \
+            "1: movl (%%esi),%%eax\n\t" \
+            "addl $4,%%esi\n\t" \
+            "cmpl %[limit],%%eax\n\t" \
+            "ja 2f\n\t" \
+            SAMPLE_ \
+            "testl %%eax,%%eax\n\t" \
+            "jz 2f\n\t" \
+            "movw (%[palette],%%eax,2),%%ax\n\t" \
+            "movw %%ax,(%%edi)\n\t" \
+            "incl %%edx\n\t" \
+            "2: addl %[stride],%%edi\n\t" \
+            "cmpl %[end],%%esi\n\t" \
+            "jne 1b" \
+            : "+&D"(out), "+&S"(rows), "=&d"(drawn) \
+            : "b"(source), [palette]"r"(palette), "c"(shift), \
+              [limit]"m"(limit), [stride]"m"(bytes), [end]"m"(end) \
+            : "eax","memory","cc"); \
+        return drawn; \
+    } while(0)
+
+unsigned dos_raster_sprite_column(RendererPixel *out,unsigned count,unsigned stride,
+                                   const uint8_t *source,const RendererPixel *palette,
+                                   const int *rows,unsigned limit,unsigned shift)
+{
+    SPRITE_COLUMN_SAMPLE("movzwl (%%ebx,%%eax,2),%%eax\n\t"
+                         "rorw $8,%%ax\n\t"
+                         "shrl %%cl,%%eax\n\t"
+                         "andl $31,%%eax\n\t");
+}
+
+unsigned dos_raster_sprite_texel_column(RendererPixel *out,unsigned count,unsigned stride,
+                                         const uint8_t *source,const RendererPixel *palette,
+                                         const int *rows,unsigned limit)
+{
+    unsigned shift=0;
+    SPRITE_COLUMN_SAMPLE("movzbl (%%ebx,%%eax),%%eax\n\t");
+}
+#undef SPRITE_COLUMN_SAMPLE
+
 DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out,unsigned width,
                                         unsigned height,unsigned pitch,
                                         const DosSpriteRows *sprite)

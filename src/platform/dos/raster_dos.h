@@ -47,6 +47,14 @@ typedef struct {
     unsigned columns, down_strip;
 } DosSpriteRows;
 typedef struct { unsigned visible, drawn; } DosSpriteCoverage;
+/* BitMapObj column after screen, room and wall clipping. The row indices are
+ * already sampled by the renderer; texel zero is the only transparent value. */
+unsigned dos_raster_sprite_column(RendererPixel *out,unsigned count,unsigned stride,
+                                   const uint8_t *source,const RendererPixel *palette,
+                                   const int *rows,unsigned limit,unsigned shift);
+unsigned dos_raster_sprite_texel_column(RendererPixel *out,unsigned count,unsigned stride,
+                                         const uint8_t *texels,const RendererPixel *palette,
+                                         const int *rows,unsigned limit);
 /* Native, unclipped rectangle after the renderer applies its screen/plane
  * bounds. Transparent texels leave the destination untouched, including
  * opaque palette entries whose RGB565 word happens to be zero. */
