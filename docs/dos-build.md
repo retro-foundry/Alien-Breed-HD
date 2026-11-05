@@ -1673,3 +1673,9 @@ detailed rendering profiling off, mean game-loop times after eight warmup
 frames fall from 110.35/98.96/111.72 ms to 81.11/76.19/84.70 ms. These
 ordinary-build diagnostic timings are not the main real-time FPS benchmark
 and do not establish physical 486 cache behaviour.
+
+An identical pair of tinted samples now bypasses interpolation entirely.
+That result is exact for every alpha. The same 15 frames, 192 state hashes
+and 4 MB raster cases still match. The three ordinary-build mean loop
+times improve further to 76.76/72.22/81.11 ms, with no profile audio
+underruns in these runs.

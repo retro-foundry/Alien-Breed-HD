@@ -49,6 +49,10 @@ void dos_raster_water(RendererPixel *out,unsigned count,
         unsigned level=phase[((uv>>2)&0xfc0)|(uv&63)];
         uint32_t c0=brighten[level][renderer_pixel_gb_index(background0[x])];
         uint32_t c1=brighten[level][renderer_pixel_gb_index(background1[x])];
+        if(c0==c1) {
+            out[x]=water_rg[((c0>>12)&240)|((c0>>8)&15)]|water_blue[c0&15];
+            continue;
+        }
         uint32_t difference=(c1|0x101010u)-c0;
         unsigned r=(c0>>16)+blend[(difference>>16)&31];
         unsigned g=((c0>>8)&15)+blend[(difference>>8)&31];
