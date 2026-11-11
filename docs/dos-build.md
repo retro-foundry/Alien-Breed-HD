@@ -1953,3 +1953,73 @@ profiling attributes 38.33 ms to water within 40.27 ms of inclusive floor
 work, versus 13.40 ms for walls and 2.22 ms for sprites. The next investigation
 is water alpha switching and equal-background sample frequency, to select
 an exact blend optimization that fits the same memory budget.
+
+
+### Exact native water sampling with less table storage
+
+The next profile isolates water as the dominant pool-view cost. Across
+64 fixed updates it uses 220 alpha values, changing alpha in 9,872 of
+10,232 spans; 527,267 samples brighten to the same colour and 608,682 need
+interpolation. Rebuilding a large per-alpha bank would add work to almost
+every span. The selected DOS kernel instead decodes RGB565 green/blue
+indices through one 2 KiB table and shares its prepared Brighten colours
+with the renderer, removing the duplicate 11 KiB native colour array.
+
+The existing four-bit rounding is exactly symmetric when exchanging the
+two samples and replacing alpha with 255-alpha. Only 128 delta rows are
+needed. At half-alpha 0..8, every possible channel difference rounds to
+zero, so a single-source walk is exact. The same kernel handles spans
+without a second refraction row. Its loop is unrolled for the 486 while
+retaining the original AB3DI.s texturedwater phase indexing and 16-bit
+wateroff carry. No visual approximation or animation timing changes are
+introduced.
+
+The independent DOS oracle checks all 65,536 native RGB565 inputs,
+65,536 alpha/colour pairs, all 5,632 shared Brighten colours and 768
+single/blended spans with wrapping, aliases, clipping and guards. All
+192 simulation hashes and 195 complete pool-view images match at three
+camera angles. Matched diagnostics with detailed profiling and captures
+disabled measure:
+
+| Pool yaw | Previous loop ms | Updated loop ms |
+| --- | ---: | ---: |
+| 0 | 74.103 | 67.867 |
+| 1024 | 58.672 | 55.417 |
+| -1024 | 60.011 | 56.519 |
+
+These are fixed 40,000-cycle normal/486_slow, 4 MB, 320x240 RGB565,
+SB16/mouse runs with host sound muted, averaging frames 8-63 of the same
+64 updates. The source is committed as `ac4da24` in `build/dos-water2-source`.
+
+The completed PGO releases were also compared by relinking the same
+diagnostic entry point against each release's unchanged optimized engine
+objects. Profiling and captures were disabled for these measurements:
+
+| Pool yaw | Previous release loop ms | Updated release loop ms |
+| --- | ---: | ---: |
+| 0 | 73.082 | 64.787 |
+| 1024 | 57.889 | 53.494 |
+| -1024 | 59.310 | 54.636 |
+
+This reduces pool-view frame time by 7.6-11.3% at the same fixed-cycle
+settings. Native text/data/BSS are 1,184,280/22,016/291,840 bytes: total
+static memory falls by 12,800 bytes. The shared-assets checkpoint reports
+120 KiB free physical memory versus the previous release's 108 KiB.
+
+The separate 128-frame real-time starting-view benchmark remains stable:
+26.04 to 26.03 FPS, 38.40 to 38.42 ms per frame and 38.91 to 38.93 ms p95.
+This change targets water-heavy views rather than the starting room.
+
+All 22 ordinary and optimized native captures and all 22 indexed captures
+match the original start/turn references. Full 4 MB level-1/4/15 fixed
+exercises and the real-time level-4 SB16/mouse exercise pass, including
+save/reload and UI checks, with zero profile audio underruns. Level-1/4
+maps and all six saved level/map payloads remain exact. Windows Release
+and the feedback suite pass. Both packages retain the 231 prepared assets,
+238 archive entries and generated defaults; private diagnostic markers
+are absent. Local mouse settings are preserved during staging.
+
+The native EXE SHA-256 is
+`994925f074121a5f52687b3b20303e948a9dc9126a551f55adb7dd2621f6c00c`.
+Local evidence is in `build/dos/water2-performance.json` and
+`build/dos/water2-validation.json`. Physical 486 hardware is unmeasured.
