@@ -1010,6 +1010,8 @@ static void check_objects(void)
     puts("PASS: 2048 room candidate lists and both shot pools retain ObjDraw slot ordering and rejects");
 }
 
+void check_movement_touch(void);
+
 int main(void)
 {
     check_division();
@@ -1022,6 +1024,7 @@ int main(void)
     check_sprite_batches();
     check_sprite_batch_repeated_rows();
     check_water();
+    check_movement_touch();
     check_objects();
     puts("DOS raster regression passed");
     return 0;

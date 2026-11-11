@@ -39,8 +39,10 @@ def main():
                         '--output', str(run / name), *options], cwd=root, check=True)
     subprocess.run([str(djgpp / 'bin/i586-pc-msdosdjgpp-gcc.exe'), '-march=i486', '-mtune=i486',
                     '-O2', '-std=c11', '-fomit-frame-pointer', '-fno-strict-aliasing', '-DAB3D_DOS', '-DAB3D_NATIVE_RGB565',
+                    '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',
                     '-Isrc', '-Isrc/platform/dos', '-I' + str(run),
-                    'tests/dos_raster.c', 'src/platform/dos/raster_dos.c',
+                    '-include', 'src/platform/dos/math_compat.h',
+                    'tests/dos_raster.c', 'tests/dos_movement.c', 'src/platform/dos/raster_dos.c',
                     'src/platform/dos/objects_dos.c',
                     'src/sprite_palettes.c',
                     '-o', str(run / 'RASTER.EXE')], cwd=root, env=env, check=True)

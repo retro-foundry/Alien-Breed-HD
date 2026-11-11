@@ -22,6 +22,7 @@ def main():
     for name, sources, flags in (
         ("pixels", [], ["-DAB3D_NATIVE_RGB565"]),
         ("movement", ["src/math_tables.c", "src/level.c"], []),
+        ("wall_touch", [], []),
         ("points", ["src/math_tables.c", "src/level.c"], []),
         ("settings", ["src/game_state.c", "src/game_data.c", "src/logging.c"], ["-sUSE_SDL=2"]),
         ("audio", ["src/audio_spatial.c"], ["-sUSE_SDL=2"]),

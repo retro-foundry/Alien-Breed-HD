@@ -262,6 +262,7 @@ static int32_t compute_crossing_height_asm(const MoveContext *ctx,
     int64_t cross_new, int64_t cross_old, int32_t line_len_plus_ext)
 {
     int64_t hit_y = (int64_t)ctx->newy;
+    if (ctx->newy == ctx->oldy) return ctx->newy;
 
     if (line_len_plus_ext != 0) {
         int64_t new_d = cross_new / (int64_t)line_len_plus_ext;
@@ -433,10 +434,21 @@ static int firstpass_othercheck_hit(int16_t hit_x, int16_t hit_z,
     }
 }
 
+/* The target room matters only after the existing geometric hit gates. */
+static const uint8_t *movement_target_zone(const LevelState *level, const uint8_t *zone_data,
+                                          int16_t connect, int *zone_index)
+{
+    *zone_index = -1;
+    if (!zone_data || !level->zone_adds) return NULL;
+    int index = level_connect_to_zone_index(level, connect);
+    if (index < 0 || index >= level_zone_slot_count(level)) return NULL;
+    *zone_index = index;
+    return level->data + read_be32(level->zone_adds + (size_t)index * 4);
+}
+
 static int check_wall_line_walls_asm(MoveContext *ctx, const uint8_t *fline,
     int32_t lx, int32_t lz, int16_t lxlen, int16_t lzlen, int32_t line_len,
-    int32_t a4, int32_t a6, const LevelState *level, int target_zone_index,
-    const uint8_t *target_zone,
+    int32_t a4, int32_t a6, const LevelState *level, const uint8_t *zone_data,
     int32_t *xdiff, int32_t *zdiff)
 {
     int16_t sx = (int16_t)ctx->newx;
@@ -465,12 +477,6 @@ static int check_wall_line_walls_asm(MoveContext *ctx, const uint8_t *fline,
         int16_t rel_ox = (int16_t)(ox - lxw - a4w);
         int16_t rel_oz = (int16_t)(oz - lzw - a6w);
         int32_t cross_old = (int32_t)d5 * (int32_t)rel_ox - (int32_t)d2 * (int32_t)rel_oz;
-        int32_t hit_y = compute_crossing_height_asm(ctx, cross_new, cross_old, den);
-
-        if (target_zone && !pass1_vertical_hit_asm(ctx, level, target_zone_index,
-                                                   target_zone, hit_y)) {
-            return 0;
-        }
 
         {
             int16_t hit_x = sx;
@@ -499,6 +505,15 @@ static int check_wall_line_walls_asm(MoveContext *ctx, const uint8_t *fline,
             if (!firstpass_othercheck_hit(hit_x, hit_z, lxw, lzw, a4w, a6w, d2, d5)) {
                 return 0;
             }
+
+            /* Segment rejection has no side effects; postpone the room and
+             * height work until a hit can survive that geometric gate. */
+            int32_t hit_y = compute_crossing_height_asm(ctx, cross_new, cross_old, den);
+            int target_zone_index;
+            const uint8_t *target_zone = movement_target_zone(level, zone_data,
+                read_be16(fline + FLINE_CONNECT), &target_zone_index);
+            if (target_zone && !pass1_vertical_hit_asm(ctx, level, target_zone_index, target_zone, hit_y))
+                return 0;
 
             ctx->newx = (int32_t)hit_x;
             ctx->newz = (int32_t)hit_z;
@@ -549,9 +564,12 @@ static void mark_floorline_touch_if_near(const MoveContext *ctx, const uint8_t *
         int32_t denom = line_len + ctx->extlen;
         if (denom <= 0) denom = 1;
 
-        int64_t d = side / denom;
         int64_t near_thresh = (int64_t)32 << ps;
-        if (d < near_thresh)
+        /* side and denom are positive, so trunc(side/denom) < near_thresh
+         * is exactly side < denom*near_thresh. MoveContext uses pos_shift
+         * 0 or 16; the largest denominator is 65535, so this product fits
+         * in int64_t and avoids a software wide division on the 486. */
+        if (side < (int64_t)denom * near_thresh)
             mark_floorline_touch_flag(ctx, fline);
     }
 }
@@ -923,8 +941,6 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
     int pass_is_other = (pass_kind == MOVE_PASS_OTHER) ? 1 : 0;
 
     int16_t connect = (int16_t)read_be16(fline + FLINE_CONNECT);
-    int connect_index = level_connect_to_zone_index(level, connect);
-    int zone_slots = level_zone_slot_count(level);
     int32_t lx = (int32_t)(int16_t)read_be16(fline + FLINE_X) << ps;
     int32_t lz = (int32_t)(int16_t)read_be16(fline + FLINE_Z) << ps;
     int16_t lxlen = (int16_t)read_be16(fline + FLINE_XLEN);
@@ -937,21 +953,23 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
 
     int32_t wx = (int32_t)lxlen << ps;
     int32_t wz = (int32_t)lzlen << ps;
-    const uint8_t *target_zone = NULL;
-    uint8_t *target_room = NULL;
-    int has_target_zone = 0;
 
     get_floorline_shift_offsets(ctx, fline, &a4, &a6);
 
     /* Amiga tags touch flags before deciding whether an exit is passable. */
     mark_floorline_touch_if_near(ctx, fline, lx, lz, lxlen, lzlen, ps);
 
+    if (pass_is_walls) {
+        return check_wall_line_walls_asm(ctx, fline, lx, lz, lxlen, lzlen, line_len,
+                                        a4, a6, level, zone_data, xdiff, zdiff);
+    }
+
+    int connect_index;
+    const uint8_t *target_zone = movement_target_zone(level, zone_data, connect, &connect_index);
+    uint8_t *target_room = (uint8_t *)target_zone;
+    int has_target_zone = target_zone != NULL;
     /* ---- Exit line handling. ---- */
-    if (zone_data && level->zone_adds && connect_index >= 0 && connect_index < zone_slots) {
-        int32_t target_zone_off = read_be32(level->zone_adds + (size_t)connect_index * 4);
-        target_zone = level->data + target_zone_off;
-        target_room = (uint8_t*)(level->data + target_zone_off);
-        has_target_zone = 1;
+    if (target_zone) {
         int dbg_type = -1;
         int is_enemy = move_ctx_is_enemy(ctx, level, &dbg_type) ? 1 : 0;
 
@@ -1005,12 +1023,6 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
     /* Amiga checkotherwalls uses its own integer hit test (no radius slide). */
     if (pass_is_other && ctx->extlen != 0) {
         return check_wall_line_otherpass_asm(ctx, fline, lx, lz, lxlen, lzlen, a4, a6, xdiff, zdiff);
-    }
-
-    /* Amiga checkwalls uses integer wall math for all movers, including extlen==0 bullets. */
-    if (pass_is_walls) {
-        return check_wall_line_walls_asm(ctx, fline, lx, lz, lxlen, lzlen, line_len,
-            a4, a6, level, connect_index, has_target_zone ? target_zone : NULL, xdiff, zdiff);
     }
 
     /* ---- Wall collision with extents ----
@@ -1170,9 +1182,7 @@ static void find_room(MoveContext* ctx, LevelState* level,
             {
                 const uint8_t* fline = level->floor_lines + entry * FLINE_SIZE;
                 int16_t connect = (int16_t)read_be16(fline + FLINE_CONNECT);
-                int connect_index = level_connect_to_zone_index(level, connect);
-                if (connect_index < 0) continue;
-                if (connect_index >= zone_slots) continue;
+                if (connect < 0) continue;
 
                 int32_t lx = (int32_t)(int16_t)read_be16(fline + FLINE_X) << ps;
                 int32_t lz = (int32_t)(int16_t)read_be16(fline + FLINE_Z) << ps;
@@ -1182,6 +1192,9 @@ static void find_room(MoveContext* ctx, LevelState* level,
                 int32_t cross_old = 0;
                 if (!find_room_crosses_exit_asm(ctx, lx, lz, lxlen, lzlen, &cross_new, &cross_old))
                     continue;
+
+                int connect_index = level_connect_to_zone_index(level, connect);
+                if (connect_index < 0 || connect_index >= zone_slots) continue;
 
                 {
                     int32_t target_zone_off = read_be32(level->zone_adds + (size_t)connect_index * 4);
