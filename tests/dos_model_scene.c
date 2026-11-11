@@ -2,6 +2,8 @@
  * tools/check_dos_models.py compares the same engine at 4 and 16 MB with
  * 32 KiB of extra residency to exercise the former late scratch failure. */
 #include "../src/game_loop.h"
+#include "../src/level.h"
+#include "../src/objects.h"
 static void model_scene_tick(GameState *, GameLoopCtx *);
 #define game_loop_tick model_scene_tick
 #include "../src/main.c"
