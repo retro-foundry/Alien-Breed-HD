@@ -3108,3 +3108,80 @@ Local evidence is in `build/dos/audio2-performance.json`,
 `build/dos-audio2-source/build/dos/pgo/model-check/report.json`.
 Diagnostic/PCM evidence remains under `build/dos-audio2-trace/` and
 `build/dos-audio2-source/build/dos-audio-regression/`.
+
+### Admit short billboard batches by their estimated area
+
+`b522a29` extends the existing exact reverse billboard batch to shorter
+lists with substantial overdraw. Lists of at least 16 candidates retain
+their one-screen area gate. Lists of 4–15 candidates require an estimated
+four screens of area. The estimate uses the same projected widths and
+unfiltered candidates as before. Polygon objects, picking and other
+existing exclusions retain their painter traversal. This changes only
+native DOS 320×240 batch admission; `ObjDraw3.ChipRam.s:ObjDraw/BitMapObj`
+projection, sampling, transparency and final painter-order pixels are
+preserved. It adds no tables, scratch buffers or resident asset bytes.
+
+The original count gate left some large explosion overlaps on the painter
+path. Simply lowering it to four candidates reduced burst time but added
+1.84 ms to the ordinary level-1 close view in the private O3 experiment.
+The area gate excludes those small lists while admitting the overlapping
+explosions. In the rebuilt release engine, normal/486_slow, fixed 40,000
+cycles, 4 MB, RGB565 320×240, SB16/mouse, muted host, 64 fixed-update frames
+and eight warmup frames give these mean/p95/worst times in milliseconds:
+
+| Scene | Before | After |
+| --- | --- | --- |
+| Level 1 start | 38.495 / 38.552 / 38.560 | 38.497 / 38.553 / 38.562 |
+| Level 1 close | 38.465 / 39.176 / 39.212 | 38.466 / 39.178 / 39.214 |
+| Level 1 water | 60.323 / 61.659 / 61.838 | 60.326 / 61.659 / 61.841 |
+| Level 1 barrel | 49.572 / 75.016 / 78.585 | 49.574 / 75.018 / 78.586 |
+| Level 6 barrel | 47.925 / 63.325 / 63.661 | 47.318 / 58.866 / 60.180 |
+| Level 1 barrel, turning | 51.271 / 82.665 / 87.572 | 51.273 / 82.667 / 87.574 |
+| Level 6 barrel, turning | 61.491 / 78.089 / 79.741 | 59.827 / 69.255 / 70.326 |
+| Level 1 close, turning | 39.319 / 47.476 / 47.571 | 39.320 / 47.481 / 47.573 |
+
+The 128-frame unmodified real-time start retains the 25.80 FPS gate:
+26.20 FPS, 38.16 ms mean, 38.67 ms p95 and 77.96 ms worst, versus
+26.21 FPS and 38.15/38.65/77.96 ms before. Separate 64-frame burst probes
+with ordinary clock timing and no image writes show essentially unchanged
+worst frames: level 1 reaches 92.34 ms, or 115.31 ms while turning; level 6
+reaches 64.59 ms, or 77.40 ms while turning. These probes advance original
+latched VBlank logic and interpolation according to elapsed time, so they
+visit different animation states from the fixed-update comparison. The
+new admission rule improves some dense states; it does not establish
+smoother live barrel bursts or complete the remaining level-1 work.
+
+All 512 diagnostic and 512 release-engine frames and simulation hashes
+match the preceding release. The 4-versus-16 MB model oracle matches all
+128 image/hash pairs with its extra 32 KiB residency. Fresh compiler
+feedback completes 23 training runs and 22 ordinary/optimized native
+captures, all matching original native references. All 22 freshly rebuilt
+indexed captures match, and the indexed EXE is byte-identical to the
+preceding release. Full 4 MB level-1/4/15 and real-time level-4 SB16/mouse
+exercises pass with zero profile audio underruns. Windows Release builds.
+Both packages retain all 231 asset payloads, 238 archive entries and the
+existing exact map/active saved-level payload checks.
+
+Native text/data/BSS are 1,190,424/22,016/260,096 bytes: 512 more code bytes
+and unchanged data sizes. The sound/mouse level-4 checkpoints still report
+144 KiB free after shared assets and 44 KiB after loading the level.
+The staged native EXE SHA-256 is
+`f5764e55624fe0109f4df7c0c015066150252bce560dbf206e0cae027e21b0e5`;
+the indexed EXE remains
+`8a95188f1c78c213850ead3a65d8214bdb06b66c7bbfc6bd0027a8ea2ef8dae8`.
+EXE/archive staging preserves all 241 native and 238 indexed non-EXE game
+files, including settings, saves and the prepared sprite/water assets.
+
+Additional private raster trials were not adopted. On the recorded
+89-call barrel frame, 64 repeats per call, native pointer records gave
+22.805 ms versus 22.991 ms; checking decoded opaque bounds gave 22.962 ms;
+checking individual spans gave 25.439 ms. All pixels, masks and counts
+matched, but the gains did not justify changing asset formats or adding
+coverage work. A checked 32-bit geometry subtraction path also changed
+the two measured scene means by less than 0.06 ms.
+
+Local release evidence is in `build/dos/billboard10-performance.json`,
+`build/dos/billboard10-validation.json`, `build/dos/billboard10-staging.json`
+and `build/dos-billboard10-source/build/dos/pgo/model-check/report.json`.
+Private experiments and the separate live-clock probes remain under
+`build/dos-billboard10-trace/`.
