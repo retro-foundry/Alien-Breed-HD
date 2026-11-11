@@ -2600,3 +2600,76 @@ Local evidence is in `build/dos/sprite6-performance.json`,
 `build/dos/sprite6-validation.json`, `build/dos/sprite6-staging.json` and
 `build/dos-sprite6-source/build/dos/pgo/model-check/report.json`.
 Diagnostic profiling remains under `build/dos-sprite6-trace/`.
+
+### Reduce repeated billboard room selection and projection work
+
+`f37e163` removes repeated preparation from the ObjDraw/BitMapObj path:
+room/section clip validation runs once for the whole object pass, and
+shot sizing follows the existing room, section and near-plane rejects.
+DOS also reuses the already cached projected width during final bitmap
+drawing when `EXPLOSION_SIZE_CORRECTION == 1`.
+
+Adjacent-room membership for IDs 0-255 uses an eight-word stack mask
+instead of repeatedly searching the connected-room list. Other signed
+zone IDs keep the original list search. The mask adds 32 stack bytes,
+with no persistent table, heap allocation or larger object-entry layout.
+The geometry oracle now verifies 1,179,648 membership queries against an
+independent linear scan: every signed 16-bit ID, six list lengths including
+zero, and ordered, reversed and duplicate-heavy lists. The original
+101,829 geometry and 3,750 capsule cases also pass.
+
+Diagnostic profiling of level-1 burst frame 18 puts object selection at
+7.504 ms versus 8.385 ms in the previous diagnostic build. Sprite drawing
+still takes 35.614 ms. These probes add overhead and are absent from the
+playable executable.
+
+Matched release-engine timings use normal/486_slow, 40,000 fixed cycles,
+4 MB, 320x240 RGB565, SB16/mouse and muted host sound. Both entry points
+keep 512 bytes of timing samples and capture frame 23 outside the timed
+update. Results cover fixed updates 8-63; turning views hold the original
+right-turn input throughout all 64 updates.
+
+| View | Previous mean/p95/worst ms | Updated mean/p95/worst ms |
+| --- | ---: | ---: |
+| Starting room | 38.484 / 38.540 / 38.541 | 38.511 / 38.567 / 38.568 |
+| Close enemies/barrel | 39.028 / 40.033 / 40.126 | 39.026 / 40.031 / 40.126 |
+| Pool surface | 63.722 / 64.642 / 64.863 | 63.760 / 64.683 / 64.902 |
+| Level-1 barrel burst | 51.963 / 82.704 / 88.221 | 51.518 / 81.999 / 87.451 |
+| Level-6 barrel burst | 49.096 / 67.451 / 67.811 | 48.950 / 67.259 / 67.619 |
+| Level-1 burst, turning | 53.570 / 88.339 / 98.802 | 53.192 / 87.673 / 98.018 |
+| Level-6 burst, turning | 62.799 / 83.862 / 86.761 | 62.604 / 83.640 / 86.541 |
+| Close enemies, turning | 39.554 / 48.257 / 48.352 | 39.553 / 48.254 / 48.352 |
+
+The gain is modest and concentrated in bursts: level-1 first-eight-burst
+updates average 66.423 ms versus 67.203 ms, and its worst turning frame
+falls by 0.784 ms. Starting-room and pool means regress by 0.027 and
+0.038 ms. The separate unmodified 128-frame starting-room test retains
+the 25.80 FPS gate at 26.15 FPS, 38.23 ms mean and 38.74 ms p95, versus
+26.18 FPS, 38.20 ms and 38.72 ms before. Its worst frame rises from
+77.60 to 78.13 ms. Expensive burst frames still approach 98 ms; a general
+threefold improvement and physical 486 performance remain unproven.
+
+All 512 complete release-engine framebuffers and simulation hashes match
+across the eight views, as do all 512 diagnostic comparisons. The 32 KiB
+residency-stress oracle retains all 128 image/hash pairs between 4 and
+16 MB on levels 1 and 6. Fresh compiler feedback completes 23 training
+runs and all 22 ordinary/optimized native captures; all 22 original native
+and 22 freshly rebuilt indexed references match. The real-time 4 MB
+level-4 SB16/mouse exercise and full level-1/4/15 exercises pass with zero
+profile audio underruns. Windows Release also builds. Both packages keep
+231 original assets and 238 archive entries, with unchanged map images
+and all six saved level/map payloads on levels 1 and 4.
+
+Native text/data/BSS remain 1,186,328/22,016/292,864 bytes. The level-4
+sound/mouse check still reports 116 KiB free physical memory after shared
+assets and 24 KiB after loading the level. The staged native EXE SHA-256 is
+`e2660946c9ed236e3a1780788c08810f122daabb6a1b3b4c295dd70668c9d886`;
+the indexed EXE is
+`74fae2a6061e729d13e4495b6b764e56ef7c4a8c104ee07ba4f1ee8b482c00e8`.
+Staging preserves all 241 native and 238 indexed non-EXE game files,
+including local settings and saves.
+
+Local evidence is in `build/dos/sprite7-performance.json`,
+`build/dos/sprite7-validation.json`, `build/dos/sprite7-staging.json` and
+`build/dos-sprite7-source/build/dos/pgo/model-check/report.json`.
+Diagnostic profiling remains under `build/dos-sprite7-trace/`.
