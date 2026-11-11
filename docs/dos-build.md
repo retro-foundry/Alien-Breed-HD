@@ -2455,3 +2455,74 @@ Local evidence is in `build/dos/sprite4-performance.json`,
 `build/dos/sprite4-validation.json`, `build/dos/sprite4-staging.json` and
 `build/dos-sprite4-source/build/dos/pgo/model-check/report.json`.
 Diagnostic profiling remains under `build/dos-sprite4-trace/`.
+
+### Reject separated spill bounds before wide geometry arithmetic
+
+DOS now checks inclusive bounds before segment orientations and point-edge
+cross products. Capsule admission first checks the radius-inflated bounds,
+widening the additions to avoid signed 32-bit overflow. Separated shapes
+return immediately; overlapping or touching bounds retain the original
+wide geometry tests. This avoids unnecessary multiplications and software
+division during billboard spill checks, without a new cache or heap allocation.
+The changes are `aa4f04b` and `8e88664`.
+
+`tools/check_dos_geometry.py` compiles the actual renderer helpers with the
+unused renderer discarded. At 4 MB on normal/486_slow it checks 39,329
+geometry cases against the original definitions, including endpoint order,
+collinear and zero-length segments, point ownership and large coordinates.
+Another 3,750 capsule cases cover squared lengths around 2^31 and signed
+radius extremes. The tool uses fixed 200,000 cycles for this arithmetic
+oracle and verifies both the success marker and DOS exit status:
+
+```powershell
+python tools/check_dos_geometry.py --dosbox <dosbox.exe>
+```
+
+Fresh release-engine timings use normal/486_slow, 40,000 fixed cycles,
+4 MB, native 320x240 RGB565, SB16/mouse and muted host sound. Both entry
+points retain 512 bytes of timing samples, capture only frame 23 outside
+the timed update, and report updates 8-63. Turning views hold the original
+right-turn input throughout the same 64 fixed updates.
+
+| View | Previous mean/p95/worst ms | Updated mean/p95/worst ms |
+| --- | ---: | ---: |
+| Starting room | 38.648 / 38.705 / 38.705 | 38.573 / 38.630 / 38.630 |
+| Close enemies/barrel | 39.270 / 40.265 / 40.367 | 39.134 / 40.146 / 40.241 |
+| Pool surface | 64.126 / 65.036 / 65.260 | 63.902 / 64.820 / 65.039 |
+| Level-1 barrel burst | 54.334 / 86.629 / 93.064 | 53.221 / 87.474 / 88.431 |
+| Level-6 barrel burst | 50.320 / 69.464 / 69.819 | 49.762 / 68.603 / 68.967 |
+| Level-1 burst, turning | 55.799 / 92.886 / 103.250 | 54.706 / 92.843 / 99.320 |
+| Level-6 burst, turning | 63.516 / 85.915 / 88.809 | 63.188 / 85.058 / 87.956 |
+| Close enemies, turning | 39.736 / 48.490 / 48.588 | 39.634 / 48.368 / 48.466 |
+
+Means and worst frames improve across these views. Stationary level-1
+burst p95 rises by 0.845 ms while its mean falls by 1.113 ms and worst
+frame falls by 4.633 ms. The unmodified 128-frame starting-room test
+passes the 25.80 FPS gate at 26.13 FPS, 38.27 ms mean and 38.78 ms p95,
+versus 26.09 FPS, 38.33 ms and 38.85 ms before. Physical hardware remains
+unmeasured, and expensive burst frames remain.
+
+All 512 complete release-engine images and simulation hashes match
+across the eight views. The 32 KiB residency-stress model oracle retains
+all 128 image/hash comparisons between 4 and 16 MB on levels 1 and 6.
+Fresh compiler feedback completes 23 training runs and all 22
+ordinary/optimized captures; all original native and indexed references
+remain exact. The real-time 4 MB level-4 SB16/mouse exercise and full
+level-1/4/15 exercises pass with zero profile audio underruns. Windows
+Release also builds. Both packages retain the original 231 assets and
+238 archive entries; map images and the six saved level/map payloads on
+levels 1 and 4 retain their earlier comparisons.
+
+Native text/data/BSS are 1,184,792/22,016/292,864 bytes: 512 more code bytes
+and unchanged persistent data. Shared-assets free physical memory remains
+120 KiB. The staged native EXE SHA-256 is
+`82ecf263981519e8fb3a46e753e11b2a54ba74dbb50fce187dde3e0a79a2c7f0`;
+the indexed EXE is
+`c14000e45459a7b2835cfd1a3230e4855dded488ac4e740a94a4802894ccb5f3`.
+Staging preserves all 241 native and 238 indexed non-EXE game files,
+including local settings and saves.
+
+Local evidence is in `build/dos/sprite5-performance.json`,
+`build/dos/sprite5-validation.json`, `build/dos/sprite5-staging.json` and
+`build/dos-sprite5-source/build/dos/pgo/model-check/report.json`.
+Diagnostic profiling remains under `build/dos-sprite5-trace/`.
