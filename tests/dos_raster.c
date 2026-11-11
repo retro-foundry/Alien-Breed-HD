@@ -313,6 +313,51 @@ static void check_sprite_batches(void)
     puts("PASS: 32 reverse billboard batches match independent painter order, row/column cutouts, black, mask edges, complete coverage, reset and guards");
 }
 
+static void check_sprite_batch_repeated_rows(void)
+{
+    enum { HEIGHT=8, PIXELS=320*HEIGHT };
+    static RendererPixel actual[PIXELS+16],expected[PIXELS+16];
+    uint8_t wad[4]={0,0,0,31},ptr[128]={0},texels[2]={0,1};
+    RendererPixel front[2]={0,0x1357},middle[32]={0},back[32]={0};
+    int rows[HEIGHT],constant[HEIGHT]={0};
+    static const unsigned clips[3][2]={{0,320},{1,318},{33,254}};
+    DosSpriteBatch scratch;
+    for(unsigned x=0;x<32;x++)ptr[x*4+3]=2;
+    for(unsigned clip=0;clip<3;clip++)for(unsigned pattern=0;pattern<6;pattern++) {
+        unsigned left=clips[clip][0],width=clips[clip][1],written=0;
+        middle[31]=(RendererPixel)(pattern&1?0:1);back[31]=0x2468;
+        for(unsigned i=0;i<PIXELS+16;i++)actual[i]=expected[i]=0xa55a;
+        dos_raster_sprite_batch_begin(actual+8,&scratch);
+        for(unsigned x=0;x<320;x++) {
+            for(unsigned y=0;y<HEIGHT;y++) {
+                int opaque;
+                switch(pattern) {
+                    case 0:opaque=x&1;break; /* Maximum 160 fresh copy ranges. */
+                    case 1:opaque=(x+y)&1;break;
+                    case 2:opaque=(x&1)^(x==31 && y>=4);break;
+                    case 3:opaque=x!=(31+y);break;
+                    case 4:opaque=(x<32 || x>=288) && (y&1);break;
+                    default:opaque=y&1;break;
+                }
+                rows[y]=opaque;
+                expected[8+y*320+x]=opaque?front[1]:
+                    x>=left && x<left+width?middle[31]:back[31];
+            }
+            written+=dos_raster_sprite_texel_column(actual+8+x,HEIGHT,320,
+                                                      texels,front,rows,1);
+        }
+        DosSpriteRows sprite={wad,ptr,sizeof(wad),sizeof(ptr),middle,constant,
+                              0,0,65536u,32,0};
+        written+=dos_raster_sprite_rows(actual+8+left,width,HEIGHT,320,&sprite).drawn;
+        sprite.palette=back;
+        written+=dos_raster_sprite_rows(actual+8,320,HEIGHT,320,&sprite).drawn;
+        for(unsigned y=0;y<HEIGHT;y++)assert(!scratch.open_words[y]);
+        dos_raster_sprite_batch_end();
+        assert(written==PIXELS && !memcmp(actual,expected,sizeof(actual)));
+    }
+    puts("PASS: 18 repeated billboard bands preserve 160 copy ranges, changing masks, partial mask words, outside clips, closed-word counts, black and guards");
+}
+
 static void check_word_offset_bounds(void)
 {
     static const uint32_t values[]={0,1,2,3,4,15,31,255,256,65535,65536,UINT32_MAX-2,UINT32_MAX-1,UINT32_MAX};
@@ -975,6 +1020,7 @@ int main(void)
     check_sprite_rows();
     check_sprite_columns();
     check_sprite_batches();
+    check_sprite_batch_repeated_rows();
     check_water();
     check_objects();
     puts("DOS raster regression passed");

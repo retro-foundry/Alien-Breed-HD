@@ -112,7 +112,17 @@ static void sprite_copy(RendererPixel *out,const RendererPixel *source,unsigned 
     if(count&1)*out=*source;
 }
 
-static unsigned sprite_batch_copy(RendererPixel *out,const RendererPixel *source,unsigned count)
+typedef struct { const RendererPixel *source;unsigned count; } DosSpriteSpan;
+
+static inline void sprite_copy_record(RendererPixel *out,const RendererPixel *source,
+                                      unsigned count,DosSpriteSpan **next)
+{
+    if(next){(*next)->source=source;(*next)->count=count;(*next)++;}
+    sprite_copy(out,source,count);
+}
+
+static unsigned sprite_batch_copy(RendererPixel *out,const RendererPixel *source,
+                                   unsigned count,DosSpriteSpan **next)
 {
     unsigned at=(unsigned)(out-sprite_batch_surface),y=at/320,x=at%320;
     if(!sprite_batch->open_words[y])return 0;
@@ -130,14 +140,14 @@ static unsigned sprite_batch_copy(RendererPixel *out,const RendererPixel *source
         } else {
             if(run) {
                 unsigned first=run-1,length=x-origin-first;
-                sprite_copy(out+first,source+first,length);written+=length;run=0;
+                sprite_copy_record(out+first,source+first,length,next);written+=length;run=0;
             }
             while(fresh) {
                 unsigned first=(unsigned)__builtin_ctz(fresh);
                 uint32_t shifted=fresh>>first;
                 unsigned length=shifted==UINT32_MAX?32:(unsigned)__builtin_ctz(~shifted);
                 unsigned offset=word*32+first-origin;
-                sprite_copy(out+offset,source+offset,length);written+=length;
+                sprite_copy_record(out+offset,source+offset,length,next);written+=length;
                 uint32_t bits=length==32?UINT32_MAX:((1u<<length)-1)<<first;
                 fresh&=~bits;
             }
@@ -146,9 +156,60 @@ static unsigned sprite_batch_copy(RendererPixel *out,const RendererPixel *source
     }
     if(run) {
         unsigned first=run-1,length=count-first;
-        sprite_copy(out+first,source+first,length);written+=length;
+        sprite_copy_record(out+first,source+first,length,next);written+=length;
     }
     return written;
+}
+
+static inline void sprite_mask_copy(uint32_t *out,const uint32_t *source,unsigned words)
+{
+    __asm__ volatile("rep movsl" : "+D"(out),"+S"(source),"+c"(words) : : "memory","cc");
+}
+
+static inline int sprite_mask_equal(const uint32_t *a,const uint32_t *b,unsigned words)
+{
+    unsigned char equal;
+    __asm__ volatile("repe cmpsl; sete %0" : "=qm"(equal),"+S"(a),"+D"(b),"+c"(words) : : "memory","cc");
+    return equal;
+}
+
+/* Magnified rows often have the same previous coverage. Decode their fresh
+ * copy ranges once; matching rows can replay those exact ranges and mask
+ * updates. Comparing complete mask words preserves pixels outside the clip. */
+static unsigned sprite_batch_rows(RendererPixel *out,unsigned width,unsigned height,
+                                   unsigned pitch,const RendererPixel *row,
+                                   const DosSpriteSpan *spans,unsigned span_count)
+{
+    if(!span_count)return 0;
+    unsigned at=(unsigned)(out-sprite_batch_surface),y=at/320,x=at%320;
+    unsigned first=x/32,words=(x+width-1)/32-first+1,total=0;
+    uint32_t before[10];
+    DosSpriteSpan ranges[160]; /* At most 16 fresh runs in each of ten mask words. */
+    for(unsigned dy=0;dy<height;) {
+        uint32_t *covered=sprite_batch->covered[y+dy]+first;
+        sprite_mask_copy(before,covered,words);
+        unsigned open=sprite_batch->open_words[y+dy];
+        DosSpriteSpan *end=ranges;
+        RendererPixel *target=out+dy*pitch;
+        for(unsigned i=0;i<span_count;i++) {
+            const DosSpriteSpan *r=spans+i;
+            total+=sprite_batch_copy(target+(r->source-row),r->source,r->count,&end);
+        }
+        unsigned closed=open-sprite_batch->open_words[y+dy],next=dy+1;
+        for(;next<height;next++) {
+            uint32_t *other=sprite_batch->covered[y+next]+first;
+            if(!sprite_mask_equal(before,other,words))break;
+            target=out+next*pitch;
+            for(const DosSpriteSpan *r=ranges;r<end;r++) {
+                sprite_copy(target+(r->source-row),r->source,r->count);
+                total+=r->count;
+            }
+            sprite_mask_copy(other,covered,words);
+            sprite_batch->open_words[y+next]-=(uint8_t)closed;
+        }
+        dy=next;
+    }
+    return total;
 }
 
 static int sprite_batch_hidden(const RendererPixel *out,unsigned width,unsigned height)
@@ -244,7 +305,7 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
     typedef struct { const uint8_t *source; unsigned limit,shift,width; } Group;
     Group groups[MAX_WIDTH];
     RendererPixel row[MAX_WIDTH];
-    typedef struct { RendererPixel *source; unsigned count; } Span;
+    typedef DosSpriteSpan Span;
     Span spans[MAX_WIDTH/2];
     _Static_assert(sizeof(Group)==16 && sizeof(Span)==8,"486 sprite descriptor layout");
     DosSpriteCoverage result={0,0};
@@ -336,6 +397,11 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             : "eax","ecx","edx","cc","memory");
 #undef SPRITE_ROW_CLOSE
 #undef SPRITE_ROW_SAMPLE
+        if(batch && end_y-y>1) {
+            result.drawn+=sprite_batch_rows(out+y*pitch,width,end_y-y,pitch,row,
+                                             spans,(unsigned)(span-spans));
+            y=end_y;continue;
+        }
         unsigned opaque=0;
         for(Span *r=spans;r<span;r++) {
             opaque+=r->count;
@@ -343,7 +409,7 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             for(unsigned dy=y;dy<end_y;dy++,target+=pitch) {
                 const RendererPixel *source=r->source;
                 if(batch) {
-                    result.drawn+=sprite_batch_copy(target,source,r->count);
+                    result.drawn+=sprite_batch_copy(target,source,r->count,NULL);
                     continue;
                 }
                 RendererPixel *dest=target;
