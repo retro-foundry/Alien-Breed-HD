@@ -93,6 +93,22 @@ int main(void)
         }
         check_case(p);
     }
+    static const int32_t coordinates[]={-0x40000000,-32768,0,32767,0x3fffffff};
+    for(unsigned a=0;a<5;a++)for(unsigned b=0;b<5;b++)for(unsigned c=0;c<5;c++)
+    for(unsigned d=0;d<5;d++)for(unsigned e=0;e<5;e++)for(unsigned f=0;f<5;f++)
+    for(unsigned axes=0;axes<4;axes++) {
+        /* Every horizontal/vertical pairing, reversed endpoints and points,
+         * with the same independent wide reference at large coordinates. */
+        p[0]=axes&1?coordinates[c]:coordinates[a];
+        p[1]=axes&1?coordinates[a]:coordinates[c];
+        p[2]=axes&1?coordinates[c]:coordinates[b];
+        p[3]=axes&1?coordinates[b]:coordinates[c];
+        p[4]=axes&2?coordinates[f]:coordinates[d];
+        p[5]=axes&2?coordinates[d]:coordinates[f];
+        p[6]=axes&2?coordinates[f]:coordinates[e];
+        p[7]=axes&2?coordinates[e]:coordinates[f];
+        check_case(p);
+    }
     static const int32_t deltas[]={-32768,-32767,0,1,32767};
     static const int32_t offsets[]={-32768,-1,0,1,32767};
     static const int32_t radii[]={INT32_MIN,-1,0,1,32767,INT32_MAX};

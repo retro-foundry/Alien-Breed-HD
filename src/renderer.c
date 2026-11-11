@@ -12135,6 +12135,9 @@ static int renderer_segments_intersect_i32(int32_t a1x, int32_t a1z,
     amin = a1z < a2z ? a1z : a2z; amax = a1z > a2z ? a1z : a2z;
     bmin = b1z < b2z ? b1z : b2z; bmax = b1z > b2z ? b1z : b2z;
     if (amax < bmin || bmax < amin) return 0;
+    /* For two axis-aligned segments, inclusive box overlap already proves
+     * intersection, including collinear overlaps and zero-length points. */
+    if ((a1x == a2x || a1z == a2z) && (b1x == b2x || b1z == b2z)) return 1;
 #endif
     int64_t o1 = renderer_orient2d_i64(a1x, a1z, a2x, a2z, b1x, b1z);
     int64_t o2 = renderer_orient2d_i64(a1x, a1z, a2x, a2z, b2x, b2z);
@@ -12505,6 +12508,7 @@ static int renderer_point_on_segment_i32(int32_t px, int32_t pz,
      * wide cross product; the original inclusive ownership is unchanged. */
     if (px < ((x1 < x2) ? x1 : x2) || px > ((x1 > x2) ? x1 : x2)) return 0;
     if (pz < ((z1 < z2) ? z1 : z2) || pz > ((z1 > z2) ? z1 : z2)) return 0;
+    if (x1 == x2 || z1 == z2) return 1;
 #endif
     int64_t cross = (int64_t)(px - x1) * (int64_t)(z2 - z1) -
                     (int64_t)(pz - z1) * (int64_t)(x2 - x1);
@@ -13683,6 +13687,11 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
     const int64_t explosion_sprite_scale_x_for_estimate = renderer_sprite_scale_x_fp16_for_state(r, state);
     const int16_t billboard_view_right_x = (int16_t)(r->cosval / 2);
     const int16_t billboard_view_right_z = (int16_t)(-r->sinval / 2);
+#if defined(AB3D_DOS) && EXPLOSION_SIZE_CORRECTION == 1
+    const int fast_spill_admission = g_dos_draw_objects_active &&
+        !g_pick_capture_active && !g_debug_spill_visualize &&
+        !renderer_active_pick_player() && !renderer_get_graphic_pick_target();
+#endif
 
     /* Build one depth-sorted list for objects and particles so painter order is consistent. */
     enum {
@@ -13694,16 +13703,19 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
         int src;
         int idx;
         int16_t source_zone;
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
-        uint16_t estimated_width; /* Reuses the original alignment padding. */
-#endif
         int32_t z;  /* Amiga ObjDraw depthtable key: rotated Z word. */
         int16_t clip_left;
         int16_t clip_right;
         int32_t zone_top_world;
         int32_t zone_bot_world;
         uint8_t ignore_top_clip;
+#ifdef AB3D_DOS
+        uint8_t spill_admitted; /* Uses the original tail padding. */
+#endif
     } ObjEntry;
+#ifdef AB3D_DOS
+    _Static_assert(sizeof(ObjEntry)==32,"DOS object entry scratch layout");
+#endif
     enum {
         /* Level object table is CID-terminated but physically 256 slots in level data.
          * Keep draw-list capacity aligned with all potential contributors. */
@@ -13715,6 +13727,10 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                   MAX_EXPLOSIONS];
     const int max_draw_entries = (int)(sizeof(objs) / sizeof(objs[0]));
     int obj_count = 0;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    int batch_candidates = 0, batch_has_polygon = 0;
+    unsigned batch_area = 0;
+#endif
 
     int num_pts = level->num_object_points;
     if (num_pts > MAX_OBJ_POINTS) num_pts = MAX_OBJ_POINTS;
@@ -13824,6 +13840,9 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
         }
         /* BitMapObj cull: skip early when a billboard cannot affect this
          * column strip. PolygonObj clips its projected polygons directly. */
+#ifdef AB3D_DOS
+        int spill_admitted = 0;
+#endif
         if (!is_poly_object) {
             int sprite_w_est, scr_x_est;
 #ifdef AB3D_DOS
@@ -13844,11 +13863,34 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             int spr_r = spr_l + sprite_w_est;
             if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
-            objs[obj_count].estimated_width=(uint16_t)(sprite_w_est>320?320:sprite_w_est);
+            unsigned batch_width = (unsigned)(sprite_w_est > 320 ? 320 : sprite_w_est);
+            batch_candidates++;
+            batch_area += batch_width * (batch_width > 240 ? 240 : batch_width);
+#endif
+#if defined(AB3D_DOS) && EXPLOSION_SIZE_CORRECTION == 1
+            if (!in_this_zone && geometry && fast_spill_admission) {
+                const uint8_t *point = level->object_points + (size_t)(uint16_t)pt_num * 8u;
+                if (!renderer_spill_draw_still_valid(state, obj_zone, zone_id,
+                                                     rd16(point), rd16(point+4),
+                                                     spill_world_w,
+                                                     billboard_view_right_x,
+                                                     billboard_view_right_z,
+                                                     draw_clip_left, draw_clip_right,
+                                                     renderer_sprite_param_i16(scr_x_est),
+                                                     renderer_sprite_param_i16(sprite_w_est)))
+                    continue;
+                spill_admitted = 1;
+            }
 #endif
         }
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+        else { batch_candidates++; batch_has_polygon = 1; }
+#endif
 
         objs[obj_count].src = DRAW_SRC_OBJECT;
+#ifdef AB3D_DOS
+        objs[obj_count].spill_admitted = (uint8_t)spill_admitted;
+#endif
         objs[obj_count].idx = obj_idx;
         objs[obj_count].source_zone = obj_zone;
         objs[obj_count].z = ROT_Z_INT(orp->z);
@@ -13938,6 +13980,9 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
             if (orp->z <= ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z)) continue;
 
+#ifdef AB3D_DOS
+            int spill_admitted = 0;
+#endif
             {
                 int sprite_w_est, scr_x_est;
 #ifdef AB3D_DOS
@@ -13958,10 +14003,34 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                 int spr_r = spr_l + sprite_w_est;
                 if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
-                objs[obj_count].estimated_width=(uint16_t)(sprite_w_est>320?320:sprite_w_est);
+                unsigned batch_width = (unsigned)(sprite_w_est > 320 ? 320 : sprite_w_est);
+                batch_candidates++;
+                batch_area += batch_width * (batch_width > 240 ? 240 : batch_width);
+                if ((uint8_t)obj[6] == (uint8_t)OBJ_3D_SPRITE) batch_has_polygon = 1;
+#endif
+#if defined(AB3D_DOS) && EXPLOSION_SIZE_CORRECTION == 1
+                if (!in_this_zone && geometry && (uint8_t)obj[6] != (uint8_t)OBJ_3D_SPRITE &&
+                    fast_spill_admission) {
+                    const uint8_t *point = level->object_points + (size_t)(uint16_t)pt_num * 8u;
+                    /* These cached dimensions/X and saturated width are also
+                     * used by the final draw. Reject before sorting and Y work. */
+                    if (!renderer_spill_draw_still_valid(state, shot_zone, zone_id,
+                                                         rd16(point), rd16(point+4),
+                                                         spill_world_w,
+                                                         billboard_view_right_x,
+                                                         billboard_view_right_z,
+                                                         draw_clip_left, draw_clip_right,
+                                                         renderer_sprite_param_i16(scr_x_est),
+                                                         renderer_sprite_param_i16(sprite_w_est)))
+                        continue;
+                    spill_admitted = 1;
+                }
 #endif
             }
             objs[obj_count].src = DRAW_SRC_SHOT;
+#ifdef AB3D_DOS
+            objs[obj_count].spill_admitted = (uint8_t)spill_admitted;
+#endif
             objs[obj_count].idx = slot + ((pool == 0) ? 0 : NASTY_SHOT_SLOT_COUNT);
             objs[obj_count].source_zone = shot_zone;
             objs[obj_count].z = ROT_Z_INT(orp->z);
@@ -14052,11 +14121,16 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                 int spr_r = spr_l + sprite_w_est;
                 if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
-                objs[obj_count].estimated_width=(uint16_t)(sprite_w_est>320?320:sprite_w_est);
+                unsigned batch_width = (unsigned)(sprite_w_est > 320 ? 320 : sprite_w_est);
+                batch_candidates++;
+                batch_area += batch_width * (batch_width > 240 ? 240 : batch_width);
 #endif
             }
 
             objs[obj_count].src = DRAW_SRC_EXPLOSION;
+#ifdef AB3D_DOS
+            objs[obj_count].spill_admitted = 0;
+#endif
             objs[obj_count].idx = ei;
             objs[obj_count].source_zone = expl_zone;
             objs[obj_count].z = ROT_Z_INT(orp_z);
@@ -14106,26 +14180,14 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
     /* Reversing an opaque billboard-only painter pass is exact when the
      * first covered pixel wins. Polygon objects and picking retain their
      * original draw traversal. Small lists avoid the mask setup cost. */
-    if(obj_count>=16 && r->width==320 && r->height==240 &&
+    /* Preserve the original batch decision from the unfiltered candidates.
+     * Early spill rejection must not turn a dense pass into a slower painter pass. */
+    if(obj_count>0 && batch_candidates>=16 && r->width==320 && r->height==240 &&
        !g_renderer_rgb_raster_expand && !g_debug_spill_visualize && !g_pick_capture_active &&
        !renderer_active_pick_player() && !renderer_get_graphic_pick_target()) {
-        reverse_billboards=1;
-        unsigned estimated_area=0;
-        for(int i=0;i<obj_count;i++) {
-            const ObjEntry *e=&objs[i];const uint8_t *obj=NULL;
-            if(e->src==DRAW_SRC_OBJECT)obj=level->object_data+e->idx*OBJECT_SIZE;
-            else if(e->src==DRAW_SRC_SHOT) {
-                obj=e->idx<NASTY_SHOT_SLOT_COUNT
-                    ?level->nasty_shot_data+e->idx*OBJECT_SIZE
-                    :level->player_shot_data+(e->idx-NASTY_SHOT_SLOT_COUNT)*OBJECT_SIZE;
-            }
-            if(obj && obj[6]==(uint8_t)OBJ_3D_SPRITE){reverse_billboards=0;break;}
-            unsigned width=e->estimated_width;
-            estimated_area+=width*(width>240?240:width);
-        }
         /* Sparse/distant particles have little overdraw to repay the mask.
          * Width is already projected by the existing visibility rejection. */
-        if(estimated_area<320u*240u)reverse_billboards=0;
+        reverse_billboards=!batch_has_polygon && batch_area>=320u*240u;
         if(reverse_billboards)dos_raster_sprite_batch_begin(renderer_active_cw(),&batch_scratch);
     }
 #endif
@@ -14492,7 +14554,11 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             }
 
             if (entry_is_spill) {
-                if (!renderer_spill_draw_still_valid(state,
+                if (
+#ifdef AB3D_DOS
+                    !entry->spill_admitted &&
+#endif
+                    !renderer_spill_draw_still_valid(state,
                                                      entry->source_zone,
                                                      zone_id,
                                                      billboard_world_x,
