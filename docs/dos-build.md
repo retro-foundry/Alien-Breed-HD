@@ -2851,3 +2851,29 @@ Local evidence is in `build/dos/sprite9-performance.json`,
 Diagnostic and captured-kernel evidence remains under
 `build/dos-sprite9-trace/`; the raster oracle log is
 `build/dos-sprite9-source/build/dos-raster-regression/RASTER.LOG`.
+
+### Reuse prepared native water colours
+
+`dos_raster_prepare_water` now stores a ready-to-write RGB565 colour in
+the low word of each existing 32-bit Brighten entry. Its high word retains
+the original four-bit components in five-bit lanes. Guard bits allow the
+three signed channel differences to be calculated together for the existing
+rounded interpolation. Single-source and equal-sample pixels write the
+prepared colour directly instead of reconstructing it through two tables.
+`dos_raster_water_color` also returns that prepared word directly.
+
+The original AB3DI.s Brighten colours, sampling and rounding still define
+the output. Table sizes remain unchanged, with no extra heap allocation.
+The actual 486 raster oracle checks all 5,632 prepared colours, all 65,536
+native inputs, 65,536 alpha/colour combinations and 768 single/blended,
+wrapping, aliasing and clipping spans. Its other raster/arithmetic checks
+also pass. Across eight diagnostic views, all 512 complete framebuffers
+and simulation hashes remain exact, with zero profile audio underruns.
+
+The diagnostic pool view averages 63.728 ms versus 66.646 ms, a 4.4%
+reduction. These diagnostics replace selected engine objects with ordinary
+O3 builds; they do not establish the final compiler-feedback release gain.
+The playable packages still contain the billboard-cache release above.
+Fresh release timings and memory checks are pending for this source change.
+Local diagnostic evidence is under `build/dos-water3-trace/`, with the
+raster log at `build/dos-water3-source/build/dos-raster-regression/RASTER.LOG`.

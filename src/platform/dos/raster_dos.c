@@ -13,6 +13,8 @@ static void fill_words(int16_t *out, unsigned count, uint16_t value)
 }
 
 #ifdef AB3D_NATIVE_RGB565
+/* Low word: ready-to-write RGB565. High word: the original 4-bit channels
+ * in five-bit lanes, leaving one guard bit for each signed blend delta. */
 static uint32_t water_brighten[22][256];
 static int8_t water_blend_delta[128][32];
 static RendererPixel water_rg[256],water_blue[16];
@@ -24,9 +26,8 @@ void dos_raster_prepare_water(const uint8_t *brighten)
     for(unsigned row=0;row<22;row++)for(unsigned sample=0;sample<256;sample++) {
         unsigned i=(row*256+sample)*2;
         unsigned color=((unsigned)brighten[i]<<8)|brighten[i+1];
-        /* One nibble in each byte lets a single subtraction produce all
-         * three foreground-minus-background differences without borrowing. */
-        water_brighten[row][sample]=((color&0xf00)<<8)|((color&0xf0)<<4)|(color&15);
+        water_brighten[row][sample]=((color&0xf00)<<18)|((color&0xf0)<<17)|
+            ((color&15)<<16)|renderer_pixel_from_c12((uint16_t)color);
     }
     for(unsigned alpha=0;alpha<128;alpha++)for(int difference=-15;difference<=15;difference++) {
         /* floor((17*(255*bg + difference*alpha)/255 + 8)/17)
@@ -42,8 +43,7 @@ void dos_raster_prepare_water(const uint8_t *brighten)
 
 RendererPixel dos_raster_water_color(unsigned row,unsigned sample)
 {
-    uint32_t color=water_brighten[row][sample];
-    return water_rg[((color>>12)&240)|((color>>8)&15)]|water_blue[color&15];
+    return (RendererPixel)water_brighten[row][sample];
 }
 
 __attribute__((noinline,optimize("O3,unroll-loops")))
@@ -67,8 +67,7 @@ void dos_raster_water(RendererPixel *out,unsigned count,
             uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
             uv=(uint16_t)(uv+offset);
             unsigned level=phase[((uv>>2)&0xfc0)|(uv&63)];
-            uint32_t c0=brighten[level][water_gb_index[background0[x]&2047]];
-            out[x]=water_rg[((c0>>12)&240)|((c0>>8)&15)]|water_blue[c0&15];
+            out[x]=(RendererPixel)brighten[level][water_gb_index[background0[x]&2047]];
         }
         return;
     }
@@ -80,13 +79,15 @@ void dos_raster_water(RendererPixel *out,unsigned count,
         uint32_t c0=brighten[level][water_gb_index[background0[x]&2047]];
         uint32_t c1=brighten[level][water_gb_index[background1[x]&2047]];
         if(c0==c1) {
-            out[x]=water_rg[((c0>>12)&240)|((c0>>8)&15)]|water_blue[c0&15];
+            out[x]=(RendererPixel)c0;
             continue;
         }
-        uint32_t difference=(c1|0x101010u)-c0;
-        unsigned r=(c0>>16)+blend[(difference>>16)&31];
-        unsigned g=((c0>>8)&15)+blend[(difference>>8)&31];
-        unsigned b=(c0&15)+blend[difference&31];
+        /* The three guard bits prevent a negative channel difference from
+         * borrowing into the next lane. Each lookup still uses delta+16. */
+        uint32_t difference=((c1>>16)|0x4210u)-(c0>>16);
+        unsigned r=(c0>>26)+blend[(difference>>10)&31];
+        unsigned g=((c0>>21)&15)+blend[(difference>>5)&31];
+        unsigned b=((c0>>16)&15)+blend[difference&31];
         out[x]=water_rg[(r<<4)|g]|water_blue[b];
     }
 }
