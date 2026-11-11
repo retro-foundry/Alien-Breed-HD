@@ -3273,3 +3273,72 @@ Local evidence is in `build/dos/movement11-performance.json`,
 and `build/dos-movement11-source/build/dos/pgo/model-check/report.json`.
 Clock replay evidence is under `build/dos-movement11-trace/`; the recorded
 live clock and billboard fixture remain under `build/dos-billboard10-trace/`.
+
+### Reuse billboard rows across unused outer mask words
+
+`c50e6ea` narrows the coverage comparison for magnified billboard rows to
+the complete mask words between their first and last opaque pixels. Rows
+can reuse the same decoded copy ranges when coverage differs outside that
+envelope. Comparing and copying whole boundary words preserves neighboring
+pixels and the closed-word count. Packed source interpretation, transparency,
+opaque black and the original `BitMapObj` drawing semantics are unchanged.
+No resident tables, asset conversions or scratch buffers are added.
+
+The recorded 92-call live billboard fixture improves from 30.309 to
+28.985 ms; the earlier 89-call fixture improves from 22.991 to 22.329 ms.
+Both use 64 repetitions per call and retain every pixel, mask, open-word
+count and visible/drawn tally. A more complex single-word/span special case
+was slower on both fixtures and was not adopted.
+
+In the matched release-engine clock replay, normal/486_slow, 40,000 cycles,
+4 MB, native 320x240, SB16/mouse and muted host, the busy frame improves
+from 113.977 to 112.529 ms. Rendering falls from 79.749 to 78.297 ms;
+update remains 27.314 ms. All 64 replay images and simulation hashes match,
+including all recorded clock, latched-tick and remainder assertions.
+
+Separate ordinary-clock probes, with no image writes, give the following
+mean/p95/worst times in milliseconds. Each runs 64 frames with eight warmup
+frames. Elapsed-time differences can change subsequent animation states;
+the matched replay above compares the same busy state.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 41.419 / 76.516 / 89.934 | 41.427 / 76.503 / 89.512 |
+| Level 1, turning | 36.043 / 82.859 / 112.770 | 36.042 / 82.806 / 111.536 |
+| Level 6 | 44.801 / 62.844 / 64.207 | 44.793 / 62.792 / 64.062 |
+| Level 6, turning | 52.302 / 67.935 / 76.859 | 52.529 / 67.924 / 76.746 |
+
+The eight fixed-update release scenes retain all 512 images and simulation
+hashes. Level-1 turning barrels improve from 51.024/82.222/87.101 to
+50.967/80.860/86.389 ms mean/p95/worst. The unmodified 128-frame real-time
+start passes the 25.80 FPS gate at 26.22 FPS, with 38.14/38.65/77.95 ms
+mean/p95/worst, versus 26.21 FPS and 38.15/38.65/77.96 ms before. Large
+live burst spikes remain; these emulator results do not establish physical
+486 performance or completion of the overall consistency target.
+
+The actual 486 raster oracle expands repeated-band coverage from 18 to
+54 cases, adding transparent margins, separated opaque groups and changing
+unused outer mask words. It also passes the existing independent painter,
+coverage-history, packed-row/column and movement arithmetic cases. All
+512 diagnostic images/hashes match. Fresh compiler feedback completes
+23 training runs and 22 original native capture comparisons; all 22 fresh
+indexed comparisons also match. The 4-versus-16 MB model oracle preserves
+128 image/hash pairs with 32 KiB extra residency. Full 4 MB level-1/4/15
+and real-time level-4 SB16/mouse exercises pass with zero profile audio
+underruns. Windows Release builds. Package checks retain all 231 assets,
+238 archive entries and the existing map/active saved-level payload checks.
+
+Native text/data/BSS remain 1,189,912/22,016/260,096 bytes. Level-4
+sound/mouse checkpoints retain 144 KiB free after shared assets and 44 KiB
+after loading the level. The staged native EXE SHA-256 is
+`9e3280ad1e4526bea94503ab86a78357b4333fdd098c76801be1110fe9652d23`;
+the indexed EXE is unchanged at
+`8fc2876fc510ede5904adfa8d4a5f1488583a2076b504e04176803e5a954fb08`.
+EXE/archive staging preserves all 241 native and 238 indexed non-EXE
+game files, including settings and saves.
+
+Local evidence is in `build/dos/sprite12-performance.json`,
+`build/dos/sprite12-validation.json`, `build/dos/sprite12-staging.json`
+and `build/dos-sprite12-source/build/dos/pgo/model-check/report.json`.
+Private fixtures and clock/live comparisons remain under
+`build/dos-sprite12-trace/`.
