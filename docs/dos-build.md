@@ -2526,3 +2526,77 @@ Local evidence is in `build/dos/sprite5-performance.json`,
 `build/dos/sprite5-validation.json`, `build/dos/sprite5-staging.json` and
 `build/dos-sprite5-source/build/dos/pgo/model-check/report.json`.
 Diagnostic profiling remains under `build/dos-sprite5-trace/`.
+
+### Reject invalid billboard spills before sorting and draw preparation
+
+DOS now performs the existing bitmap spill admission check during object
+and shot selection, before sorting, vertical projection, shading and frame
+setup. Accepted entries reuse that result during drawing. The check uses
+the same cached dimensions, horizontal projection and signed-16-bit clamp
+as the final draw path. Polygon sprites and pick/debug rendering retain
+their original path. The change is `0e4ebad`.
+
+The native batching threshold still uses the original candidate count,
+projected area and polygon presence before this additional rejection.
+Dropping an invisible entry therefore does not change which batching
+algorithm the surviving entries use. The admission flag occupies existing
+object-entry padding; a compile-time check keeps each entry at 32 bytes.
+No persistent table or heap allocation is added. Axis-aligned segment and
+point-edge tests also return directly after their inclusive bounds prove
+intersection; other overlapping geometry retains the original wide math.
+
+The geometry oracle now covers 101,829 cases, including 62,500 additional
+large-coordinate horizontal/vertical combinations with reversed endpoints
+and degenerate segments. All pass against the original definitions, as do
+the separate 3,750 capsule boundary and signed-radius cases.
+
+Matched native release-engine measurements use normal/486_slow, 40,000
+fixed cycles, 4 MB, 320x240 RGB565, SB16/mouse and muted host sound. Both
+entry points retain 512 bytes of timing samples and capture only frame 23
+outside the timed update. Results cover fixed updates 8-63; turning holds
+the original right-turn input throughout the same 64 updates.
+
+| View | Previous mean/p95/worst ms | Updated mean/p95/worst ms |
+| --- | ---: | ---: |
+| Starting room | 38.573 / 38.630 / 38.630 | 38.484 / 38.540 / 38.541 |
+| Close enemies/barrel | 39.134 / 40.146 / 40.241 | 39.028 / 40.033 / 40.126 |
+| Pool surface | 63.902 / 64.820 / 65.039 | 63.722 / 64.642 / 64.863 |
+| Level-1 barrel burst | 53.221 / 87.474 / 88.431 | 51.963 / 82.704 / 88.221 |
+| Level-6 barrel burst | 49.762 / 68.603 / 68.967 | 49.096 / 67.451 / 67.811 |
+| Level-1 burst, turning | 54.706 / 92.843 / 99.320 | 53.570 / 88.339 / 98.802 |
+| Level-6 burst, turning | 63.188 / 85.058 / 87.956 | 62.799 / 83.862 / 86.761 |
+| Close enemies, turning | 39.635 / 48.369 / 48.465 | 39.555 / 48.257 / 48.354 |
+
+Level-1 stationary burst p95 falls by 5.5%; its first eight burst updates
+average 67.203 ms versus 70.644 ms. Turning burst p95 falls by 4.9%.
+The worst burst frames improve much less and still approach 99 ms.
+The unmodified 128-frame starting-room test passes the 25.80 FPS gate at
+26.18 FPS, 38.20 ms mean and 38.72 ms p95, versus 26.13 FPS, 38.27 ms and
+38.78 ms before. These remain emulator measurements; physical 486
+hardware is unmeasured and a general threefold improvement is not proven.
+
+All 512 release-engine framebuffers and simulation hashes match across
+the eight scenes. A separate 512-frame diagnostic comparison is also
+exact. The 32 KiB residency-stress oracle retains all 128 image/hash
+comparisons at 4 versus 16 MB on levels 1 and 6. Fresh compiler feedback
+completes 23 training runs and all 22 ordinary/optimized native captures;
+all 22 original native and 22 freshly rebuilt indexed references match.
+The real-time 4 MB level-4 SB16/mouse exercise and full level-1/4/15
+exercises pass with zero profile audio underruns. Windows Release builds.
+Both packages retain 231 original assets and 238 archive entries; map
+images and all six saved level/map payloads on levels 1 and 4 remain exact.
+
+Native text/data/BSS are 1,186,328/22,016/292,864 bytes: 1,536 more code
+bytes and unchanged persistent data. The level-4 sound/mouse check reports
+116 KiB free physical memory after shared assets, versus 120 KiB before,
+and 24 KiB after the level is loaded. The staged native EXE SHA-256 is
+`4aa706172e8c399e78d04d9d5e186639f22d13808f573fd3f2ad9de8df48802b`;
+the indexed EXE is
+`2b03b3b597bb424dcf1b1eb4419cfead03e13450df7f4b2c920c461b18289e8e`.
+Staging preserves all 241 native and 238 indexed non-EXE game files,
+including local settings and saves.
+
+Local evidence is in `build/dos/sprite6-performance.json`,
+`build/dos/sprite6-validation.json`, `build/dos/sprite6-staging.json` and
+`build/dos-sprite6-source/build/dos/pgo/model-check/report.json`.
+Diagnostic profiling remains under `build/dos-sprite6-trace/`.
