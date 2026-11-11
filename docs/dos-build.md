@@ -2797,10 +2797,57 @@ The 4 MB DOS raster oracle also passes 560 row cases, 768 column cases,
 draw comparisons. The latter exercise palette changes, every sampling key,
 reused row storage, eviction and pass reset.
 
-This source checkpoint has not refreshed the playable packages or compiler
-feedback build. The sprite8 executable hashes and package limitations above
-still describe the staged games. Fresh release timings and memory checks
-remain necessary before claiming an overall performance improvement.
-Local evidence is in `build/dos-sprite9-trace/diagnostic-validation.json`,
-`build/dos-sprite9-trace/replay-timings.json` and
+Matched release-engine timings use normal/486_slow, 40,000 fixed cycles,
+4 MB, 320x240 RGB565, SB16/mouse and muted host sound. Both entry points
+keep 512 bytes of timing samples and capture frame 23 outside the timed
+update. Results cover fixed updates 8-63; turning holds the original
+right-turn input throughout all 64 updates.
+
+| View | Previous mean/p95/worst ms | Updated mean/p95/worst ms |
+| --- | ---: | ---: |
+| Starting room | 38.500 / 38.556 / 38.557 | 38.486 / 38.542 / 38.543 |
+| Close enemies/barrel | 38.832 / 39.817 / 39.931 | 38.559 / 39.551 / 39.672 |
+| Pool surface | 63.689 / 64.612 / 64.833 | 63.650 / 64.571 / 64.792 |
+| Level-1 barrel burst | 51.304 / 81.576 / 86.782 | 50.672 / 76.640 / 79.324 |
+| Level-6 barrel burst | 48.842 / 66.722 / 70.212 | 48.598 / 65.699 / 69.556 |
+| Level-1 burst, turning | 53.066 / 90.313 / 96.710 | 52.357 / 82.579 / 90.544 |
+| Level-6 burst, turning | 62.500 / 83.096 / 85.662 | 62.130 / 82.206 / 84.607 |
+| Close enemies, turning | 39.493 / 48.069 / 48.229 | 39.404 / 47.892 / 48.059 |
+
+All eight means, p95s and maxima improve in this comparison. The level-1
+burst worst frame falls by 7.458 ms; while turning, its p95 falls by
+7.734 ms and worst time by 6.166 ms. The separate unmodified 128-frame
+starting-room test retains the 25.80 FPS gate at 26.20 FPS, 38.17 ms mean,
+38.68 ms p95 and 77.96 ms worst, versus 26.19 FPS, 38.19/38.70/77.97 ms
+before. Burst frames still approach 91 ms; general threefold improvement
+across these views and physical 486 performance remain unproven.
+
+All 512 complete release-engine framebuffers and simulation hashes match.
+The 32 KiB residency-stress oracle retains all 128 image/hash pairs between
+4 and 16 MB on levels 1 and 6. Fresh compiler feedback completes 23 training
+runs and all 22 ordinary/optimized native captures; all 22 original native
+references and 22 freshly rebuilt indexed references match. The real-time
+4 MB level-4 SB16/mouse exercise and full level-1/4/15 exercises pass with
+zero profile audio underruns. Windows Release builds. Both packages retain
+231 assets and 238 archive entries. Maps and all six saved level/map payloads
+on levels 1 and 4 retain the same active-byte comparisons described above.
+
+Native text/data/BSS are 1,187,352/22,016/292,864 bytes: 512 more code bytes
+and unchanged persistent data size. The level-4 sound/mouse check reports
+116 KiB free physical memory after shared assets and 32 KiB after loading
+the level, versus 116/16 KiB previously. The reserved stack accommodates
+the history without another heap buffer.
+
+The staged native EXE SHA-256 is
+`904953697e13ebda52a2f0622998644bb79e15bcd14090abbbe6d364652d4b79`;
+the freshly rebuilt indexed EXE remains
+`b19af1db3ac1570579d6c02d74bbb273df4c7858952582288d163154c28d023d`.
+Staging replaces only the EXE and distribution archive, preserving all
+241 native and 238 indexed non-EXE game files, including settings and saves.
+
+Local evidence is in `build/dos/sprite9-performance.json`,
+`build/dos/sprite9-validation.json`, `build/dos/sprite9-staging.json` and
+`build/dos-sprite9-source/build/dos/pgo/model-check/report.json`.
+Diagnostic and captured-kernel evidence remains under
+`build/dos-sprite9-trace/`; the raster oracle log is
 `build/dos-sprite9-source/build/dos-raster-regression/RASTER.LOG`.
