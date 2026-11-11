@@ -2023,3 +2023,68 @@ The native EXE SHA-256 is
 `994925f074121a5f52687b3b20303e948a9dc9126a551f55adb7dd2621f6c00c`.
 Local evidence is in `build/dos/water2-performance.json` and
 `build/dos/water2-validation.json`. Physical 486 hardware is unmeasured.
+
+### Keep native billboard run state in the decoder
+
+The native DOS row sampler now retains its transparent/opaque run state
+in separate assembly loops. It reads the source row into EDX once per
+unique row, and closes spans on cutouts or the final opaque sample. This
+removes the previous stack flag checks and repeated row-index loads from
+BitMapObj sampling. Source index zero, packed modes, clipping, bounds,
+opaque black, repeated rows and reverse-pass coverage keep their existing
+semantics. No heap allocation, palette bank or static data is added.
+
+The independent raster oracle now covers 308 row cases, including 20
+explicit run-boundary cases: all-transparent/all-opaque rows, alternating
+cutouts at the full 160-span capacity, odd/even widths, rejected rows,
+repeated rows, opaque black and RGB565 word one. The 768 column and 32
+reverse compositor cases and the other arithmetic/raster checks pass.
+Five matched source diagnostics cover the level-1 starting, enemy and
+pool views and barrel bursts on levels 1 and 6. All 320 simulation hashes
+and 325 complete images match. Production kernel changes are committed as
+`e119fc3` and `b79c997`; the expanded oracle is `e32b83f`.
+Both optimized releases also match all 128 simulation hashes and 130 complete
+images in the level-1/6 barrel-burst comparisons.
+
+Two related experiments were rejected. A paired-pixel palette and STOSL
+expansion made the enemy and burst views slower overall. Lowering the
+reverse-pass object cutoff from 16 to four slowed the enemy view; eight
+provided no useful burst gain. The existing cutoff and pixel-copy path
+are retained.
+
+The completed PGO releases were compared using the same diagnostic entry
+point and each release's unchanged optimized engine objects. Profiling and
+captures were disabled for timings; means cover frames 8-63 of 64 identical
+updates at normal/486_slow, fixed 40,000 cycles, 4 MB, 320x240 RGB565,
+SB16 and mouse, with host sound muted:
+
+| View | Previous release loop ms | Updated release loop ms |
+| --- | ---: | ---: |
+| Level-1 starting room | 38.731 | 38.638 |
+| Close barrel / approaching enemies | 38.652 | 37.668 |
+| Pool north shore | 64.774 | 64.470 |
+| Level-1 barrel burst | 58.307 | 57.369 |
+| Level-6 barrel burst | 52.190 | 51.484 |
+
+Enemy-view frame time falls 2.5%. Level-1 burst p95 improves from 112.942 to
+109.118 ms and its worst frame from 124.082 to 123.305 ms. Level-6 burst p95
+falls from 76.315 to 74.070 ms and its worst frame from 79.537 to 77.338 ms.
+The early level-1 burst remains expensive; this improves the decoder without
+claiming to eliminate that pause. The independent 128-frame real-time
+starting benchmark improves from 26.03 to 26.10 FPS, 38.42 to 38.32 ms per
+frame and 38.93 to 38.83 ms p95, passing the 25.80 FPS acceptance gate.
+
+All 22 ordinary and optimized native captures match the verified original
+start/turn references. The full 4 MB level-1/4/15 fixed exercises and real-time
+level-4 SB16/mouse exercise pass with zero profile audio underruns, including
+repeated quickloads, all five autosave slots, UI and weapon checks. Level-1/4
+maps and all six saved level/map payloads remain exact. Native text/data/BSS
+remain 1,184,280/22,016/291,840 bytes. The unchanged indexed package and both
+packages' 231 assets, 238 archive entries, generated defaults and absent
+diagnostic markers are verified. This change is inside the existing native
+DOS guard; modern and indexed rendering source is unchanged.
+
+The native EXE SHA-256 is
+`79b43201f73076bee1b487877f3e49a4530ad35a05f3d77325580793ec8c871c`.
+Local evidence is in `build/dos/sprite2-performance.json` and
+`build/dos/sprite2-validation.json`. Physical 486 hardware is unmeasured.
