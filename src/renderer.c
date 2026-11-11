@@ -13625,6 +13625,9 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
         int src;
         int idx;
         int16_t source_zone;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+        uint16_t estimated_width; /* Reuses the original alignment padding. */
+#endif
         int32_t z;  /* Amiga ObjDraw depthtable key: rotated Z word. */
         int16_t clip_left;
         int16_t clip_right;
@@ -13771,6 +13774,9 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             int spr_l = scr_x_est - sprite_w_est / 2;
             int spr_r = spr_l + sprite_w_est;
             if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+            objs[obj_count].estimated_width=(uint16_t)(sprite_w_est>320?320:sprite_w_est);
+#endif
         }
 
         objs[obj_count].src = DRAW_SRC_OBJECT;
@@ -13882,6 +13888,9 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                 int spr_l = scr_x_est - sprite_w_est / 2;
                 int spr_r = spr_l + sprite_w_est;
                 if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+                objs[obj_count].estimated_width=(uint16_t)(sprite_w_est>320?320:sprite_w_est);
+#endif
             }
             objs[obj_count].src = DRAW_SRC_SHOT;
             objs[obj_count].idx = slot + ((pool == 0) ? 0 : NASTY_SHOT_SLOT_COUNT);
@@ -13973,6 +13982,9 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                 int spr_l = scr_x_est - sprite_w_est / 2;
                 int spr_r = spr_l + sprite_w_est;
                 if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+                objs[obj_count].estimated_width=(uint16_t)(sprite_w_est>320?320:sprite_w_est);
+#endif
             }
 
             objs[obj_count].src = DRAW_SRC_EXPLOSION;
@@ -14019,7 +14031,36 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
     const int64_t explosion_sprite_scale_x = renderer_sprite_scale_x_fp16_for_state(r, state);
     if (ctx->profile_collect_stats)
         ctx->workload_stats.ticks_object_select += SDL_GetPerformanceCounter() - select_start;
-    for (int oi = 0; oi < obj_count; oi++) {
+    int reverse_billboards=0;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565) && !AB3D_CW_COL_MAJOR
+    /* Reversing an opaque billboard-only painter pass is exact when the
+     * first covered pixel wins. Polygon objects and picking retain their
+     * original draw traversal. Small lists avoid the mask setup cost. */
+    if(obj_count>=16 && r->width==320 && r->height==240 &&
+       !g_renderer_rgb_raster_expand && !g_debug_spill_visualize && !g_pick_capture_active &&
+       !renderer_active_pick_player() && !renderer_get_graphic_pick_target()) {
+        reverse_billboards=1;
+        unsigned estimated_area=0;
+        for(int i=0;i<obj_count;i++) {
+            const ObjEntry *e=&objs[i];const uint8_t *obj=NULL;
+            if(e->src==DRAW_SRC_OBJECT)obj=level->object_data+e->idx*OBJECT_SIZE;
+            else if(e->src==DRAW_SRC_SHOT) {
+                obj=e->idx<NASTY_SHOT_SLOT_COUNT
+                    ?level->nasty_shot_data+e->idx*OBJECT_SIZE
+                    :level->player_shot_data+(e->idx-NASTY_SHOT_SLOT_COUNT)*OBJECT_SIZE;
+            }
+            if(obj && obj[6]==(uint8_t)OBJ_3D_SPRITE){reverse_billboards=0;break;}
+            unsigned width=e->estimated_width;
+            estimated_area+=width*(width>240?240:width);
+        }
+        /* Sparse/distant particles have little overdraw to repay the mask.
+         * Width is already projected by the existing visibility rejection. */
+        if(estimated_area<320u*240u)reverse_billboards=0;
+        if(reverse_billboards)dos_raster_sprite_batch_begin(renderer_active_cw());
+    }
+#endif
+    for (int step = 0; step < obj_count; step++) {
+        int oi=reverse_billboards?obj_count-1-step:step;
         const ObjEntry *entry = &objs[oi];
         int entry_src = entry->src;
         int16_t draw_clip_left = entry->clip_left;
@@ -14430,6 +14471,9 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                                            billboard_view_right_z);
         }
     }
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565) && !AB3D_CW_COL_MAJOR
+    if(reverse_billboards)dos_raster_sprite_batch_end();
+#endif
 }
 
 static void draw_zone_objects_ctx(RenderSliceContext *ctx, GameState *state, int16_t zone_id,
