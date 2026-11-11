@@ -2962,9 +2962,63 @@ A real DOS startup test also rejects the old raw WaterFile.
 
 Diagnostic BSS falls from 292,352 to 259,584 bytes, exactly 32 KiB. Its
 pool mean is essentially unchanged at 63.712 versus 63.728 ms; this change
-targets memory headroom rather than removing another rendering stage.
-Fresh compiler-feedback release validation and package staging are pending.
-The playable packages still contain the preceding water-colour release.
-Local byte/phase, startup-rejection and diagnostic evidence is under
+targets memory headroom. The rebuilt compiler-feedback release uses
+normal/486_slow, 40,000 fixed cycles, 4 MB, 320x240 RGB565, SB16/mouse and
+muted host sound. Both benchmark entry points keep 512 bytes of timing
+samples and capture frame 23 outside the timed update. Results cover fixed
+updates 8-63; turning holds the original right-turn input for all 64 updates.
+
+| View | Previous mean/p95/worst ms | Updated mean/p95/worst ms |
+| --- | ---: | ---: |
+| Starting room | 38.479 / 38.535 / 38.536 | 38.482 / 38.538 / 38.547 |
+| Close enemies/barrel | 38.553 / 39.545 / 39.661 | 38.543 / 39.527 / 39.656 |
+| Pool surface | 60.504 / 61.802 / 61.919 | 60.557 / 61.834 / 61.949 |
+| Level-1 barrel burst | 50.667 / 76.639 / 79.318 | 50.667 / 76.667 / 79.322 |
+| Level-6 barrel burst | 48.554 / 65.689 / 66.340 | 48.585 / 65.709 / 69.858 |
+| Level-1 burst, turning | 52.353 / 82.574 / 90.851 | 52.358 / 83.516 / 91.712 |
+| Level-6 burst, turning | 62.119 / 82.196 / 84.599 | 62.115 / 81.626 / 84.271 |
+| Close enemies, turning | 39.398 / 47.888 / 48.052 | 39.398 / 47.878 / 48.043 |
+
+Means change by at most 0.053 ms, but stationary level-6 worst time rises
+by 3.518 ms and turning level-1 p95/worst by 0.942/0.861 ms. Four matched
+sound-off burst comparisons differ by at most 0.024 ms in worst time;
+all four frame-23 images remain exact. This points toward sound-enabled
+execution for the larger changes, without establishing the underlying
+operation. Audio/backend pacing still needs investigation.
+
+The unmodified 128-frame starting-room test retains the 25.80 FPS gate at
+26.20 FPS, 38.17 ms mean, 38.68 ms p95 and 77.96 ms worst, versus 26.21 FPS,
+38.16/38.67/77.96 ms before. Heavy bursts still approach 92 ms; physical
+486 performance and a general threefold gain across these views remain
+unproven.
+
+All 512 complete release-engine images and simulation hashes match.
+The 32 KiB residency-stress oracle retains all 128 image/hash pairs at
+4 versus 16 MB on levels 1 and 6. Fresh compiler feedback completes 23
+training runs and all 22 ordinary/optimized native captures. All 22
+original native and 22 freshly rebuilt indexed references match. Full
+4 MB level-1/4/15 and real-time level-4 SB16/mouse exercises pass with zero
+profile audio underruns. Windows Release builds. Both packages retain
+231 assets and 238 archive entries. The 14 native sprite transports and
+other 216 assets remain exact; the WaterFile permutation preserves all
+source bytes. Maps and all six saved level/map payloads on levels 1 and 4
+retain the active-byte comparisons described above.
+
+Native text/data/BSS are 1,186,840/22,016/260,096 bytes: 512 more code bytes,
+unchanged data and 32,768 fewer BSS bytes. The level-4 sound/mouse check
+reports 148 KiB free physical memory after shared assets and 48 KiB after
+loading the level, versus 116/16 KiB before. Both checkpoints gain 32 KiB.
+
+The staged native EXE SHA-256 is
+`fcd90668f75344621e17dc9d5d96e33d3b1c591c9160327010a290b9e684b633`;
+the indexed EXE is
+`be3ef90c196d58b6be5abe786471964dd78b733b6e49142d36579fd7949f9a10`.
+Staging replaces each EXE/archive and `DATA/A000027.BIN` together, preserving
+the other 240 native and 237 indexed non-EXE files, including settings/saves.
+
+Local evidence is in `build/dos/phase1-performance.json`,
+`build/dos/phase1-validation.json`, `build/dos/phase1-staging.json` and
+`build/dos-phase1-source/build/dos/pgo/model-check/report.json`.
+Byte/phase, startup-rejection, sound-off and diagnostic evidence is under
 `build/dos-phase1-trace/`; the raster log is
 `build/dos-phase1-source/build/dos-raster-regression/RASTER.LOG`.
