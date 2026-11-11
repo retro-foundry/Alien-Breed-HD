@@ -93,7 +93,23 @@ int main(void)
         }
         check_case(p);
     }
+    static const int32_t deltas[]={-32768,-32767,0,1,32767};
+    static const int32_t offsets[]={-32768,-1,0,1,32767};
+    static const int32_t radii[]={INT32_MIN,-1,0,1,32767,INT32_MAX};
+    unsigned radius_checked=0;
+    for(unsigned x=0;x<5;x++)for(unsigned z=0;z<5;z++)
+    for(unsigned ox=0;ox<5;ox++)for(unsigned oz=0;oz<5;oz++)
+    for(unsigned r=0;r<6;r++) {
+        /* (-32768,-32768) has squared length 2^31. Include its neighbours,
+         * zero length and radii whose inflated bounds exceed signed 32 bits. */
+        int32_t x1=-32768,z1=32767,x2=x1+deltas[x],z2=z1+deltas[z];
+        int32_t px=x1+deltas[x]/2+offsets[ox],pz=z1+deltas[z]/2+offsets[oz];
+        assert(renderer_point_within_segment_radius_i32(px,pz,x1,z1,x2,z2,radii[r])==
+               reference_radius(px,pz,x1,z1,x2,z2,radii[r]));
+        radius_checked++;
+    }
     printf("PASS: %u geometry cases retain intersections, endpoint order, collinearity, point ownership and capsule admission\n",checked);
+    printf("PASS: %u capsule cases retain squared-length boundaries and signed radius extremes\n",radius_checked);
     puts("DOS geometry regression passed");
     return 0;
 }
