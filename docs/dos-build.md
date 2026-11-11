@@ -2673,3 +2673,93 @@ Local evidence is in `build/dos/sprite7-performance.json`,
 `build/dos/sprite7-validation.json`, `build/dos/sprite7-staging.json` and
 `build/dos-sprite7-source/build/dos/pgo/model-check/report.json`.
 Diagnostic profiling remains under `build/dos-sprite7-trace/`.
+
+### Transport packed sprite words in native byte order
+
+`c845469` moves sprite word byte swapping into `tools/dos_sprite.py` and
+the DOS packaging step. All 14 WADs retain their original packing of three
+five-bit pixels per word, PTR offsets and 240,344 payload bytes. Each transported
+file adds an eight-byte `ABS1` version/length header, for 112 extra disk
+bytes across the package. DOS validates and consumes that header before
+allocating the original payload size. Old raw WADs fail with a specific
+error instead of silently using the wrong byte order. Use the matching
+EXE and DATA files from the updated package together.
+
+`sprite_format.h` centralizes native DOS word reads/writes while keeping
+desktop assets in Amiga order. The readers cover general billboard paths,
+keys, weapon caches, RGBA extraction and `io_sprite_clear_texel` fixups.
+The native row and column assembly samplers no longer rotate each word's
+bytes. RGB565 and indexed packages use the same prepared sprite format;
+palette derivation still reads original source bytes before conversion.
+
+The source audit verifies every one of the 120,172 original words and
+all referenced word alignments. The other 217 asset payloads remain exact.
+The raster oracle also loads all 65,536 word values through the actual
+preparer and checks native unaligned reads/writes and invalid headers.
+Packed row/column, reverse-batch and repeated-band cases pass with the
+native transport ABI, including malformed PTR views and guards. The test
+runner now captures assertion diagnostics and checks DOS exit status.
+An actual DOS startup test rejects an old raw gun WAD with exit status 1.
+
+Matched release-engine timings use normal/486_slow, 40,000 fixed cycles,
+4 MB, 320x240 RGB565, SB16/mouse and muted host sound. Each entry point
+keeps 512 bytes of timing samples and captures frame 23 outside the timed
+update. Results cover fixed updates 8-63; turning holds the original
+right-turn input throughout the 64 updates.
+
+| View | Previous mean/p95/worst ms | Updated mean/p95/worst ms |
+| --- | ---: | ---: |
+| Starting room | 38.511 / 38.567 / 38.568 | 38.500 / 38.556 / 38.557 |
+| Close enemies/barrel | 39.026 / 40.031 / 40.126 | 38.832 / 39.817 / 39.931 |
+| Pool surface | 63.760 / 64.683 / 64.902 | 63.689 / 64.612 / 64.833 |
+| Level-1 barrel burst | 51.518 / 81.999 / 87.451 | 51.304 / 81.576 / 86.782 |
+| Level-6 barrel burst | 48.950 / 67.259 / 67.619 | 48.842 / 66.722 / 70.212 |
+| Level-1 burst, turning | 53.192 / 87.673 / 98.018 | 53.066 / 90.313 / 96.710 |
+| Level-6 burst, turning | 62.604 / 83.640 / 86.541 | 62.500 / 83.096 / 85.662 |
+| Close enemies, turning | 39.553 / 48.253 / 48.351 | 39.493 / 48.071 / 48.229 |
+
+Means improve across these views, but stationary level-6 worst time rises
+by 2.593 ms and turning level-1 p95 rises by 2.640 ms. A separate matched
+sound-off diagnostic improves p95 and worst time in all four burst views:
+worst frames change from 81.186/63.051/92.360/78.996 ms to
+80.871/62.477/91.892/78.417 ms respectively. This suggests audio-related
+pacing needs further investigation; it does not establish the cause of
+the SB16 regressions. The unmodified 128-frame starting-room test passes
+the 25.80 FPS gate at 26.19 FPS, 38.19 ms mean and 38.70 ms p95, versus
+26.15 FPS, 38.23 ms and 38.74 ms before. Physical hardware is unmeasured.
+
+All 512 release-engine framebuffers and simulation hashes match, as do
+all 512 diagnostic comparisons. All 128 residency-stress image/hash pairs
+at 4 versus 16 MB match on levels 1 and 6. Fresh compiler feedback completes
+23 training runs and 22 ordinary/optimized captures; all 22 original native
+and 22 fresh indexed references remain exact. Full 4 MB level-1/4/15 and
+real-time level-4 SB16/mouse exercises pass with zero profile underruns.
+Windows Release builds. Both packages retain 231 assets and 238 archive
+entries. Map images and compared saved level/map chunks match for all six
+saves on levels 1 and 4, excluding only unused bytes after negative door
+and lift table terminators. Active table records and terminator words
+remain exact; `level.c` initializes only the sentinel word in those tails.
+
+Native text/data/BSS are 1,186,840/22,016/292,864 bytes: 512 more code bytes,
+with unchanged persistent data. Shared-assets free physical memory remains
+116 KiB; the level-4 loaded checkpoint reports 16 KiB versus 24 KiB before,
+despite identical resident sprite payload sizes. This lower headroom and
+the mixed burst pacing remain limitations of this release.
+
+The staged native EXE SHA-256 is
+`d03ce3c74ed8b73b07fd57665f90f5090f42be13881c3b07ab3f2342fe75b5fe`;
+the indexed EXE is
+`b19af1db3ac1570579d6c02d74bbb273df4c7858952582288d163154c28d023d`.
+Staging refreshes the 14 prepared sprites with each executable and preserves
+the other 227 native and 224 indexed non-EXE files, including settings and saves.
+
+Detailed diagnostic profiling still places about 25 ms in sprite copying
+and coverage work at the burst peak, versus about 3 ms in sample decoding.
+The small byte-order gain does not resolve the remaining burst stutter or
+prove a general threefold improvement.
+
+Local evidence is in `build/dos/sprite8-performance.json`,
+`build/dos/sprite8-validation.json`, `build/dos/sprite8-staging.json` and
+`build/dos-sprite8-source/build/dos/pgo/model-check/report.json`.
+Source-word, invalid-package, sound-off and diagnostic evidence remains
+under `build/dos-sprite8-trace/`.
