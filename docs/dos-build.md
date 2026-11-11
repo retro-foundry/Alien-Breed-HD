@@ -2310,3 +2310,27 @@ Local evidence is in `build/dos/move-performance.json`,
 `build/dos/move-validation.json` and the isolated build's
 `build/dos/pgo/model-check/report.json`. Further burst-cost investigation
 remains active; physical 486 hardware is unmeasured.
+
+### Reuse an exact single-span billboard spill clip
+
+Spill drawing first narrows the billboard to the destination room geometry.
+When that produces one range, DOS now passes the resulting exact bounds
+through to the rasterizer without walking the same geometry again. Multiple
+ranges retain their original per-span mask, and spill wall-depth clipping
+remains enabled. This adds no persistent table or heap allocation.
+
+Matched diagnostics retain the existing release engine objects and rebuild
+both baseline and candidate renderers with the same unprofiled options.
+At normal/486_slow, 40,000 cycles, 4 MB, native 320x240 and SB16/mouse,
+the level-1 barrel burst changes from 56.996/95.623/99.716 ms mean/p95/worst
+to 56.781/94.534/98.826 ms across fixed updates 8-63. The ordinary close
+view and level-6 burst are effectively unchanged. These are diagnostic
+results, not measurements of a newly trained PGO release or physical hardware.
+
+All 320 complete RGB565 framebuffers and simulation hashes match between
+the diagnostic builds: 64 updates each in the level-1 starting, close-enemy
+and water views, plus barrel bursts on levels 1 and 6. Every run reports
+zero audio underruns. Local evidence is in
+`build/dos-sprite3-trace/narrow-validation.json` and the corresponding
+`renderer-base`/`narrow` scene directories. The model scene fixture also
+includes the headers declaring its level and barrel APIs.

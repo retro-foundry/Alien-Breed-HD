@@ -11976,8 +11976,9 @@ static int renderer_spill_draw_still_valid(const GameState *state,
 
 /* Narrow spill draw clip bounds to the envelope of screen columns where the
  * billboard lateral segment overlaps the destination zone polygon. The exact
- * per-span mask is applied later in renderer_draw_sprite_ctx. */
-static void renderer_spill_narrow_clip_to_zone_geometry(
+ * per-span mask is applied later in renderer_draw_sprite_ctx. Return the
+ * number of surviving ranges so a single exact span need not be clipped twice. */
+static int renderer_spill_narrow_clip_to_zone_geometry(
     const LevelState *level,
     int16_t draw_zone,
     int32_t billboard_world_x,
@@ -12001,9 +12002,9 @@ static void renderer_spill_narrow_clip_to_zone_geometry(
     int geom_left, geom_right;
 
     if (!level || !io_clip_left || !io_clip_right || sprite_w <= 0)
-        return;
+        return 0;
     if (*io_clip_left >= *io_clip_right)
-        return;
+        return 0;
 
     half_w = billboard_world_w / 2;
     if (half_w < 1) half_w = 1;
@@ -12031,7 +12032,7 @@ static void renderer_spill_narrow_clip_to_zone_geometry(
     if (clip_dx_end > (int)sprite_w) clip_dx_end = (int)sprite_w;
     if (clip_dx_end <= clip_dx_start) {
         *io_clip_right = *io_clip_left;
-        return;
+        return 0;
     }
 
     geom_span_count = renderer_zone_clip_segment_to_dx_ranges(level,
@@ -12047,7 +12048,7 @@ static void renderer_spill_narrow_clip_to_zone_geometry(
                                                                RENDERER_GEOM_CLIP_MAX_SPANS);
     if (geom_span_count <= 0) {
         *io_clip_right = *io_clip_left;
-        return;
+        return 0;
     }
 
     geom_left = span_starts[0] + spr_l;
@@ -12057,6 +12058,7 @@ static void renderer_spill_narrow_clip_to_zone_geometry(
         *io_clip_left = (int16_t)geom_left;
     if ((int16_t)geom_right < *io_clip_right)
         *io_clip_right = (int16_t)geom_right;
+    return geom_span_count;
 }
 
 static int renderer_lookup_zone_prepass_clip_span(const RenderSliceContext *ctx,
@@ -14170,6 +14172,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             size_t obj_pal_size = r->sprite_pal_size[expl_vect];
             int32_t expl_world_w = expl_w * EXPLOSION_SIZE_CORRECTION;
             const int entry_is_spill = !level_same_draw_room(level, entry->source_zone, zone_id);
+            const LevelState *raster_clip_level = level;
             if (expl_world_w < 1) expl_world_w = 1;
             scr_x = renderer_sprite_param_i16(scr_x);
             scr_y = renderer_sprite_param_i16(scr_y);
@@ -14190,7 +14193,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                                                      sprite_w)) {
                     continue;
                 }
-                renderer_spill_narrow_clip_to_zone_geometry(
+                int narrowed_spans = renderer_spill_narrow_clip_to_zone_geometry(
                     level, zone_id,
                     (int32_t)state->explosions[ei].x,
                     (int32_t)state->explosions[ei].z,
@@ -14199,6 +14202,11 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                     billboard_view_right_z,
                     sprite_w, scr_x,
                     &draw_clip_left, &draw_clip_right);
+#ifdef AB3D_DOS
+                if (narrowed_spans == 1) raster_clip_level = NULL;
+#else
+                (void)narrowed_spans;
+#endif
                 if (draw_clip_left >= draw_clip_right) continue;
             }
             {
@@ -14228,7 +14236,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                                                entry->zone_top_world, entry->zone_bot_world,
                                                clip_top_y, clip_bot_y,
                                                entry_is_spill,
-                                               level,
+                                               raster_clip_level,
                                                zone_id,
                                                (int32_t)state->explosions[ei].x,
                                                (int32_t)state->explosions[ei].z,
@@ -14443,6 +14451,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             int32_t billboard_world_x = 0;
             int32_t billboard_world_z = 0;
             const int entry_is_spill = !level_same_draw_room(level, entry->source_zone, zone_id);
+            const LevelState *raster_clip_level = level;
 
             if (orp_z_int > 32767) orp_z_int = 32767;
             scr_x = renderer_sprite_param_i16(scr_x);
@@ -14471,7 +14480,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                                                      sprite_w)) {
                     continue;
                 }
-                renderer_spill_narrow_clip_to_zone_geometry(
+                int narrowed_spans = renderer_spill_narrow_clip_to_zone_geometry(
                     level, zone_id,
                     billboard_world_x,
                     billboard_world_z,
@@ -14480,6 +14489,13 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                     billboard_view_right_z,
                     sprite_w, scr_x,
                     &draw_clip_left, &draw_clip_right);
+#ifdef AB3D_DOS
+                /* Narrowing already applied the complete mask for one span.
+                 * Keep spill wall-depth clipping while avoiding a second walk. */
+                if (narrowed_spans == 1) raster_clip_level = NULL;
+#else
+                (void)narrowed_spans;
+#endif
                 if (draw_clip_left >= draw_clip_right) continue;
             }
 
@@ -14504,7 +14520,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                                            entry->zone_top_world, entry->zone_bot_world,
                                            clip_top_y, clip_bot_y,
                                            entry_is_spill,
-                                           level,
+                                           raster_clip_level,
                                            zone_id,
                                            billboard_world_x,
                                            billboard_world_z,
