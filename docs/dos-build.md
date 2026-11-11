@@ -2170,9 +2170,10 @@ movement have not been changed here.
 
 ### Reject movement non-hits before room and height work
 
-This candidate is retained on `codex/dos-move`. It has not been merged into
-`main` or staged over the playable packages because an optimized explosion
-capture still differs, as described below.
+The movement changes and polygon scratch fix are validated together. The
+former explosion-image discrepancy was traced to failed
+polygon scratch allocations in the earlier release-object diagnostic at
+4 MB, as described below.
 
 The movement profile identifies wall checks as the largest part of the
 projectile/debris update cost. The port now defers destination-room lookup
@@ -2212,18 +2213,100 @@ exercises, and level-4 real-time SB16/mouse exercise. Windows Release,
 the indexed build's 22 reference captures, package assets, and saved
 level/map payload checks pass.
 
-Matched optimized-object timings at normal/486_slow, fixed 40,000 cycles,
-4 MB, 320x240 RGB565, SB16/mouse and muted host sound reduce the level-1
-barrel-burst mean/p95/worst loop time from 54.932/97.012/101.565 ms to
-53.333/94.486/98.978 ms. Level-6 burst mean falls from 51.445 to 50.372 ms.
-These are candidate measurements, not a completed release validation.
+The initial optimized-object timing fixture carried extra profiling arrays.
+Its level-1 barrel mean improved from 54.932 to 53.333 ms, but its memory
+pressure allowed the compared builds to drop different polygon draws.
+The final measurements below use a smaller timing entry point and include
+the polygon scratch fix; the initial figures are not release-speed claims.
 
-The optimized level-1 burst comparison fails at `EN23.BMP`: 63 pixels
-differ within x=79..139, y=101..116. All 64 simulation hashes and complete
+The initial optimized level-1 burst comparison differed at `EN23.BMP`: 63
+pixels within x=79..139, y=101..116. All 64 simulation hashes and complete
 mutable-state snapshots match, as do the captured previous/current object
-points and nonpointer game state. Relinking both sets of engine objects
-with the same unprofiled renderer produces identical images matching the
-previous release. This implicates optimized renderer code generation but
-does not establish its cause. The candidate remains unmerged until that
-image discrepancy is resolved; source parity alone does not clear it.
-Local diagnostic evidence is retained under `build/dos-move-trace/`.
+points and nonpointer game state. Precision changes and unprofiled relinks
+changed the image, but these experiments also changed the memory layout.
+Direct probes in the unchanged release binaries show that billboard draws
+match, and the first divergent pixels come from a polygon object between
+two billboard passes. Renderer state, wall-depth spans, object records,
+rotated points, texture/palette bytes and model data all match.
+
+### Keep DOS polygon scratch on the reserved stack
+
+The direct allocation-return probe establishes the cause: the earlier
+release-object diagnostic at 4 MB returns NULL for both 3,840-byte
+PolygonObj scratch allocations in the disputed frame. It silently skips those models and
+retries allocation for each object. The movement candidate successfully
+allocates the scratch once and draws the models. Running the earlier
+executable at 16 MB produces exactly the candidate's disputed image.
+The reference for this case is the larger-memory run, where the authored
+models are present; a missing model cannot be an image-parity requirement.
+The diagnostic adds profiling storage and its failure does not establish
+that the shipped executable drops these models in the same scene.
+
+DOS now uses a bounded local PolyThreadContext on its already reserved
+128 KiB stack. The original rotobj/convtoscr loops initialize all fields
+used by the model's validated point indices. This needs no additional
+persistent table or heap allocation and avoids the TLS lookup, silent
+failure and repeated allocation attempts during drawing. Other platforms
+retain their existing per-thread context. The change is `df80b72`.
+
+`tools/check_dos_models.py` relinks only a scene entry point against the
+actual release engine objects. It detonates authored barrels on levels
+1 and 6 through object_handle_barrel, runs 64 fixed updates per scene with
+SB16/mouse and 32 KiB of extra static residency, and compares every complete
+native RGB565 framebuffer and simulation hash at 4 and 16 MB. Frames are
+written directly as complete 320x240 native buffers, avoiding BMP
+conversion overhead during the audio exercise. This exercises late scratch
+allocation under memory pressure. It is an image/memory oracle, not a
+timing benchmark.
+Local allocation, primitive and memory evidence remains under
+`build/dos-move-trace/`; probes are absent from the playable executable.
+
+The permanent oracle reproduces the earlier engine's level-1 frame-23
+failure and passes all 128 simulation hashes and complete framebuffers
+on levels 1 and 6 with the fix. It is committed as `d1b2cca` and can be run
+after a native PGO build:
+
+```powershell
+python tools/check_dos_models.py --build-dir build/dos/pgo --dosbox <dosbox.exe>
+```
+
+Matched release-object timings use normal/486_slow, fixed 40,000 cycles,
+4 MB, 320x240 RGB565, SB16/mouse and muted host sound. The smaller entry
+point holds 512 bytes of timing samples, captures only frame 23 outside
+the timed update, and has no residency stress or detailed profiling.
+That frame matches byte for byte between the timed builds. Results cover
+frames 8-63 of 64 identical fixed updates:
+
+| View | Previous mean/p95/worst ms | Updated mean/p95/worst ms |
+| --- | ---: | ---: |
+| Level-1 barrel burst | 55.120 / 97.354 / 102.317 | 55.470 / 94.657 / 99.481 |
+| Level-6 barrel burst | 51.492 / 74.053 / 77.216 | 50.879 / 71.413 / 73.673 |
+
+Level-1 early burst frames 8-15 improve from 80.086 to 74.924 ms. Its
+overall mean rises by 0.350 ms while p95/worst improve by about 2.8%.
+Level-6 early burst mean improves from 73.444 to 71.217 ms. These results
+support steadier burst updates, rather than a broad average-FPS increase.
+The separate unmodified 128-frame starting-room benchmark passes the
+25.80 FPS gate at 26.09 FPS, 38.33 ms mean and 38.84 ms p95, versus
+26.10 FPS, 38.32 ms and 38.83 ms before this change.
+
+The fresh native build completes all 23 compiler-feedback training runs,
+retains all 22 ordinary/optimized and original-reference captures, and
+passes the 4 MB level-1/4/15 exercises and real-time level-4 SB16/mouse
+exercise with zero profile audio underruns. All 22 indexed references,
+Windows Release, package assets and level/map save payload checks pass.
+The movement arithmetic/feedback checks above also pass.
+
+Native text/data/BSS are 1,182,232/22,016/292,864 bytes: total static
+storage is 1 KiB smaller than the previous release. The shared-assets
+checkpoint still reports 120 KiB free physical memory. The native EXE
+SHA-256 is `7207a8b0eeeb01648b0733367e10abeeba11ac7bf9696a6b757c8b0098c7fbb9`;
+the indexed EXE is
+`c240b01e8cd950083630c3e946a517a721cd3fc10afc3369367a5e2120148b09`.
+Both archives retain 231 prepared assets and 238 entries. Existing local
+settings and saved games are preserved when staging.
+
+Local evidence is in `build/dos/move-performance.json`,
+`build/dos/move-validation.json` and the isolated build's
+`build/dos/pgo/model-check/report.json`. Further burst-cost investigation
+remains active; physical 486 hardware is unmeasured.
