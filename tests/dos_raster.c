@@ -202,7 +202,33 @@ static void check_sprite_rows(void)
         assert(!memcmp(actual,expected,sizeof(actual)));
         checked++;
     }
-    printf("PASS: %u sprite row rasters preserve packed modes, clipping origins, repeated rows, black/transparent texels, bounds and guards\n",checked);
+    /* Exercise both run states at their first/last pixel and the full
+     * 160-span capacity. Texel zero alone is transparent, even with a
+     * black palette; repeated and rejected rows must reset run state. */
+    static uint8_t run_ptr[320*4],run_wad[320*2+2];
+    static const unsigned run_widths[]={1,2,3,319,320};
+    rows[0]=rows[2]=rows[3]=0;rows[1]=-1;
+    for(unsigned pattern=0;pattern<4;pattern++)for(unsigned w=0;w<5;w++) {
+        unsigned width=run_widths[w],pitch=width+4,drawn=0;
+        palette[31]=(RendererPixel)(w&1?0:1);
+        for(unsigned i=0;i<sizeof(actual)/sizeof(*actual);i++)actual[i]=expected[i]=0xa55a;
+        for(unsigned x=0;x<320;x++) {
+            unsigned offset=2+x*2;
+            run_ptr[x*4]=run_ptr[x*4+1]=0;
+            run_ptr[x*4+2]=(uint8_t)(offset>>8);run_ptr[x*4+3]=(uint8_t)offset;
+            int opaque=pattern==1 || (pattern>=2 && (x&1)==pattern-2);
+            run_wad[offset]=0;run_wad[offset+1]=(uint8_t)(opaque?31:0);
+            if(x<width && opaque)for(unsigned y=0;y<4;y++)if(rows[y]>=0) {
+                expected[(y+1)*pitch+x+2]=palette[31];drawn++;
+            }
+        }
+        DosSpriteRows sprite={run_wad,run_ptr,sizeof(run_wad),sizeof(run_ptr),palette,rows,
+                              0,0,65536u,320,0};
+        DosSpriteCoverage got=dos_raster_sprite_rows(actual+pitch+2,width,4,pitch,&sprite);
+        assert(got.visible==width*4 && got.drawn==drawn);
+        assert(!memcmp(actual,expected,sizeof(actual)));checked++;
+    }
+    printf("PASS: %u sprite row rasters preserve packed modes, clipping origins, repeated rows, black/transparent texels, run boundaries/capacity, bounds and guards\n",checked);
 }
 
 static void check_sprite_batches(void)
