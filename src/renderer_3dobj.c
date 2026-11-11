@@ -494,8 +494,16 @@ void draw_3d_vector_object(const uint8_t *obj, const ObjRotatedPoint *orp, GameS
     int frame_byte_off = (int)vo->frame_off[frame_num];
     if (frame_byte_off + vo->num_points * 6 > (int)vo->size) return;
     const uint8_t *pts = vo->data + frame_byte_off;
+#ifdef AB3D_DOS
+    /* DOS draws synchronously on an already reserved stack. rotobj and
+     * convtoscr initialize every used vertex below; no heap/TLS allocation
+     * may silently drop PolygonObj or be retried for each visible model. */
+    PolyThreadContext scratch;
+    PolyThreadContext *thread_ctx = &scratch;
+#else
     PolyThreadContext *thread_ctx = poly_thread_context_get();
     if (!thread_ctx) return;
+#endif
     BoxRot *boxrot = thread_ctx->boxrot;
     int16_t *boxbrights = thread_ctx->boxbrights;
     ObjVertex *world = thread_ctx->world;
