@@ -30,6 +30,7 @@
 #include "renderer.h"
 #include "renderer_limits.h"
 #include "renderer_fixed.h"
+#include "sprite_format.h"
 #ifdef AB3D_DOS
 #include "platform_dos.h"
 #include "raster_dos.h"
@@ -1453,7 +1454,7 @@ static AB3D_ATTR_UNUSED uint16_t automap_key_frame_representative_c12(const Rend
         for (int r0 = 0; r0 < rows; r0++) {
             int row_idx = (int)down_strip + r0;
             if (wad_off + (size_t)(row_idx + 1) * 2u > wad_size) continue;
-            uint16_t w = (uint16_t)((src[row_idx * 2u] << 8) | src[row_idx * 2u + 1u]);
+            uint16_t w = sprite_word_read(src+row_idx*2u);
             uint8_t texel;
             if (mode == 0) texel = (uint8_t)(w & 0x1Fu);
             else if (mode == 1) texel = (uint8_t)((w >> 5) & 0x1Fu);
@@ -1969,7 +1970,7 @@ int renderer_key_sprite_rasterize_frame_argb(int frame_index, uint32_t *out, int
                 *dst = 0;
                 continue;
             }
-            uint16_t w = (uint16_t)((src[row_idx * 2u] << 8) | src[row_idx * 2u + 1u]);
+            uint16_t w = sprite_word_read(src+row_idx*2u);
             uint8_t texel;
             if (mode == 0) texel = (uint8_t)(w & 0x1Fu);
             else if (mode == 1) texel = (uint8_t)((w >> 5) & 0x1Fu);
@@ -10462,7 +10463,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
 #endif
                 if (decode_column) for (int rr = 0; rr < decode_rows; rr++) {
                     const int src_byte = rr << 1;
-                    const uint16_t w = (uint16_t)((src_base[src_byte] << 8) | src_base[src_byte + 1]);
+                    const uint16_t w = sprite_word_read(src_base+src_byte);
                     col_texel_lut[rr] = (uint8_t)((w >> texel_shift) & 0x1F);
                 }
                 use_col_texel_lut = 1;
@@ -10610,7 +10611,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                             for (int screen_row = col_top; screen_row <= col_bot; screen_row++) {
                                 const int src_row = *row_src_ptr++;
                                 const int src_byte = src_row << 1;
-                                const uint16_t w = (uint16_t)((src_base[src_byte] << 8) | src_base[src_byte + 1]);
+                                const uint16_t w = sprite_word_read(src_base+src_byte);
                                 const uint8_t texel = (uint8_t)((w >> texel_shift) & 0x1F);
                                 if (texel != 0) {
                                     if (profile_collect_stats) sprite_opaque_writes_total++;
@@ -10645,7 +10646,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                 const int src_row = *row_src_ptr++;
                                 if (src_row <= max_src_row_col) {
                                     const int src_byte = src_row << 1;
-                                    const uint16_t w = (uint16_t)((src_base[src_byte] << 8) | src_base[src_byte + 1]);
+                                    const uint16_t w = sprite_word_read(src_base+src_byte);
                                     const uint8_t texel = (uint8_t)((w >> texel_shift) & 0x1F);
                                     if (texel != 0) {
                                         if (profile_collect_stats) sprite_opaque_writes_total++;
@@ -10666,7 +10667,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                         if (have_pick) pick_player[pix] = pick_player_id;
                         if (!need_src_row_bounds || src_row <= max_src_row_col) {
                             const int src_byte = src_row << 1;
-                            const uint16_t w = (uint16_t)((src_base[src_byte] << 8) | src_base[src_byte + 1]);
+                            const uint16_t w = sprite_word_read(src_base+src_byte);
                             const uint8_t texel = (uint8_t)((w >> texel_shift) & 0x1F);
                             if (texel != 0) {
                                 if (profile_collect_stats) sprite_opaque_writes_total++;
@@ -10732,7 +10733,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                             for (int screen_row = col_top; screen_row <= col_bot; screen_row++) {
                                 const int src_row = *row_src_ptr++;
                                 const int src_byte = src_row << 1;
-                                const uint16_t w = (uint16_t)((src_base[src_byte] << 8) | src_base[src_byte + 1]);
+                                const uint16_t w = sprite_word_read(src_base+src_byte);
                                 const uint8_t texel = (uint8_t)((w >> texel_shift) & 0x1F);
                                 if (texel != 0) {
                                     if (profile_collect_stats) sprite_opaque_writes_total++;
@@ -10765,7 +10766,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                 const int src_row = *row_src_ptr++;
                                 if (src_row <= max_src_row_col) {
                                     const int src_byte = src_row << 1;
-                                    const uint16_t w = (uint16_t)((src_base[src_byte] << 8) | src_base[src_byte + 1]);
+                                    const uint16_t w = sprite_word_read(src_base+src_byte);
                                     const uint8_t texel = (uint8_t)((w >> texel_shift) & 0x1F);
                                     if (texel != 0) {
                                         if (profile_collect_stats) sprite_opaque_writes_total++;
@@ -10785,7 +10786,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                         if (have_pick) pick_player[pix] = pick_player_id;
                         if (!need_src_row_bounds || src_row <= max_src_row_col) {
                             const int src_byte = src_row << 1;
-                            const uint16_t w = (uint16_t)((src_base[src_byte] << 8) | src_base[src_byte + 1]);
+                            const uint16_t w = sprite_word_read(src_base+src_byte);
                             const uint8_t texel = (uint8_t)((w >> texel_shift) & 0x1F);
                             if (texel != 0) {
                                 if (profile_collect_stats) sprite_opaque_writes_total++;
@@ -11048,7 +11049,7 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
 
                     const uint8_t *src = gun_wad + wad_off;
                     if (wad_off + (size_t)(src_row + 1) * 2 > gun_wad_size) continue;
-                    uint16_t w = (uint16_t)((src[src_row * 2u] << 8) | src[src_row * 2u + 1]);
+                    uint16_t w = sprite_word_read(src+src_row*2u);
                     uint32_t idx;
                     if (mode == 0) {
                         idx = (uint32_t)(w & 31u);
@@ -11104,7 +11105,7 @@ static unsigned renderer_dos_gun_source(int slot,int x,int y)
     unsigned mode=ptr[0],offset=((unsigned)ptr[1]<<16)|((unsigned)ptr[2]<<8)|ptr[3];
     if((!mode && !offset) || offset+(size_t)GUN_LINES*2>g_renderer.gun_wad_size)return 0;
     const uint8_t *p=g_renderer.gun_wad+offset+y*2;
-    unsigned word=((unsigned)p[0]<<8)|p[1];
+    unsigned word=sprite_word_read(p);
     unsigned index=(word>>(mode==0?0:mode==1?5:10))&31;
     if(!index)return 0;
     p=g_renderer.gun_pal+index*2;
@@ -11352,7 +11353,7 @@ int renderer_decode_gun_frame_rgba(int frame_slot, uint32_t *out_rgba)
 
         const uint8_t *src = gun_wad + wad_off;
         for (int src_row = 0; src_row < GUN_LINES; src_row++) {
-            uint16_t w = (uint16_t)((src[src_row * 2u] << 8) | src[src_row * 2u + 1]);
+            uint16_t w = sprite_word_read(src+src_row*2u);
             uint32_t idx;
             if (mode == 0)      idx = (uint32_t)(w & 31u);
             else if (mode == 1) idx = (uint32_t)((w >> 5) & 31u);

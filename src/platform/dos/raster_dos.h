@@ -56,7 +56,7 @@ typedef struct {
 } DosSpriteBatch;
 void dos_raster_sprite_batch_begin(RendererPixel *surface,DosSpriteBatch *scratch);
 void dos_raster_sprite_batch_end(void);
-/* BitMapObj column after screen, room and wall clipping. The row indices are
+/* BitMapObj native-order packed column after screen, room and wall clipping. The row indices are
  * already sampled by the renderer; texel zero is the only transparent value. */
 unsigned dos_raster_sprite_column(RendererPixel *out,unsigned count,unsigned stride,
                                    const uint8_t *source,const RendererPixel *palette,

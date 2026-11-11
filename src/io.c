@@ -20,6 +20,7 @@
 #include "renderer_3dobj.h"
 #include "game_types.h"
 #include "sprite_palettes.h"
+#include "sprite_format.h"
 #include <SDL.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -1514,6 +1515,45 @@ static void io_release_gun_graphics(void)
     g_renderer.gun_wad_size=g_renderer.gun_ptr_size=0;
 }
 
+#ifdef AB3D_DOS
+/* ABS1 is the mandatory DOS sprite transport format. Read its header before
+ * allocating so only the original word payload occupies the resident banks. */
+static size_t io_dos_sprite_begin(FILE *file,const char *path)
+{
+    uint8_t header[SPRITE_NATIVE_HEADER_BYTES];
+    if (fseek(file,0,SEEK_END)) {
+        fprintf(stderr,"[IO] Cannot seek native sprite: %s\n",path);exit(1);
+    }
+    long bytes=ftell(file);
+    if (bytes<SPRITE_NATIVE_HEADER_BYTES || fseek(file,0,SEEK_SET) ||
+        fread(header,1,sizeof(header),file)!=sizeof(header)) {
+        fprintf(stderr,"[IO] Cannot read native sprite header: %s\n",path);exit(1);
+    }
+    size_t payload=sprite_native_payload_size(header,(size_t)bytes);
+    if (!payload) {
+        fprintf(stderr,"[IO] Invalid ABS1 sprite header/length: %s; rebuild the DOS asset package\n",path);exit(1);
+    }
+    return payload;
+}
+
+static int io_load_dos_sprite(const char *path,uint8_t **out_data,size_t *out_size)
+{
+    FILE *file=fopen(path,"rb");
+    if (!file) return 0;
+    size_t bytes=io_dos_sprite_begin(file,path);
+    uint8_t *data=malloc(bytes);
+    if (!data) {
+        fprintf(stderr,"[IO] Out of memory loading native sprite %s (%lu bytes)\n",path,(unsigned long)bytes);
+        dos_memory_report("sprite allocation failed");exit(1);
+    }
+    if (fread(data,1,bytes,file)!=bytes) {
+        fprintf(stderr,"[IO] Native sprite read failed: %s\n",path);exit(1);
+    }
+    fclose(file);*out_data=data;*out_size=bytes;
+    return 1;
+}
+#endif
+
 void io_load_gun_graphics(void)
 {
     printf("[IO] Loading gun graphics...\n");
@@ -1530,9 +1570,13 @@ void io_load_gun_graphics(void)
 
     f = open_gun_file("includes/newgunsinhand.wad", "newgunsinhand.wad", path, sizeof(path));
     if (f) {
+#ifdef AB3D_DOS
+        long len=(long)io_dos_sprite_begin(f,path);
+#else
         fseek(f, 0, SEEK_END);
         long len = ftell(f);
         fseek(f, 0, SEEK_SET);
+#endif
         uint8_t *data = (uint8_t *)io_scene_alloc(SCENE_GUN_WAD,(size_t)len);
         if (data) {
             if (fread(data, 1, (size_t)len, f) == (size_t)len) {
@@ -1902,10 +1946,9 @@ static void io_sprite_clear_texel(uint8_t *wad, size_t wad_size,
     wad_off += (uint32_t)row * 2u;
     if (wad_off + 1u >= wad_size) return;
 
-    uint16_t word = (uint16_t)(((uint16_t)wad[wad_off] << 8) | (uint16_t)wad[wad_off + 1u]);
+    uint16_t word = sprite_word_read(wad+wad_off);
     word = (uint16_t)(word & (uint16_t)~(0x1Fu << (mode * 5u)));
-    wad[wad_off] = (uint8_t)(word >> 8);
-    wad[wad_off + 1u] = (uint8_t)word;
+    sprite_word_write(wad+wad_off,word);
 }
 
 static void io_apply_sprite_asset_fixes(int slot, uint8_t *wad, size_t wad_size,
@@ -1959,6 +2002,11 @@ static int load_sprite_file(const char *name, const char *prefix,
     /* Try includes/<name> */
     snprintf(subpath, sizeof(subpath), "includes/%s", name);
     make_data_path(path, sizeof(path), subpath);
+#ifdef AB3D_DOS
+    const char *extension=strrchr(name,'.');
+    if (extension && !strcmp(extension,".wad"))
+        return io_load_dos_sprite(path,out_data,out_size);
+#endif
     if (sb_load_file(path, out_data, out_size) == 0 && *out_data && *out_size > 0)
         return 1;
     {

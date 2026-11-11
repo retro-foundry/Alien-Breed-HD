@@ -1,4 +1,5 @@
 #include "raster_dos.h"
+#include "sprite_format.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -237,7 +238,7 @@ static unsigned sprite_batch_column(RendererPixel *out,unsigned count,unsigned s
     for(unsigned i=0;i<count;i++,y++,out+=stride) {
         if(sprite_batch->covered[y][word]&bit || (unsigned)rows[i]>limit)continue;
         unsigned row=(unsigned)rows[i];
-        unsigned texel=decoded?source[row]:((((unsigned)source[row*2]<<8)|source[row*2+1])>>shift)&31;
+        unsigned texel=decoded?source[row]:(sprite_word_read(source+row*2)>>shift)&31;
         if(!texel)continue;
         uint32_t bits=sprite_batch->covered[y][word]|bit;sprite_batch->covered[y][word]=bits;
         if(bits==UINT32_MAX)sprite_batch->open_words[y]--;
@@ -281,7 +282,6 @@ unsigned dos_raster_sprite_column(RendererPixel *out,unsigned count,unsigned str
 {
     if(sprite_batch_surface)return sprite_batch_column(out,count,stride,source,palette,rows,limit,shift,0);
     SPRITE_COLUMN_SAMPLE("movzwl (%%ebx,%%eax,2),%%eax\n\t"
-                         "rorw $8,%%ax\n\t"
                          "shrl %%cl,%%eax\n\t"
                          "andl $31,%%eax\n\t");
 }
@@ -395,7 +395,6 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             SOURCE_(REJECT_) \
             BOUNDS_(REJECT_) \
             "movzwl (%%eax,%%edx,2),%%eax\n\t" \
-            "rorw $8,%%ax\n\t" \
             "movl 8(%%esi),%%ecx\n\t" \
             "shrl %%cl,%%eax\n\t" \
             "andl $31,%%eax\n\t" \

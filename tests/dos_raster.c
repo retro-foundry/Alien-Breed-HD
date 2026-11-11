@@ -3,6 +3,7 @@
 #include "renderer_fixed.h"
 #include "objects_dos.h"
 #include "sprite_palettes.h"
+#include "sprite_format.h"
 #include "level.h"
 #include <assert.h>
 #include <limits.h>
@@ -97,16 +98,42 @@ static void check_water(void)
 
 __attribute__((noinline)) static int64_t reference_divide(int64_t n, int64_t d) { return n / d; }
 
+static void check_sprite_words(void)
+{
+    FILE *file=fopen("SWORDS.BIN","rb");assert(file);
+    uint8_t header[8],samples[514];
+    assert(fread(header,1,sizeof(header),file)==sizeof(header));
+    assert(sprite_native_payload_size(header,131080)==131072);
+    assert(!sprite_native_payload_size(header,131079));
+    assert(!sprite_native_payload_size(header,7));
+    header[3]='2';assert(!sprite_native_payload_size(header,131080));header[3]='1';
+    uint8_t empty[8]={'A','B','S','1',0,0,0,0};
+    assert(!sprite_native_payload_size(empty,8));
+    empty[4]=1;assert(!sprite_native_payload_size(empty,9));
+    for(unsigned start=0;start<65536;start+=256) {
+        assert(fread(samples+1,1,512,file)==512);
+        for(unsigned i=0;i<256;i++) {
+            unsigned word=start+i;
+            assert(sprite_word_read(samples+1+i*2)==word);
+            uint8_t written[3]={0};sprite_word_write(written+1,(uint16_t)word);
+            assert(written[1]==(word&255) && written[2]==(word>>8));
+        }
+    }
+    assert(fgetc(file)==EOF);fclose(file);
+    puts("PASS: all 65536 prepared sprite words, unaligned reads/writes and invalid transport headers");
+}
+
 static void check_sprite_columns(void)
 {
     enum { CAPACITY=41*242+8 };
     static RendererPixel actual[CAPACITY],expected[CAPACITY],palette[32];
-    static uint8_t packed[513],texels[256];
+    static uint8_t packed[513],native[513],texels[256];
     static int rows[240];
     static const unsigned counts[]={0,1,2,3,7,31,127,239,240};
     static const unsigned strides[]={1,2,3,7,41};
     static const unsigned shifts[]={0,5,10};
     for(unsigned i=0;i<sizeof(packed);i++)packed[i]=(uint8_t)next_value();
+    for(unsigned i=0;i<256;i++){native[1+i*2]=packed[2+i*2];native[2+i*2]=packed[1+i*2];}
     for(unsigned i=0;i<32;i++)palette[i]=(RendererPixel)(i==1?0:i*1973);
     assert(!dos_raster_sprite_column(NULL,0,0,NULL,NULL,NULL,0,0));
     assert(!dos_raster_sprite_texel_column(NULL,0,0,NULL,NULL,NULL,0));
@@ -130,7 +157,7 @@ static void check_sprite_columns(void)
             unsigned word=((unsigned)p[0]<<8)|p[1],texel=(word>>shift)&31;
             if(texel){expected[3+y*stride]=palette[texel];drawn++;}
         }
-        assert(dos_raster_sprite_column(actual+3,count,stride,source,palette,rows,limit,shift)==drawn);
+        assert(dos_raster_sprite_column(actual+3,count,stride,native+1,palette,rows,limit,shift)==drawn);
         assert(!memcmp(actual,expected,sizeof(actual)));
         /* Both source representations must write exactly the same pixels.
          * Reset only the column so all surrounding guards remain checked. */
@@ -147,7 +174,7 @@ static void check_sprite_columns(void)
 static void check_sprite_rows(void)
 {
     static RendererPixel actual[324*242],expected[324*242];
-    static uint8_t wad[4099],ptr[131];
+    static uint8_t wad[4099],native[4099],ptr[131];
     static RendererPixel palette[32];
     static int rows[240];
     static const unsigned widths[]={0,1,2,3,7,31,127,319,320};
@@ -155,6 +182,10 @@ static void check_sprite_rows(void)
     for(unsigned i=0;i<sizeof(wad);i++) {
         seed=seed*1664525u+1013904223u;wad[i]=(uint8_t)(seed>>24);
     }
+    for(unsigned i=0;i+1<sizeof(wad);i+=2){native[i]=wad[i+1];native[i+1]=wad[i];}
+    /* The isolated final column deliberately starts at an odd address. Its
+     * native words do not overlap any other sampled column in this fixture. */
+    native[4097]=wad[4098];native[4098]=wad[4097];
     for(unsigned i=0;i<32;i++)palette[i]=(RendererPixel)(i==1?0:i*1973u);
     for(unsigned test=0;test<432;test++) {
         unsigned width=widths[test%9],height=test==287?240:1+(test%61);
@@ -174,7 +205,7 @@ static void check_sprite_rows(void)
         }
         for(unsigned i=0;i<height;i++)rows[i]=(int)(i/(1+test%7))-(test%11==0?1:0);
         for(unsigned i=0;i<sizeof(actual)/sizeof(*actual);i++)actual[i]=expected[i]=0xa55a;
-        DosSpriteRows sprite={wad,ptr,sizeof(wad)-(test%5),sizeof(ptr)-(test%7),palette,rows,
+        DosSpriteRows sprite={native,ptr,sizeof(wad)-(test%5),sizeof(ptr)-(test%7),palette,rows,
                               test%4,(test%3)*65536u+333u,test%4==0?0:65536u/(1+test%8),
                               32,test%13==0?65535u:test%3};
         if(test>=288) {
@@ -203,12 +234,21 @@ static void check_sprite_rows(void)
                 if(rows[y]<0)continue;
                 uint64_t address=(uint64_t)offset+((uint64_t)sprite.down_strip+(unsigned)rows[y])*2;
                 if(address+2>sprite.wad_bytes)continue;
-                unsigned word=((unsigned)wad[address]<<8)|wad[address+1];
+                /* Malformed PTR views can point at odd byte offsets. Their
+                 * bounds and samples follow the native transport ABI, while
+                 * valid authored columns retain the original word values. */
+                unsigned word=(unsigned)native[address]|((unsigned)native[address+1]<<8);
                 unsigned texel=(word>>(!mode?0:mode==1?5:10))&31;
                 if(texel){expected[(y+1)*pitch+x+2]=palette[texel];coverage.drawn++;}
             }
         }
         DosSpriteCoverage got=dos_raster_sprite_rows(actual+pitch+2,width,height,pitch,&sprite);
+        if(memcmp(actual,expected,sizeof(actual))) {
+            for(unsigned i=0;i<sizeof(actual)/sizeof(*actual);i++)if(actual[i]!=expected[i]) {
+                fprintf(stderr,"Sprite row case %u, pixel %u, width=%u height=%u: actual=%04x expected=%04x\n",
+                        test,i,width,height,(unsigned)actual[i],(unsigned)expected[i]);break;
+            }
+        }
         assert(got.visible==coverage.visible && got.drawn==coverage.drawn);
         assert(!memcmp(actual,expected,sizeof(actual)));
         checked++;
@@ -228,7 +268,7 @@ static void check_sprite_rows(void)
             run_ptr[x*4]=run_ptr[x*4+1]=0;
             run_ptr[x*4+2]=(uint8_t)(offset>>8);run_ptr[x*4+3]=(uint8_t)offset;
             int opaque=pattern==1 || (pattern>=2 && (x&1)==pattern-2);
-            run_wad[offset]=0;run_wad[offset+1]=(uint8_t)(opaque?31:0);
+            run_wad[offset]=(uint8_t)(opaque?31:0);run_wad[offset+1]=0;
             if(x<width && opaque)for(unsigned y=0;y<4;y++)if(rows[y]>=0) {
                 expected[(y+1)*pitch+x+2]=palette[31];drawn++;
             }
@@ -246,7 +286,7 @@ static void check_sprite_batches(void)
 {
     enum { PIXELS=320*240, LAYERS=12 };
     static RendererPixel actual[PIXELS+16],expected[PIXELS+16],palettes[LAYERS][32];
-    static uint8_t wad[4098],ptr[128],decoded[64];
+    static uint8_t wad[4098],native[4098],ptr[128],decoded[64];
     static int rows[LAYERS][240];
     struct Rect { unsigned x,y,w,h,u,du,down; } rect[LAYERS];
     DosSpriteBatch scratch;
@@ -258,6 +298,7 @@ static void check_sprite_batches(void)
         /* A fully opaque source also checks black ownership and complete
          * covered-row rejection, including reset between separate batches. */
         if(test%4==0)for(unsigned i=0;i<sizeof(wad);i+=2){wad[i]=4;wad[i+1]=33;}
+        for(unsigned i=0;i<sizeof(wad);i+=2){native[i]=wad[i+1];native[i+1]=wad[i];}
         for(unsigned x=0;x<32;x++) {
             unsigned offset=2+x*128;
             ptr[x*4]=(uint8_t)((x+test)%3);ptr[x*4+1]=0;
@@ -297,7 +338,7 @@ static void check_sprite_batches(void)
             unsigned layer=LAYERS-1-step;const struct Rect *r=&rect[layer];
             RendererPixel *out=actual+8+r->y*320+r->x;
             if(layer%3!=0 || test%4==0) {
-                DosSpriteRows sprite={wad,ptr,sizeof(wad),sizeof(ptr),palettes[layer],rows[layer],0,r->u,r->du,32,r->down};
+                DosSpriteRows sprite={native,ptr,sizeof(wad),sizeof(ptr),palettes[layer],rows[layer],0,r->u,r->du,32,r->down};
                 written+=dos_raster_sprite_rows(out,r->w,r->h,320,&sprite).drawn;
             } else for(unsigned x=0;x<r->w;x++) {
                 unsigned column=(r->u+x*r->du)>>16;if(column>=32)column=31;
@@ -305,7 +346,7 @@ static void check_sprite_batches(void)
                 unsigned offset=((unsigned)entry[1]<<16)|((unsigned)entry[2]<<8)|entry[3];
                 const uint8_t *source=wad+offset+r->down*2;
                 unsigned limit=(sizeof(wad)-offset)/2-1-r->down,shift=entry[0]*5;
-                if(x&1)written+=dos_raster_sprite_column(out+x,r->h,320,source,palettes[layer],rows[layer],limit,shift);
+                if(x&1)written+=dos_raster_sprite_column(out+x,r->h,320,native+offset+r->down*2,palettes[layer],rows[layer],limit,shift);
                 else {
                     for(unsigned y=0;y<64 && y<=limit;y++)decoded[y]=(uint8_t)((((unsigned)source[y*2]<<8)|source[y*2+1])>>shift)&31;
                     written+=dos_raster_sprite_texel_column(out+x,r->h,320,decoded,palettes[layer],rows[layer],limit<63?limit:63);
@@ -328,7 +369,7 @@ static void check_sprite_batch_repeated_rows(void)
 {
     enum { HEIGHT=8, PIXELS=320*HEIGHT };
     static RendererPixel actual[PIXELS+16],expected[PIXELS+16];
-    uint8_t wad[4]={0,0,0,31},ptr[128]={0},texels[2]={0,1};
+    uint8_t wad[4]={0,0,31,0},ptr[128]={0},texels[2]={0,1};
     RendererPixel front[2]={0,0x1357},middle[32]={0},back[32]={0};
     int rows[HEIGHT],constant[HEIGHT]={0};
     static const unsigned clips[3][2]={{0,320},{1,318},{33,254}};
@@ -1025,13 +1066,15 @@ void check_movement_touch(void);
 
 int main(void)
 {
+    freopen("RASTER.ERR","w",stderr);
+    setvbuf(stderr,NULL,_IONBF,0);
     setvbuf(stdout,NULL,_IOLBF,0);
     check_division();
     check_floor_step_rounding();
     check_billboard_projection();
     check_sky_step_cache();
     check_word_offset_bounds(); check_projection_rounding(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_solid_floor_rows(); check_edges(); check_walls();
-    check_sprite_rows();
+    check_sprite_words();check_sprite_rows();
     check_sprite_columns();
     check_sprite_batches();
     check_sprite_batch_repeated_rows();

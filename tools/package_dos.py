@@ -11,6 +11,7 @@ import sys
 import zipfile
 from dos_palette import stage_palettes
 from dos_wall import prepare_wall
+from dos_sprite import prepare_sprite
 
 
 def main():
@@ -91,6 +92,19 @@ def main():
         if unpacked.stat().st_size!=expected:raise SystemExit(f'Incomplete unpacked level: {source}')
         sources[logical]=unpacked
     stage_palettes(root, generated, sources)
+    # Palette derivation above still sees original Amiga sprite bytes. Retain
+    # the packed words and PTR offsets, but transport words in 486 byte order.
+    for index, (logical, source) in enumerate(sorted(sources.items())):
+        if not logical.startswith('data/includes/') or '/walls/' in logical or not logical.endswith('.wad'):
+            continue
+        pointer_name = logical[:-4] + '.ptr'
+        if pointer_name not in sources:
+            raise SystemExit(f'Sprite WAD has no source PTR: {logical}')
+        native = generated / f'sprite{index:06d}.bin'
+        payload = prepare_sprite(source.read_bytes(), sources[pointer_name].read_bytes())
+        if not native.exists() or native.read_bytes() != payload:
+            native.write_bytes(payload)
+        sources[logical] = native
     # Keep palette selection above based on its existing source inputs. Wall
     # caches replace only the transported representation, after that selection.
     for index, (logical, source) in enumerate(sorted(sources.items())):
