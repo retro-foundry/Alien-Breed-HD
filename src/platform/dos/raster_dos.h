@@ -50,7 +50,11 @@ typedef struct { unsigned visible, drawn; } DosSpriteCoverage;
 /* One 320x240 RGB565 object pass, traversed in reverse painter order.
  * Every contributing primitive must be an opaque/index-zero billboard;
  * columns advance by the screen pitch of 320 pixels. */
-void dos_raster_sprite_batch_begin(RendererPixel *surface);
+typedef struct {
+    uint32_t covered[240][10];
+    uint8_t open_words[240];
+} DosSpriteBatch;
+void dos_raster_sprite_batch_begin(RendererPixel *surface,DosSpriteBatch *scratch);
 void dos_raster_sprite_batch_end(void);
 /* BitMapObj column after screen, room and wall clipping. The row indices are
  * already sampled by the renderer; texel zero is the only transparent value. */
