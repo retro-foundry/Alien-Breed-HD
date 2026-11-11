@@ -2334,3 +2334,58 @@ zero audio underruns. Local evidence is in
 `build/dos-sprite3-trace/narrow-validation.json` and the corresponding
 `renderer-base`/`narrow` scene directories. The model scene fixture also
 includes the headers declaring its level and barrel APIs.
+
+### Prove billboard row bounds once per repeated band
+
+The native decoder now finds the minimum valid source-column limit during
+descriptor setup. A repeated source row within that limit needs one bounds
+check for the band, instead of one per column. Setup also records whether
+all source columns are nonempty, allowing that band to omit repeated null
+checks. Empty columns, truncated data and negative/out-of-range rows keep
+their original checked path. These changes are `adf5532` and `2b76b00`.
+They add no persistent table or heap allocation.
+
+A fresh native PGO build includes the spill-clip reuse above. Matched
+release-engine diagnostics use normal/486_slow, 40,000 fixed cycles, 4 MB,
+320x240 RGB565, SB16/mouse and muted host sound. Both entry points keep
+512 bytes of timing samples and capture only frame 23 outside the timed
+update. Results cover fixed updates 8-63:
+
+| View | Previous mean/p95/worst ms | Updated mean/p95/worst ms |
+| --- | ---: | ---: |
+| Starting room | 38.663 / 38.720 / 38.721 | 38.611 / 38.669 / 38.669 |
+| Close enemies/barrel | 39.730 / 40.679 / 40.790 | 39.344 / 40.338 / 40.437 |
+| Pool surface | 64.229 / 65.352 / 65.938 | 64.110 / 65.023 / 65.245 |
+| Level-1 barrel burst | 55.466 / 94.647 / 99.472 | 54.615 / 92.220 / 97.414 |
+| Level-6 barrel burst | 50.863 / 71.404 / 73.653 | 50.512 / 70.320 / 70.548 |
+
+The separate, unmodified 128-frame starting-room test passes the 25.80 FPS
+gate at 26.13 FPS, 38.28 ms mean and 38.79 ms p95, versus 26.09 FPS,
+38.33 ms and 38.84 ms before. These are small gains; expensive burst frames
+remain, and physical 486 hardware is unmeasured.
+
+All 320 complete release-engine images and simulation hashes match across
+the five views. The 32 KiB residency-stress model oracle also retains all
+128 image/hash comparisons at 4 versus 16 MB on levels 1 and 6. The native
+486 raster suite passes, including 308 row, 768 column, 32 reverse-batch
+and 18 repeated-band cases. Fresh compiler feedback completes 23 training
+runs and 22 ordinary/optimized captures; all 22 original native and 22
+indexed references remain exact. The real-time level-4 sound/mouse check
+and full 4 MB level-1/4/15 exercises pass with zero profile audio underruns.
+Original assets, map images and all six saved level/map payloads on levels
+1 and 4 retain their earlier checks.
+
+Native text/data/BSS are 1,183,768/22,016/292,864 bytes: 1.5 KiB more code,
+with unchanged static data and BSS. The shared-assets checkpoint still
+reports 120 KiB free physical memory. The staged native EXE SHA-256 is
+`45c8da02bd757f4b41e831582f8f436cb6b4c3ad92e285bc5640925d53d65d3d`;
+the indexed EXE is
+`13e7b28467d1cad540839f8978b8aa8567e05a1c39ad763e2b7aac88f7e981f4`.
+Both archives retain 231 prepared assets and 238 entries. Staging preserves
+all 241 native and 238 indexed non-EXE game files, including local settings
+and saves.
+
+Local evidence is in `build/dos/sprite3-performance.json`,
+`build/dos/sprite3-validation.json`, `build/dos/sprite3-staging.json` and
+`build/dos-sprite3-source/build/dos/pgo/model-check/report.json`. Diagnostic
+and source-format audit files remain under `build/dos-sprite3-trace/`.
