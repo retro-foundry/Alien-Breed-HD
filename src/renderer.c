@@ -200,7 +200,14 @@ static inline void renderer_cw_store_xy(RendererPixel *cw, int x, int y, int wid
 #endif
 
 /* Sprite row caches for renderer_draw_sprite_ctx hot path (per-thread). */
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+static int *g_sprite_src_row_lut;
+static uint32_t *g_dos_sky_offsets;
+static uint8_t *g_dos_gun_columns;
+static int g_dos_sky_offsets_valid;
+#else
 static AB3D_THREAD_LOCAL int g_sprite_src_row_lut[RENDER_INTERNAL_MAX_DIM];
+#endif
 static AB3D_THREAD_LOCAL uint8_t g_sprite_col_texel_lut[256];
 
 /* Floor/ceiling UV step per pixel: d1>>FLOOR_STEP_SHIFT (same at any width so texture scale is correct). */
@@ -325,7 +332,11 @@ int8_t renderer_get_last_fill_screen_water(void) { return g_renderer.last_fill_s
 
 /* Horizontal projection reference width (effective logical width used for X projection). */
 static int g_proj_base_width = RENDER_DEFAULT_WIDTH;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+static uint32_t *g_floor_row_abs_recip_fp;
+#else
 static uint32_t g_floor_row_abs_recip_fp[RENDER_INTERNAL_MAX_DIM + 1];
+#endif
 static int g_floor_row_abs_recip_limit = 0;
 
 static inline int renderer_clamp_base_width(int w)
@@ -4829,6 +4840,9 @@ static void free_buffers(void)
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
     free(g_dos_wall_columns);
     g_dos_wall_columns = NULL;
+    g_sprite_src_row_lut=NULL;g_dos_sky_offsets=NULL;g_dos_gun_columns=NULL;
+    g_floor_row_abs_recip_fp=NULL;g_floor_row_abs_recip_limit=0;
+    g_dos_sky_offsets_valid=0;
 #endif
     ab3d_aligned_free(g_pick_graphic_buffer);
     g_pick_graphic_buffer = NULL;
@@ -4905,11 +4919,22 @@ static void allocate_buffers(int w, int h)
     g_renderer.present_width = w;
     g_renderer.present_height = h;
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
-    g_dos_wall_columns = malloc((size_t)w * sizeof(*g_dos_wall_columns));
-    if (!g_dos_wall_columns) {
-        fprintf(stderr, "[RENDERER] Cannot allocate %d wall columns\n", w);
+    _Static_assert(GUN_COLS<=256,"DOS byte gun-column cache fits the original source");
+    /* Size all synchronous raster scratch to this viewport. The 96-column
+     * original gun source needs only byte indices; sky offsets remain wide. */
+    size_t scratch_bytes=(size_t)w*(sizeof(*g_dos_wall_columns)+sizeof(uint32_t)+1u)
+        +(size_t)h*(sizeof(int)+sizeof(uint32_t))+sizeof(uint32_t);
+    g_dos_wall_columns=malloc(scratch_bytes);
+    if(!g_dos_wall_columns) {
+        fprintf(stderr,"[RENDERER] Cannot allocate %lu bytes of %dx%d DOS raster scratch\n",
+                (unsigned long)scratch_bytes,w,h);
         exit(1);
     }
+    g_sprite_src_row_lut=(int *)(void *)(g_dos_wall_columns+w);
+    g_dos_sky_offsets=(uint32_t *)(void *)(g_sprite_src_row_lut+h);
+    g_floor_row_abs_recip_fp=g_dos_sky_offsets+w;
+    g_dos_gun_columns=(uint8_t *)(void *)(g_floor_row_abs_recip_fp+h+1);
+    g_floor_row_abs_recip_limit=0;g_dos_sky_offsets_valid=0;
 #endif
 
     size_t buf_size = (size_t)w * h;
@@ -7615,12 +7640,12 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
 
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
         if (s_sky_pixels && s_sky_mode == 0 && !g_pick_capture_active && !g_renderer_rgb_raster_expand) {
-            static uint32_t offsets[RENDER_INTERNAL_MAX_DIM];
+            uint32_t *offsets=g_dos_sky_offsets;
             static int cached_width, cached_step, cached_pan = -1, cached_tw, cached_stride;
             static uint32_t maximum_offset;
             int tw = s_sky_tex_w, th = s_sky_tex_h;
             int stride = s_sky_row_major ? 2 : s_sky_bytes_per_col;
-            if (w != cached_width || sx_step_fp != cached_step || u0_fp != cached_pan ||
+            if (!g_dos_sky_offsets_valid || w != cached_width || sx_step_fp != cached_step || u0_fp != cached_pan ||
                 tw != cached_tw || stride != cached_stride) {
                 int32_t scale = (tw << 16) / SKY_PAN_WIDTH;
                 maximum_offset=0;
@@ -7633,7 +7658,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
                     if(offsets[x]>maximum_offset)maximum_offset=offsets[x];
                 }
                 cached_width = w; cached_step = sx_step_fp; cached_pan = u0_fp;
-                cached_tw = tw; cached_stride = stride;
+                cached_tw = tw; cached_stride = stride;g_dos_sky_offsets_valid=1;
             }
             int source_y = y * (th - 1) / (h > 1 ? h - 1 : 1);
             if (source_y < 0) source_y = 0;
@@ -10980,7 +11005,11 @@ static void renderer_draw_gun_columns(GameState *state, int col_start, int col_e
 #ifdef AB3D_DOS
             /* The source column depends only on x. Avoid a software 64-bit
              * division for every weapon pixel on a 486; values fit in 32 bits. */
+#ifdef AB3D_NATIVE_RGB565
+            uint8_t *dos_gun_columns=g_dos_gun_columns;
+#else
             static int dos_gun_columns[RENDER_INTERNAL_MAX_DIM];
+#endif
             for(int sx=draw_x0;sx<draw_x1;sx++)
                 dos_gun_columns[sx]=(sx-gx)*gun_w_src/gun_w_draw;
 #endif
@@ -14033,6 +14062,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
         ctx->workload_stats.ticks_object_select += SDL_GetPerformanceCounter() - select_start;
     int reverse_billboards=0;
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565) && !AB3D_CW_COL_MAJOR
+    DosSpriteBatch batch_scratch; /* Reuses the already reserved DOS stack. */
     /* Reversing an opaque billboard-only painter pass is exact when the
      * first covered pixel wins. Polygon objects and picking retain their
      * original draw traversal. Small lists avoid the mask setup cost. */
@@ -14056,7 +14086,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
         /* Sparse/distant particles have little overdraw to repay the mask.
          * Width is already projected by the existing visibility rejection. */
         if(estimated_area<320u*240u)reverse_billboards=0;
-        if(reverse_billboards)dos_raster_sprite_batch_begin(renderer_active_cw());
+        if(reverse_billboards)dos_raster_sprite_batch_begin(renderer_active_cw(),&batch_scratch);
     }
 #endif
     for (int step = 0; step < obj_count; step++) {

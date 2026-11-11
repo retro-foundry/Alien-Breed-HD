@@ -198,6 +198,7 @@ static void check_sprite_batches(void)
     static uint8_t wad[4098],ptr[128],decoded[64];
     static int rows[LAYERS][240];
     struct Rect { unsigned x,y,w,h,u,du,down; } rect[LAYERS];
+    DosSpriteBatch scratch;
     uint32_t random=0x87451a9bu;
     for(unsigned test=0;test<32;test++) {
         for(unsigned i=0;i<sizeof(wad);i++) {
@@ -239,7 +240,7 @@ static void check_sprite_batches(void)
                 if(texel)expected[8+(r->y+y)*320+r->x+x]=palettes[layer][texel];
             }
         }
-        dos_raster_sprite_batch_begin(actual+8);
+        dos_raster_sprite_batch_begin(actual+8,&scratch);
         unsigned written=0;
         for(unsigned step=0;step<LAYERS;step++) {
             unsigned layer=LAYERS-1-step;const struct Rect *r=&rect[layer];
