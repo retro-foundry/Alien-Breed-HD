@@ -36,6 +36,7 @@ static SDL_AudioStream *stream;
 static SDL_AudioDeviceID device;
 static SDL_AudioSpec spec;
 static unsigned char *mix_buffer;
+static int32_t *mix_sums;
 static int chunk_bytes,target_bytes,master=100,underwater,wet;
 static FILE *music;
 static unsigned music_length,music_pos,music_start;
@@ -77,6 +78,45 @@ static int music_sample(void)
     music_pos++;
     return ((int)music_buf[music_at++]-128)*176*256/255;
 }
+/* Voices add before master volume, clipping and the underwater filter. Mix
+ * each source as a block so its position, bounds and volume stay out of the
+ * per-sample bookkeeping. All 24 full-scale voices plus music fit int32_t. */
+static void mix_chunk(void)
+{
+    Voice *active[VOICES];int active_count=0;
+    for(int c=0;c<VOICES;c++) {
+        Voice *v=&voices[c];
+        if(v->id>=0 && v->pos<samples[v->id].length)active[active_count++]=v;
+        else v->id=-1;
+    }
+    if(!active_count && !music_playing && !wet && !underwater) {
+        memset(mix_buffer,spec.format==SDL_AUDIO_U8?128:0,chunk_bytes);
+        return;
+    }
+    int bytes_per_frame=spec.channels*(spec.format==SDL_AUDIO_U8?1:2);
+    int count=chunk_bytes/bytes_per_frame;
+    if(music_playing && music)for(int i=0;i<count;i++)mix_sums[i]=music_sample();
+    else memset(mix_sums,0,(size_t)count*sizeof(*mix_sums));
+    for(int c=0;c<active_count;c++) {
+        Voice *v=active[c];Sample *s=&samples[v->id];
+        unsigned available=s->length-v->pos;
+        unsigned n=available<(unsigned)count?available:(unsigned)count;
+        const int8_t *data=s->data+v->pos;int volume=v->volume;
+        /* At full volume, signed PCM * 255 * 256 / 255 is exactly PCM * 256. */
+        if(volume==255)for(unsigned i=0;i<n;i++)mix_sums[i]+=(int)data[i]*256;
+        else for(unsigned i=0;i<n;i++)mix_sums[i]+=(int)data[i]*volume*256/255;
+        v->pos+=n;
+        /* Exact-boundary voices retire at the next scan, as before. */
+        if(n<(unsigned)count)v->id=-1;
+    }
+    for(int i=0;i<count;i++) {
+        int out=filter(clamp16(mix_sums[i]*master/100));
+        for(int ch=0;ch<spec.channels;ch++) {
+            if(spec.format==SDL_AUDIO_U8)mix_buffer[i*spec.channels+ch]=(unsigned char)((out>>8)+128);
+            else ((int16_t *)mix_buffer)[i*spec.channels+ch]=(int16_t)out;
+        }
+    }
+}
 void audio_dos_pump(void)
 {
     if(!device)return;
@@ -84,35 +124,7 @@ void audio_dos_pump(void)
     int queued=SDL_DOSSoundBlasterGetQueuedAudioSize(device);
     if(queued<0)fatal("Invalid Sound Blaster ring","queue state");
     while(queued+chunk_bytes<=target_bytes) {
-        int active[VOICES],active_count=0;
-        for(int c=0;c<VOICES;c++) {
-            Voice *v=&voices[c];
-            if(v->id>=0 && v->pos<samples[v->id].length)active[active_count++]=c;
-            else v->id=-1;
-        }
-        if(!active_count && !music_playing && !wet && !underwater) {
-            memset(mix_buffer,spec.format==SDL_AUDIO_U8?128:0,chunk_bytes);
-            if(!SDL_DOSSoundBlasterQueueAudio(device,mix_buffer,chunk_bytes))fatal("Queue silence","Sound Blaster");
-            queued+=chunk_bytes;
-            continue;
-        }
-        int bytes_per_frame=spec.channels*(spec.format==SDL_AUDIO_U8?1:2);
-        int count=chunk_bytes/bytes_per_frame;
-        for(int i=0;i<count;i++) {
-            int sum=music_sample();
-            for(int c=0;c<active_count;c++) {
-                Voice *v=&voices[active[c]];
-                if(v->id<0)continue;
-                Sample *s=&samples[v->id];
-                if(v->pos>=s->length){v->id=-1;continue;}
-                sum+=(int)s->data[v->pos++]*v->volume*256/255;
-            }
-            int out=filter(clamp16(sum*master/100));
-            for(int ch=0;ch<spec.channels;ch++) {
-                if(spec.format==SDL_AUDIO_U8)mix_buffer[i*spec.channels+ch]=(unsigned char)((out>>8)+128);
-                else ((int16_t *)mix_buffer)[i*spec.channels+ch]=(int16_t)out;
-            }
-        }
+        mix_chunk();
         if(!SDL_DOSSoundBlasterQueueAudio(device,mix_buffer,chunk_bytes))
             fatal("Queue failed","Sound Blaster ring");
         queued+=chunk_bytes;
@@ -152,6 +164,9 @@ void audio_init(void)
     target_bytes=chunk_bytes*3;
     if(chunk_bytes<=0 || target_bytes>capacity)fatal("Invalid buffer sizes","Sound Blaster");
     mix_buffer=malloc(chunk_bytes);if(!mix_buffer)fatal("Out of memory","mixer chunk");
+    unsigned mix_frames=(unsigned)chunk_bytes/(spec.channels*(spec.format==SDL_AUDIO_U8?1u:2u));
+    mix_sums=malloc((size_t)mix_frames*sizeof(*mix_sums));
+    if(!mix_sums)fatal("Out of memory","mixer accumulator");
     unsigned lengths[NUM_NAMED_SFX],total=0;
     for(int id=0;id<NUM_NAMED_SFX;id++) {
         char sub[80],path[512];snprintf(sub,sizeof(sub),"sounds/%s",sfx_names[id]);
@@ -259,4 +274,5 @@ void audio_shutdown(void)
     for(int i=0;i<SAMPLES;i++){samples[i].data=NULL;samples[i].length=0;}
     if(sample_selector>=0){__dpmi_free_dos_memory(sample_selector);sample_selector=-1;sample_bank=NULL;}
     free(mix_buffer);mix_buffer=NULL;
+    free(mix_sums);mix_sums=NULL;
 }

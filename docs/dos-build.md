@@ -3022,3 +3022,38 @@ Local evidence is in `build/dos/phase1-performance.json`,
 Byte/phase, startup-rejection, sound-off and diagnostic evidence is under
 `build/dos-phase1-trace/`; the raster log is
 `build/dos-phase1-source/build/dos-raster-regression/RASTER.LOG`.
+
+### Mix DOS voices in blocks
+
+Private per-frame profiling identifies actual mixer work during authored
+barrel bursts: level-1 audio peaks at 7.831 ms and the turning level-6 case
+at 9.102 ms, with up to 11 active voices. No music refills or underwater
+filtering occur in those measured scenes; queue copies take about 0.057 ms
+per chunk. These probes add overhead and are absent from playable builds.
+
+`audio_dos.c:mix_chunk` now accumulates each active voice over its bounded
+source span. Position, source length and volume are loaded once per chunk.
+Full-volume PCM uses the exact identity `sample * 255 * 256 / 255 == sample * 256`.
+Arbitrary-volume signed division, music gain, final master volume/clipping,
+filter state and output packing retain their original equations. Voices
+ending exactly at a chunk boundary retire on the next scan, as before.
+The queue still requests the same chunks and target depth.
+
+One accumulator is allocated at audio initialization and freed at shutdown.
+The measured 512-frame device needs 2,048 bytes; there is no allocation in
+the per-frame mixer. The independent 486 PCM oracle verifies every signed
+byte/volume pair, 768 mixed chunks with 0-24 voices and 192 music chunks,
+including EOF/looping/refills, both PCM formats/channels, exact voice and
+filter state, and guards. All 1,216 chunks pass. Run it with:
+
+```powershell
+python tools/check_dos_audio.py --dosbox <dosbox.exe>
+```
+
+The block-mixing probe lowers the level-1 audio maximum to 4.158 ms and
+the turning level-6 maximum to 4.057 ms. All 512 complete diagnostic images
+and simulation hashes match. The fresh compiler-feedback release is still
+being checked; the playable packages currently contain the preceding
+water-phase release. Local diagnostic/PCM evidence is under
+`build/dos-audio2-trace/` and
+`build/dos-audio2-source/build/dos-audio-regression/`.
