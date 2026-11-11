@@ -3415,3 +3415,77 @@ Local evidence is in `build/dos/sprite13-performance.json`,
 and `build/dos-sprite13-source/build/dos/pgo/model-check/report.json`.
 Private trials and clock/live probes remain under
 `build/dos-sprite13-trace/`.
+
+### Compare cached billboard row indices as words
+
+`65e259c` reuses the DOS 32-bit equality helper for sampled row indices in
+the billboard footprint history. The linked DJGPP `memcmp` walks bytes;
+`REPE CMPSL` compares the same complete row values four bytes at a time.
+A compile-time check verifies that the row-index type is 32 bits. Both
+history and coverage callers already reject empty comparisons. The shared
+helper now has the name `sprite_words_equal`; mask comparisons retain the
+same instructions. Original `ObjDraw3.ChipRam.s:BitMapObj` sampling,
+transparency, opaque black and drawing ownership remain exact. No table,
+cache entry, asset bytes or scratch buffers are added.
+
+The 92-call recorded live raster replay improves from 28.257 to 24.567 ms;
+the earlier 89-call replay improves from 22.065 to 19.189 ms. Both run
+64 repetitions per call with exact pixels, masks, open-word counts and
+visible/drawn tallies. An explicit word-copy replacement for history rows
+gave no useful additional gain, so their existing copy remains. Separate
+clip-preparation and rectangle-query-cache trials gave smaller gains and
+were not adopted.
+
+With the actual optimized release engine, normal/486_slow, 40,000 cycles,
+4 MB, native 320x240, SB16/mouse and muted host, the matched busy frame
+falls from 112.043 to 108.238 ms. Its render bucket falls from
+77.812 to 74.003 ms; update remains 27.314 ms. All 64 replay
+images, simulation hashes and recorded clock/latched-tick assertions match.
+
+Ordinary-clock 64-frame probes, with eight warmup frames and no image
+writes, give these mean/p95/worst times in milliseconds. Elapsed-time
+differences can change subsequent animation states; the matched replay
+above compares the same busy state.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 41.439 / 76.587 / 89.464 | 41.106 / 76.448 / 89.353 |
+| Level 1, turning | 36.045 / 83.026 / 111.534 | 36.032 / 82.656 / 109.593 |
+| Level 6 | 44.801 / 62.758 / 64.047 | 44.882 / 62.152 / 63.311 |
+| Level 6, turning | 52.531 / 67.848 / 76.730 | 52.513 / 67.512 / 75.921 |
+
+The fixed-update level-1 turning-barrel comparison changes from
+50.949 / 80.794 / 85.973 to 50.590 / 77.831 / 83.961 ms mean/p95/worst.
+The unmodified 128-frame real-time start passes the 25.80 FPS gate at
+26.20 FPS, with 38.16/38.67/77.96 ms mean/p95/worst. Live burst spikes
+still need work, and physical 486 performance remains unmeasured. These
+results do not prove completion of the overall consistency target.
+
+The actual 486 oracle expands history coverage from 216 to 300 draws.
+New cases expose valid samples from previously rejected row indices that
+differ in their high bytes, at the first/middle/last row and at one/full
+screen height, while reusing the row-array address. Cached and uncached
+pixels, masks and counts match. All existing 1,024 narrow-coverage,
+54 repeated-band, 32 independent painter, packed row/column and arithmetic
+cases also pass. All 512 diagnostic and 512 release-engine images and
+simulation hashes match. Fresh compiler feedback completes 23 training
+runs and 22 original native capture comparisons; all 22 rebuilt indexed
+comparisons match. The 4-versus-16 MB model oracle retains 128 image/hash
+pairs with 32 KiB extra residency. Full 4 MB level-1/4/15 and real-time
+level-4 SB16/mouse exercises pass with zero profile audio underruns.
+Windows Release builds. Package checks preserve all 231 assets,
+238 archive entries and the existing map/active saved-level payload checks.
+
+Native text/data/BSS are 1,190,424/22,016/260,096 bytes. Data sizes are unchanged.
+Level-4 checkpoints retain 144 KiB free after shared assets and 44 KiB
+after loading the level. The staged native EXE SHA-256 is
+`232d60f49b4071dc8e1689583bcb90f700a8126b78ca1c6217b10949039fecf3`;
+the indexed EXE remains
+`8fc2876fc510ede5904adfa8d4a5f1488583a2076b504e04176803e5a954fb08`.
+Staging preserves all 241 native and 238 indexed non-EXE game files,
+including settings and saves.
+
+Local evidence is in `build/dos/sprite14-performance.json`,
+`build/dos/sprite14-validation.json`, `build/dos/sprite14-staging.json`
+and `build/dos-sprite14-source/build/dos/pgo/model-check/report.json`.
+Private replays and experiments remain under `build/dos-sprite14-trace/`.
