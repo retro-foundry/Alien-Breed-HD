@@ -3185,3 +3185,91 @@ Local release evidence is in `build/dos/billboard10-performance.json`,
 and `build/dos-billboard10-source/build/dos/pgo/model-check/report.json`.
 Private experiments and the separate live-clock probes remain under
 `build/dos-billboard10-trace/`.
+
+### Reuse the wall-touch side test during debris movement
+
+`ed76098` removes duplicate side arithmetic in DOS `checkwalls` calls.
+`mark_floorline_touch_if_near` still performs its existing floorline flag
+writes, then reports when the positive side used signed-word relative
+coordinates. With zero wall offsets, that proves the later
+`ObjectMove.s:checkwalls` word subtraction/multiplication would immediately
+reject the same line. Other sides, shifted offsets and coordinates outside
+the signed-word range retain their original collision path. The DOS
+optimization applies to both pixel formats; desktop collision behavior
+and all movement steps, positions and bounce calculations are preserved.
+No resident table, asset bytes or scratch buffers are added.
+
+A clock replay now exposes a cost hidden by the fixed-update scenes.
+The recorder stores 64 ordinary-clock timestamps, latched VBlanks and
+interpolation remainders, plus an image/state checkpoint at the busy
+frame 10. That frame latched five VBlanks. A separate full-image trace
+first verifies that replay reproduces all 64 original recorded images and
+simulation hashes. Replaying the lean clock sequence then keeps the
+original busy state stable while adding probes or image writes. Both
+release engines match all 64 images/state hashes against the preceding
+engine's lean replay, and assert every recorded clock/latched-tick value.
+
+In that matched release-engine replay, normal/486_slow, fixed 40,000
+cycles, 4 MB, RGB565 320×240, SB16/mouse and muted host, the worst frame
+falls from 116.416 to 113.977 ms. Its update bucket falls from 29.797 to
+27.314 ms; rendering remains about 79.7 ms. Earlier probes found roughly
+4,275 wall checks and 775 room searches in this frame, with debris
+movement accounting for most of the update cost.
+
+Separate ordinary-clock 64-frame probes, with no image writes and eight
+warmup frames, give these mean/p95/worst times in milliseconds. They can
+visit different animation states as elapsed time changes, so the matched
+clock replay above provides the direct comparison at the same busy state.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 41.425 / 77.974 / 92.342 | 41.419 / 76.516 / 89.934 |
+| Level 1, turning | 36.142 / 84.253 / 115.306 | 36.043 / 82.859 / 112.770 |
+| Level 6 | 44.897 / 63.394 / 64.585 | 44.801 / 62.844 / 64.207 |
+| Level 6, turning | 52.572 / 68.468 / 77.400 | 52.302 / 67.935 / 76.859 |
+
+The existing fixed-update release comparison remains in the performance
+artifact. Its level-1 barrel mean/worst improve from 49.574/78.586 to
+49.323/76.940 ms, while p95 rises from 75.018 to 76.417 ms. The turning
+level-1 barrel result improves from 51.273/82.667/87.574 to
+51.024/82.222/87.101 ms. The unmodified 128-frame real-time start retains
+the 25.80 FPS gate at 26.21 FPS and 38.15/38.65/77.96 ms mean/p95/worst,
+versus 26.20 FPS and 38.16/38.67/77.96 ms before. Large live burst spikes
+and physical 486 performance remain unresolved.
+
+The actual 486 arithmetic/raster oracle passes 73,728 touch cases,
+including signed-word overflow boundaries and comparison with the original
+word cross, plus 32,768 original crossing-height comparisons. All 512
+diagnostic and 512 release-engine images and simulation hashes match.
+Fresh compiler feedback completes 23 training runs and 22 ordinary/optimized
+native captures, all matching original native references. All 22 freshly
+rebuilt indexed captures also match. The 4-versus-16 MB model oracle
+retains all 128 image/hash pairs with its extra 32 KiB residency. Full
+4 MB level-1/4/15 and real-time level-4 SB16/mouse exercises pass with zero
+profile audio underruns. Windows Release builds. Package checks preserve
+all 231 assets, 238 archive entries and the existing map/active saved-level
+payload comparisons.
+
+Native text/data/BSS are 1,189,912/22,016/260,096 bytes: 512 fewer code
+bytes and unchanged data sizes. Level-4 sound/mouse checkpoints still
+report 144 KiB free after shared assets and 44 KiB after loading the level.
+The staged native EXE SHA-256 is
+`12b6f14ded0cbdd7d0f7bf3a2d38344e06203ea817ece87649ae28d6ba5ef9c3`;
+the indexed EXE is
+`8fc2876fc510ede5904adfa8d4a5f1488583a2076b504e04176803e5a954fb08`.
+EXE/archive staging preserves all 241 native and 238 indexed non-EXE game
+files, including settings and saves.
+
+Private loop-copy, substep-DDA, native-geometry-cache and checked point-touch
+trials produced smaller gains or regressions and were not adopted. A new
+92-call live billboard fixture records actual batch and asset identities;
+larger history caches add no hits to its existing 23. A separate mask-word
+envelope experiment reduces that fixture's raster time from 30.309 to
+28.985 ms across 64 repeats per call, with exact pixels, masks and counts.
+That billboard change is still private and needs engine/package checks.
+
+Local evidence is in `build/dos/movement11-performance.json`,
+`build/dos/movement11-validation.json`, `build/dos/movement11-staging.json`
+and `build/dos-movement11-source/build/dos/pgo/model-check/report.json`.
+Clock replay evidence is under `build/dos-movement11-trace/`; the recorded
+live clock and billboard fixture remain under `build/dos-billboard10-trace/`.
