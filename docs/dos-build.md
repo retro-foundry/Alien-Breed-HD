@@ -2872,8 +2872,65 @@ and simulation hashes remain exact, with zero profile audio underruns.
 
 The diagnostic pool view averages 63.728 ms versus 66.646 ms, a 4.4%
 reduction. These diagnostics replace selected engine objects with ordinary
-O3 builds; they do not establish the final compiler-feedback release gain.
-The playable packages still contain the billboard-cache release above.
-Fresh release timings and memory checks are pending for this source change.
-Local diagnostic evidence is under `build/dos-water3-trace/`, with the
-raster log at `build/dos-water3-source/build/dos-raster-regression/RASTER.LOG`.
+O3 builds. The rebuilt compiler-feedback release uses normal/486_slow,
+40,000 fixed cycles, 4 MB, 320x240 RGB565, SB16/mouse and muted host sound.
+Both benchmark entry points keep 512 bytes of timing samples and capture
+frame 23 outside the timed update. Results cover fixed updates 8-63;
+turning holds the original right-turn input throughout all 64 updates.
+
+| View | Previous mean/p95/worst ms | Updated mean/p95/worst ms |
+| --- | ---: | ---: |
+| Starting room | 38.486 / 38.542 / 38.543 | 38.479 / 38.535 / 38.536 |
+| Close enemies/barrel | 38.559 / 39.551 / 39.672 | 38.553 / 39.545 / 39.661 |
+| Pool surface | 63.650 / 64.571 / 64.792 | 60.504 / 61.802 / 61.919 |
+| Level-1 barrel burst | 50.672 / 76.640 / 79.324 | 50.667 / 76.639 / 79.318 |
+| Level-6 barrel burst | 48.598 / 65.699 / 69.556 | 48.554 / 65.689 / 66.340 |
+| Level-1 burst, turning | 52.357 / 82.579 / 90.544 | 52.353 / 82.574 / 90.851 |
+| Level-6 burst, turning | 62.130 / 82.206 / 84.607 | 62.119 / 82.196 / 84.599 |
+| Close enemies, turning | 39.404 / 47.892 / 48.059 | 39.398 / 47.888 / 48.052 |
+
+The pool mean improves by 3.146 ms, or 4.9%, and its p95 by 2.769 ms.
+Other means change little. The level-1 turning-burst maximum rises by
+0.307 ms despite a slightly lower mean and p95. The unmodified 128-frame
+starting-room test retains the 25.80 FPS gate at 26.21 FPS, 38.16 ms mean,
+38.67 ms p95 and 77.96 ms worst, versus 26.20 FPS, 38.17/38.68/77.96 ms
+before. Heavy bursts still approach 91 ms; physical 486 performance and
+a general threefold improvement across these views remain unproven.
+
+All 512 complete release-engine images and simulation hashes match, as do
+all 128 image/hash pairs in the 32 KiB residency-stress test at 4 versus
+16 MB on levels 1 and 6. Fresh compiler feedback completes 23 training
+runs and all 22 ordinary/optimized native captures. All 22 original native
+and 22 freshly rebuilt indexed reference images match. The real-time
+4 MB level-4 SB16/mouse exercise and full level-1/4/15 exercises pass with
+zero profile audio underruns. Windows Release builds. Both packages keep
+231 original assets and 238 archive entries; maps and all six saved
+level/map payloads on levels 1 and 4 retain the active-byte comparisons
+described above.
+
+Native text/data/BSS are 1,186,328/22,016/292,864 bytes: 1,024 fewer code
+bytes and unchanged persistent data size. Shared-assets free physical
+memory remains 116 KiB. The level-4 loaded checkpoint reports 16 KiB
+versus 32 KiB before, so memory headroom remains a limitation despite
+identical table sizes and the smaller executable.
+
+The staged native EXE SHA-256 is
+`0e566ed7d16f25d8826214f61787abb63a289671634b195b0edaeb52f6b3b9a5`;
+the freshly rebuilt indexed EXE remains
+`b19af1db3ac1570579d6c02d74bbb273df4c7858952582288d163154c28d023d`.
+Staging replaces only the EXE and distribution archive, preserving all
+241 native and 238 indexed non-EXE files, including settings and saves.
+
+Local evidence is in `build/dos/water3-performance.json`,
+`build/dos/water3-validation.json`, `build/dos/water3-staging.json` and
+`build/dos-water3-source/build/dos/pgo/model-check/report.json`.
+Diagnostic evidence is under `build/dos-water3-trace/`, with the raster
+log at `build/dos-water3-source/build/dos-raster-regression/RASTER.LOG`.
+
+A separate, unshipped compiler-training trial added two authored barrel
+scenes to the previous release's unchanged engine. Its level-1 burst mean
+improved by 0.162 ms and worst time by 0.577 ms, but the starting-room
+mean regressed by 0.047 ms and level-6 turning p95/worst by 0.062/0.066 ms.
+Those small, mixed changes do not justify adopting the extra training yet.
+The isolated trial preserves all five checked frame-23 images and hashes;
+its evidence remains under `build/dos-water3-trace/burst-training/`.
