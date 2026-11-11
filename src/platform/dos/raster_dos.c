@@ -208,14 +208,18 @@ static inline int sprite_mask_equal(const uint32_t *a,const uint32_t *b,unsigned
 
 /* Magnified rows often have the same previous coverage. Decode their fresh
  * copy ranges once; matching rows can replay those exact ranges and mask
- * updates. Comparing complete mask words preserves pixels outside the clip. */
-static unsigned sprite_batch_rows(RendererPixel *out,unsigned width,unsigned height,
+ * updates. Comparing full words between the first and last opaque pixel
+ * lets outer coverage differ while preserving boundary bits. */
+static unsigned sprite_batch_rows(RendererPixel *out,unsigned height,
                                    unsigned pitch,const RendererPixel *row,
                                    const DosSpriteSpan *spans,unsigned span_count)
 {
     if(!span_count)return 0;
     unsigned at=(unsigned)(out-sprite_batch_surface),y=at/320,x=at%320;
-    unsigned first=x/32,words=(x+width-1)/32-first+1,total=0;
+    unsigned left=x+(unsigned)(spans[0].source-row);
+    const DosSpriteSpan *last=spans+span_count-1;
+    unsigned right=x+(unsigned)(last->source-row)+last->count;
+    unsigned first=left/32,words=(right-1)/32-first+1,total=0;
     uint32_t before[10];
     DosSpriteSpan ranges[160]; /* At most 16 fresh runs in each of ten mask words. */
     for(unsigned dy=0;dy<height;) {
@@ -496,7 +500,7 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
 #undef SPRITE_ROW_UNCHECKED
 #undef SPRITE_ROW_CHECK
         if(batch && end_y-y>1) {
-            result.drawn+=sprite_batch_rows(out+y*pitch,width,end_y-y,pitch,row,
+            result.drawn+=sprite_batch_rows(out+y*pitch,end_y-y,pitch,row,
                                              spans,(unsigned)(span-spans));
             y=end_y;continue;
         }
