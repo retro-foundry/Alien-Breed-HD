@@ -12126,6 +12126,16 @@ static int renderer_segments_intersect_i32(int32_t a1x, int32_t a1z,
                                            int32_t b1x, int32_t b1z,
                                            int32_t b2x, int32_t b2z)
 {
+#ifdef AB3D_DOS
+    /* Separated boxes cannot intersect. Keep touching bounds inclusive, then
+     * retain the original wide orientation and endpoint tests. */
+    int32_t amin = a1x < a2x ? a1x : a2x, amax = a1x > a2x ? a1x : a2x;
+    int32_t bmin = b1x < b2x ? b1x : b2x, bmax = b1x > b2x ? b1x : b2x;
+    if (amax < bmin || bmax < amin) return 0;
+    amin = a1z < a2z ? a1z : a2z; amax = a1z > a2z ? a1z : a2z;
+    bmin = b1z < b2z ? b1z : b2z; bmax = b1z > b2z ? b1z : b2z;
+    if (amax < bmin || bmax < amin) return 0;
+#endif
     int64_t o1 = renderer_orient2d_i64(a1x, a1z, a2x, a2z, b1x, b1z);
     int64_t o2 = renderer_orient2d_i64(a1x, a1z, a2x, a2z, b2x, b2z);
     int64_t o3 = renderer_orient2d_i64(b1x, b1z, b2x, b2z, a1x, a1z);
@@ -12149,6 +12159,16 @@ static int renderer_point_within_segment_radius_i32(int32_t px, int32_t pz,
                                                     int32_t x2, int32_t z2,
                                                     int32_t radius)
 {
+#ifdef AB3D_DOS
+    /* Widen before inflating bounds; rejection needs no squared distance or
+     * interior projection division, including for zero-length segments. */
+    if (radius < 0) radius = 0;
+    if ((int64_t)px + radius < (x1 < x2 ? x1 : x2) ||
+        (int64_t)px - radius > (x1 > x2 ? x1 : x2) ||
+        (int64_t)pz + radius < (z1 < z2 ? z1 : z2) ||
+        (int64_t)pz - radius > (z1 > z2 ? z1 : z2))
+        return 0;
+#endif
     int64_t dx = (int64_t)x2 - (int64_t)x1;
     int64_t dz = (int64_t)z2 - (int64_t)z1;
     int64_t vx = (int64_t)px - (int64_t)x1;
@@ -12480,6 +12500,12 @@ static int renderer_point_on_segment_i32(int32_t px, int32_t pz,
                                          int32_t x1, int32_t z1,
                                          int32_t x2, int32_t z2)
 {
+#ifdef AB3D_DOS
+    /* Most polygon edges cannot contain this point. Check bounds before the
+     * wide cross product; the original inclusive ownership is unchanged. */
+    if (px < ((x1 < x2) ? x1 : x2) || px > ((x1 > x2) ? x1 : x2)) return 0;
+    if (pz < ((z1 < z2) ? z1 : z2) || pz > ((z1 > z2) ? z1 : z2)) return 0;
+#endif
     int64_t cross = (int64_t)(px - x1) * (int64_t)(z2 - z1) -
                     (int64_t)(pz - z1) * (int64_t)(x2 - x1);
     if (cross != 0) return 0;
