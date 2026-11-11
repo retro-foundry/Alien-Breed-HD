@@ -12781,6 +12781,19 @@ static int renderer_zone_list_contains(const int16_t *zones, int count, int16_t 
     return 0;
 }
 
+#ifdef AB3D_DOS
+/* The common authored room IDs fit in eight words. Keep the full signed
+ * zone domain by using the original list for IDs outside that mask. */
+static int renderer_dos_adjacent_contains(const uint32_t mask[8],
+                                           const int16_t *zones, int count,
+                                           int16_t zone_id)
+{
+    unsigned zone = (uint16_t)zone_id;
+    if (zone < 256) return (mask[zone >> 5] >> (zone & 31)) & 1u;
+    return renderer_zone_list_contains(zones, count, zone_id);
+}
+#endif
+
 #define RENDERER_CONNECTED_ZONE_CACHE_SIZE 128u
 
 typedef struct {
@@ -13737,10 +13750,31 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
 
     int16_t adjacent_source_zones[RENDERER_SPILL_SEARCH_MAX_NEIGHBORS];
     uint64_t select_start = ctx->profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
+    /* Clip ownership is constant for this room/section pass. Resolve it once
+     * before considering any of its objects, shots or explosions. */
+    int16_t room_clip_left, room_clip_right;
+    int32_t room_clip_top, room_clip_bot;
+    int room_ignore_top;
+    if (!renderer_resolve_sprite_zone_draw_clip(ctx, state, zone_id,
+                                                top_of_room, bot_of_room,
+                                                ignore_sky_top_clip,
+                                                &room_clip_left, &room_clip_right,
+                                                &room_clip_top, &room_clip_bot,
+                                                &room_ignore_top)) return;
     int adjacent_source_count = renderer_collect_connected_zones_fast(level,
                                                                       zone_id,
                                                                       adjacent_source_zones,
                                                                       RENDERER_SPILL_SEARCH_MAX_NEIGHBORS);
+#ifdef AB3D_DOS
+    uint32_t adjacent_source_mask[8] = {0};
+    for (int i = 0; i < adjacent_source_count; i++) {
+        unsigned zone = (uint16_t)adjacent_source_zones[i];
+        if (zone < 256) adjacent_source_mask[zone >> 5] |= 1u << (zone & 31);
+    }
+#define DRAW_ADJACENT_CONTAINS(zone) renderer_dos_adjacent_contains(adjacent_source_mask, adjacent_source_zones, adjacent_source_count, zone)
+#else
+#define DRAW_ADJACENT_CONTAINS(zone) renderer_zone_list_contains(adjacent_source_zones, adjacent_source_count, zone)
+#endif
     /* Object/shot layout keeps the logical upper/lower section flag at byte 63.
      * For sprites in their own zone, prefer that stable gameplay-side section state
      * over a renderer-estimated vertical overlap test; overlap remains useful for
@@ -13777,7 +13811,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
         if (obj_zone < 0) continue;
         if (!in_this_zone) {
             if (is_poly_object) continue;
-            if (!renderer_zone_list_contains(adjacent_source_zones, adjacent_source_count, obj_zone))
+            if (!DRAW_ADJACENT_CONTAINS(obj_zone))
                 continue;
             if (!renderer_spill_zone_order_allows(state, obj_zone, zone_id))
                 continue;
@@ -13808,17 +13842,9 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
 #endif
         renderer_resolve_billboard_world_size_for_spill(obj, 0, &spill_world_w, &spill_world_h);
 
-        int16_t draw_clip_left = 0, draw_clip_right = 0;
-        int32_t draw_zone_top = 0, draw_zone_bot = 0;
-        int draw_ignore_top = 0;
-        if (!renderer_resolve_sprite_zone_draw_clip(ctx, state, zone_id,
-                                                    top_of_room, bot_of_room,
-                                                    ignore_sky_top_clip,
-                                                    &draw_clip_left, &draw_clip_right,
-                                                    &draw_zone_top, &draw_zone_bot,
-                                                    &draw_ignore_top)) {
-            continue;
-        }
+        int16_t draw_clip_left = room_clip_left, draw_clip_right = room_clip_right;
+        int32_t draw_zone_top = room_clip_top, draw_zone_bot = room_clip_bot;
+        int draw_ignore_top = room_ignore_top;
         if (!in_this_zone && level_filter == 0 && obj_on_upper) {
             draw_ignore_top = 1;
         }
@@ -13928,19 +13954,10 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             if ((int8_t)obj[16] != OBJ_NBR_BULLET) continue;
             int16_t pt_num = rd16(obj);
             if (pt_num < 0 || (unsigned)pt_num >= (unsigned)num_pts) continue;
-            int spill_world_w = 32, spill_world_h = 32;
-#ifdef AB3D_DOS
-            int geometry_slot = 256 + slot + (pool ? NASTY_SHOT_SLOT_COUNT : 0);
-            DosBillboardGeometry *geometry = NULL;
-            if (g_dos_draw_objects_active)
-                geometry = renderer_dos_billboard_world_size(geometry_slot, obj, 1, &spill_world_w, &spill_world_h);
-            else
-#endif
-            renderer_resolve_billboard_world_size_for_spill(obj, 1, &spill_world_w, &spill_world_h);
             int in_this_zone = level_same_draw_room(level, shot_zone, zone_id);
             int shot_on_upper = (obj[obj_off_in_top] != 0);
             if (!in_this_zone) {
-                if (!renderer_zone_list_contains(adjacent_source_zones, adjacent_source_count, shot_zone))
+                if (!DRAW_ADJACENT_CONTAINS(shot_zone))
                     continue;
                 if (!renderer_spill_zone_order_allows(state, shot_zone, zone_id))
                     continue;
@@ -13951,17 +13968,23 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                     continue;
             }
 
-            int16_t draw_clip_left = 0, draw_clip_right = 0;
-            int32_t draw_zone_top = 0, draw_zone_bot = 0;
-            int draw_ignore_top = 0;
-            if (!renderer_resolve_sprite_zone_draw_clip(ctx, state, zone_id,
-                                                        top_of_room, bot_of_room,
-                                                        ignore_sky_top_clip,
-                                                        &draw_clip_left, &draw_clip_right,
-                                                        &draw_zone_top, &draw_zone_bot,
-                                                        &draw_ignore_top)) {
-                continue;
-            }
+            /* ObjDraw room/section and near rejection do not need sprite
+             * dimensions. Defer sizing until a shot survives those checks. */
+            ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
+            if (orp->z <= ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z)) continue;
+            int spill_world_w = 32, spill_world_h = 32;
+#ifdef AB3D_DOS
+            int geometry_slot = 256 + slot + (pool ? NASTY_SHOT_SLOT_COUNT : 0);
+            DosBillboardGeometry *geometry = NULL;
+            if (g_dos_draw_objects_active)
+                geometry = renderer_dos_billboard_world_size(geometry_slot, obj, 1, &spill_world_w, &spill_world_h);
+            else
+#endif
+            renderer_resolve_billboard_world_size_for_spill(obj, 1, &spill_world_w, &spill_world_h);
+
+            int16_t draw_clip_left = room_clip_left, draw_clip_right = room_clip_right;
+            int32_t draw_zone_top = room_clip_top, draw_zone_bot = room_clip_bot;
+            int draw_ignore_top = room_ignore_top;
             if (!in_this_zone && level_filter == 0 && shot_on_upper) {
                 draw_ignore_top = 1;
             }
@@ -13977,9 +14000,6 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                 if ((draw_zone_bot - draw_zone_top) < ((int32_t)(spill_world_h >> 1) << WORLD_Y_FRAC_BITS))
                     continue;
             }
-            ObjRotatedPoint *orp = &r->obj_rotated[pt_num];
-            if (orp->z <= ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z)) continue;
-
 #ifdef AB3D_DOS
             int spill_admitted = 0;
 #endif
@@ -14060,7 +14080,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             if ((int)state->explosions[ei].frame >= 9) continue;
             renderer_get_explosion_frame_and_world_size(state, ei, NULL, NULL, &expl_h_est);
             if (!in_this_zone) {
-                if (!renderer_zone_list_contains(adjacent_source_zones, adjacent_source_count, expl_zone))
+                if (!DRAW_ADJACENT_CONTAINS(expl_zone))
                     continue;
                 if (!renderer_spill_zone_order_allows(state, expl_zone, zone_id))
                     continue;
@@ -14071,17 +14091,9 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                     continue;
             }
 
-            int16_t draw_clip_left = 0, draw_clip_right = 0;
-            int32_t draw_zone_top = 0, draw_zone_bot = 0;
-            int draw_ignore_top = 0;
-            if (!renderer_resolve_sprite_zone_draw_clip(ctx, state, zone_id,
-                                                        top_of_room, bot_of_room,
-                                                        ignore_sky_top_clip,
-                                                        &draw_clip_left, &draw_clip_right,
-                                                        &draw_zone_top, &draw_zone_bot,
-                                                        &draw_ignore_top)) {
-                continue;
-            }
+            int16_t draw_clip_left = room_clip_left, draw_clip_right = room_clip_right;
+            int32_t draw_zone_top = room_clip_top, draw_zone_bot = room_clip_bot;
+            int draw_ignore_top = room_ignore_top;
             if (!in_this_zone && level_filter == 0 && expl_on_upper) {
                 draw_ignore_top = 1;
             }
@@ -14143,6 +14155,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
         }
     }
 
+#undef DRAW_ADJACENT_CONTAINS
     /* Insertion sort by integer Z descending (farthest first). ObjDraw's
      * cmp/blt loop inserts equal-depth objects ahead of older entries. */
     for (int i = 1; i < obj_count; i++) {
@@ -14456,7 +14469,12 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             sprite_scale_x = explosion_sprite_scale_x;
         }
         int anchor_h = renderer_project_billboard_wall_y_size(r, world_h, z_for_size) * SPRITE_SIZE_MULTIPLIER;
-        int sprite_w = renderer_project_billboard_size(world_w, sprite_scale_x, z_for_size) * SPRITE_SIZE_MULTIPLIER;
+        int sprite_w;
+#if defined(AB3D_DOS) && EXPLOSION_SIZE_CORRECTION == 1
+        if (geometry) sprite_w = geometry->estimated_width;
+        else
+#endif
+        sprite_w = renderer_project_billboard_size(world_w, sprite_scale_x, z_for_size) * SPRITE_SIZE_MULTIPLIER;
         int sprite_h = renderer_project_billboard_size(world_h, sprite_scale_x, z_for_size) * SPRITE_SIZE_MULTIPLIER;
         if (explosion_billboard) {
             sprite_w *= EXPLOSION_SIZE_CORRECTION;

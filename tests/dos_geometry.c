@@ -126,6 +126,33 @@ int main(void)
     }
     printf("PASS: %u geometry cases retain intersections, endpoint order, collinearity, point ownership and capsule admission\n",checked);
     printf("PASS: %u capsule cases retain squared-length boundaries and signed radius extremes\n",radius_checked);
+    static const int16_t adjacent_values[] = {
+        INT16_MIN,-257,-256,-1,0,1,31,32,63,64,95,96,127,128,159,160,
+        191,192,223,224,254,255,256,257,300,511,512,1024,32766,INT16_MAX,0,255
+    };
+    static const unsigned adjacent_counts[] = {0,1,2,7,16,32};
+    unsigned adjacent_checked = 0;
+    for (unsigned pattern = 0; pattern < 3; pattern++) {
+        int16_t zones[32];
+        for (unsigned i = 0; i < 32; i++)
+            zones[i] = adjacent_values[pattern == 0 ? i : pattern == 1 ? 31-i : i%4];
+        for (unsigned c = 0; c < sizeof(adjacent_counts)/sizeof(*adjacent_counts); c++) {
+            unsigned count = adjacent_counts[c];
+            uint32_t mask[8] = {0};
+            for (unsigned i = 0; i < count; i++) {
+                unsigned zone = (uint16_t)zones[i];
+                if (zone < 256) mask[zone>>5] |= 1u << (zone&31);
+            }
+            for (int zone = INT16_MIN; zone <= INT16_MAX; zone++) {
+                int expected = 0;
+                for (unsigned i = 0; i < count; i++)
+                    if (zones[i] == zone) expected = 1;
+                assert(renderer_dos_adjacent_contains(mask,zones,count,(int16_t)zone) == expected);
+                adjacent_checked++;
+            }
+        }
+    }
+    printf("PASS: %u adjacent-room queries retain all signed zone IDs, empty lists and duplicates\n",adjacent_checked);
     puts("DOS geometry regression passed");
     return 0;
 }
