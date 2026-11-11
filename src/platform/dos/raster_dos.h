@@ -54,7 +54,20 @@ typedef struct {
     uint32_t covered[240][10];
     uint8_t open_words[240];
 } DosSpriteBatch;
+/* Within one reverse painter pass, repeating the same alpha footprint cannot
+ * claim any new pixel. Source WAD/PTR data remains immutable for that pass. */
+typedef struct {
+    const RendererPixel *out;
+    DosSpriteRows sprite;
+    unsigned width,height,pitch,visible;
+    int rows[240];
+} DosSpriteHistoryEntry;
+typedef struct {
+    DosSpriteHistoryEntry entries[4];
+    unsigned count,next;
+} DosSpriteHistory;
 void dos_raster_sprite_batch_begin(RendererPixel *surface,DosSpriteBatch *scratch);
+void dos_raster_sprite_batch_history_begin(DosSpriteHistory *scratch);
 void dos_raster_sprite_batch_end(void);
 /* BitMapObj native-order packed column after screen, room and wall clipping. The row indices are
  * already sampled by the renderer; texel zero is the only transparent value. */

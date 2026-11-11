@@ -2753,13 +2753,54 @@ the indexed EXE is
 Staging refreshes the 14 prepared sprites with each executable and preserves
 the other 227 native and 224 indexed non-EXE files, including settings and saves.
 
-Detailed diagnostic profiling still places about 25 ms in sprite copying
-and coverage work at the burst peak, versus about 3 ms in sample decoding.
-The small byte-order gain does not resolve the remaining burst stutter or
-prove a general threefold improvement.
+The original detailed diagnostic incorrectly attributed decoding time to
+copying: its insertion hook no longer matched the source boundary. With
+that hook repaired, the same burst-peak diagnostic reports 15.286 ms in
+decoding and 15.982 ms in copying/coverage, plus 3.745 ms in setup. These
+instrumented values include probe overhead. The release timings above
+remain valid; the small byte-order gain does not resolve the remaining
+burst stutter or prove a general threefold improvement.
 
 Local evidence is in `build/dos/sprite8-performance.json`,
 `build/dos/sprite8-validation.json`, `build/dos/sprite8-staging.json` and
 `build/dos-sprite8-source/build/dos/pgo/model-check/report.json`.
 Source-word, invalid-package, sound-off and diagnostic evidence remains
 under `build/dos-sprite8-trace/`.
+
+### Skip repeated billboard footprints within a reverse pass
+
+`dos_raster_sprite_rows` now remembers four recent sampling footprints
+within a reverse billboard pass. Repeating one cannot claim another opaque
+pixel: coverage only increases during that pass. Matching includes geometry,
+WAD/PTR identity and lengths, clipping, horizontal sampling, strip selection
+and a private copy of the sampled rows. Palette differences do not change
+source-index transparency. The existing whole-rectangle rejection runs
+first, preserving visible/drawn accounting. Every new pass resets history;
+source WAD/PTR data must remain immutable during a pass.
+
+The history uses 4,104 bytes of the existing reserved DOS stack, with one
+additional pointer in persistent state and no heap allocation. Ordinary
+non-batch row drawing also decodes the first row directly into the
+framebuffer, then copies opaque spans to repeated rows.
+
+A captured level-1 barrel-burst frame contains 89 batch calls. Replaying
+each call 64 times with its original incoming coverage/history state takes
+22.991 ms versus 28.314 ms before, an 18.8% reduction in the recorded
+billboard kernel. All framebuffer pixels, coverage bits, open-word counts
+and visible/drawn tallies match. This is a kernel result, not overall FPS.
+The replay uses normal/486_slow, 40,000 fixed cycles, 4 MB and no audio.
+
+Across eight diagnostic scenes, all 512 complete framebuffers and
+simulation hashes match, with zero reported profile audio underruns.
+The 4 MB DOS raster oracle also passes 560 row cases, 768 column cases,
+32 independent painter comparisons, 18 repeated-band cases and 216 cached
+draw comparisons. The latter exercise palette changes, every sampling key,
+reused row storage, eviction and pass reset.
+
+This source checkpoint has not refreshed the playable packages or compiler
+feedback build. The sprite8 executable hashes and package limitations above
+still describe the staged games. Fresh release timings and memory checks
+remain necessary before claiming an overall performance improvement.
+Local evidence is in `build/dos-sprite9-trace/diagnostic-validation.json`,
+`build/dos-sprite9-trace/replay-timings.json` and
+`build/dos-sprite9-source/build/dos-raster-regression/RASTER.LOG`.

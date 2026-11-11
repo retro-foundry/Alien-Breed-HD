@@ -96,15 +96,46 @@ void dos_raster_water(RendererPixel *out,unsigned count,
  * lets the first opaque pixel own the result. Reset at each room/section. */
 static DosSpriteBatch *sprite_batch;
 static RendererPixel *sprite_batch_surface;
+static DosSpriteHistory *sprite_history;
 
 void dos_raster_sprite_batch_begin(RendererPixel *surface,DosSpriteBatch *scratch)
 {
     sprite_batch=scratch;
+    sprite_history=NULL;
     memset(sprite_batch->covered,0,sizeof(sprite_batch->covered));
     memset(sprite_batch->open_words,10,sizeof(sprite_batch->open_words));
     sprite_batch_surface=surface;
 }
-void dos_raster_sprite_batch_end(void) { sprite_batch_surface=NULL;sprite_batch=NULL; }
+void dos_raster_sprite_batch_history_begin(DosSpriteHistory *scratch)
+{
+    scratch->count=0;scratch->next=0;sprite_history=scratch;
+}
+void dos_raster_sprite_batch_end(void) { sprite_batch_surface=NULL;sprite_batch=NULL;sprite_history=NULL; }
+
+static int sprite_history_match(const DosSpriteHistoryEntry *entry,const RendererPixel *out,
+                                  unsigned width,unsigned height,unsigned pitch,const DosSpriteRows *sprite)
+{
+    /* Palette changes cannot expose an already claimed opaque texel. Rows
+     * need their own copy because the renderer reuses its sampling array. */
+    const DosSpriteRows *old=&entry->sprite;
+    return entry->out==out && entry->width==width && entry->height==height && entry->pitch==pitch &&
+        old->wad==sprite->wad && old->ptr==sprite->ptr &&
+        old->wad_bytes==sprite->wad_bytes && old->ptr_bytes==sprite->ptr_bytes &&
+        old->ptr_offset==sprite->ptr_offset && old->u==sprite->u && old->du==sprite->du &&
+        old->columns==sprite->columns && old->down_strip==sprite->down_strip &&
+        !memcmp(entry->rows,sprite->rows,height*sizeof(*entry->rows));
+}
+
+static void sprite_history_note(RendererPixel *out,unsigned width,unsigned height,unsigned pitch,
+                                 const DosSpriteRows *sprite,unsigned visible)
+{
+    DosSpriteHistoryEntry *entry=sprite_history->entries+sprite_history->next;
+    entry->out=out;entry->width=width;entry->height=height;entry->pitch=pitch;
+    entry->sprite=*sprite;entry->visible=visible;
+    memcpy(entry->rows,sprite->rows,height*sizeof(*entry->rows));
+    if(sprite_history->count<4)sprite_history->count++;
+    sprite_history->next=(sprite_history->next+1)&3;
+}
 
 static void sprite_copy(RendererPixel *out,const RendererPixel *source,unsigned count)
 {
@@ -329,6 +360,15 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
     if(!width || width>MAX_WIDTH || !height || !sprite->columns ||
        sprite->ptr_bytes<=sprite->ptr_offset)return result;
     if(batch && sprite_batch_hidden(out,width,height))return result;
+    if(batch && sprite_history && height<=240) {
+        for(unsigned i=0;i<sprite_history->count;i++) {
+            const DosSpriteHistoryEntry *entry=sprite_history->entries+i;
+            if(sprite_history_match(entry,out,width,height,pitch,sprite)) {
+                result.visible=entry->visible;
+                return result;
+            }
+        }
+    }
     unsigned available=(sprite->ptr_bytes-sprite->ptr_offset)/4u;
     if(!available)return result;
     unsigned count=0,previous=UINT32_MAX;
@@ -378,7 +418,10 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
         }
         Group *group=groups;
         const Group *groups_end=groups+count;
-        RendererPixel *destination=row;
+        /* Ordinary painter draws can decode their first row directly into
+         * the framebuffer. Repeated rows still copy only its opaque spans. */
+        RendererPixel *decoded_row=batch?row:out+y*pitch;
+        RendererPixel *destination=decoded_row;
         Span *span=spans;
         /* BitMapObj uses source index zero for cutouts. Separate transparent
          * and opaque loops retain that state in control flow, so sampling a
@@ -459,8 +502,9 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
         unsigned opaque=0;
         for(Span *r=spans;r<span;r++) {
             opaque+=r->count;
-            RendererPixel *target=out+y*pitch+(r->source-row);
-            for(unsigned dy=y;dy<end_y;dy++,target+=pitch) {
+            unsigned first_copy=batch?y:y+1;
+            RendererPixel *target=out+first_copy*pitch+(r->source-decoded_row);
+            for(unsigned dy=first_copy;dy<end_y;dy++,target+=pitch) {
                 const RendererPixel *source=r->source;
                 if(batch) {
                     result.drawn+=sprite_batch_copy(target,source,r->count,NULL);
@@ -475,6 +519,8 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
         if(!batch)result.drawn+=opaque*(end_y-y);
         y=end_y;
     }
+    if(batch && sprite_history && height<=240)
+        sprite_history_note(out,width,height,pitch,sprite,result.visible);
     return result;
 }
 

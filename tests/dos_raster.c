@@ -187,7 +187,7 @@ static void check_sprite_rows(void)
      * native words do not overlap any other sampled column in this fixture. */
     native[4097]=wad[4098];native[4098]=wad[4097];
     for(unsigned i=0;i<32;i++)palette[i]=(RendererPixel)(i==1?0:i*1973u);
-    for(unsigned test=0;test<432;test++) {
+    for(unsigned test=0;test<540;test++) {
         unsigned width=widths[test%9],height=test==287?240:1+(test%61);
         for(unsigned i=1;i<32;i++) {
             /* Adjacent opaque samples may share a colour, including black.
@@ -211,12 +211,13 @@ static void check_sprite_rows(void)
         if(test>=288) {
             /* Compare the row renderer with the independent per-pixel DDA
              * across fractional boundaries, clamped columns and 32-bit wraps. */
-            static const uint32_t steps[]={0,1,2,3,127,16383,32767,32768,65535,65536,65537,UINT32_MAX};
+            static const uint32_t steps[]={0,1,2,3,127,4095,4096,4097,8191,8192,8193,
+                16383,16384,16385,32767,32768,32769,65535,65536,65537,UINT32_MAX};
             static const uint32_t origins[]={0,1,65534,65535,65536,65537,31*65536u,
                                              32*65536u-1u,32*65536u,UINT32_MAX-65535u,
                                              UINT32_MAX-1u,UINT32_MAX};
             unsigned n=test-288;
-            sprite.du=steps[n%12];sprite.u=origins[n/12];
+            sprite.du=steps[n%21];sprite.u=origins[n/21];
             if(n%7==0)sprite.columns=1;
         }
         DosSpriteCoverage coverage={0,0};
@@ -290,6 +291,7 @@ static void check_sprite_batches(void)
     static int rows[LAYERS][240];
     struct Rect { unsigned x,y,w,h,u,du,down; } rect[LAYERS];
     DosSpriteBatch scratch;
+    DosSpriteHistory history;
     uint32_t random=0x87451a9bu;
     for(unsigned test=0;test<32;test++) {
         for(unsigned i=0;i<sizeof(wad);i++) {
@@ -333,6 +335,7 @@ static void check_sprite_batches(void)
             }
         }
         dos_raster_sprite_batch_begin(actual+8,&scratch);
+        if(test&1)dos_raster_sprite_batch_history_begin(&history);
         unsigned written=0;
         for(unsigned step=0;step<LAYERS;step++) {
             unsigned layer=LAYERS-1-step;const struct Rect *r=&rect[layer];
@@ -408,6 +411,79 @@ static void check_sprite_batch_repeated_rows(void)
         assert(written==PIXELS && !memcmp(actual,expected,sizeof(actual)));
     }
     puts("PASS: 18 repeated billboard bands preserve 160 copy ranges, changing masks, partial mask words, outside clips, closed-word counts, black and guards");
+}
+
+static void check_sprite_history(void)
+{
+    enum { PIXELS=320*240, STEPS=12 };
+    static RendererPixel actual[PIXELS+16],expected[PIXELS+16],palette[2][32];
+    static uint8_t wad[2][16*32*2+2],ptr[2][16*4];
+    int rows[240];
+    DosSpriteBatch scratch,expected_mask;
+    DosSpriteHistory history;
+    DosSpriteCoverage reference[STEPS];
+    for(unsigned source=0;source<2;source++)for(unsigned x=0;x<16;x++) {
+        unsigned offset=2+x*64,ptr_offset=2+((x+source)%16)*64;
+        ptr[source][x*4]=(uint8_t)(x%3);
+        ptr[source][x*4+2]=(uint8_t)(ptr_offset>>8);
+        ptr[source][x*4+3]=(uint8_t)ptr_offset;
+        for(unsigned y=0;y<32;y++) {
+            unsigned texel=(x+y+source)%3?0:1+(x+y)%31;
+            sprite_word_write(wad[source]+offset+y*2,(uint16_t)(texel|(texel<<5)|(texel<<10)));
+        }
+    }
+    /* Compare the optional cache with the same uncached mask kernel, including
+     * every sampling input, palette-only changes, reused row storage and reset.
+     * Transparent holes keep repeated rectangles out of the whole-box reject. */
+    for(unsigned variant=0;variant<18;variant++)for(unsigned cached=0;cached<2;cached++) {
+        RendererPixel *surface=cached?actual:expected;
+        for(unsigned i=0;i<PIXELS+16;i++)surface[i]=0xa55a;
+        dos_raster_sprite_batch_begin(surface+8,&scratch);
+        if(cached)dos_raster_sprite_batch_history_begin(&history);
+        for(unsigned step=0;step<STEPS;step++) {
+            for(unsigned y=0;y<240;y++)rows[y]=(int)(y/4)%24;
+            for(unsigned i=0;i<32;i++) {
+                palette[0][i]=(RendererPixel)(i==1?0:i*1973u);
+                palette[1][i]=(RendererPixel)(i*917u);
+            }
+            unsigned width=310,height=239,pitch=320,offset=8;
+            DosSpriteRows sprite={wad[0],ptr[0],sizeof(wad[0]),sizeof(ptr[0]),
+                                  palette[0],rows,0,0,65536u/20,16,0};
+            if(step%4==1 || step%4==2)switch(variant) {
+                case 0:sprite.palette=palette[1];break;
+                case 1:for(unsigned y=0;y<240;y++)rows[y]++;break;
+                case 2:sprite.wad=wad[1];break;
+                case 3:sprite.ptr=ptr[1];break;
+                case 4:sprite.wad_bytes-=128;break;
+                case 5:sprite.ptr_bytes=16;break;
+                case 6:sprite.ptr_offset=4;break;
+                case 7:sprite.u=65536;break;
+                case 8:sprite.du=65536u/10;break;
+                case 9:sprite.columns=8;break;
+                case 10:sprite.down_strip=2;break;
+                case 11:width--;break;
+                case 12:height++;break;
+                case 13:offset++;break;
+                case 14:offset+=320;break;
+                case 15:width=32;height=1;break;
+                case 16:for(unsigned i=1;i<32;i++)palette[0][i]=0;break;
+                case 17:for(unsigned y=0;y<240;y++)rows[y]=(y&1)?-1:INT_MAX;break;
+            }
+            /* More than four distinct footprints exercise eviction, then
+             * revisiting the original verifies that missing entries are safe. */
+            if(step>=4 && step<10)offset+=step;
+            DosSpriteCoverage got=dos_raster_sprite_rows(surface+offset,width,height,pitch,&sprite);
+            if(!cached)reference[step]=got;
+            else assert(got.visible==reference[step].visible && got.drawn==reference[step].drawn);
+        }
+        dos_raster_sprite_batch_end();
+        if(!cached)expected_mask=scratch;
+        else {
+            assert(!memcmp(actual,expected,sizeof(actual)));
+            assert(!memcmp(&scratch,&expected_mask,sizeof(scratch)));
+        }
+    }
+    puts("PASS: 216 cached billboard draws retain uncached pixels, coverage, sampling keys, palette changes, row storage reuse, eviction, reset and guards");
 }
 
 static void check_word_offset_bounds(void)
@@ -1078,6 +1154,7 @@ int main(void)
     check_sprite_columns();
     check_sprite_batches();
     check_sprite_batch_repeated_rows();
+    check_sprite_history();
     check_water();
     check_movement_touch();
     check_objects();

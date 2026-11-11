@@ -14191,6 +14191,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
     int reverse_billboards=0;
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565) && !AB3D_CW_COL_MAJOR
     DosSpriteBatch batch_scratch; /* Reuses the already reserved DOS stack. */
+    DosSpriteHistory history_scratch;
     /* Reversing an opaque billboard-only painter pass is exact when the
      * first covered pixel wins. Polygon objects and picking retain their
      * original draw traversal. Small lists avoid the mask setup cost. */
@@ -14202,7 +14203,10 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
         /* Sparse/distant particles have little overdraw to repay the mask.
          * Width is already projected by the existing visibility rejection. */
         reverse_billboards=!batch_has_polygon && batch_area>=320u*240u;
-        if(reverse_billboards)dos_raster_sprite_batch_begin(renderer_active_cw(),&batch_scratch);
+        if(reverse_billboards) {
+            dos_raster_sprite_batch_begin(renderer_active_cw(),&batch_scratch);
+            dos_raster_sprite_batch_history_begin(&history_scratch);
+        }
     }
 #endif
     for (int step = 0; step < obj_count; step++) {
