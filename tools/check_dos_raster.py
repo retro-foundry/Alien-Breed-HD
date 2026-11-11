@@ -51,6 +51,8 @@ def main():
     shutil.copy2(Path(deps['dpmi']) / 'bin/CWSDPMI.EXE', run / 'CWSDPMI.EXE')
     (run / 'RASTER.LOG').unlink(missing_ok=True)
     config = run / 'profile.conf'
+    # This is a deterministic pixel/arithmetic oracle, not a timing benchmark.
+    # A higher cycle budget keeps the expanded boundary cases within its timeout.
     config.write_text(f'''[sdl]
 fullscreen=false
 [mixer]
@@ -61,7 +63,7 @@ memsize=4
 [cpu]
 core=normal
 cputype=486_slow
-cycles=fixed 40000
+cycles=fixed 200000
 [dos]
 xms=true
 ems=false

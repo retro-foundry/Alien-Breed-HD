@@ -296,13 +296,30 @@ unsigned dos_raster_sprite_texel_column(RendererPixel *out,unsigned count,unsign
 }
 #undef SPRITE_COLUMN_SAMPLE
 
+typedef struct { const uint8_t *source; unsigned limit,shift,width; } DosSpriteGroup;
+
+static inline void sprite_group_source(DosSpriteGroup *g,const DosSpriteRows *sprite,
+                                       unsigned column,unsigned width)
+{
+    g->source=NULL;g->width=width;
+    const uint8_t *entry=sprite->ptr+sprite->ptr_offset+column*4u;
+    unsigned mode=entry[0];
+    uint32_t offset=((uint32_t)entry[1]<<16)|((uint32_t)entry[2]<<8)|entry[3];
+    if((!mode && !offset) || offset>=sprite->wad_bytes)return;
+    unsigned words=(sprite->wad_bytes-offset)/2u;
+    if(words<=sprite->down_strip)return;
+    g->source=sprite->wad+offset+sprite->down_strip*2u;
+    g->limit=words-1-sprite->down_strip;
+    g->shift=!mode?0:mode==1?5:10;
+}
+
 __attribute__((always_inline)) static inline
 DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
                                         unsigned height,unsigned pitch,
                                         const DosSpriteRows *sprite,int batch)
 {
     enum { MAX_WIDTH=320 };
-    typedef struct { const uint8_t *source; unsigned limit,shift,width; } Group;
+    typedef DosSpriteGroup Group;
     Group groups[MAX_WIDTH];
     RendererPixel row[MAX_WIDTH];
     typedef DosSpriteSpan Span;
@@ -316,22 +333,35 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
     if(!available)return result;
     unsigned count=0,previous=UINT32_MAX;
     uint32_t u=sprite->u;
-    for(unsigned x=0;x<width;x++,u+=sprite->du) {
+    if(sprite->du && sprite->du<65536u) {
+        /* A magnified source column repeats whole pixels. After the first
+         * boundary, each run is floor(65536/du) or one pixel longer; its
+         * remainder advances exactly like the original unsigned DDA. */
+        unsigned whole=65536u/sprite->du,remainder=65536u%sprite->du;
+        unsigned column=u>>16,run=(65535u-(u&65535u))/sprite->du+1u;
+        unsigned fraction=(u&65535u)+run*sprite->du-65536u;
+        for(unsigned x=0;x<width;) {
+            unsigned length=run,sample=column;
+            if(length>width-x)length=width-x;
+            if(sample>=sprite->columns)sample=sprite->columns-1;
+            if(sample>=available)sample=available-1;
+            if(sample==previous)groups[count-1].width+=length;
+            else {
+                previous=sample;
+                sprite_group_source(&groups[count++],sprite,sample,length);
+            }
+            x+=length;
+            column=(column+1u)&65535u;
+            run=whole+(fraction<remainder);
+            fraction=fraction>=remainder?fraction-remainder:fraction+sprite->du-remainder;
+        }
+    } else for(unsigned x=0;x<width;x++,u+=sprite->du) {
         unsigned column=u>>16;
         if(column>=sprite->columns)column=sprite->columns-1;
         if(column>=available)column=available-1;
         if(column==previous){groups[count-1].width++;continue;}
         previous=column;
-        Group *g=&groups[count++];g->source=NULL;g->width=1;
-        const uint8_t *entry=sprite->ptr+sprite->ptr_offset+column*4u;
-        unsigned mode=entry[0];
-        uint32_t offset=((uint32_t)entry[1]<<16)|((uint32_t)entry[2]<<8)|entry[3];
-        if((!mode && !offset) || offset>=sprite->wad_bytes)continue;
-        unsigned words=(sprite->wad_bytes-offset)/2u;
-        if(words<=sprite->down_strip)continue;
-        g->source=sprite->wad+offset+sprite->down_strip*2u;
-        g->limit=words-1-sprite->down_strip;
-        g->shift=!mode?0:mode==1?5:10;
+        sprite_group_source(&groups[count++],sprite,column,1);
     }
     unsigned minimum_limit=UINT32_MAX;
     int all_sources=1;

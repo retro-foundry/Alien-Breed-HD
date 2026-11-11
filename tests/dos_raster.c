@@ -156,7 +156,7 @@ static void check_sprite_rows(void)
         seed=seed*1664525u+1013904223u;wad[i]=(uint8_t)(seed>>24);
     }
     for(unsigned i=0;i<32;i++)palette[i]=(RendererPixel)(i==1?0:i*1973u);
-    for(unsigned test=0;test<288;test++) {
+    for(unsigned test=0;test<432;test++) {
         unsigned width=widths[test%9],height=test==287?240:1+(test%61);
         for(unsigned i=1;i<32;i++) {
             /* Adjacent opaque samples may share a colour, including black.
@@ -177,6 +177,17 @@ static void check_sprite_rows(void)
         DosSpriteRows sprite={wad,ptr,sizeof(wad)-(test%5),sizeof(ptr)-(test%7),palette,rows,
                               test%4,(test%3)*65536u+333u,test%4==0?0:65536u/(1+test%8),
                               32,test%13==0?65535u:test%3};
+        if(test>=288) {
+            /* Compare the row renderer with the independent per-pixel DDA
+             * across fractional boundaries, clamped columns and 32-bit wraps. */
+            static const uint32_t steps[]={0,1,2,3,127,16383,32767,32768,65535,65536,65537,UINT32_MAX};
+            static const uint32_t origins[]={0,1,65534,65535,65536,65537,31*65536u,
+                                             32*65536u-1u,32*65536u,UINT32_MAX-65535u,
+                                             UINT32_MAX-1u,UINT32_MAX};
+            unsigned n=test-288;
+            sprite.du=steps[n%12];sprite.u=origins[n/12];
+            if(n%7==0)sprite.columns=1;
+        }
         DosSpriteCoverage coverage={0,0};
         unsigned available=(sprite.ptr_bytes-sprite.ptr_offset)/4;
         for(unsigned x=0;x<width;x++) {
@@ -1014,6 +1025,7 @@ void check_movement_touch(void);
 
 int main(void)
 {
+    setvbuf(stdout,NULL,_IOLBF,0);
     check_division();
     check_floor_step_rounding();
     check_billboard_projection();
