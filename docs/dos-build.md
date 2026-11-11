@@ -3052,8 +3052,59 @@ python tools/check_dos_audio.py --dosbox <dosbox.exe>
 
 The block-mixing probe lowers the level-1 audio maximum to 4.158 ms and
 the turning level-6 maximum to 4.057 ms. All 512 complete diagnostic images
-and simulation hashes match. The fresh compiler-feedback release is still
-being checked; the playable packages currently contain the preceding
-water-phase release. Local diagnostic/PCM evidence is under
-`build/dos-audio2-trace/` and
+and simulation hashes match. Matched compiler-feedback release timings use
+normal/486_slow, 40,000 fixed cycles, 4 MB, 320x240 RGB565, SB16/mouse and
+muted host sound. Both entry points keep 512 bytes of timing samples and
+capture frame 23 outside the timed update. Results cover fixed updates
+8-63; turning holds the original right-turn input throughout all 64 updates.
+
+| View | Previous mean/p95/worst ms | Updated mean/p95/worst ms |
+| --- | ---: | ---: |
+| Starting room | 38.482 / 38.538 / 38.547 | 38.495 / 38.552 / 38.560 |
+| Close enemies/barrel | 38.543 / 39.527 / 39.656 | 38.465 / 39.176 / 39.212 |
+| Pool surface | 60.557 / 61.834 / 61.949 | 60.323 / 61.659 / 61.838 |
+| Level-1 barrel burst | 50.667 / 76.667 / 79.322 | 49.572 / 75.016 / 78.585 |
+| Level-6 barrel burst | 48.585 / 65.709 / 69.858 | 47.925 / 63.325 / 63.661 |
+| Level-1 burst, turning | 52.358 / 83.516 / 91.712 | 51.271 / 82.665 / 87.572 |
+| Level-6 burst, turning | 62.115 / 81.626 / 84.271 | 61.491 / 78.089 / 79.741 |
+| Close enemies, turning | 39.398 / 47.878 / 48.043 | 39.319 / 47.479 / 47.571 |
+
+All four burst means, p95s and maxima improve. Level-6 stationary worst
+time falls by 6.197 ms, and turning worst times fall by 4.140/4.530 ms on
+levels 1/6. The first eight burst updates improve by 2.394/2.949 ms on
+levels 1/6. The starting-room diagnostic mean regresses by 0.013 ms.
+The separate unmodified 128-frame starting-room test retains the 25.80 FPS
+gate at 26.21 FPS, 38.15 ms mean, 38.65 ms p95 and 77.96 ms worst, versus
+26.20 FPS, 38.17/38.68/77.96 ms before. Heavy turning bursts still approach
+88 ms; physical 486 performance and a general threefold gain across these
+views remain unproven.
+
+All 512 complete release-engine images and simulation hashes match, as do
+all 128 image/hash pairs in the 32 KiB residency-stress test at 4 versus
+16 MB on levels 1 and 6. Fresh compiler feedback completes 23 training
+runs and 22 ordinary/optimized native captures. All 22 original native
+and 22 freshly rebuilt indexed reference images match. Full 4 MB level-1/4/15
+and real-time level-4 SB16/mouse exercises pass with zero profile audio
+underruns. Windows Release builds. Both packages retain 231 unchanged
+assets and 238 archive entries, with exact maps and the existing active-byte
+comparisons for all six saved level/map payloads on levels 1 and 4.
+
+Native text/data/BSS are 1,189,912/22,016/260,096 bytes: 3,072 more code
+bytes and unchanged persistent data size. The 2 KiB accumulator is bounded
+by the negotiated device chunk. The level-4 sound/mouse checkpoint reports
+144 KiB free physical memory after shared assets and 44 KiB after loading
+the level, versus 148/48 KiB before. This retains the 4 MB target with a
+4 KiB reduction in observed physical headroom.
+
+The staged native EXE SHA-256 is
+`def2fd6afd865b71ccae4e674e14c98db13ec74b2c8fef96a380421182cbf954`;
+the indexed EXE is
+`8a95188f1c78c213850ead3a65d8214bdb06b66c7bbfc6bd0027a8ea2ef8dae8`.
+Staging replaces each EXE/archive, preserving all 241 native and 238 indexed
+non-EXE game files, including settings, saves and the ABW1 water asset.
+
+Local evidence is in `build/dos/audio2-performance.json`,
+`build/dos/audio2-validation.json`, `build/dos/audio2-staging.json` and
+`build/dos-audio2-source/build/dos/pgo/model-check/report.json`.
+Diagnostic/PCM evidence remains under `build/dos-audio2-trace/` and
 `build/dos-audio2-source/build/dos-audio-regression/`.
