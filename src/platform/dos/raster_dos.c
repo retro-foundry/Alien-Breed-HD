@@ -333,8 +333,11 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
         g->limit=words-1-sprite->down_strip;
         g->shift=!mode?0:mode==1?5:10;
     }
-    for(unsigned g=0;g<count;g++)if(groups[g].source)
+    unsigned minimum_limit=UINT32_MAX;
+    for(unsigned g=0;g<count;g++)if(groups[g].source) {
         result.visible+=groups[g].width*height;
+        if(groups[g].limit<minimum_limit)minimum_limit=groups[g].limit;
+    }
     for(unsigned y=0;y<height;) {
         int source_row=sprite->rows[y];
         unsigned end_y=y+1;
@@ -349,12 +352,15 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
         /* BitMapObj uses source index zero for cutouts. Separate transparent
          * and opaque loops retain that state in control flow, so sampling a
          * column does not reload a flag from the stack. */
-#define SPRITE_ROW_SAMPLE(REJECT_) \
+#define SPRITE_ROW_CHECK(REJECT_) \
+            "cmpl 4(%%esi),%%edx\n\t" \
+            "ja " REJECT_ "\n\t"
+#define SPRITE_ROW_UNCHECKED(REJECT_) ""
+#define SPRITE_ROW_SAMPLE(REJECT_,BOUNDS_) \
             "movl (%%esi),%%eax\n\t" \
             "testl %%eax,%%eax\n\t" \
             "jz " REJECT_ "\n\t" \
-            "cmpl 4(%%esi),%%edx\n\t" \
-            "ja " REJECT_ "\n\t" \
+            BOUNDS_(REJECT_) \
             "movzwl (%%eax,%%edx,2),%%eax\n\t" \
             "rorw $8,%%ax\n\t" \
             "movl 8(%%esi),%%ecx\n\t" \
@@ -367,36 +373,47 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             "shrl $1,%%eax\n\t" \
             "movl %%eax,4(%[span])\n\t" \
             "addl $8,%[span]\n\t"
-        __asm__ volatile(
-            "movl %[y],%%edx\n\t"
-            "1: " SPRITE_ROW_SAMPLE("3f")
-            "movl %%edi,(%[span])\n\t"
-            "jmp 2f\n\t"
-            /* Transparent run: skip the destination, then sample again. */
-            "3: movl 12(%%esi),%%eax\n\t"
-            "leal (%%edi,%%eax,2),%%edi\n\t"
-            "addl $16,%%esi\n\t"
-            "cmpl %[end],%%esi\n\t"
-            "jne 1b\n\t"
-            "jmp 9f\n\t"
-            /* Opaque run: the span is already open until a cutout. */
-            "4: " SPRITE_ROW_SAMPLE("6f")
-            "2: movw (%%ebx,%%eax,2),%%ax\n\t"
-            "movl 12(%%esi),%%ecx\n\t"
-            "rep stosw\n\t"
-            "addl $16,%%esi\n\t"
-            "cmpl %[end],%%esi\n\t"
-            "jne 4b\n\t"
-            SPRITE_ROW_CLOSE
-            "jmp 9f\n\t"
-            "6: " SPRITE_ROW_CLOSE
-            "jmp 3b\n\t"
-            "9:"
-            : "+&S"(group), "+&D"(destination), [span]"+&r"(span)
-            : "b"(sprite->palette), [y]"m"(source_row), [end]"m"(groups_end)
-            : "eax","ecx","edx","cc","memory");
+#define SPRITE_ROW_DECODE(BOUNDS_) \
+        __asm__ volatile( \
+            "movl %[y],%%edx\n\t" \
+            "1: " SPRITE_ROW_SAMPLE("3f",BOUNDS_) \
+            "movl %%edi,(%[span])\n\t" \
+            "jmp 2f\n\t" \
+            /* Transparent run: skip the destination, then sample again. */ \
+            "3: movl 12(%%esi),%%eax\n\t" \
+            "leal (%%edi,%%eax,2),%%edi\n\t" \
+            "addl $16,%%esi\n\t" \
+            "cmpl %[end],%%esi\n\t" \
+            "jne 1b\n\t" \
+            "jmp 9f\n\t" \
+            /* Opaque run: the span is already open until a cutout. */ \
+            "4: " SPRITE_ROW_SAMPLE("6f",BOUNDS_) \
+            "2: movw (%%ebx,%%eax,2),%%ax\n\t" \
+            "movl 12(%%esi),%%ecx\n\t" \
+            "rep stosw\n\t" \
+            "addl $16,%%esi\n\t" \
+            "cmpl %[end],%%esi\n\t" \
+            "jne 4b\n\t" \
+            SPRITE_ROW_CLOSE \
+            "jmp 9f\n\t" \
+            "6: " SPRITE_ROW_CLOSE \
+            "jmp 3b\n\t" \
+            "9:" \
+            : "+&S"(group), "+&D"(destination), [span]"+&r"(span) \
+            : "b"(sprite->palette), [y]"m"(source_row), [end]"m"(groups_end) \
+            : "eax","ecx","edx","cc","memory")
+        /* Most rows are valid in every nonempty source column. Prove that
+         * once per band instead of loading and checking each column's limit.
+         * Truncated data and negative rows retain the unsigned bounds checks. */
+        if((unsigned)source_row<=minimum_limit)
+            SPRITE_ROW_DECODE(SPRITE_ROW_UNCHECKED);
+        else
+            SPRITE_ROW_DECODE(SPRITE_ROW_CHECK);
+#undef SPRITE_ROW_DECODE
 #undef SPRITE_ROW_CLOSE
 #undef SPRITE_ROW_SAMPLE
+#undef SPRITE_ROW_UNCHECKED
+#undef SPRITE_ROW_CHECK
         if(batch && end_y-y>1) {
             result.drawn+=sprite_batch_rows(out+y*pitch,width,end_y-y,pitch,row,
                                              spans,(unsigned)(span-spans));
