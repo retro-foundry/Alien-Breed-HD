@@ -285,47 +285,57 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
         const Group *groups_end=groups+count;
         RendererPixel *destination=row;
         Span *span=spans;
-        unsigned open=0;
-        /* BitMapObj's packed sample and the run expansion stay in registers.
-         * Record alpha transitions once per group, including opaque black. */
-        __asm__ volatile(
-            "1: movl (%%esi),%%eax\n\t"
-            "testl %%eax,%%eax\n\t"
-            "jz 3f\n\t"
-            "movl %[y],%%edx\n\t"
-            "cmpl 4(%%esi),%%edx\n\t"
-            "ja 3f\n\t"
-            "movzwl (%%eax,%%edx,2),%%eax\n\t"
-            "rorw $8,%%ax\n\t"
-            "movl 8(%%esi),%%ecx\n\t"
-            "shrl %%cl,%%eax\n\t"
-            "andl $31,%%eax\n\t"
-            "jz 3f\n\t"
-            "movw (%%ebx,%%eax,2),%%ax\n\t"
-            "cmpl $0,%[open]\n\t"
-            "jne 2f\n\t"
-            "movl %%edi,(%[span])\n\t"
-            "movl $1,%[open]\n\t"
-            "2: movl 12(%%esi),%%ecx\n\t"
-            "rep stosw\n\t"
-            "jmp 5f\n\t"
-            "3: cmpl $0,%[open]\n\t"
-            "je 4f\n\t"
-            "movl %%edi,%%eax\n\t"
-            "subl (%[span]),%%eax\n\t"
-            "shrl $1,%%eax\n\t"
-            "movl %%eax,4(%[span])\n\t"
+        /* BitMapObj uses source index zero for cutouts. Separate transparent
+         * and opaque loops retain that state in control flow, so sampling a
+         * column does not reload a flag from the stack. */
+#define SPRITE_ROW_SAMPLE(REJECT_) \
+            "movl (%%esi),%%eax\n\t" \
+            "testl %%eax,%%eax\n\t" \
+            "jz " REJECT_ "\n\t" \
+            "movl %[y],%%edx\n\t" \
+            "cmpl 4(%%esi),%%edx\n\t" \
+            "ja " REJECT_ "\n\t" \
+            "movzwl (%%eax,%%edx,2),%%eax\n\t" \
+            "rorw $8,%%ax\n\t" \
+            "movl 8(%%esi),%%ecx\n\t" \
+            "shrl %%cl,%%eax\n\t" \
+            "andl $31,%%eax\n\t" \
+            "jz " REJECT_ "\n\t"
+#define SPRITE_ROW_CLOSE \
+            "movl %%edi,%%eax\n\t" \
+            "subl (%[span]),%%eax\n\t" \
+            "shrl $1,%%eax\n\t" \
+            "movl %%eax,4(%[span])\n\t" \
             "addl $8,%[span]\n\t"
-            "movl $0,%[open]\n\t"
-            "4: movl 12(%%esi),%%eax\n\t"
+        __asm__ volatile(
+            "1: " SPRITE_ROW_SAMPLE("3f")
+            "movl %%edi,(%[span])\n\t"
+            "jmp 2f\n\t"
+            /* Transparent run: skip the destination, then sample again. */
+            "3: movl 12(%%esi),%%eax\n\t"
             "leal (%%edi,%%eax,2),%%edi\n\t"
-            "5: addl $16,%%esi\n\t"
+            "addl $16,%%esi\n\t"
             "cmpl %[end],%%esi\n\t"
-            "jne 1b"
-            : "+&S"(group), "+&D"(destination), [span]"+&r"(span), [open]"+m"(open)
+            "jne 1b\n\t"
+            "jmp 9f\n\t"
+            /* Opaque run: the span is already open until a cutout. */
+            "4: " SPRITE_ROW_SAMPLE("6f")
+            "2: movw (%%ebx,%%eax,2),%%ax\n\t"
+            "movl 12(%%esi),%%ecx\n\t"
+            "rep stosw\n\t"
+            "addl $16,%%esi\n\t"
+            "cmpl %[end],%%esi\n\t"
+            "jne 4b\n\t"
+            SPRITE_ROW_CLOSE
+            "jmp 9f\n\t"
+            "6: " SPRITE_ROW_CLOSE
+            "jmp 3b\n\t"
+            "9:"
+            : "+&S"(group), "+&D"(destination), [span]"+&r"(span)
             : "b"(sprite->palette), [y]"m"(source_row), [end]"m"(groups_end)
             : "eax","ecx","edx","cc","memory");
-        if(open){span->count=(unsigned)(destination-span->source);span++;}
+#undef SPRITE_ROW_CLOSE
+#undef SPRITE_ROW_SAMPLE
         unsigned opaque=0;
         for(Span *r=spans;r<span;r++) {
             opaque+=r->count;
