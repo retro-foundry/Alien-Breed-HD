@@ -31,6 +31,7 @@
 #include "renderer_limits.h"
 #include "renderer_fixed.h"
 #include "sprite_format.h"
+#include "water_format.h"
 #ifdef AB3D_DOS
 #include "platform_dos.h"
 #include "raster_dos.h"
@@ -2836,7 +2837,11 @@ static uint32_t g_water_ms_remainder = 0;
 static const uint8_t *g_water_file = NULL;
 static size_t g_water_file_size = 0;
 static uint8_t g_water_file_level_max = 0;
+#ifdef AB3D_DOS
+static const uint8_t (*g_water_level_phase_lut)[WATER_PHASE_BYTES];
+#else
 static uint8_t g_water_level_phase_lut[8][64 * 64];
+#endif
 static int g_water_level_phase_lut_ready = 0;
 static const uint8_t *g_water_brighten = NULL;
 static size_t g_water_brighten_size = 0;
@@ -3065,6 +3070,10 @@ static void renderer_build_water_level_phase_lut(const uint8_t *water_file, size
     g_water_level_phase_lut_ready = 0;
     if (!water_file || water_file_size < 65536u) return;
 
+#ifdef AB3D_DOS
+    /* ABW1 already holds these planes in the resident WaterFile bank. */
+    g_water_level_phase_lut=(const uint8_t (*)[WATER_PHASE_BYTES])water_file;
+#else
     for (int phase = 0; phase < 8; phase++) {
         size_t phase_off = (size_t)g_water_src_offsets[phase];
         for (int v = 0; v < 64; v++) {
@@ -3075,6 +3084,7 @@ static void renderer_build_water_level_phase_lut(const uint8_t *water_file, size
             }
         }
     }
+#endif
 
     g_water_level_phase_lut_ready = 1;
 }
@@ -4780,6 +4790,9 @@ void renderer_set_water_assets(const uint8_t *water_file, size_t water_file_size
     g_water_file_size = water_file_size;
     g_water_file_level_max = 0;
     g_water_level_phase_lut_ready = 0;
+#ifdef AB3D_DOS
+    g_water_level_phase_lut = NULL;
+#endif
     g_water_brighten_cw_lut_ready = 0;
     if (water_file && water_file_size > 0) {
         uint8_t level_max = 0;
@@ -8308,7 +8321,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             size_t water_brighten_lookup_span = (size_t)dist_off + ((size_t)g_water_file_level_max << 9) + 512u;
             if ((water_phase_lut || g_water_file_size >= water_file_lookup_span) &&
                 (water_has_brighten_cw_lut || g_water_brighten_size >= water_brighten_lookup_span)) {
-                const uint8_t *water_file = water_phase_lut ? NULL : (g_water_file + (size_t)g_water_src_off);
+                const uint8_t *water_file = water_phase_lut ? NULL : g_water_file;
                 const uint8_t *water_brighten = g_water_brighten + (size_t)dist_off;
                 const int water_brighten_row_base = (int)(dist_off >> 9);
                 const int sample0_needs_back_buffer = 0;
@@ -8353,7 +8366,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
                                 uint8_t water_level = water_phase_lut
                                     ? water_phase_lut[water_idx]
-                                    : water_file[(size_t)water_d5 << 2];
+                                    : water_source_byte(water_file,((size_t)water_d5 << 2)+(size_t)g_water_src_off);
 
                                 uint16_t bg_cw0 = cwbuf[bg_cw_i0];
                                 uint16_t out_cw;
@@ -8382,7 +8395,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                             uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
                             uint8_t water_level = water_phase_lut
                                 ? water_phase_lut[water_idx]
-                                : water_file[(size_t)water_d5 << 2];
+                                : water_source_byte(water_file,((size_t)water_d5 << 2)+(size_t)g_water_src_off);
 
                             uint16_t bg_cw0 = cwbuf[bg_cw_i0];
                             int sample0_back_buffer = 0;
@@ -8439,7 +8452,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
                                 uint8_t water_level = water_phase_lut
                                     ? water_phase_lut[water_idx]
-                                    : water_file[(size_t)water_d5 << 2];
+                                    : water_source_byte(water_file,((size_t)water_d5 << 2)+(size_t)g_water_src_off);
 
                                 uint16_t bg_cw0 = cwbuf[bg_cw_i0];
                                 uint16_t bg_cw1 = cwbuf[bg_cw_i1];
@@ -8481,7 +8494,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                             uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
                             uint8_t water_level = water_phase_lut
                                 ? water_phase_lut[water_idx]
-                                : water_file[(size_t)water_d5 << 2];
+                                : water_source_byte(water_file,((size_t)water_d5 << 2)+(size_t)g_water_src_off);
 
                             uint16_t bg_cw0 = cwbuf[bg_cw_i0];
                             int sample0_back_buffer = 0;
@@ -8544,7 +8557,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                 } else {
                     size_t wi = ((size_t)water_d5 << 2) + (size_t)g_water_src_off;
                     if (wi < g_water_file_size) {
-                        water_level = g_water_file[wi];
+                        water_level = water_source_byte(g_water_file,wi);
                     }
                 }
             } else if (texture) {

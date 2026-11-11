@@ -12,6 +12,7 @@ import zipfile
 from dos_palette import stage_palettes
 from dos_wall import prepare_wall
 from dos_sprite import prepare_sprite
+from dos_water import prepare_water
 
 
 def main():
@@ -92,6 +93,16 @@ def main():
         if unpacked.stat().st_size!=expected:raise SystemExit(f'Incomplete unpacked level: {source}')
         sources[logical]=unpacked
     stage_palettes(root, generated, sources)
+    # Native water planes replace the renderer's duplicate 32 KiB phase LUT.
+    # Preserve all source bytes, including those outside the sampled planes.
+    for logical, source in list(sources.items()):
+        if logical not in ('data/includes/waterfile', 'data/helper/waterfile'):
+            continue
+        native = generated / ('water-' + logical.split('/')[1] + '.bin')
+        payload = prepare_water(source.read_bytes())
+        if not native.exists() or native.read_bytes() != payload:
+            native.write_bytes(payload)
+        sources[logical] = native
     # Palette derivation above still sees original Amiga sprite bytes. Retain
     # the packed words and PTR offsets, but transport words in 486 byte order.
     for index, (logical, source) in enumerate(sorted(sources.items())):

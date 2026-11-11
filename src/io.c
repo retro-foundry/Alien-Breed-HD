@@ -21,6 +21,7 @@
 #include "game_types.h"
 #include "sprite_palettes.h"
 #include "sprite_format.h"
+#include "water_format.h"
 #include <SDL.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -1271,6 +1272,15 @@ void io_load_floor(void)
             fseek(f, 0, SEEK_END);
             long len = ftell(f);
             fseek(f, 0, SEEK_SET);
+#ifdef AB3D_DOS
+            /* Consume the transport header before taking a resident bank. */
+            uint8_t header[WATER_NATIVE_HEADER_BYTES];
+            if(len<0 || fread(header,1,sizeof(header),f)!=sizeof(header) ||
+               !water_native_payload_size(header,(size_t)len)) {
+                fprintf(stderr,"[IO] Invalid ABW1 water header/length: %s; rebuild the DOS asset package\n",path);exit(1);
+            }
+            len=WATER_FILE_BYTES;
+#endif
             if (len > 0) {
                 g_water_file_data = (uint8_t *)shared_texture_alloc((size_t)len);
                 if (g_water_file_data && fread(g_water_file_data, 1, (size_t)len, f) == (size_t)len) {

@@ -2934,3 +2934,37 @@ mean regressed by 0.047 ms and level-6 turning p95/worst by 0.062/0.066 ms.
 Those small, mixed changes do not justify adopting the extra training yet.
 The isolated trial preserves all five checked frame-23 images and hashes;
 its evidence remains under `build/dos-water3-trace/burst-training/`.
+
+### Transport the water phase views directly
+
+DOS `WaterFile` now carries an eight-byte `ABW1` version/length header and
+a permutation of its complete 65,536-byte source payload. The first 32 KiB
+contains the eight contiguous 64x64 phase planes selected by the original
+AB3DI.s waterpt offsets. The second 32 KiB retains every odd source byte in
+word order. `water_source_byte` preserves original byte addressing for scalar
+sampling; the source maximum is unchanged by the permutation.
+
+`renderer_build_water_level_phase_lut` uses a view into that existing
+conventional-memory bank on DOS. It no longer builds or stores another
+32 KiB phase array. Desktop keeps the original asset and phase builder.
+DOS consumes and validates the header before allocating the same 64 KiB
+resident bank. Both RGB565 and indexed packages prepare the new transport
+automatically. Use matching updated EXE and DATA files together; raw water
+files fail with an explicit ABW1 version/length error.
+
+The source audit proves a bijection over all 65,536 bytes and all 32,768
+phase samples. The actual 486 oracle loads the preparer's output, checks
+every original byte through the scalar accessor and every direct phase
+sample against the AB3DI.s address expression, and rejects invalid headers.
+All other raster checks pass. Across eight diagnostic scenes, all 512 full
+framebuffers and simulation hashes match, with zero profile audio underruns.
+A real DOS startup test also rejects the old raw WaterFile.
+
+Diagnostic BSS falls from 292,352 to 259,584 bytes, exactly 32 KiB. Its
+pool mean is essentially unchanged at 63.712 versus 63.728 ms; this change
+targets memory headroom rather than removing another rendering stage.
+Fresh compiler-feedback release validation and package staging are pending.
+The playable packages still contain the preceding water-colour release.
+Local byte/phase, startup-rejection and diagnostic evidence is under
+`build/dos-phase1-trace/`; the raster log is
+`build/dos-phase1-source/build/dos-raster-regression/RASTER.LOG`.

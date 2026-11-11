@@ -10,6 +10,7 @@ import struct
 import sys
 from dos_wall import prepare_wall
 from dos_sprite import prepare_sprite
+from dos_water import prepare_water
 from pal_to_header import rgb565_words
 
 
@@ -25,6 +26,15 @@ def main():
     (run / 'WALL.BIN').write_bytes(prepare_wall(packed))
     (run / 'COLORS.BIN').write_bytes(rgb565_words(struct.pack('>4096H', *range(4096))))
     (run / 'SWORDS.BIN').write_bytes(prepare_sprite(struct.pack('>65536H', *range(65536)), b'\x01\0\0\0'))
+    water = (root / 'amiga/data/helper/WaterFile').read_bytes()
+    (run / 'WATER.BIN').write_bytes(prepare_water(water))
+    (run / 'WATERRAW.BIN').write_bytes(water)
+    for malformed in (b'', water[:-1], water + b'\0'):
+        try:
+            prepare_water(malformed)
+        except ValueError:
+            continue
+        raise AssertionError('Malformed water transport input was accepted')
     for words, pointers in [(b'', b''), (b'\0', b''), (b'\0\0', b'\0'),
                              (b'\0\0\0\0', b'\x01\0\0\x01')]:
         try:

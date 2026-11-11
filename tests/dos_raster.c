@@ -4,6 +4,7 @@
 #include "objects_dos.h"
 #include "sprite_palettes.h"
 #include "sprite_format.h"
+#include "water_format.h"
 #include "level.h"
 #include <assert.h>
 #include <limits.h>
@@ -24,6 +25,32 @@ static uint32_t next_value(void)
 {
     random_state = random_state * 1664525u + 1013904223u;
     return random_state;
+}
+
+static void check_water_transport(void)
+{
+    static uint8_t native[WATER_FILE_BYTES],original[WATER_FILE_BYTES];
+    uint8_t header[WATER_NATIVE_HEADER_BYTES];
+    FILE *file=fopen("WATER.BIN","rb");assert(file);
+    assert(fread(header,1,sizeof(header),file)==sizeof(header));
+    assert(water_native_payload_size(header,WATER_FILE_BYTES+WATER_NATIVE_HEADER_BYTES)==WATER_FILE_BYTES);
+    assert(!water_native_payload_size(header,WATER_FILE_BYTES+WATER_NATIVE_HEADER_BYTES-1));
+    assert(!water_native_payload_size(header,7));
+    header[3]='2';assert(!water_native_payload_size(header,WATER_FILE_BYTES+WATER_NATIVE_HEADER_BYTES));header[3]='1';
+    header[4]=1;assert(!water_native_payload_size(header,WATER_FILE_BYTES+WATER_NATIVE_HEADER_BYTES));header[4]=0;
+    assert(fread(native,1,sizeof(native),file)==sizeof(native) && fgetc(file)==EOF);fclose(file);
+    file=fopen("WATERRAW.BIN","rb");assert(file);
+    assert(fread(original,1,sizeof(original),file)==sizeof(original) && fgetc(file)==EOF);fclose(file);
+    for(unsigned offset=0;offset<WATER_FILE_BYTES;offset++)
+        assert(water_source_byte(native,offset)==original[offset]);
+    /* Independent AB3DI.s d5/phase address expressions verify the direct
+     * views consumed by the actual water raster, including all eight phases. */
+    static const unsigned offsets[8]={0,2,256,258,512,514,768,770};
+    for(unsigned phase=0;phase<8;phase++)for(unsigned v=0;v<64;v++)for(unsigned u=0;u<64;u++) {
+        unsigned source=(((v<<8)|u)<<2)+offsets[phase];
+        assert(native[phase*4096+v*64+u]==original[source]);
+    }
+    puts("PASS: all 65536 transported water bytes, 32768 phase samples and invalid headers");
 }
 
 static RendererPixel reference_water_pixel(RendererPixel p0,RendererPixel p1,
@@ -1155,7 +1182,7 @@ int main(void)
     check_sprite_batches();
     check_sprite_batch_repeated_rows();
     check_sprite_history();
-    check_water();
+    check_water_transport();check_water();
     check_movement_touch();
     check_objects();
     puts("DOS raster regression passed");
