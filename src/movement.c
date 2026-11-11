@@ -548,16 +548,18 @@ static void mark_floorline_touch_flag(const MoveContext *ctx, const uint8_t *fli
  * if (d > 0 && d < 32) or.w wallflags,14(a2)
  *
  * Our coordinates may be shifted by pos_shift, so scale the 32 threshold too. */
-static void mark_floorline_touch_if_near(const MoveContext *ctx, const uint8_t *fline,
+/* Returns a positive side proof for checkwalls when its signed-word
+ * relative coordinates have the same value as this wider touch test. */
+static int mark_floorline_touch_if_near(const MoveContext *ctx, const uint8_t *fline,
     int32_t lx, int32_t lz, int16_t lxlen, int16_t lzlen, int ps)
 {
-    if (!ctx || !fline) return;
-    if (ctx->wall_flags == 0) return;
+    if (!ctx || !fline) return 0;
+    if (ctx->wall_flags == 0) return 0;
 
     {
-        int64_t side = (int64_t)(ctx->newx - lx) * (int64_t)lzlen -
-                       (int64_t)(ctx->newz - lz) * (int64_t)lxlen;
-        if (side <= 0) return;
+        int32_t rx = ctx->newx - lx, rz = ctx->newz - lz;
+        int64_t side = (int64_t)rx * lzlen - (int64_t)rz * lxlen;
+        if (side <= 0) return 0;
 
         int32_t line_len = (int32_t)(int16_t)read_be16(fline + FLINE_LENGTH);
         if (line_len < 0) line_len = -line_len;
@@ -571,6 +573,11 @@ static void mark_floorline_touch_if_near(const MoveContext *ctx, const uint8_t *
          * in int64_t and avoids a software wide division on the 486. */
         if (side < (int64_t)denom * near_thresh)
             mark_floorline_touch_flag(ctx, fline);
+#ifdef AB3D_DOS
+        return (((uint32_t)rx + 32768u) | ((uint32_t)rz + 32768u)) <= 65535u;
+#else
+        return 0;
+#endif
     }
 }
 
@@ -957,7 +964,15 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
     get_floorline_shift_offsets(ctx, fline, &a4, &a6);
 
     /* Amiga tags touch flags before deciding whether an exit is passable. */
-    mark_floorline_touch_if_near(ctx, fline, lx, lz, lxlen, lzlen, ps);
+    int positive_word_side = mark_floorline_touch_if_near(ctx, fline, lx, lz, lxlen, lzlen, ps);
+#ifdef AB3D_DOS
+    /* ObjectMove.s checkwalls immediately rejects this positive cross.
+     * With zero offsets and word-sized relative coordinates, reuse the
+     * touch test's result after preserving its floorline flag writes. */
+    if (pass_is_walls && positive_word_side && !(a4 | a6)) return 0;
+#else
+    (void)positive_word_side;
+#endif
 
     if (pass_is_walls) {
         return check_wall_line_walls_asm(ctx, fline, lx, lz, lxlen, lzlen, line_len,

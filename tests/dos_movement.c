@@ -33,8 +33,20 @@ static void check_touch(int32_t lx,int32_t lz,int32_t x,int32_t z,
             expected[14]=(uint8_t)((old|flags)>>8);expected[15]=(uint8_t)(old|flags);
         }
     }
-    mark_floorline_touch_if_near(&ctx,line,lx,lz,vx,vz,shift);
+    int positive_word_side=mark_floorline_touch_if_near(&ctx,line,lx,lz,vx,vz,shift);
     assert(!memcmp(line,expected,sizeof(line)));
+    int64_t rx=(int64_t)x-lx,rz=(int64_t)z-lz;
+    int expected_side=flags && side>0 && rx>=INT16_MIN && rx<=INT16_MAX &&
+                      rz>=INT16_MIN && rz<=INT16_MAX;
+    assert(positive_word_side==expected_side);
+    if(positive_word_side) {
+        /* Independent ObjectMove.s checkwalls word subtraction/multiply.
+         * A proven side must take its original immediate rejection. */
+        int16_t word_x=(int16_t)((int16_t)x-(int16_t)lx);
+        int16_t word_z=(int16_t)((int16_t)z-(int16_t)lz);
+        int32_t word_cross=(int32_t)word_x*vz-(int32_t)word_z*vx;
+        assert(word_cross>0);
+    }
 }
 
 void check_movement_touch(void)
@@ -70,7 +82,20 @@ void check_movement_touch(void)
         uint16_t flag=(uint16_t)touch_random();
         check_touch(lx,lz,x,z,vx,vz,length,extent,shift,flag);checked++;
     }
+    static const int32_t word_edges[]={-65536,-32769,-32768,-32767,-1,0,1,32766,32767,32768,65535};
+    static const int16_t vectors[][2]={{-32768,-32768},{-32768,32767},{32767,-32768},{32767,32767},
+                                      {0,1},{1,0},{-1,0},{0,-1}};
+    for(unsigned mode=0;mode<2;mode++)for(unsigned f=0;f<4;f++)
+    for(unsigned v=0;v<8;v++)for(unsigned x=0;x<11;x++)for(unsigned z=0;z<11;z++) {
+        check_touch(17,-23,17+word_edges[x],-23+word_edges[z],vectors[v][0],vectors[v][1],
+                    (int16_t)(v&1?-32768:32767),(int16_t)(v&2?-32768:32767),mode?16:0,flags[f]);
+        checked++;
+    }
+    uint8_t empty_line[16]={0};MoveContext empty_ctx={0};
+    assert(!mark_floorline_touch_if_near(NULL,empty_line,0,0,1,1,0));
+    assert(!mark_floorline_touch_if_near(&empty_ctx,NULL,0,0,1,1,0));
     printf("PASS: %u movement touch cases preserve the original wide division, threshold boundaries, signed lengths/extents, both position scales and all line bytes\n",checked);
+    puts("PASS: positive-side proofs match original signed-word crosses, including word overflow boundaries and absent touch flags");
 
     for(unsigned i=0;i<32768;i++) {
         MoveContext ctx={0};
