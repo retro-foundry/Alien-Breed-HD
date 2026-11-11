@@ -527,7 +527,7 @@ static void check_sprite_history(void)
     /* Compare the optional cache with the same uncached mask kernel, including
      * every sampling input, palette-only changes, reused row storage and reset.
      * Transparent holes keep repeated rectangles out of the whole-box reject. */
-    for(unsigned variant=0;variant<18;variant++)for(unsigned cached=0;cached<2;cached++) {
+    for(unsigned variant=0;variant<25;variant++)for(unsigned cached=0;cached<2;cached++) {
         RendererPixel *surface=cached?actual:expected;
         for(unsigned i=0;i<PIXELS+16;i++)surface[i]=0xa55a;
         dos_raster_sprite_batch_begin(surface+8,&scratch);
@@ -539,6 +539,16 @@ static void check_sprite_history(void)
                 palette[1][i]=(RendererPixel)(i*917u);
             }
             unsigned width=310,height=239,pitch=320,offset=8;
+            if(variant>=23)height=variant==23?1:240;
+            unsigned changed_row=(variant==18 || variant==22 || variant==23)?0:
+                                  (variant==19 || variant==21)?height/2:height-1;
+            if(variant>=18) {
+                /* Begin with a rejected row, then expose its valid low-byte
+                 * sample without changing the reused row-array address.
+                 * Differences in any byte must invalidate the footprint. */
+                uint32_t high=variant==21?65536u:variant==22?0x80000000u:256u;
+                rows[changed_row]=(int)((uint32_t)rows[changed_row]|high);
+            }
             DosSpriteRows sprite={wad[0],ptr[0],sizeof(wad[0]),sizeof(ptr[0]),
                                   palette[0],rows,0,0,65536u/20,16,0};
             if(step%4==1 || step%4==2)switch(variant) {
@@ -560,6 +570,8 @@ static void check_sprite_history(void)
                 case 15:width=32;height=1;break;
                 case 16:for(unsigned i=1;i<32;i++)palette[0][i]=0;break;
                 case 17:for(unsigned y=0;y<240;y++)rows[y]=(y&1)?-1:INT_MAX;break;
+                case 18:case 19:case 20:case 21:case 22:case 23:case 24:
+                    rows[changed_row]=(int)((changed_row/4)%24);break;
             }
             /* More than four distinct footprints exercise eviction, then
              * revisiting the original verifies that missing entries are safe. */
@@ -575,7 +587,7 @@ static void check_sprite_history(void)
             assert(!memcmp(&scratch,&expected_mask,sizeof(scratch)));
         }
     }
-    puts("PASS: 216 cached billboard draws retain uncached pixels, coverage, sampling keys, palette changes, row storage reuse, eviction, reset and guards");
+    puts("PASS: 300 cached billboard draws retain uncached pixels, coverage, sampling keys, palette changes, row storage reuse, high-byte changes, first/last rows, one/full-height clips, eviction, reset and guards");
 }
 
 static void check_word_offset_bounds(void)

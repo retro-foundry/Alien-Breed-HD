@@ -113,9 +113,19 @@ void dos_raster_sprite_batch_history_begin(DosSpriteHistory *scratch)
 }
 void dos_raster_sprite_batch_end(void) { sprite_batch_surface=NULL;sprite_batch=NULL;sprite_history=NULL; }
 
+/* Masks and sampled row indices need equality only. Both callers provide
+ * at least one 32-bit word, avoiding the C library's byte comparison loop. */
+static inline int sprite_words_equal(const void *a,const void *b,unsigned words)
+{
+    unsigned char equal;
+    __asm__ volatile("repe cmpsl; sete %0" : "=qm"(equal),"+S"(a),"+D"(b),"+c"(words) : : "memory","cc");
+    return equal;
+}
+
 static int sprite_history_match(const DosSpriteHistoryEntry *entry,const RendererPixel *out,
                                   unsigned width,unsigned height,unsigned pitch,const DosSpriteRows *sprite)
 {
+    _Static_assert(sizeof(int)==sizeof(uint32_t),"486 sprite row word layout");
     /* Palette changes cannot expose an already claimed opaque texel. Rows
      * need their own copy because the renderer reuses its sampling array. */
     const DosSpriteRows *old=&entry->sprite;
@@ -124,7 +134,7 @@ static int sprite_history_match(const DosSpriteHistoryEntry *entry,const Rendere
         old->wad_bytes==sprite->wad_bytes && old->ptr_bytes==sprite->ptr_bytes &&
         old->ptr_offset==sprite->ptr_offset && old->u==sprite->u && old->du==sprite->du &&
         old->columns==sprite->columns && old->down_strip==sprite->down_strip &&
-        !memcmp(entry->rows,sprite->rows,height*sizeof(*entry->rows));
+        sprite_words_equal(entry->rows,sprite->rows,height);
 }
 
 static void sprite_history_note(RendererPixel *out,unsigned width,unsigned height,unsigned pitch,
@@ -199,13 +209,6 @@ static inline void sprite_mask_copy(uint32_t *out,const uint32_t *source,unsigne
     __asm__ volatile("rep movsl" : "+D"(out),"+S"(source),"+c"(words) : : "memory","cc");
 }
 
-static inline int sprite_mask_equal(const uint32_t *a,const uint32_t *b,unsigned words)
-{
-    unsigned char equal;
-    __asm__ volatile("repe cmpsl; sete %0" : "=qm"(equal),"+S"(a),"+D"(b),"+c"(words) : : "memory","cc");
-    return equal;
-}
-
 /* Magnified rows often have the same previous coverage. Decode their fresh
  * copy ranges once; matching rows can replay those exact ranges and mask
  * updates. Comparing full words between the first and last opaque pixel
@@ -235,7 +238,7 @@ static unsigned sprite_batch_rows(RendererPixel *out,unsigned height,
         unsigned closed=open-sprite_batch->open_words[y+dy],next=dy+1;
         for(;next<height;next++) {
             uint32_t *other=sprite_batch->covered[y+next]+first;
-            if(!sprite_mask_equal(before,other,words))break;
+            if(!sprite_words_equal(before,other,words))break;
             target=out+next*pitch;
             for(const DosSpriteSpan *r=ranges;r<end;r++) {
                 sprite_copy(target+(r->source-row),r->source,r->count);
