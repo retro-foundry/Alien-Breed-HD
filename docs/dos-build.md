@@ -3342,3 +3342,76 @@ Local evidence is in `build/dos/sprite12-performance.json`,
 and `build/dos-sprite12-source/build/dos/pgo/model-check/report.json`.
 Private fixtures and clock/live comparisons remain under
 `build/dos-sprite12-trace/`.
+
+### Check narrow billboard coverage directly
+
+`40343e0` gives DOS reverse-pass coverage queries separate loops for
+rectangles touching one or two mask words. Those loops read only the
+boundary words. A closed row already has every coverage bit set, so its
+open-word counter need not be loaded. Wider rectangles keep their existing
+loop. Original `ObjDraw3.ChipRam.s:BitMapObj` source sampling, alpha,
+opaque black, painter ownership and coverage counts remain unchanged.
+No tables, assets or scratch buffers are added.
+
+The 92-call recorded live billboard replay improves from 28.985 to
+28.257 ms; the older 89-call replay improves from 22.329 to 22.065 ms.
+Both run 64 repetitions per call and verify all pixels, coverage masks,
+open-word counts and visible/drawn tallies. Combining neighboring empty
+or identical source descriptors was slower on both fixtures and was not
+adopted. An additional full-width coverage shortcut was slower than the
+selected narrow loops on the live fixture and was also left out.
+
+With the actual optimized release engine, normal/486_slow, 40,000 cycles,
+4 MB, native 320x240, SB16/mouse and muted host, the matched busy frame
+improves from 112.529 to 112.043 ms. Its render bucket falls
+from 78.297 to 77.812 ms; update remains 27.314 ms.
+All 64 recorded replay images, simulation hashes and clock/latched-tick
+assertions remain exact.
+
+Ordinary-clock probes, without image writes, give these mean/p95/worst
+times in milliseconds over 64 frames with eight warmup frames. Changes in
+elapsed time can alter subsequent animation states; the replay above
+measures the same busy state.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 41.427 / 76.503 / 89.512 | 41.439 / 76.587 / 89.464 |
+| Level 1, turning | 36.042 / 82.806 / 111.536 | 36.045 / 83.026 / 111.534 |
+| Level 6 | 44.793 / 62.792 / 64.062 | 44.801 / 62.758 / 64.047 |
+| Level 6, turning | 52.529 / 67.924 / 76.746 | 52.531 / 67.848 / 76.730 |
+
+This is a small improvement to the renderer. Ordinary-clock burst results
+remain nearly unchanged and still include roughly 112 ms spikes. The
+unmodified 128-frame real-time start passes the 25.80 FPS gate at 26.20 FPS,
+with 38.16/38.67/77.96 ms mean/p95/worst. Physical 486 performance and the
+overall consistency target remain unproven.
+
+The actual 486 raster oracle adds 1,024 independent pixel-coverage cases:
+all 32 starting bit alignments, one/two/three-word rectangles, first/last
+and interior row gaps, closed rows, opaque black, complete mask/count
+comparisons and surface guards. Its existing 54 repeated-band, 32 painter,
+216 history, packed row/column and arithmetic cases also pass. All 512
+diagnostic and 512 release-engine images and simulation hashes match.
+Fresh compiler feedback completes 23 training runs and 22 original native
+capture comparisons, and all 22 rebuilt indexed comparisons match. The
+4-versus-16 MB model oracle retains all 128 image/hash pairs with 32 KiB
+extra residency. Full 4 MB level-1/4/15 and real-time level-4 SB16/mouse
+exercises pass with zero profile audio underruns. Windows Release builds.
+Package checks preserve all 231 assets, 238 archive entries and the existing
+map/active saved-level payload comparisons.
+
+Native text/data/BSS are 1,190,424/22,016/260,096 bytes: 512 more code
+bytes, with unchanged data sizes. Level-4 checkpoints retain 144 KiB free
+after shared assets and 44 KiB after loading the level. The staged native
+EXE SHA-256 is
+`32d55b39e7eb21a667bf3e2011fbe312b24fe8173b63dcafa4c8d6168ce421e0`;
+the indexed EXE remains
+`8fc2876fc510ede5904adfa8d4a5f1488583a2076b504e04176803e5a954fb08`.
+Staging preserves all 241 native and 238 indexed non-EXE game files,
+including settings and saves.
+
+Local evidence is in `build/dos/sprite13-performance.json`,
+`build/dos/sprite13-validation.json`, `build/dos/sprite13-staging.json`
+and `build/dos-sprite13-source/build/dos/pgo/model-check/report.json`.
+Private trials and clock/live probes remain under
+`build/dos-sprite13-trace/`.
