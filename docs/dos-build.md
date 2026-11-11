@@ -2389,3 +2389,69 @@ Local evidence is in `build/dos/sprite3-performance.json`,
 `build/dos/sprite3-validation.json`, `build/dos/sprite3-staging.json` and
 `build/dos-sprite3-source/build/dos/pgo/model-check/report.json`. Diagnostic
 and source-format audit files remain under `build/dos-sprite3-trace/`.
+
+### Advance magnified billboard descriptors by repeated source columns
+
+Descriptor setup previously advanced the source DDA once per destination
+pixel, even when many adjacent pixels sampled the same source column.
+The native decoder now computes the first repeated-column run, then uses
+the quotient and remainder of 65536/du to advance subsequent runs exactly.
+Clamping and unsigned 32-bit wrapping retain their original behavior;
+minified sprites keep their original traversal. The change is `7854d5b`.
+It adds no persistent table or heap allocation.
+
+Matched diagnostic profiling puts descriptor setup in the worst level-1
+burst frame at 7.565 ms before and 3.621 ms afterwards. Coverage reset is
+only 0.132 ms in that frame and is unchanged. Those probes add overhead
+and are absent from the playable build.
+
+Fresh native release-engine comparisons use normal/486_slow, 40,000 fixed
+cycles, 4 MB, 320x240 RGB565, SB16/mouse and muted host sound. Each entry
+point retains 512 bytes of timing samples, captures only frame 23 outside
+the timed update, and reports fixed updates 8-63:
+
+| View | Previous mean/p95/worst ms | Updated mean/p95/worst ms |
+| --- | ---: | ---: |
+| Starting room | 38.611 / 38.669 / 38.669 | 38.648 / 38.705 / 38.705 |
+| Close enemies/barrel | 39.344 / 40.338 / 40.437 | 39.270 / 40.265 / 40.367 |
+| Pool surface | 64.110 / 65.023 / 65.245 | 64.126 / 65.036 / 65.260 |
+| Level-1 barrel burst | 54.615 / 92.220 / 97.414 | 54.334 / 86.629 / 93.064 |
+| Level-6 barrel burst | 50.512 / 70.320 / 70.548 | 50.320 / 69.464 / 69.819 |
+
+The improvement is concentrated in the largest magnified sprites:
+level-1 burst p95 falls by about 6.1% and its worst frame by 4.5%.
+The separate real-time starting-room test changes from 26.13 to 26.09 FPS,
+38.28 to 38.33 ms mean and 38.79 to 38.85 ms p95, retaining the 25.80 FPS
+gate. Starting and water views therefore show small regressions, while
+the expensive burst frames improve. Physical 486 hardware is unmeasured.
+
+The independent per-pixel row oracle now includes 144 additional fractional,
+clamped-column and unsigned-wrap combinations: all 452 row cases pass,
+alongside the original column, batch, water, floor and movement checks.
+The arithmetic/pixel regression runs at fixed 200,000 cycles to accommodate
+its expanded workload; performance comparisons above remain at 40,000.
+The test flushes progress lines so a slow or failed run can be localized.
+
+All 320 complete release-engine images and simulation hashes match across
+the five views. All 128 residency-stress image/hash comparisons at 4/16 MB
+on levels 1 and 6 remain exact. Fresh native compiler feedback completes
+23 training runs and all 22 ordinary/optimized captures, also matching the
+original native references. The real-time level-4 sound/mouse exercise
+and full 4 MB level-1/4/15 checks pass with zero profile audio underruns.
+Both packages retain the original 231 assets, map and saved level/map
+payload checks. The indexed rebuild is byte-for-byte identical to its
+previous executable, so its existing 22 reference captures remain valid.
+
+Native text/data/BSS are 1,184,280/22,016/292,864 bytes: 512 more code bytes,
+with unchanged data and BSS. Shared-assets free physical memory remains
+120 KiB. The staged native EXE SHA-256 is
+`4ae5bea86c2bf81cc8d8180d47b6828463c57d716b6b3ec4b9f071bf222f88da`;
+the indexed EXE remains
+`13e7b28467d1cad540839f8978b8aa8567e05a1c39ad763e2b7aac88f7e981f4`.
+Staging preserves all 241 native and 238 indexed non-EXE game files,
+including local settings and saves.
+
+Local evidence is in `build/dos/sprite4-performance.json`,
+`build/dos/sprite4-validation.json`, `build/dos/sprite4-staging.json` and
+`build/dos-sprite4-source/build/dos/pgo/model-check/report.json`.
+Diagnostic profiling remains under `build/dos-sprite4-trace/`.
