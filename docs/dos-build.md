@@ -2167,3 +2167,63 @@ substepped movement: 1,127 calls take 4,677 movement steps across the
 64-frame burst, predominantly two to six steps per call. These diagnostics
 add profiling overhead and identify the next investigation; gameplay and
 movement have not been changed here.
+
+### Reject movement non-hits before room and height work
+
+This candidate is retained on `codex/dos-move`. It has not been merged into
+`main` or staged over the playable packages because an optimized explosion
+capture still differs, as described below.
+
+The movement profile identifies wall checks as the largest part of the
+projectile/debris update cost. The port now defers destination-room lookup
+and crossing-height calculation until the existing primary wall/segment
+checks accept a possible hit. FindRoom likewise tests its existing crossing
+gate before resolving the exit's zone ID. Room transition order, signed
+word arithmetic, hit positions, bounce results, four-unit substeps and the
+32-step limit are preserved from the current ObjectMove.s translation.
+
+The near-wall flag test also avoids a software wide division. With positive
+side and denominator, `side / denominator < threshold` is exactly
+`side < denominator * threshold`. The existing denominator clamp and
+position scales 0/16 keep the product within int64_t. Wall flags at floorline
+offset 14 retain their original OR semantics. Crossing height returns the
+existing Y immediately when old and new Y are equal; moving-Y division
+order and clamping are retained.
+
+Independent division oracles check 65,984 wall-touch cases, including exact
+threshold boundaries, signed lengths/extents, clamped denominators, both
+coordinate scales and all 16 line bytes. Another 32,768 crossing-height
+cases cover signed division order, zero vertical motion/divisors and clamps.
+These run in both the native 4 MB DOS raster suite and WebAssembly feedback
+suite. All previous raster/compositor checks, Windows Release, and the full
+movement/shooting/stairs/doors/robot/corpse feedback checks pass. The code and
+tests are committed as `5b11810`.
+
+Five matched source scenes preserve all 320 simulation hashes and 325
+complete images. Separate burst fixtures also capture the complete mutable
+level data, floorlines, zone table, points, objects and both shot pools,
+plus normalized player coordinates/room/angle/energy, after every update.
+These records compare bytes directly and include the wall-touch flags.
+
+The two source burst fixtures preserve all 128 simulation hashes, 130
+complete images and 128 mutable-state snapshots. The fresh native build
+also passes the 22 ordinary/optimized reference captures, 4 MB level-1/4/15
+exercises, and level-4 real-time SB16/mouse exercise. Windows Release,
+the indexed build's 22 reference captures, package assets, and saved
+level/map payload checks pass.
+
+Matched optimized-object timings at normal/486_slow, fixed 40,000 cycles,
+4 MB, 320x240 RGB565, SB16/mouse and muted host sound reduce the level-1
+barrel-burst mean/p95/worst loop time from 54.932/97.012/101.565 ms to
+53.333/94.486/98.978 ms. Level-6 burst mean falls from 51.445 to 50.372 ms.
+These are candidate measurements, not a completed release validation.
+
+The optimized level-1 burst comparison fails at `EN23.BMP`: 63 pixels
+differ within x=79..139, y=101..116. All 64 simulation hashes and complete
+mutable-state snapshots match, as do the captured previous/current object
+points and nonpointer game state. Relinking both sets of engine objects
+with the same unprofiled renderer produces identical images matching the
+previous release. This implicates optimized renderer code generation but
+does not establish its cause. The candidate remains unmerged until that
+image discrepancy is resolved; source parity alone does not clear it.
+Local diagnostic evidence is retained under `build/dos-move-trace/`.
