@@ -2088,3 +2088,82 @@ The native EXE SHA-256 is
 `79b43201f73076bee1b487877f3e49a4530ad35a05f3d77325580793ec8c871c`.
 Local evidence is in `build/dos/sprite2-performance.json` and
 `build/dos/sprite2-validation.json`. Physical 486 hardware is unmeasured.
+
+### Reuse exact copy ranges across repeated covered billboard rows
+
+The next barrel-burst diagnostic counts 2,937,727 requested batch-copy
+pixels but only 1,365,857 fresh writes across frames 8-63. At the worst
+frame, about 70% of visited mask words contain no fresh bits. Among repeated
+source-row groups, 31,724 adjacent destination rows have identical coverage
+versus 3,112 with different coverage: 91.1% match.
+
+The native DOS compositor now records the first row's fresh copy ranges
+and replays them while following rows have identical prior coverage.
+Different masks start a new set of ranges. Complete mask words are compared,
+including bits outside the clipped rectangle; closed-word counts are
+adjusted per destination row. Original BitMapObj index-zero cutouts,
+opaque black, draw ordering and per-room mask resets remain exact.
+The bounded range list and mask snapshot use 1,320 bytes of temporary
+stack storage, with no heap allocation or persistent table.
+
+The initial C-library comparison made the burst slower. Disassembly shows
+DJGPP memcmp walking byte by byte. The selected helpers compare and copy
+32-bit mask words with CMPSL/MOVSL. Matched source diagnostics then reduce
+burst mean/p95/worst loop time from 58.026/109.167/118.845 ms to
+56.362/95.957/102.601 ms. The ordinary enemy view stays at 38.485 ms.
+These diagnostics use the same fixed-cycle settings as the release
+comparisons below, with profiling and captures disabled for timing.
+
+The DOS raster oracle adds 18 repeated-band cases, covering all 160 fresh
+copy ranges, changing masks, partial mask words, coverage outside clips,
+different closed-word counts, opaque black and guards. The existing 308
+row, 768 column, 32 reverse compositor and other raster/arithmetic checks
+pass. All 320 simulation hashes and 325 complete images match in the five
+level-1/6 starting, enemy, pool and barrel-burst scenes. The implementation
+and oracle are committed as `621903c`.
+The optimized release-object barrel comparisons also preserve all 128
+simulation hashes and 130 complete images on levels 1 and 6.
+
+The completed PGO release comparison relinks the same diagnostic entry
+point against each release's unchanged optimized engine objects. Detailed
+profiling and captures are disabled during timing. The mean loop times
+cover frames 8-63 of 64 identical updates at normal/486_slow, fixed 40,000
+cycles, 4 MB, 320x240 RGB565, SB16/mouse and muted host sound:
+
+| View | Previous release loop ms | Updated release loop ms |
+| --- | ---: | ---: |
+| Level-1 starting room | 38.628 | 38.630 |
+| Close barrel / approaching enemies | 37.636 | 37.640 |
+| Pool north shore | 64.490 | 64.493 |
+| Level-1 barrel burst | 57.338 | 55.010 |
+| Level-6 barrel burst | 51.517 | 51.515 |
+
+Level-1 burst p95 falls from 109.166 to 97.043 ms and its worst frame from
+123.335 to 101.576 ms, a 17.6% reduction. Early burst frames 8-15 average
+86.064 versus 80.071 ms. Sparse and ordinary views retain their existing
+cost; the separate real-time 128-frame starting benchmark stays at
+26.10 FPS, 38.32 ms per frame and 38.83 ms p95, passing the 25.80 FPS gate.
+
+All 22 ordinary and optimized native captures match the verified original
+references. Full 4 MB level-1/4/15 fixed exercises and the real-time level-4
+SB16/mouse exercise pass with zero profile audio underruns, including
+repeated quickloads, autosaves, UI and weapons. Level-1/4 maps and all six
+saved level/map payloads remain exact. Both packages retain 231 prepared
+assets, 238 archive entries, generated defaults and no private diagnostic
+markers. The indexed package and modern/indexed rendering source are
+unchanged. Local mouse settings are preserved when staging.
+
+Native text/data/BSS remain 1,184,280/22,016/291,840 bytes, and the
+shared-assets checkpoint still reports 120 KiB free physical memory.
+The native EXE SHA-256 is
+`18bbd6a8f5cfe3d8c8fc3ba69a40872d17dc6e579d0155af0cefc2066149107d`.
+Local evidence is in `build/dos/copy-performance.json` and
+`build/dos/copy-validation.json`. Physical 486 hardware is unmeasured.
+
+The broader consistency investigation remains active. Private coarse
+profiling attributes about 17.6 ms to object updates immediately after
+the barrel explosion. A separate probe attributes most of that work to
+substepped movement: 1,127 calls take 4,677 movement steps across the
+64-frame burst, predominantly two to six steps per call. These diagnostics
+add profiling overhead and identify the next investigation; gameplay and
+movement have not been changed here.
