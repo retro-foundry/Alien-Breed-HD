@@ -13,8 +13,10 @@ static void fill_words(int16_t *out, unsigned count, uint16_t value)
 
 #ifdef AB3D_NATIVE_RGB565
 static uint32_t water_brighten[22][256];
-static int8_t water_blend_delta[256][32];
+static int8_t water_blend_delta[128][32];
 static RendererPixel water_rg[256],water_blue[16];
+/* Brighten uses only the low eleven RGB565 green/blue bits. */
+static uint8_t water_gb_index[2048];
 
 void dos_raster_prepare_water(const uint8_t *brighten)
 {
@@ -25,30 +27,57 @@ void dos_raster_prepare_water(const uint8_t *brighten)
          * three foreground-minus-background differences without borrowing. */
         water_brighten[row][sample]=((color&0xf00)<<8)|((color&0xf0)<<4)|(color&15);
     }
-    for(unsigned alpha=0;alpha<256;alpha++)for(int difference=-15;difference<=15;difference++) {
+    for(unsigned alpha=0;alpha<128;alpha++)for(int difference=-15;difference<=15;difference++) {
         /* floor((17*(255*bg + difference*alpha)/255 + 8)/17)
          * = bg + floor((difference*alpha + 120)/255).
          * C division truncates negative values, so adjust to floor. */
         int n=difference*(int)alpha+120;
         water_blend_delta[alpha][difference+16]=(int8_t)(n>=0?n/255:-((-n+254)/255));
     }
+    for(unsigned i=0;i<2048;i++)water_gb_index[i]=(uint8_t)renderer_pixel_gb_index((uint16_t)i);
     for(unsigned rg=0;rg<256;rg++)water_rg[rg]=renderer_pixel_from_c12((uint16_t)(rg<<4));
     for(unsigned b=0;b<16;b++)water_blue[b]=renderer_pixel_from_c12((uint16_t)b);
 }
 
+RendererPixel dos_raster_water_color(unsigned row,unsigned sample)
+{
+    uint32_t color=water_brighten[row][sample];
+    return water_rg[((color>>12)&240)|((color>>8)&15)]|water_blue[color&15];
+}
+
+__attribute__((noinline,optimize("O3,unroll-loops")))
 void dos_raster_water(RendererPixel *out,unsigned count,
                         const RendererPixel *background0,const RendererPixel *background1,
                         const uint8_t *phase,unsigned shade,unsigned offset,unsigned alpha,
                         uint32_t u,uint32_t v,uint32_t du,uint32_t dv)
 {
     const uint32_t (*brighten)[256]=water_brighten+shade;
+    /* Exact rounded interpolation is symmetric: exchange the samples and
+     * replace alpha with 255-alpha. Only half the delta rows are needed. */
+    if(background1 && alpha>127) {
+        const RendererPixel *swap=background0;background0=background1;background1=swap;
+        alpha=255-alpha;
+    }
+    /* floor((difference*alpha+120)/255) is zero for every -15..15
+     * difference at alpha 0..8. A missing second row is also single-source. */
+    if(alpha<=8 || background0==background1)background1=NULL;
+    if(!background1) {
+        for(unsigned x=0;x<count;x++,u+=du,v+=dv) {
+            uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
+            uv=(uint16_t)(uv+offset);
+            unsigned level=phase[((uv>>2)&0xfc0)|(uv&63)];
+            uint32_t c0=brighten[level][water_gb_index[background0[x]&2047]];
+            out[x]=water_rg[((c0>>12)&240)|((c0>>8)&15)]|water_blue[c0&15];
+        }
+        return;
+    }
     const int8_t *blend=water_blend_delta[alpha];
     for(unsigned x=0;x<count;x++,u+=du,v+=dv) {
         uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
         uv=(uint16_t)(uv+offset);
         unsigned level=phase[((uv>>2)&0xfc0)|(uv&63)];
-        uint32_t c0=brighten[level][renderer_pixel_gb_index(background0[x])];
-        uint32_t c1=brighten[level][renderer_pixel_gb_index(background1[x])];
+        uint32_t c0=brighten[level][water_gb_index[background0[x]&2047]];
+        uint32_t c1=brighten[level][water_gb_index[background1[x]&2047]];
         if(c0==c1) {
             out[x]=water_rg[((c0>>12)&240)|((c0>>8)&15)]|water_blue[c0&15];
             continue;

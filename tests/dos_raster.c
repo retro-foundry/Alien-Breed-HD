@@ -51,6 +51,10 @@ static void check_water(void)
         brighten[(row*256+sample)*2+1]=(uint8_t)color;
     }
     dos_raster_prepare_water(brighten);
+    for(unsigned row=0;row<22;row++)for(unsigned sample=0;sample<256;sample++) {
+        unsigned at=(row*256+sample)*2;
+        assert(dos_raster_water_color(row,sample)==renderer_pixel_from_c12((uint16_t)(((unsigned)brighten[at]<<8)|brighten[at+1])));
+    }
     for(unsigned pair=0;pair<256;pair++) {
         actual[pair]=renderer_pixel_from_c12((uint16_t)(pair>>4));
         actual[PITCH+pair]=renderer_pixel_from_c12((uint16_t)(pair&15));
@@ -61,24 +65,34 @@ static void check_water(void)
         for(unsigned pair=0;pair<256;pair++)
             assert(actual[PITCH*2+pair]==reference_water_pixel(actual[pair],actual[PITCH+pair],brighten,0,alpha));
     }
+    /* Every native RGB565 word, including noncanonical channel values,
+     * must retain the original low-byte Amiga green/blue selection. */
+    for(unsigned block=0;block<256;block++) {
+        for(unsigned x=0;x<256;x++)actual[x]=(RendererPixel)((block<<8)|x);
+        dos_raster_water(actual+PITCH*2,256,actual,NULL,phase,1,0,231,0,0,0,0);
+        for(unsigned x=0;x<256;x++)
+            assert(actual[PITCH*2+x]==reference_water_pixel(actual[x],actual[x],brighten,1,0));
+    }
     for(unsigned i=0;i<sizeof(phase);i++)phase[i]=(uint8_t)(next_value()%10);
     static const unsigned widths[]={0,1,2,3,7,17,159,319,320};
-    for(unsigned test=0;test<384;test++) {
+    for(unsigned test=0;test<768;test++) {
         for(unsigned i=0;i<PITCH*ROWS;i++)actual[i]=expected[i]=(RendererPixel)next_value();
-        unsigned count=widths[test%9],shade=next_value()%13,offset=test%64,alpha=test%256;
+        unsigned count=widths[test%9],shade=next_value()%13;
+        unsigned offset=test%9==0?65535u:test%9==1?65536u:test%64,alpha=test%256;
+        int single=test>=384;
         unsigned out=PITCH*2+2,src0=(test%5)*PITCH+2,src1=((test+1)%5)*PITCH+2;
         uint32_t u=next_value(),v=next_value(),du=next_value(),dv=next_value(),ru=u,rv=v;
-        dos_raster_water(actual+out,count,actual+src0,actual+src1,phase,shade,offset,alpha,u,v,du,dv);
+        dos_raster_water(actual+out,count,actual+src0,single?NULL:actual+src1,phase,shade,offset,alpha,u,v,du,dv);
         for(unsigned x=0;x<count;x++,ru+=du,rv+=dv) {
             uint8_t ub=(uint8_t)(ru>>16),vb=(uint8_t)(rv>>16);
             uint16_t uv=(uint16_t)(((uint16_t)vb<<8)|ub);
             uv=(uint16_t)(uv+offset);uv&=0x3f3f;
             unsigned level=phase[((uv>>8)<<6)|(uv&63)];
-            expected[out+x]=reference_water_pixel(expected[src0+x],expected[src1+x],brighten,shade+level,alpha);
+            expected[out+x]=reference_water_pixel(expected[src0+x],single?expected[src0+x]:expected[src1+x],brighten,shade+level,single?0:alpha);
         }
         assert(!memcmp(actual,expected,sizeof(actual)));
     }
-    printf("Water: 65536 alpha/colour pairs and 384 wrapping/alias/clip spans passed\n");
+    printf("Water: 5632 shared colours, 65536 native inputs, 65536 alpha/colour pairs and 768 single/blended wrapping/alias/clip spans passed\n");
 }
 
 __attribute__((noinline)) static int64_t reference_divide(int64_t n, int64_t d) { return n / d; }

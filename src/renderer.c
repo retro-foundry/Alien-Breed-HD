@@ -2839,7 +2839,17 @@ static uint8_t g_water_level_phase_lut[8][64 * 64];
 static int g_water_level_phase_lut_ready = 0;
 static const uint8_t *g_water_brighten = NULL;
 static size_t g_water_brighten_size = 0;
+#if !defined(AB3D_DOS) || !defined(AB3D_NATIVE_RGB565)
 static RendererPixel g_water_brighten_cw_lut[WATER_BRIGHTEN_ROW_COUNT][256];
+#endif
+static inline RendererPixel renderer_water_color(unsigned row,unsigned sample)
+{
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    return dos_raster_water_color(row,sample);
+#else
+    return g_water_brighten_cw_lut[row][sample];
+#endif
+}
 static int g_water_brighten_cw_lut_ready = 0;
 static const uint16_t g_water_src_offsets[8] = { 0, 2, 256, 258, 512, 514, 768, 770 };
 /* Debug view: show floor/ceiling Gouraud term without distance attenuation. */
@@ -3073,6 +3083,7 @@ static void renderer_build_water_brighten_cw_lut(const uint8_t *water_brighten, 
     g_water_brighten_cw_lut_ready = 0;
     if (!water_brighten || water_brighten_size < (WATER_BRIGHTEN_ROW_COUNT * WATER_BRIGHTEN_ROW_BYTES)) return;
 
+#if !defined(AB3D_DOS) || !defined(AB3D_NATIVE_RGB565)
     for (size_t row = 0; row < WATER_BRIGHTEN_ROW_COUNT; row++) {
         const uint8_t *src = water_brighten + row * WATER_BRIGHTEN_ROW_BYTES;
         for (int sample = 0; sample < 256; sample++) {
@@ -3081,7 +3092,7 @@ static void renderer_build_water_brighten_cw_lut(const uint8_t *water_brighten, 
         }
     }
 
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#else
     dos_raster_prepare_water(water_brighten);
 #endif
     g_water_brighten_cw_lut_ready = 1;
@@ -8275,10 +8286,11 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
             : NULL;
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
         if (!expand && water_has_file && water_has_brighten_cw_lut && water_phase_lut &&
-            water_has_next_refr && !water_trace_stats) {
+            !water_trace_stats) {
             unsigned shade = ((uint32_t)dist & 0xFF00u) >> 8;
             if (shade > 12) shade = 12;
-            dos_raster_water(row16, span_len, cwbuf + bg_cw_i0, cwbuf + bg_cw_i1,
+            dos_raster_water(row16, span_len, cwbuf + bg_cw_i0,
+                water_has_next_refr ? cwbuf + bg_cw_i1 : NULL,
                 water_phase_lut, shade, g_water_off, water_refr_frac,
                 u_fp, v_fp, (uint32_t)u_step, (uint32_t)v_step);
             return;
@@ -8321,7 +8333,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 water_d5 &= 0x3F3Fu;
                                 uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
                                 uint8_t water_level = water_phase_lut[water_idx];
-                                uint16_t out_cw = g_water_brighten_cw_lut[water_brighten_row_base + water_level][renderer_pixel_gb_index(cwbuf[bg_cw_i0])];
+                                uint16_t out_cw = renderer_water_color(water_brighten_row_base+water_level,renderer_pixel_gb_index(cwbuf[bg_cw_i0]));
 
                                 RENDER_TAG_STORE(*p8++, 4);
                                 if(p32)p32++;
@@ -8345,7 +8357,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 uint16_t bg_cw0 = cwbuf[bg_cw_i0];
                                 uint16_t out_cw;
                                 if (water_has_brighten_cw_lut) {
-                                    out_cw = g_water_brighten_cw_lut[water_brighten_row_base + water_level][renderer_pixel_gb_index(bg_cw0)];
+                                    out_cw = renderer_water_color(water_brighten_row_base+water_level,renderer_pixel_gb_index(bg_cw0));
                                 } else {
                                     size_t bi0 = ((size_t)water_level << 9) + (size_t)(renderer_pixel_gb_index(bg_cw0)) * 2u;
                                     out_cw = renderer_pixel_from_be(water_brighten+bi0);
@@ -8377,7 +8389,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
 
                             uint16_t out_cw;
                             if (water_has_brighten_cw_lut) {
-                                out_cw = g_water_brighten_cw_lut[water_brighten_row_base + water_level][renderer_pixel_gb_index(bg_cw0)];
+                                out_cw = renderer_water_color(water_brighten_row_base+water_level,renderer_pixel_gb_index(bg_cw0));
                             } else {
                                 size_t bi0 = ((size_t)water_level << 9) + (size_t)(renderer_pixel_gb_index(bg_cw0)) * 2u;
                                 out_cw = renderer_pixel_from_be(water_brighten+bi0);
@@ -8402,9 +8414,9 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 water_d5 &= 0x3F3Fu;
                                 uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
                                 uint8_t water_level = water_phase_lut[water_idx];
-                                const RendererPixel *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
-                                uint16_t out_cw0 = brighten_row[renderer_pixel_gb_index(cwbuf[bg_cw_i0])];
-                                uint16_t out_cw1 = brighten_row[renderer_pixel_gb_index(cwbuf[bg_cw_i1])];
+                                const unsigned brighten_row=water_brighten_row_base+water_level;
+                                uint16_t out_cw0 = renderer_water_color(brighten_row,renderer_pixel_gb_index(cwbuf[bg_cw_i0]));
+                                uint16_t out_cw1 = renderer_water_color(brighten_row,renderer_pixel_gb_index(cwbuf[bg_cw_i1]));
                                 uint16_t r4 = water_blend_nibble_lut[((((uint32_t)renderer_pixel_to_c12(out_cw0) >> 8) & 0xFu) << 4) | (((uint32_t)renderer_pixel_to_c12(out_cw1) >> 8) & 0xFu)];
                                 uint16_t g4 = water_blend_nibble_lut[((((uint32_t)renderer_pixel_to_c12(out_cw0) >> 4) & 0xFu) << 4) | (((uint32_t)renderer_pixel_to_c12(out_cw1) >> 4) & 0xFu)];
                                 uint16_t b4 = water_blend_nibble_lut[(((uint32_t)renderer_pixel_to_c12(out_cw0) & 0xFu) << 4) | ((uint32_t)renderer_pixel_to_c12(out_cw1) & 0xFu)];
@@ -8433,9 +8445,9 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 uint16_t out_cw0;
                                 uint16_t out_cw1;
                                 if (water_has_brighten_cw_lut) {
-                                    const RendererPixel *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
-                                    out_cw0 = brighten_row[renderer_pixel_gb_index(bg_cw0)];
-                                    out_cw1 = brighten_row[renderer_pixel_gb_index(bg_cw1)];
+                                    const unsigned brighten_row=water_brighten_row_base+water_level;
+                                    out_cw0 = renderer_water_color(brighten_row,renderer_pixel_gb_index(bg_cw0));
+                                    out_cw1 = renderer_water_color(brighten_row,renderer_pixel_gb_index(bg_cw1));
                                 } else {
                                     size_t bi0 = ((size_t)water_level << 9) + (size_t)(renderer_pixel_gb_index(bg_cw0)) * 2u;
                                     size_t bi1 = ((size_t)water_level << 9) + (size_t)(renderer_pixel_gb_index(bg_cw1)) * 2u;
@@ -8480,9 +8492,9 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                             uint16_t out_cw0;
                             uint16_t out_cw1;
                             if (water_has_brighten_cw_lut) {
-                                const RendererPixel *brighten_row = g_water_brighten_cw_lut[water_brighten_row_base + water_level];
-                                out_cw0 = brighten_row[renderer_pixel_gb_index(bg_cw0)];
-                                out_cw1 = brighten_row[renderer_pixel_gb_index(bg_cw1)];
+                                const unsigned brighten_row=water_brighten_row_base+water_level;
+                                out_cw0 = renderer_water_color(brighten_row,renderer_pixel_gb_index(bg_cw0));
+                                out_cw1 = renderer_water_color(brighten_row,renderer_pixel_gb_index(bg_cw1));
                             } else {
                                 size_t bi0 = ((size_t)water_level << 9) + (size_t)(renderer_pixel_gb_index(bg_cw0)) * 2u;
                                 size_t bi1 = ((size_t)water_level << 9) + (size_t)(renderer_pixel_gb_index(bg_cw1)) * 2u;
@@ -17815,7 +17827,7 @@ void renderer_dos_check_indexed_pixels(GameState *state)
         }
         for(unsigned row=0;row<WATER_BRIGHTEN_ROW_COUNT;row++) {
             const uint8_t *src=g_water_brighten+row*WATER_BRIGHTEN_ROW_BYTES+gb*2;
-            if(g_water_brighten_cw_lut[row][gb]!=renderer_pixel_from_be(src)) {
+            if(renderer_water_color(row,gb)!=renderer_pixel_from_be(src)) {
                 fprintf(stderr,"DOS stale indexed water palette\n");exit(1);
             }
         }

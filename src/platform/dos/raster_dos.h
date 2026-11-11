@@ -72,8 +72,11 @@ DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out, unsigned width,
                                         const DosSpriteRows *sprite);
 void dos_raster_prepare_floor(unsigned slot,const uint8_t *texture,const uint8_t *palettes);
 /* Stock AB3DI.s texturedwater: original Brighten words, vertical samples and
- * 16-bit wateroff carry. Blending retains the port's rounded 4-bit channels. */
+ * 16-bit wateroff carry. NULL background1 selects background0 alone.
+ * Blending retains the port's rounded 4-bit channels. */
 void dos_raster_prepare_water(const uint8_t *brighten);
+/* Shared prepared Brighten colours: row 0..21, sample 0..255. */
+RendererPixel dos_raster_water_color(unsigned row,unsigned sample);
 void dos_raster_water(RendererPixel *out, unsigned count,
                         const RendererPixel *background0, const RendererPixel *background1,
                         const uint8_t *phase, unsigned shade, unsigned offset, unsigned alpha,
