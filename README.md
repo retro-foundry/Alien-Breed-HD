@@ -91,7 +91,8 @@ Floor column-fast rendering is enabled by default.
 ### DOS / 486
 
 The DOS build targets a 486 DX2/DX4, 4 MB RAM, VESA RGB565 video and
-Sound Blaster audio. It renders at 320x200 and presents pixels 1:1 through SDL.
+Sound Blaster audio. The default RGB565 build renders at 320x240 and presents
+pixels 1:1 through SDL; the optional indexed build uses 320x200.
 From PowerShell, with CMake, Ninja, Git, Python 3 and ffmpeg installed:
 
 ```powershell
