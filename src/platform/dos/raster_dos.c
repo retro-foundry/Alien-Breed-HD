@@ -255,6 +255,20 @@ static int sprite_batch_hidden(const RendererPixel *out,unsigned width,unsigned 
     unsigned first=x/32,last=(x+width-1)/32;
     uint32_t left=UINT32_MAX<<(x%32),right=UINT32_MAX>>(31-((x+width-1)%32));
     if(first==last)left&=right;
+    /* Narrow billboards need only their boundary words. Closed rows already
+     * have those bits set, so they need no separate open-word test. */
+    if(first==last) {
+        for(unsigned row=y;row<y+height;row++)
+            if((sprite_batch->covered[row][first]&left)!=left)return 0;
+        return 1;
+    }
+    if(last==first+1) {
+        for(unsigned row=y;row<y+height;row++) {
+            const uint32_t *covered=sprite_batch->covered[row];
+            if((covered[first]&left)!=left || (covered[last]&right)!=right)return 0;
+        }
+        return 1;
+    }
     for(unsigned row=y;row<y+height;row++) {
         if(!sprite_batch->open_words[row])continue;
         const uint32_t *covered=sprite_batch->covered[row];

@@ -449,6 +449,62 @@ static void check_sprite_batch_repeated_rows(void)
     puts("PASS: 54 repeated billboard bands preserve 160 copy ranges, changing masks, transparent margins and gaps, boundary words, outside clips, closed-word counts, black and guards");
 }
 
+static void check_sprite_narrow_coverage(void)
+{
+    enum { HEIGHT=8, PIXELS=320*HEIGHT };
+    static RendererPixel actual[PIXELS+16],expected[PIXELS+16];
+    static const unsigned widths[]={1,2,31,32,33,63,64,65};
+    uint8_t wad[4]={0,0,31,0},ptr[4]={0,0,0,2};
+    RendererPixel palette[32]={0};int rows[HEIGHT]={0};
+    DosSpriteBatch scratch,expected_mask;unsigned checked=0;
+    for(unsigned bit=0;bit<32;bit++)for(unsigned w=0;w<8;w++)
+    for(unsigned pattern=0;pattern<4;pattern++) {
+        unsigned left=224+bit,width=widths[w],drawn=0;
+        palette[31]=(RendererPixel)(w&1?0:0x2468);
+        for(unsigned i=0;i<PIXELS+16;i++)actual[i]=expected[i]=0xa55a;
+        dos_raster_sprite_batch_begin(actual+8,&scratch);
+        /* Independent pixel coverage: fully closed rows alternate with
+         * outside holes, while the rectangle is covered except for selected
+         * first/last pixels in its first, last or interior rows. */
+        for(unsigned y=0;y<HEIGHT;y++)for(unsigned x=0;x<320;x++) {
+            int inside=x>=left && x<left+width;
+            int covered=inside || !(y&1) || (x&1);
+            if((pattern==1 && y==0 && x==left) ||
+               (pattern==2 && y==HEIGHT-1 && x==left+width-1) ||
+               (pattern==3 && ((y==1 && x==left) ||
+                               (y==HEIGHT-2 && x==left+width-1))))covered=0;
+            if(covered)scratch.covered[y][x/32]|=1u<<(x%32);
+            actual[8+y*320+x]=expected[8+y*320+x]=covered?0x1357:0xa55a;
+        }
+        for(unsigned y=0;y<HEIGHT;y++) {
+            unsigned open=0;
+            for(unsigned word=0;word<10;word++)open+=scratch.covered[y][word]!=UINT32_MAX;
+            scratch.open_words[y]=(uint8_t)open;
+        }
+        expected_mask=scratch;
+        for(unsigned y=0;y<HEIGHT;y++)for(unsigned x=left;x<left+width;x++) {
+            uint32_t mask=1u<<(x%32);
+            if(!(scratch.covered[y][x/32]&mask)) {
+                expected[8+y*320+x]=palette[31];drawn++;
+                expected_mask.covered[y][x/32]|=mask;
+            }
+        }
+        for(unsigned y=0;y<HEIGHT;y++) {
+            unsigned open=0;
+            for(unsigned word=0;word<10;word++)open+=expected_mask.covered[y][word]!=UINT32_MAX;
+            expected_mask.open_words[y]=(uint8_t)open;
+        }
+        DosSpriteRows sprite={wad,ptr,sizeof(wad),sizeof(ptr),palette,rows,
+                              0,0,65536u,1,0};
+        DosSpriteCoverage got=dos_raster_sprite_rows(actual+8+left,width,HEIGHT,320,&sprite);
+        dos_raster_sprite_batch_end();
+        assert(got.visible==(pattern?width*HEIGHT:0) && got.drawn==drawn);
+        assert(!memcmp(actual,expected,sizeof(actual)));
+        assert(!memcmp(&scratch,&expected_mask,sizeof(scratch)));checked++;
+    }
+    printf("PASS: %u narrow billboard coverage cases preserve every bit alignment, one/two/three-word clips, first/last/interior gaps, closed rows, black, counts and guards\n",checked);
+}
+
 static void check_sprite_history(void)
 {
     enum { PIXELS=320*240, STEPS=12 };
@@ -1190,6 +1246,7 @@ int main(void)
     check_sprite_columns();
     check_sprite_batches();
     check_sprite_batch_repeated_rows();
+    check_sprite_narrow_coverage();
     check_sprite_history();
     check_water_transport();check_water();
     check_movement_touch();
