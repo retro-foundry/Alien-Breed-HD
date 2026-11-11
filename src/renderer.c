@@ -14210,12 +14210,15 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
      * original draw traversal. Small lists avoid the mask setup cost. */
     /* Preserve the original batch decision from the unfiltered candidates.
      * Early spill rejection must not turn a dense pass into a slower painter pass. */
-    if(obj_count>0 && batch_candidates>=16 && r->width==320 && r->height==240 &&
+    if(obj_count>0 && batch_candidates>=4 && r->width==320 && r->height==240 &&
        !g_renderer_rgb_raster_expand && !g_debug_spill_visualize && !g_pick_capture_active &&
        !renderer_active_pick_player() && !renderer_get_graphic_pick_target()) {
-        /* Sparse/distant particles have little overdraw to repay the mask.
-         * Width is already projected by the existing visibility rejection. */
-        reverse_billboards=!batch_has_polygon && batch_area>=320u*240u;
+        /* A few large explosions can overlap as much as a dense particle
+         * list. Short lists need a four-screen area estimate to repay mask
+         * setup. Width is already projected by the existing visibility
+         * rejection. */
+        unsigned min_area=320u*240u*(batch_candidates>=16?1u:4u);
+        reverse_billboards=!batch_has_polygon && batch_area>=min_area;
         if(reverse_billboards) {
             dos_raster_sprite_batch_begin(renderer_active_cw(),&batch_scratch);
             dos_raster_sprite_batch_history_begin(&history_scratch);
