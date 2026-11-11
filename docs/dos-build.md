@@ -1868,3 +1868,88 @@ The final native EXE SHA-256 is
 `0c9723ac5b4d3a26e8ea09f7546bfca975f599ef2a644c6fe542c857b69baac3`.
 Local evidence is in `build/dos/billboards-performance.json` and
 `build/dos/billboards-validation.json`. Physical 486 hardware is unmeasured.
+
+
+### Dense native billboard passes: preserve pixels while avoiding overdraw
+
+The original ObjDraw3.ChipRam.s BitMapObj composites opaque samples in
+painter order, with source index zero as its only cutout. A DOS RGB565 pass
+containing only billboards can therefore traverse that same sorted list in
+reverse and retain the first opaque write at each pixel. The final pixels,
+including equal-depth ownership and opaque black, are identical. The
+coverage mask is reset at each room/section object pass so intervening walls,
+floors and water keep their existing ordering. Passes containing polygon
+objects and all picking/debug paths retain the original traversal.
+
+The 320x240 mask and per-row counters use approximately 9.6 KiB of the
+already reserved DOS stack, with no per-sprite texture/shade bank or new
+heap allocation.
+Packed and decoded clipped columns share the same coverage bits as row
+spans. Fully covered rectangles and repeated source rows skip decoding.
+Small lists retain the ordinary path; larger lists activate coverage only
+when their existing projected-width estimates cover at least one screen.
+The estimates reuse padding in the draw-list entries. This avoids paying
+for coverage when late/distant debris has spread into sparse particles.
+
+The independent DOS compositor oracle covers 32 layered row/column cases,
+including source cutouts, black and RGB565 word one, mask-word boundaries,
+complete coverage, repeated passes and surface guards. The existing 288 row,
+768 column and floor/wall/water oracles pass at 4 MB. Both level-1 and level-6
+burst comparisons capture every frame: all 128 simulation hashes and 130
+complete images, including the final frames, match the unmodified current
+renderer.
+
+
+Matched diagnostics against the current source reduce burst billboard work
+from 22.74 to 14.26 ms. Separate comparisons relink only the diagnostic
+entry point against each release's unchanged optimized engine objects.
+Detailed profiling and captures are disabled for those timings. At
+normal/486_slow, fixed 40,000 cycles, 4 MB, 320x240, SB16 and mouse with
+host sound muted, frames 8-63 of 64 identical updates measure:
+
+| View | Previous release loop ms | Updated release loop ms |
+| --- | ---: | ---: |
+| Level-1 starting room | 38.648 | 38.757 |
+| Close barrel / approaching enemies | 38.421 | 38.499 |
+| Pool north shore | 73.005 | 73.081 |
+| Close barrel after detonation | 65.702 | 58.156 |
+
+The burst gains 13.0% more FPS. Early burst frames 8-15 fall from
+142.808 to 86.386 ms on average. Burst p95 falls from 145.403 to 112.939 ms,
+and the worst frame falls from 146.696 to 124.092 ms. Ordinary views change
+by approximately 0.1 ms; late sparse debris retains its original traversal.
+The independent real-time 128-frame starting benchmark changes from 26.11
+to 26.04 FPS (38.40 ms frame, 32.39 ms render, 3.13 ms present, 0.36 ms input,
+38.91 ms p95). This work targets expensive overlap rather than light scenes.
+
+Keeping the mask on the already reserved 128 KiB DOS stack avoids reducing
+save/reload headroom. Existing wall-column, sprite-row, sky-offset, floor
+reciprocal and gun-column scratch now share one viewport-sized allocation:
+6,084 bytes at 320x240 versus 12,804 bytes for the old allocation and static
+tables. Original 96-column gun indices fit in bytes, enforced at compile
+time. Cached sky offsets and floor reciprocals invalidate on reallocation.
+The supported render limits and output dimensions are unchanged.
+
+All 22 ordinary and optimized native captures and all 22 indexed captures
+match the original start/turn references. The 4 MB full level-1/4/15 fixed
+exercises and real-time level-4 SB16/mouse exercise pass, including repeated
+quickloads and UI/weapon checks, with zero profile audio underruns. Maps and
+all six saved level/map payloads remain exact. Both 238-entry packages
+retain all 231 prepared assets and generated defaults, with no diagnostic
+instrumentation. Windows Release and the feedback suite pass. Local mouse
+settings are preserved when staging the packages.
+
+The final code is committed as `88d0193` in `build/dos-consistency-source`.
+Native text/data/BSS are 1,183,768/22,016/305,152 bytes: total static memory
+is 6 KiB smaller than the previous release. The optimized shared-asset
+checkpoint reports 108 KiB free physical memory versus 104 KiB previously.
+The native EXE SHA-256 is
+`f44c2a2a4b4a1794a32cd3f96a468664f75d5d299f496d07d39097b6d52a9ef4`.
+Evidence is in `build/dos/consistency-performance.json` and
+`build/dos/consistency-validation.json`. Physical 486 hardware is unmeasured.
+
+The broader performance goal remains active. In the pool view, detailed
+profiling attributes 38.33 ms to water within 40.27 ms of inclusive floor
+work, versus 13.40 ms for walls and 2.22 ms for sprites. The next investigation
+is water alpha switching and equal-background sample frequency, to select
+an exact blend optimization that fits the same memory budget.
