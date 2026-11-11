@@ -191,6 +191,87 @@ static void check_sprite_rows(void)
     printf("PASS: %u sprite row rasters preserve packed modes, clipping origins, repeated rows, black/transparent texels, bounds and guards\n",checked);
 }
 
+static void check_sprite_batches(void)
+{
+    enum { PIXELS=320*240, LAYERS=12 };
+    static RendererPixel actual[PIXELS+16],expected[PIXELS+16],palettes[LAYERS][32];
+    static uint8_t wad[4098],ptr[128],decoded[64];
+    static int rows[LAYERS][240];
+    struct Rect { unsigned x,y,w,h,u,du,down; } rect[LAYERS];
+    uint32_t random=0x87451a9bu;
+    for(unsigned test=0;test<32;test++) {
+        for(unsigned i=0;i<sizeof(wad);i++) {
+            random=random*1664525u+1013904223u;wad[i]=(uint8_t)(random>>24);
+        }
+        /* A fully opaque source also checks black ownership and complete
+         * covered-row rejection, including reset between separate batches. */
+        if(test%4==0)for(unsigned i=0;i<sizeof(wad);i+=2){wad[i]=4;wad[i+1]=33;}
+        for(unsigned x=0;x<32;x++) {
+            unsigned offset=2+x*128;
+            ptr[x*4]=(uint8_t)((x+test)%3);ptr[x*4+1]=0;
+            ptr[x*4+2]=(uint8_t)(offset>>8);ptr[x*4+3]=(uint8_t)offset;
+        }
+        for(unsigned layer=0;layer<LAYERS;layer++) {
+            struct Rect *r=&rect[layer];
+            random=random*1664525u+1013904223u;
+            r->x=layer==LAYERS-1 && test%4==0?0:(random>>16)%320;
+            r->w=1+(random>>8)%(320-r->x);
+            r->y=(random>>24)%100;r->h=1+random%(240-r->y);
+            if(layer==LAYERS-1 && test%4==0){r->w=320;r->y=0;r->h=240;}
+            r->u=(layer%3)*65536u+333u;r->du=(32u*65536u)/r->w;
+            r->down=layer%3;
+            for(unsigned y=0;y<r->h;y++)rows[layer][y]=(int)(y*61/r->h)-(test%3==0?1:0);
+            for(unsigned i=0;i<32;i++)palettes[layer][i]=(RendererPixel)(i==1?0:i==2?1:((i+layer*32)*1973u)&0x7fff);
+        }
+        for(unsigned i=0;i<PIXELS+16;i++)actual[i]=expected[i]=0xa55a;
+        /* Independent original-order pixel sampler: later opaque pixels win. */
+        for(unsigned layer=0;layer<LAYERS;layer++) {
+            const struct Rect *r=&rect[layer];
+            for(unsigned y=0;y<r->h;y++)for(unsigned x=0;x<r->w;x++) {
+                int row=rows[layer][y];if(row<0)continue;
+                unsigned column=(r->u+x*r->du)>>16;if(column>=32)column=31;
+                const uint8_t *entry=ptr+column*4;
+                unsigned offset=((unsigned)entry[1]<<16)|((unsigned)entry[2]<<8)|entry[3];
+                unsigned address=offset+((unsigned)row+r->down)*2;
+                if(address+2>sizeof(wad))continue;
+                unsigned word=((unsigned)wad[address]<<8)|wad[address+1];
+                unsigned texel=(word>>(entry[0]*5))&31;
+                if(texel)expected[8+(r->y+y)*320+r->x+x]=palettes[layer][texel];
+            }
+        }
+        dos_raster_sprite_batch_begin(actual+8);
+        unsigned written=0;
+        for(unsigned step=0;step<LAYERS;step++) {
+            unsigned layer=LAYERS-1-step;const struct Rect *r=&rect[layer];
+            RendererPixel *out=actual+8+r->y*320+r->x;
+            if(layer%3!=0 || test%4==0) {
+                DosSpriteRows sprite={wad,ptr,sizeof(wad),sizeof(ptr),palettes[layer],rows[layer],0,r->u,r->du,32,r->down};
+                written+=dos_raster_sprite_rows(out,r->w,r->h,320,&sprite).drawn;
+            } else for(unsigned x=0;x<r->w;x++) {
+                unsigned column=(r->u+x*r->du)>>16;if(column>=32)column=31;
+                const uint8_t *entry=ptr+column*4;
+                unsigned offset=((unsigned)entry[1]<<16)|((unsigned)entry[2]<<8)|entry[3];
+                const uint8_t *source=wad+offset+r->down*2;
+                unsigned limit=(sizeof(wad)-offset)/2-1-r->down,shift=entry[0]*5;
+                if(x&1)written+=dos_raster_sprite_column(out+x,r->h,320,source,palettes[layer],rows[layer],limit,shift);
+                else {
+                    for(unsigned y=0;y<64 && y<=limit;y++)decoded[y]=(uint8_t)((((unsigned)source[y*2]<<8)|source[y*2+1])>>shift)&31;
+                    written+=dos_raster_sprite_texel_column(out+x,r->h,320,decoded,palettes[layer],rows[layer],limit<63?limit:63);
+                }
+            }
+        }
+        dos_raster_sprite_batch_end();
+        assert(!memcmp(actual,expected,sizeof(actual)));
+        unsigned changed=0;for(unsigned i=0;i<PIXELS;i++)changed+=expected[i+8]!=0xa55a;
+        assert(written==changed);
+        /* Ending a pass restores ordinary writes at previously covered pixels. */
+        int zero=0;uint8_t one=1;RendererPixel palette[2]={0,0x1234};
+        assert(dos_raster_sprite_texel_column(actual+8,1,320,&one,palette,&zero,0)==1);
+        assert(actual[8]==0x1234);
+    }
+    puts("PASS: 32 reverse billboard batches match independent painter order, row/column cutouts, black, mask edges, complete coverage, reset and guards");
+}
+
 static void check_word_offset_bounds(void)
 {
     static const uint32_t values[]={0,1,2,3,4,15,31,255,256,65535,65536,UINT32_MAX-2,UINT32_MAX-1,UINT32_MAX};
@@ -852,6 +933,7 @@ int main(void)
     check_word_offset_bounds(); check_projection_rounding(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_solid_floor_rows(); check_edges(); check_walls();
     check_sprite_rows();
     check_sprite_columns();
+    check_sprite_batches();
     check_water();
     check_objects();
     puts("DOS raster regression passed");

@@ -61,6 +61,101 @@ void dos_raster_water(RendererPixel *out,unsigned count,
     }
 }
 
+/* BitMapObj writes are opaque except for source index zero. Within one
+ * all-billboard object pass, traversing the original painter list backwards
+ * lets the first opaque pixel own the result. Reset at each room/section. */
+static uint32_t sprite_covered[240][10];
+static uint8_t sprite_open_words[240];
+static RendererPixel *sprite_batch_surface;
+
+void dos_raster_sprite_batch_begin(RendererPixel *surface)
+{
+    memset(sprite_covered,0,sizeof(sprite_covered));
+    memset(sprite_open_words,10,sizeof(sprite_open_words));
+    sprite_batch_surface=surface;
+}
+void dos_raster_sprite_batch_end(void) { sprite_batch_surface=NULL; }
+
+static void sprite_copy(RendererPixel *out,const RendererPixel *source,unsigned count)
+{
+    unsigned pairs=count/2;
+    __asm__ volatile("rep movsl" : "+S"(source), "+D"(out), "+c"(pairs) : : "memory","cc");
+    if(count&1)*out=*source;
+}
+
+static unsigned sprite_batch_copy(RendererPixel *out,const RendererPixel *source,unsigned count)
+{
+    unsigned at=(unsigned)(out-sprite_batch_surface),y=at/320,x=at%320;
+    if(!sprite_open_words[y])return 0;
+    unsigned end=x+count,origin=x,run=0,written=0;
+    while(x<end) {
+        unsigned word=x/32,bit=x%32,limit=(word+1)*32;
+        if(limit>end)limit=end;
+        uint32_t range=UINT32_MAX<<bit;
+        if(limit%32)range&=(1u<<(limit%32))-1;
+        uint32_t old=sprite_covered[y][word],fresh=range&~old;
+        uint32_t updated=old|range;sprite_covered[y][word]=updated;
+        if(updated==UINT32_MAX && old!=UINT32_MAX)sprite_open_words[y]--;
+        if(fresh==range) {
+            if(!run)run=x-origin+1;
+        } else {
+            if(run) {
+                unsigned first=run-1,length=x-origin-first;
+                sprite_copy(out+first,source+first,length);written+=length;run=0;
+            }
+            while(fresh) {
+                unsigned first=(unsigned)__builtin_ctz(fresh);
+                uint32_t shifted=fresh>>first;
+                unsigned length=shifted==UINT32_MAX?32:(unsigned)__builtin_ctz(~shifted);
+                unsigned offset=word*32+first-origin;
+                sprite_copy(out+offset,source+offset,length);written+=length;
+                uint32_t bits=length==32?UINT32_MAX:((1u<<length)-1)<<first;
+                fresh&=~bits;
+            }
+        }
+        x=limit;
+    }
+    if(run) {
+        unsigned first=run-1,length=count-first;
+        sprite_copy(out+first,source+first,length);written+=length;
+    }
+    return written;
+}
+
+static int sprite_batch_hidden(const RendererPixel *out,unsigned width,unsigned height)
+{
+    unsigned at=(unsigned)(out-sprite_batch_surface),y=at/320,x=at%320;
+    unsigned first=x/32,last=(x+width-1)/32;
+    uint32_t left=UINT32_MAX<<(x%32),right=UINT32_MAX>>(31-((x+width-1)%32));
+    if(first==last)left&=right;
+    for(unsigned row=y;row<y+height;row++) {
+        if(!sprite_open_words[row])continue;
+        const uint32_t *covered=sprite_covered[row];
+        if((covered[first]&left)!=left)return 0;
+        for(unsigned word=first+1;word<last;word++)if(covered[word]!=UINT32_MAX)return 0;
+        if(last!=first && (covered[last]&right)!=right)return 0;
+    }
+    return 1;
+}
+
+static unsigned sprite_batch_column(RendererPixel *out,unsigned count,unsigned stride,
+                                     const uint8_t *source,const RendererPixel *palette,
+                                     const int *rows,unsigned limit,unsigned shift,int decoded)
+{
+    unsigned at=(unsigned)(out-sprite_batch_surface),y=at/320,x=at%320,drawn=0;
+    unsigned word=x/32;uint32_t bit=1u<<(x%32);
+    for(unsigned i=0;i<count;i++,y++,out+=stride) {
+        if(sprite_covered[y][word]&bit || (unsigned)rows[i]>limit)continue;
+        unsigned row=(unsigned)rows[i];
+        unsigned texel=decoded?source[row]:((((unsigned)source[row*2]<<8)|source[row*2+1])>>shift)&31;
+        if(!texel)continue;
+        uint32_t bits=sprite_covered[y][word]|bit;sprite_covered[y][word]=bits;
+        if(bits==UINT32_MAX)sprite_open_words[y]--;
+        *out=palette[texel];drawn++;
+    }
+    return drawn;
+}
+
 /* All seven 486 registers keep the clipped column sampler in one loop.
  * Bounds are unsigned so an invalid negative row is rejected too. */
 #define SPRITE_COLUMN_SAMPLE(SAMPLE_) \
@@ -94,6 +189,7 @@ unsigned dos_raster_sprite_column(RendererPixel *out,unsigned count,unsigned str
                                    const uint8_t *source,const RendererPixel *palette,
                                    const int *rows,unsigned limit,unsigned shift)
 {
+    if(sprite_batch_surface)return sprite_batch_column(out,count,stride,source,palette,rows,limit,shift,0);
     SPRITE_COLUMN_SAMPLE("movzwl (%%ebx,%%eax,2),%%eax\n\t"
                          "rorw $8,%%ax\n\t"
                          "shrl %%cl,%%eax\n\t"
@@ -105,13 +201,15 @@ unsigned dos_raster_sprite_texel_column(RendererPixel *out,unsigned count,unsign
                                          const int *rows,unsigned limit)
 {
     unsigned shift=0;
+    if(sprite_batch_surface)return sprite_batch_column(out,count,stride,source,palette,rows,limit,0,1);
     SPRITE_COLUMN_SAMPLE("movzbl (%%ebx,%%eax),%%eax\n\t");
 }
 #undef SPRITE_COLUMN_SAMPLE
 
-DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out,unsigned width,
+__attribute__((always_inline)) static inline
+DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
                                         unsigned height,unsigned pitch,
-                                        const DosSpriteRows *sprite)
+                                        const DosSpriteRows *sprite,int batch)
 {
     enum { MAX_WIDTH=320 };
     typedef struct { const uint8_t *source; unsigned limit,shift,width; } Group;
@@ -123,6 +221,7 @@ DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out,unsigned width,
     DosSpriteCoverage result={0,0};
     if(!width || width>MAX_WIDTH || !height || !sprite->columns ||
        sprite->ptr_bytes<=sprite->ptr_offset)return result;
+    if(batch && sprite_batch_hidden(out,width,height))return result;
     unsigned available=(sprite->ptr_bytes-sprite->ptr_offset)/4u;
     if(!available)return result;
     unsigned count=0,previous=UINT32_MAX;
@@ -150,6 +249,9 @@ DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out,unsigned width,
         int source_row=sprite->rows[y];
         unsigned end_y=y+1;
         while(end_y<height && sprite->rows[end_y]==source_row)end_y++;
+        if(batch && sprite_batch_hidden(out+y*pitch,width,end_y-y)) {
+            y=end_y;continue;
+        }
         Group *group=groups;
         const Group *groups_end=groups+count;
         RendererPixel *destination=row;
@@ -201,15 +303,28 @@ DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out,unsigned width,
             RendererPixel *target=out+y*pitch+(r->source-row);
             for(unsigned dy=y;dy<end_y;dy++,target+=pitch) {
                 const RendererPixel *source=r->source;
+                if(batch) {
+                    result.drawn+=sprite_batch_copy(target,source,r->count);
+                    continue;
+                }
                 RendererPixel *dest=target;
                 unsigned pairs=r->count/2u;
                 __asm__ volatile("rep movsl" : "+S"(source), "+D"(dest), "+c"(pairs) : : "memory", "cc");
                 if(r->count&1u)*dest=*source;
             }
         }
-        result.drawn+=opaque*(end_y-y);y=end_y;
+        if(!batch)result.drawn+=opaque*(end_y-y);
+        y=end_y;
     }
     return result;
+}
+
+DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out,unsigned width,
+                                        unsigned height,unsigned pitch,
+                                        const DosSpriteRows *sprite)
+{
+    if(sprite_batch_surface)return sprite_rows(out,width,height,pitch,sprite,1);
+    return sprite_rows(out,width,height,pitch,sprite,0);
 }
 
 /* Two 1024-bit maps classify every interleaved horizontal/vertical tile row
