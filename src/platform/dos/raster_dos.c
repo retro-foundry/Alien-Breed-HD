@@ -292,7 +292,6 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             "movl (%%esi),%%eax\n\t" \
             "testl %%eax,%%eax\n\t" \
             "jz " REJECT_ "\n\t" \
-            "movl %[y],%%edx\n\t" \
             "cmpl 4(%%esi),%%edx\n\t" \
             "ja " REJECT_ "\n\t" \
             "movzwl (%%eax,%%edx,2),%%eax\n\t" \
@@ -308,6 +307,7 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             "movl %%eax,4(%[span])\n\t" \
             "addl $8,%[span]\n\t"
         __asm__ volatile(
+            "movl %[y],%%edx\n\t"
             "1: " SPRITE_ROW_SAMPLE("3f")
             "movl %%edi,(%[span])\n\t"
             "jmp 2f\n\t"
