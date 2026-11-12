@@ -10366,10 +10366,10 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
 
     int32_t src_col_fp = (int32_t)dx_start * src_col_step;
 
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565) && !AB3D_CW_COL_MAJOR
+#if defined(AB3D_DOS) && !AB3D_CW_COL_MAJOR
     if(!expand && !have_pick && !pick_graphic && !spill_visualize &&
        !mark_sprite_pick_zone_none && rw==320) {
-        /* All sprite scales benefit from contiguous native row writes.
+        /* All sprite scales benefit from contiguous DOS row writes.
          * Geometric X masks are already disjoint rectangles. A spill can use
          * them directly when no wall-depth span changes its vertical clip. */
         int clear=1;
@@ -10410,7 +10410,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     }
 #endif
 
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS)
     int dos_decoded_column=-1;
 #endif
     /* --- Column loop ---
@@ -10469,7 +10469,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
             if (decode_rows > eff_rows) decode_rows = eff_rows;
             if (decode_rows > 0) {
                 int decode_column = 1;
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS)
                 /* A magnified source column can cover several screen columns. */
                 decode_column = dos_decoded_column != src_col;
                 dos_decoded_column = src_col;
@@ -10709,7 +10709,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                 int row_lut_idx = col_top - draw_top;
                 size_t pix = (size_t)col_top * rw_stride + (size_t)screen_col;
                 size_t pix_cw = renderer_cw_index_xy(screen_col, col_top, rw, rh);
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565) && !AB3D_CW_COL_MAJOR
+#if defined(AB3D_DOS) && !AB3D_CW_COL_MAJOR
                 if(!have_pick && !pick_graphic && !spill_visualize && !mark_sprite_pick_zone_none) {
                     unsigned count=(unsigned)(col_bot-col_top+1),drawn;
                     const int *rows=row_src_lut+row_lut_idx;
@@ -13754,9 +13754,14 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                   MAX_EXPLOSIONS];
     const int max_draw_entries = (int)(sizeof(objs) / sizeof(objs[0]));
     int obj_count = 0;
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS)
     int batch_candidates = 0, batch_has_polygon = 0;
     unsigned batch_area = 0;
+#ifdef AB3D_DOS_INDEXED
+    enum { DOS_SPRITE_BATCH_HEIGHT=200 };
+#else
+    enum { DOS_SPRITE_BATCH_HEIGHT=240 };
+#endif
 #endif
 
     int num_pts = level->num_object_points;
@@ -13902,10 +13907,10 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             int spr_l = scr_x_est - sprite_w_est / 2;
             int spr_r = spr_l + sprite_w_est;
             if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS)
             unsigned batch_width = (unsigned)(sprite_w_est > 320 ? 320 : sprite_w_est);
             batch_candidates++;
-            batch_area += batch_width * (batch_width > 240 ? 240 : batch_width);
+            batch_area += batch_width * (batch_width > DOS_SPRITE_BATCH_HEIGHT ? DOS_SPRITE_BATCH_HEIGHT : batch_width);
 #endif
 #if defined(AB3D_DOS) && EXPLOSION_SIZE_CORRECTION == 1
             if (!in_this_zone && geometry && fast_spill_admission) {
@@ -13923,7 +13928,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             }
 #endif
         }
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS)
         else { batch_candidates++; batch_has_polygon = 1; }
 #endif
 
@@ -14042,10 +14047,10 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                 int spr_l = scr_x_est - sprite_w_est / 2;
                 int spr_r = spr_l + sprite_w_est;
                 if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS)
                 unsigned batch_width = (unsigned)(sprite_w_est > 320 ? 320 : sprite_w_est);
                 batch_candidates++;
-                batch_area += batch_width * (batch_width > 240 ? 240 : batch_width);
+                batch_area += batch_width * (batch_width > DOS_SPRITE_BATCH_HEIGHT ? DOS_SPRITE_BATCH_HEIGHT : batch_width);
                 if ((uint8_t)obj[6] == (uint8_t)OBJ_3D_SPRITE) batch_has_polygon = 1;
 #endif
 #if defined(AB3D_DOS) && EXPLOSION_SIZE_CORRECTION == 1
@@ -14152,10 +14157,10 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                 int spr_l = scr_x_est - sprite_w_est / 2;
                 int spr_r = spr_l + sprite_w_est;
                 if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right) continue;
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS)
                 unsigned batch_width = (unsigned)(sprite_w_est > 320 ? 320 : sprite_w_est);
                 batch_candidates++;
-                batch_area += batch_width * (batch_width > 240 ? 240 : batch_width);
+                batch_area += batch_width * (batch_width > DOS_SPRITE_BATCH_HEIGHT ? DOS_SPRITE_BATCH_HEIGHT : batch_width);
 #endif
             }
 
@@ -14208,7 +14213,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
     if (ctx->profile_collect_stats)
         ctx->workload_stats.ticks_object_select += SDL_GetPerformanceCounter() - select_start;
     int reverse_billboards=0;
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565) && !AB3D_CW_COL_MAJOR
+#if defined(AB3D_DOS) && !AB3D_CW_COL_MAJOR
     DosSpriteBatch batch_scratch; /* Reuses the already reserved DOS stack. */
     DosSpriteHistory history_scratch;
     /* Reversing an opaque billboard-only painter pass is exact when the
@@ -14216,14 +14221,14 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
      * original draw traversal. Small lists avoid the mask setup cost. */
     /* Preserve the original batch decision from the unfiltered candidates.
      * Early spill rejection must not turn a dense pass into a slower painter pass. */
-    if(obj_count>0 && batch_candidates>=4 && r->width==320 && r->height==240 &&
+    if(obj_count>0 && batch_candidates>=4 && r->width==320 && r->height==DOS_SPRITE_BATCH_HEIGHT &&
        !g_renderer_rgb_raster_expand && !g_debug_spill_visualize && !g_pick_capture_active &&
        !renderer_active_pick_player() && !renderer_get_graphic_pick_target()) {
         /* A few large explosions can overlap as much as a dense particle
          * list. Short lists need a four-screen area estimate to repay mask
          * setup. Width is already projected by the existing visibility
          * rejection. */
-        unsigned min_area=320u*240u*(batch_candidates>=16?1u:4u);
+        unsigned min_area=320u*DOS_SPRITE_BATCH_HEIGHT*(batch_candidates>=16?1u:4u);
         reverse_billboards=!batch_has_polygon && batch_area>=min_area;
         if(reverse_billboards) {
             dos_raster_sprite_batch_begin(renderer_active_cw(),&batch_scratch);
@@ -14666,7 +14671,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                                            billboard_view_right_z);
         }
     }
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565) && !AB3D_CW_COL_MAJOR
+#if defined(AB3D_DOS) && !AB3D_CW_COL_MAJOR
     if(reverse_billboards)dos_raster_sprite_batch_end();
 #endif
 }

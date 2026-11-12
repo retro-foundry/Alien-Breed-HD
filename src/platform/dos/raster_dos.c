@@ -92,6 +92,8 @@ void dos_raster_water(RendererPixel *out,unsigned count,
     }
 }
 
+#endif
+
 /* BitMapObj writes are opaque except for source index zero. Within one
  * all-billboard object pass, traversing the original painter list backwards
  * lets the first opaque pixel own the result. Reset at each room/section. */
@@ -150,8 +152,14 @@ static void sprite_history_note(RendererPixel *out,unsigned width,unsigned heigh
 
 static void sprite_copy(RendererPixel *out,const RendererPixel *source,unsigned count)
 {
+#ifdef AB3D_DOS_INDEXED
+    unsigned quads=count/4;
+    __asm__ volatile("rep movsl" : "+S"(source), "+D"(out), "+c"(quads) : : "memory","cc");
+    if(count&2)__asm__ volatile("movsw" : "+S"(source), "+D"(out) : : "memory","cc");
+#else
     unsigned pairs=count/2;
     __asm__ volatile("rep movsl" : "+S"(source), "+D"(out), "+c"(pairs) : : "memory","cc");
+#endif
     if(count&1)*out=*source;
 }
 
@@ -302,6 +310,15 @@ static unsigned sprite_batch_column(RendererPixel *out,unsigned count,unsigned s
 
 /* All seven 486 registers keep the clipped column sampler in one loop.
  * Bounds are unsigned so an invalid negative row is rejected too. */
+#ifdef AB3D_DOS_INDEXED
+#define SPRITE_COLUMN_STORE \
+            "movb (%[palette],%%eax),%%al\n\t" \
+            "movb %%al,(%%edi)\n\t"
+#else
+#define SPRITE_COLUMN_STORE \
+            "movw (%[palette],%%eax,2),%%ax\n\t" \
+            "movw %%ax,(%%edi)\n\t"
+#endif
 #define SPRITE_COLUMN_SAMPLE(SAMPLE_) \
     do { \
         if(!count)return 0; \
@@ -316,8 +333,7 @@ static unsigned sprite_batch_column(RendererPixel *out,unsigned count,unsigned s
             SAMPLE_ \
             "testl %%eax,%%eax\n\t" \
             "jz 2f\n\t" \
-            "movw (%[palette],%%eax,2),%%ax\n\t" \
-            "movw %%ax,(%%edi)\n\t" \
+            SPRITE_COLUMN_STORE \
             "incl %%edx\n\t" \
             "2: addl %[stride],%%edi\n\t" \
             "cmpl %[end],%%esi\n\t" \
@@ -348,6 +364,7 @@ unsigned dos_raster_sprite_texel_column(RendererPixel *out,unsigned count,unsign
     SPRITE_COLUMN_SAMPLE("movzbl (%%ebx,%%eax),%%eax\n\t");
 }
 #undef SPRITE_COLUMN_SAMPLE
+#undef SPRITE_COLUMN_STORE
 
 typedef struct { const uint8_t *source; unsigned limit,shift,width; } DosSpriteGroup;
 
@@ -464,10 +481,25 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             "shrl %%cl,%%eax\n\t" \
             "andl $31,%%eax\n\t" \
             "jz " REJECT_ "\n\t"
+#ifdef AB3D_DOS_INDEXED
+#define SPRITE_ROW_ADVANCE "leal (%%edi,%%eax),%%edi\n\t"
+#define SPRITE_ROW_PIXEL_COUNT ""
+#define SPRITE_ROW_FILL \
+            "movb (%%ebx,%%eax),%%al\n\t" \
+            "movl 12(%%esi),%%ecx\n\t" \
+            "rep stosb\n\t"
+#else
+#define SPRITE_ROW_ADVANCE "leal (%%edi,%%eax,2),%%edi\n\t"
+#define SPRITE_ROW_PIXEL_COUNT "shrl $1,%%eax\n\t"
+#define SPRITE_ROW_FILL \
+            "movw (%%ebx,%%eax,2),%%ax\n\t" \
+            "movl 12(%%esi),%%ecx\n\t" \
+            "rep stosw\n\t"
+#endif
 #define SPRITE_ROW_CLOSE \
             "movl %%edi,%%eax\n\t" \
             "subl (%[span]),%%eax\n\t" \
-            "shrl $1,%%eax\n\t" \
+            SPRITE_ROW_PIXEL_COUNT \
             "movl %%eax,4(%[span])\n\t" \
             "addl $8,%[span]\n\t"
 #define SPRITE_ROW_DECODE(SOURCE_,BOUNDS_) \
@@ -478,16 +510,14 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             "jmp 2f\n\t" \
             /* Transparent run: skip the destination, then sample again. */ \
             "3: movl 12(%%esi),%%eax\n\t" \
-            "leal (%%edi,%%eax,2),%%edi\n\t" \
+            SPRITE_ROW_ADVANCE \
             "addl $16,%%esi\n\t" \
             "cmpl %[end],%%esi\n\t" \
             "jne 1b\n\t" \
             "jmp 9f\n\t" \
             /* Opaque run: the span is already open until a cutout. */ \
             "4: " SPRITE_ROW_SAMPLE("6f",SOURCE_,BOUNDS_) \
-            "2: movw (%%ebx,%%eax,2),%%ax\n\t" \
-            "movl 12(%%esi),%%ecx\n\t" \
-            "rep stosw\n\t" \
+            "2: " SPRITE_ROW_FILL \
             "addl $16,%%esi\n\t" \
             "cmpl %[end],%%esi\n\t" \
             "jne 4b\n\t" \
@@ -511,6 +541,9 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
         } else
             SPRITE_ROW_DECODE(SPRITE_ROW_SOURCE_CHECK,SPRITE_ROW_CHECK);
 #undef SPRITE_ROW_DECODE
+#undef SPRITE_ROW_FILL
+#undef SPRITE_ROW_PIXEL_COUNT
+#undef SPRITE_ROW_ADVANCE
 #undef SPRITE_ROW_CLOSE
 #undef SPRITE_ROW_SAMPLE
 #undef SPRITE_ROW_SOURCE_CHECK
@@ -527,15 +560,11 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             unsigned first_copy=batch?y:y+1;
             RendererPixel *target=out+first_copy*pitch+(r->source-decoded_row);
             for(unsigned dy=first_copy;dy<end_y;dy++,target+=pitch) {
-                const RendererPixel *source=r->source;
                 if(batch) {
-                    result.drawn+=sprite_batch_copy(target,source,r->count,NULL);
+                    result.drawn+=sprite_batch_copy(target,r->source,r->count,NULL);
                     continue;
                 }
-                RendererPixel *dest=target;
-                unsigned pairs=r->count/2u;
-                __asm__ volatile("rep movsl" : "+S"(source), "+D"(dest), "+c"(pairs) : : "memory", "cc");
-                if(r->count&1u)*dest=*source;
+                sprite_copy(target,r->source,r->count);
             }
         }
         if(!batch)result.drawn+=opaque*(end_y-y);
@@ -554,6 +583,7 @@ DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out,unsigned width,
     return sprite_rows(out,width,height,pitch,sprite,0);
 }
 
+#ifdef AB3D_NATIVE_RGB565
 /* Two 1024-bit maps classify every interleaved horizontal/vertical tile row
  * at the authored darkest shade. No pre-shaded texture bank is retained. */
 typedef struct {

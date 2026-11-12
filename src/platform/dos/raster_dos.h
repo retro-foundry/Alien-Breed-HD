@@ -36,8 +36,6 @@ void dos_raster_wall_rows(RendererPixel *out, unsigned width, unsigned height, u
                            const DosWallColumn *columns, const RendererPixel *shared_palette,
                            uint32_t y, uint32_t dy, unsigned mask);
 
-/* AB3DI.s pastfloorbright sampling: V*1024 + U*4, wrapping at 64. */
-#ifdef AB3D_NATIVE_RGB565
 typedef struct {
     const uint8_t *wad, *ptr;
     size_t wad_bytes, ptr_bytes;
@@ -47,7 +45,7 @@ typedef struct {
     unsigned columns, down_strip;
 } DosSpriteRows;
 typedef struct { unsigned visible, drawn; } DosSpriteCoverage;
-/* One 320x240 RGB565 object pass, traversed in reverse painter order.
+/* One 320-pixel-wide object pass, up to 240 rows, in RendererPixel format.
  * Every contributing primitive must be an opaque/index-zero billboard;
  * columns advance by the screen pitch of 320 pixels. */
 typedef struct {
@@ -77,12 +75,13 @@ unsigned dos_raster_sprite_column(RendererPixel *out,unsigned count,unsigned str
 unsigned dos_raster_sprite_texel_column(RendererPixel *out,unsigned count,unsigned stride,
                                          const uint8_t *texels,const RendererPixel *palette,
                                          const int *rows,unsigned limit);
-/* Native, unclipped rectangle after the renderer applies its screen/plane
+/* Unclipped rectangle after the renderer applies its screen/plane
  * bounds. Transparent texels leave the destination untouched, including
- * opaque palette entries whose RGB565 word happens to be zero. */
+ * opaque palette entries whose pixel value happens to be zero. */
 DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out, unsigned width,
                                         unsigned height, unsigned pitch,
                                         const DosSpriteRows *sprite);
+#ifdef AB3D_NATIVE_RGB565
 void dos_raster_prepare_floor(unsigned slot,const uint8_t *texture,const uint8_t *palettes);
 /* Stock AB3DI.s texturedwater: original Brighten words, vertical samples and
  * 16-bit wateroff carry. NULL background1 selects background0 alone.
@@ -95,6 +94,7 @@ void dos_raster_water(RendererPixel *out, unsigned count,
                         const uint8_t *phase, unsigned shade, unsigned offset, unsigned alpha,
                         uint32_t u, uint32_t v, uint32_t du, uint32_t dv);
 #endif
+/* AB3DI.s pastfloorbright sampling: V*1024 + U*4, wrapping at 64. */
 void dos_raster_floor(RendererPixel *out, unsigned count, const uint8_t *texture,
                        const RendererPixel *palette, uint32_t u, uint32_t v,
                        uint32_t du, uint32_t dv);
