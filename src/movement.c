@@ -556,6 +556,21 @@ static inline int32_t floorline_touch_denominator(const MoveContext *ctx,const u
  * if (d > 0 && d < 32) or.w wallflags,14(a2)
  *
  * Our coordinates may be shifted by pos_shift, so scale the 32 threshold too. */
+#ifdef AB3D_DOS
+/* Signed-word relative coordinates bound this exact cross to int32_t.
+ * Preserve the touch write before rejecting ObjectMove.s checkwalls. */
+__attribute__((always_inline)) static inline
+int mark_floorline_touch_word_side(const MoveContext *ctx,const uint8_t *line,
+                                  int32_t rx,int32_t rz,int16_t vx,int16_t vz)
+{
+    int32_t side=rx*(int32_t)vz-rz*(int32_t)vx;
+    if(side<=0)return 0;
+    if(ctx->wall_flags && side<floorline_touch_denominator(ctx,line)*32)
+        mark_floorline_touch_flag(ctx,line);
+    return 1;
+}
+#endif
+
 /* Returns a positive side proof for checkwalls when its signed-word
  * relative coordinates have the same value as this wider touch test. */
 static int mark_floorline_touch_if_near(const MoveContext *ctx, const uint8_t *fline,
@@ -572,11 +587,7 @@ static int mark_floorline_touch_if_near(const MoveContext *ctx, const uint8_t *f
          * and the largest positive denominator times 32 is 2097120.
          * Preserve ObjectMove.s touch writes before returning its side proof. */
         if(!ps && (((uint32_t)rx+32768u)|((uint32_t)rz+32768u))<=65535u) {
-            int32_t side=rx*(int32_t)lzlen-rz*(int32_t)lxlen;
-            if(side<=0)return 0;
-            if(side<floorline_touch_denominator(ctx,fline)*32)
-                mark_floorline_touch_flag(ctx,fline);
-            return 1;
+            return mark_floorline_touch_word_side(ctx,fline,rx,rz,lxlen,lzlen);
         }
 #endif
         int64_t side = (int64_t)rx * lzlen - (int64_t)rz * lxlen;
@@ -598,6 +609,22 @@ static int mark_floorline_touch_if_near(const MoveContext *ctx, const uint8_t *f
 #endif
     }
 }
+
+#ifdef AB3D_DOS
+/* Reject ordinary integer primary-pass lines before entering the larger
+ * check_wall_line worker. Negative clearance makes both wall offsets zero.
+ * Unsigned subtraction keeps rejected wide coordinates free of overflow. */
+__attribute__((always_inline)) static inline
+int movement_integer_wall_clear(const MoveContext *ctx,const uint8_t *line)
+{
+    if(ctx->pos_shift || ctx->awayfromwall>=0)return 0;
+    int32_t lx=read_be16(line+FLINE_X),lz=read_be16(line+FLINE_Z);
+    uint32_t ux=(uint32_t)ctx->newx-(uint32_t)lx,uz=(uint32_t)ctx->newz-(uint32_t)lz;
+    if(((ux+32768u)|(uz+32768u))>65535u)return 0;
+    return mark_floorline_touch_word_side(ctx,line,(int32_t)ux,(int32_t)uz,
+                                           read_be16(line+FLINE_XLEN),read_be16(line+FLINE_ZLEN));
+}
+#endif
 
 /* -----------------------------------------------------------------------
  * Geometry helpers (robust, radius-aware wall collision)
@@ -1458,6 +1485,9 @@ void move_object(MoveContext* ctx, LevelState* level)
 
                     {
                         const uint8_t* fline = level->floor_lines + entry * FLINE_SIZE;
+#ifdef AB3D_DOS
+                        if(movement_integer_wall_clear(ctx,fline))continue;
+#endif
                         int result = check_wall_line(ctx, level, fline, zone_data, &xdiff, &zdiff, MOVE_PASS_WALLS);
 
                         /* Amiga MoveObject continues scanning after a slide-adjusted hit
@@ -1518,6 +1548,9 @@ void move_object(MoveContext* ctx, LevelState* level)
 
                 {
                     const uint8_t* fline = level->floor_lines + i * FLINE_SIZE;
+#ifdef AB3D_DOS
+                    if(movement_integer_wall_clear(ctx,fline))continue;
+#endif
                     int result = check_wall_line(ctx, level, fline, zone_data, &xdiff, &zdiff, MOVE_PASS_BRUTE);
 
                     if (result == 2) continue;

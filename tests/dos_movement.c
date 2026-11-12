@@ -1,6 +1,7 @@
 /* Execute production movement math against its original division oracles. */
 #include "../src/movement.c"
 #include <assert.h>
+#include "dos_movement_reference.h"
 
 static uint32_t touch_seed=0x82a7c4e1;
 static uint32_t touch_random(void)
@@ -15,12 +16,15 @@ static void check_touch(int32_t lx,int32_t lz,int32_t x,int32_t z,
 {
     uint8_t line[16],expected[16];
     for(unsigned i=0;i<sizeof(line);i++)line[i]=(uint8_t)(touch_random()>>24);
+    write_be16(line+FLINE_X,(uint16_t)(lx>>shift));
+    write_be16(line+FLINE_Z,(uint16_t)(lz>>shift));
     write_be16(line+FLINE_XLEN,(uint16_t)vx);write_be16(line+FLINE_ZLEN,(uint16_t)vz);
     write_be16(line+FLINE_LENGTH,(uint16_t)length);
     memcpy(expected,line,sizeof(line));
     MoveContext ctx={0};ctx.newx=x;ctx.newz=z;ctx.extlen=extent;
     ctx.pos_shift=(int8_t)shift;ctx.wall_flags=flags;
     int64_t side=((int64_t)x-lx)*vz-((int64_t)z-lz)*vx;
+    int64_t rx=(int64_t)x-lx,rz=(int64_t)z-lz;
     if(flags && side>0) {
         int divisor=length<0?-(int)length:length;divisor+=extent;
         if(divisor<=0)divisor=1;
@@ -33,12 +37,20 @@ static void check_touch(int32_t lx,int32_t lz,int32_t x,int32_t z,
             expected[14]=(uint8_t)((old|flags)>>8);expected[15]=(uint8_t)(old|flags);
         }
     }
+    uint8_t inline_line[16];memcpy(inline_line,line,sizeof(line));
+    MoveContext inline_ctx=ctx;inline_ctx.awayfromwall=-1;
+    MoveContext before_ctx=inline_ctx;
+    int fast=movement_integer_wall_clear(&inline_ctx,inline_line);
+    int expected_fast=!shift && side>0 && rx>=INT16_MIN && rx<=INT16_MAX &&
+                      rz>=INT16_MIN && rz<=INT16_MAX;
+    assert(fast==expected_fast);
+    assert(!memcmp(&inline_ctx,&before_ctx,sizeof(inline_ctx)));
+    assert(!memcmp(inline_line,fast?expected:line,sizeof(line)));
     int positive_word_side=mark_floorline_touch_if_near(&ctx,line,lx,lz,vx,vz,shift);
     assert(!memcmp(line,expected,sizeof(line)));
     /* Repeated movers can encounter a line whose requested flags are set. */
     assert(mark_floorline_touch_if_near(&ctx,line,lx,lz,vx,vz,shift)==positive_word_side);
     assert(!memcmp(line,expected,sizeof(line)));
-    int64_t rx=(int64_t)x-lx,rz=(int64_t)z-lz;
     int expected_side=flags && side>0 && rx>=INT16_MIN && rx<=INT16_MAX &&
                       rz>=INT16_MIN && rz<=INT16_MAX;
     assert(positive_word_side==expected_side);
@@ -245,7 +257,7 @@ void check_movement_paths(void)
         if(expected_proof>=0)assert(clear==expected_proof);
         proved+=clear;rejected+=!clear;
         if(seed.pos_shift || seed.extlen || seed.awayfromwall>=0 || !seed.objroom)assert(!clear);
-        move_object_substep_loop(&reference,&level);
+        reference_move_object_substepped(&reference,&level);
         memcpy(data_expected,data_store,sizeof(data_store));memcpy(line_expected,line_store,sizeof(line_store));
         memcpy(data_store,data_seed,sizeof(data_store));memcpy(line_store,line_seed,sizeof(line_store));
         move_object_substepped(&actual,&level);
@@ -312,10 +324,24 @@ void check_movement_touch(void)
         check_touch(17,-23,17+32-delta,-23+32+delta,-32768,32767,
                     -32768,32767,0,flags[f]);checked++;
     }
+    /* A zero-flag legacy touch returns before subtracting coordinates.
+     * The inline primary proof must also reject full-width differences
+     * without introducing signed overflow while testing its word bounds. */
+    static const int32_t wide_positions[]={INT32_MIN,INT32_MIN+1,-65536,-32769,
+                                           32768,65536,INT32_MAX-1,INT32_MAX};
+    uint32_t saved_touch_seed=touch_seed;
+    for(unsigned anchor=0;anchor<2;anchor++)for(unsigned v=0;v<8;v++)
+    for(unsigned p=0;p<8;p++) {
+        int32_t lx=anchor?32767:-32768,lz=anchor?-32768:32767;
+        check_touch(lx,lz,wide_positions[p],wide_positions[(p+3)&7],
+                    vectors[v][0],vectors[v][1],32767,0,0,0);checked++;
+    }
+    touch_seed=saved_touch_seed; /* Retain the established full-movement corpus. */
     uint8_t empty_line[16]={0};MoveContext empty_ctx={0};
     assert(!mark_floorline_touch_if_near(NULL,empty_line,0,0,1,1,0));
     assert(!mark_floorline_touch_if_near(&empty_ctx,NULL,0,0,1,1,0));
     printf("PASS: %u movement touch cases preserve the original wide division, threshold boundaries, signed lengths/extents, both position scales and all line bytes\n",checked);
+    printf("PASS: %u inline primary-wall proofs match independent wide crosses and touch writes, including zero flags, full contexts and rejected wide/shifted inputs\n",checked);
     puts("PASS: positive-side proofs match original signed-word crosses, including word overflow boundaries and absent touch flags");
 
     for(unsigned i=0;i<32768;i++) {
