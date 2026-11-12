@@ -374,6 +374,81 @@ static void check_sprite_band_masks(void)
     printf("PASS: %u opaque band-mask cases preserve disjoint/same-word spans, 160 ranges, word joins, empty fresh rows, changing/outside coverage, direct/table sampling, black, complete masks/counts and guards\n",checked);
 }
 
+/* Independent pixels exercise every contiguous 32-bit gap, including runs
+ * ending at bit 32, then unrelated multi-run masks. Both single-row copying
+ * and repeated bands must preserve ownership outside their rectangle. */
+static void check_sprite_fresh_runs(void)
+{
+    enum { HEIGHT=4, PIXELS=320*HEIGHT };
+    static RendererPixel actual[PIXELS+16],expected[PIXELS+16];
+    uint8_t wad[130]={0},ptr[257]={0},texels[64];
+    RendererPixel palette[32];int rows[HEIGHT]={0};
+    struct GuardedMask { uint32_t before[4];DosSpriteBatch mask;uint32_t after[4]; } got_mask,want_mask;
+    uint32_t random=0x41792b35u;unsigned checked=0;
+    for(unsigned test=0;test<1024;test++)for(unsigned height=1;height<=HEIGHT;height+=3) {
+        unsigned left=test%7==0?0:test%7==1?31:test%7==2?32:
+                      test%7==3?127:test%7==4?255:test%7==5?1:256;
+        unsigned width=64,drawn=0;int hidden=1;
+        for(unsigned i=0;i<32;i++)palette[i]=(RendererPixel)(i==31?0:i*1973u+test);
+        for(unsigned x=0;x<64;x++) {
+            unsigned offset=2+x*2,mode=x%3;
+            texels[x]=(uint8_t)(test>=528 && (test&1) && x%5==0?0:1+(x+test)%31);
+            /* Deliberately unaligned PTR entries still contain four bytes. */
+            ptr[1+x*4]=(uint8_t)mode;
+            ptr[4+x*4]=(uint8_t)offset;
+            sprite_word_write(wad+offset,(uint16_t)(texels[x]<<(mode*5)));
+        }
+        for(unsigned i=0;i<PIXELS+16;i++)actual[i]=expected[i]=(RendererPixel)0xa55a;
+        memset(&got_mask,0xa5,sizeof(got_mask));
+        dos_raster_sprite_batch_begin(actual+8,&got_mask.mask);
+        for(unsigned y=0;y<HEIGHT;y++)for(unsigned word=0;word<10;word++) {
+            uint32_t fresh;
+            if(test<528) {
+                unsigned n=test,start=0;
+                while(n>=32-start){n-=32-start;start++;}
+                unsigned end=start+n+1;
+                /* Construct the oracle by testing each bit, independently
+                 * of the production run extraction and its carry. */
+                fresh=0;
+                for(unsigned bit=0;bit<32;bit++)if(bit>=start && bit<end)fresh|=1u<<bit;
+            } else {
+                random=random*1664525u+1013904223u;fresh=random;
+            }
+            if(y>=2)fresh=~got_mask.mask.covered[y-2][word];
+            got_mask.mask.covered[y][word]=~fresh;
+        }
+        for(unsigned y=0;y<HEIGHT;y++) {
+            unsigned open=0;
+            for(unsigned word=0;word<10;word++)open+=got_mask.mask.covered[y][word]!=UINT32_MAX;
+            got_mask.mask.open_words[y]=(uint8_t)open;
+        }
+        want_mask=got_mask;
+        for(unsigned y=0;y<height;y++)for(unsigned dx=0;dx<width;dx++) {
+            unsigned x=left+dx;uint32_t bit=1u<<(x%32);
+            if(!(want_mask.mask.covered[y][x/32]&bit)) {
+                hidden=0;
+                if(texels[dx]) {
+                    expected[8+y*320+x]=palette[texels[dx]];
+                    want_mask.mask.covered[y][x/32]|=bit;drawn++;
+                }
+            }
+        }
+        for(unsigned y=0;y<HEIGHT;y++) {
+            unsigned open=0;
+            for(unsigned word=0;word<10;word++)open+=want_mask.mask.covered[y][word]!=UINT32_MAX;
+            want_mask.mask.open_words[y]=(uint8_t)open;
+        }
+        DosSpriteRows sprite={wad,ptr,sizeof(wad),sizeof(ptr),palette,rows,
+                              1,0,65536u,64,0};
+        DosSpriteCoverage got=dos_raster_sprite_rows(actual+8+left,width,height,320,&sprite);
+        dos_raster_sprite_batch_end();
+        assert(got.visible==(hidden?0:width*height) && got.drawn==drawn);
+        assert(!memcmp(actual,expected,sizeof(actual)));
+        assert(!memcmp(&got_mask,&want_mask,sizeof(got_mask)));checked++;
+    }
+    printf("PASS: %u fresh-run pixel cases preserve every contiguous word gap, arbitrary multi-run coverage, unaligned PTRs, single/repeated rows, cutouts, black, ownership, counts and guards\n",checked);
+}
+
 static void check_sprite_narrow_coverage(void)
 {
     enum { HEIGHT=8, PIXELS=320*HEIGHT };

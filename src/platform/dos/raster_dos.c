@@ -232,12 +232,13 @@ static unsigned sprite_batch_copy(RendererPixel *out,const RendererPixel *source
             }
             while(fresh) {
                 unsigned first=(unsigned)__builtin_ctz(fresh);
-                uint32_t shifted=fresh>>first;
-                unsigned length=shifted==UINT32_MAX?32:(unsigned)__builtin_ctz(~shifted);
+                /* Adding the lowest set bit clears this run and carries to
+                 * its end. A zero carry means the run reaches bit 32. */
+                uint32_t carry=fresh+(fresh&-fresh);
+                unsigned length=carry?(unsigned)__builtin_ctz(carry)-first:32-first;
                 unsigned offset=word*32+first-origin;
                 sprite_copy_record(out+offset,source+offset,length,next);written+=length;
-                uint32_t bits=length==32?UINT32_MAX:((1u<<length)-1)<<first;
-                fresh&=~bits;
+                fresh&=carry;
             }
         }
         x=limit;
@@ -296,16 +297,15 @@ static unsigned sprite_batch_rows(RendererPixel *out,unsigned height,
             if(updated==UINT32_MAX && old!=UINT32_MAX)sprite_batch->open_words[y+dy]--;
             while(fresh) {
                 unsigned bit=(unsigned)__builtin_ctz(fresh);
-                uint32_t shifted=fresh>>bit;
-                unsigned count=shifted==UINT32_MAX?32:(unsigned)__builtin_ctz(~shifted);
+                uint32_t carry=fresh+(fresh&-fresh);
+                unsigned count=carry?(unsigned)__builtin_ctz(carry)-bit:32-bit;
                 unsigned offset=(first+word)*32+bit-x;
                 if(length && run+length!=offset) {
                     sprite_copy_record(target+run,row+run,length,&end);total+=length;length=0;
                 }
                 if(!length)run=offset;
                 length+=count;
-                uint32_t bits=count==32?UINT32_MAX:((1u<<count)-1)<<bit;
-                fresh&=~bits;
+                fresh&=carry;
             }
         }
         if(length){sprite_copy_record(target+run,row+run,length,&end);total+=length;}
@@ -445,8 +445,13 @@ static inline void sprite_group_source(DosSpriteGroup *g,const DosSpriteRows *sp
 {
     g->source=NULL;g->width=width;
     const uint8_t *entry=sprite->ptr+sprite->ptr_offset+column*4u;
-    unsigned mode=entry[0];
-    uint32_t offset=((uint32_t)entry[1]<<16)|((uint32_t)entry[2]<<8)|entry[3];
+    /* ObjDraw3 PTR entries retain their original big-endian layout. One
+     * unaligned-safe word load and 486 BSWAP replaces four byte loads. */
+    uint32_t descriptor;
+    memcpy(&descriptor,entry,sizeof(descriptor));
+    descriptor=__builtin_bswap32(descriptor);
+    unsigned mode=descriptor>>24;
+    uint32_t offset=descriptor&0xffffffu;
     if((!mode && !offset) || offset>=sprite->wad_bytes)return;
     unsigned words=(sprite->wad_bytes-offset)/2u;
     if(words<=sprite->down_strip)return;
