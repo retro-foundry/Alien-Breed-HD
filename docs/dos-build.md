@@ -5153,3 +5153,36 @@ Evidence is in `build/dos/mouse-startup-validation.json`,
 `build/dos/mouse-startup-staging.json`, `build/dos-mouse-startup-trace/`,
 each build's `mouse-game-check/report.json` and
 `build/dos-mouse-startup-source/build/dos/pgo/report.json`.
+
+### Full-view DOS hit flash
+
+`ecc4911` replaces the two-pixel DOS damage border with a red tint over the
+whole view. It retains the existing `hitcol` fade and desktop overlay opacity,
+with the HUD drawn afterward. Native RGB565 uses three small component tables;
+indexed output maps through the active level palette, invalidating its table
+on a palette change. Each lookup occupies 256 bytes plus small cache metadata.
+There is no extra framebuffer, no per-pixel division, and no tint work on
+unhurt frames. The normal direct-canvas path remains available.
+
+Both builds pass the level-4 exercise at 4 MB. Actual scene captures check the
+centre tint, a weaker fading pulse, identical repeated flashes and exact
+restoration after clearing. Renderer/water history remains unchanged throughout.
+The native release completes fresh 27-scenario feedback, all 22 exact ordinary
+gameplay comparisons and the real-time 4 MB SB16/mouse exercise with zero
+underruns. Material sources and SDL remain frozen during training.
+
+Each build adds 1,024 text bytes and 512 bytes in its aligned BSS section;
+data is unchanged. Native level-4 free XMS remains 128 KiB after shared assets
+and 52 KiB after loading. Both packages retain 231 assets and 238 entries;
+only EXE/README change. Staging preserves 240 other native and 237 other indexed
+game files, including settings and saves.
+
+| Package | EXE SHA-256 | ZIP SHA-256 |
+| --- | --- | --- |
+| Native | `bc60836bf6ed399a3662d78914fc05f44d909bf367e6e0cd17bb15eedf3b7e6f` | `3c3b0d7d4749df1c14b8a0bfc216fa1e0096c6d7d7f49ae862b288375ae3f836` |
+| Indexed | `8e03199ecde1a5d920f2c0300c809e6ac3c9c126a493bd15a5bce041cdb24b31` | `c4cee0f8713625e5e880e897dfa4aac72df84e4b8fbf6a68ea930392bccee829` |
+
+These packages are staged under `build/dos` and `build/dos-indexed`. Evidence is
+in `build/dos/hit-flash-validation.json`, `build/dos/hit-flash-staging.json`,
+`build/dos-hit-flash-trace/` and
+`build/dos-hit-flash-source/build/dos/pgo/report.json`.
