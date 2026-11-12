@@ -3730,3 +3730,71 @@ overlapping measured buckets, not additive costs. This identifies movement
 as a substantial remaining part of the barrel spike. Evidence, discarded
 sources and timing logs are under `build/dos-walk18-trace/`; the staged
 EXEs and ZIPs retain their verified span17 hashes.
+
+### Bound DOS integer wall-touch arithmetic to 32 bits
+
+`bcc6af0` adds a DOS fast path to the existing ObjectMove.s near-wall
+touch calculation. Unshifted movers whose relative X/Z coordinates both
+fit signed words have an exact cross bounded by 2,147,450,880. The largest
+positive denominator times the 32-unit touch threshold is 2,097,120.
+Both therefore fit signed 32-bit arithmetic. A shared helper retains the
+existing signed length/extent handling and denominator clamp. Wider and
+shifted-coordinate inputs keep the existing wide calculation. All touch
+flag writes and positive-side proofs retain their previous values.
+
+The optimized native comparison uses normal/486_slow, 40,000 cycles,
+4 MB, native 320x240, SB16/mouse and muted host sound. The matched busy
+frame falls from 101.942 to 99.640 ms; update falls from 27.320 to
+24.995 ms, with rendering about 69.4 ms. All 64 golden images,
+simulation hashes and clock/latched-tick assertions match, with zero
+audio underruns. The unmodified 128-frame start retains 26.19 FPS and
+passes the 25.80 FPS gate, at 38.18 ms mean and 38.69/77.91 ms p95/worst.
+
+Ordinary-clock barrel probes cover 64 frames with eight warmup frames and
+no capture writes. Mean/p95/worst milliseconds are below. Elapsed-time
+differences can change later animation states; the clock replay above
+supplies the matching-state result.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 41.057 / 72.998 / 85.328 | 40.857 / 71.953 / 75.397 |
+| Level 1, turning | 35.887 / 78.963 / 94.105 | 35.779 / 77.669 / 92.225 |
+| Level 6 | 44.743 / 61.173 / 62.394 | 44.719 / 60.673 / 62.084 |
+| Level 6, turning | 52.434 / 67.965 / 74.384 | 52.307 / 70.766 / 77.673 |
+
+These live results are mixed: level-6 turning p95/worst increase despite
+its lower mean. All four captured indexed sound-on burst means and p95s
+improve slightly, but level-1 worst rises from 85.866 to 86.219 ms and
+level-6 turning worst from 84.356 to 85.522 ms. All have zero audio
+underruns. This does not establish uniformly better pacing; large spikes,
+the water-view cost and physical 486 measurements remain open.
+
+The actual 486 oracle passes 73,748 movement-touch inputs, each called
+twice to check repeated touches. Twenty new cases exercise the largest
+denominator's exact threshold with cross deltas -2 through +2; the oracle
+retains the original volatile wide division and checks every floorline
+byte and side proof. Existing 3,072 row-table, movement-height and all
+other arithmetic/raster cases also pass. An already-marked-line shortcut
+was measured and discarded because it made the busy update slower.
+
+Fresh compiler feedback completes 23 training runs and 22 original native
+capture checks. All 512 native release and 512 indexed burst image/state
+pairs, all 22 original indexed captures, and 128 model comparisons at
+4 versus 16 MB with 32 KiB extra residency match. Native 4 MB level-1/4/15
+and indexed level-1/4 sound/mouse exercises, native real-time level-4,
+package/map/save audits and Windows Release pass. Native text grows by
+1,024 bytes to 1,190,936; data/BSS remain 22,016/260,608 bytes. No heap,
+BSS or lookup table is added. Level-4 memory headroom remains 144 KiB
+after shared assets and 44 KiB after loading.
+
+Both EXEs and ZIPs are staged, preserving all 241 native and 238 indexed
+non-EXE game files, including settings and saves. Both packages retain
+all 231 assets and 238 archive entries. The native EXE SHA-256 is
+`72cdd70de2890b2f9a053f22fbc9a7337463e7a83f6c272d96efeb85203d5d49`;
+the indexed EXE is
+`80168e9e91cce91f219c58771ccd05840f5d8a5eddbda6dbc73563b83c2705b7`.
+Evidence is in `build/dos/touch19-performance.json`,
+`build/dos/touch19-validation.json`, `build/dos/touch19-staging.json`,
+`build/dos-touch19-source/build/dos/pgo/model-check/report.json` and
+`build/dos-touch19-trace/`. The native oracle log is under
+`build/dos-touch19-source/build/dos-raster-regression/RASTER.LOG`.
