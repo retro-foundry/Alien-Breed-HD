@@ -4953,3 +4953,63 @@ Evidence is in `build/dos/bounds36-performance.json`,
 `build/dos-bounds36-source/build/dos/pgo/report.json`,
 `build/dos-bounds36-release/`, `build/dos-runs36-trace/` and
 `build/dos-runs36-integrated-trace/`.
+
+### Repeated-row span copier experiment
+
+`c10e2ae` on `codex/dos-band37` changes the native copier to walk each sampled
+opaque span across matching coverage rows before advancing the span list.
+In the immutable 92-call capture, 282 reusable groups cover 1,617 rows and
+67,562 pixels. Grouping avoids 1,335 row-list restarts. The selected helper
+still loads source/count fields for each row; it introduces no table, scratch
+array or allocation.
+
+At normal/486_slow, fixed 40,000 cycles and 4 MB, the unchanged raster takes
+19.521193 ms across 64 repetitions per call. A span-first loop with a C pixel
+sum takes 19.424340 ms; summing once per span inside assembly takes
+19.338593 ms. Caching the source/width in registers takes 19.370715 ms, and
+keeping the row stride in a register takes 19.343032 ms. Every variant retains
+all pixels, coverage masks, open-word counts and visible/drawn totals.
+
+The selected assembly-sum candidate completes fresh 27-scenario feedback,
+all 22 original native 4 MB captures and the real-time level-4 sound/mouse
+exercise. Its actual optimized-object raster oracle passes all existing cases
+and the new tall-band checks. Native text/data/BSS remain
+1,198,616/22,016/259,584 bytes, with level-4 free memory still 136/36 KiB after
+shared assets/loading. Indexed raster preprocessing remains byte-identical.
+
+The isolated gain does not survive the full-engine filter. Under the same
+40,000-cycle, normal/486_slow, 4 MB, native RGB565 and SB16/mouse settings,
+the matched original-clock peak rises 79.510 to 79.611 ms and frame-10 rendering
+rises 64.213 to 64.314 ms. Mean changes 33.987 to 33.993 ms and p95 falls
+62.628 to 62.589 ms. All 64 original images, simulation hashes and latched-clock
+assertions match, with zero audio underruns.
+
+Live barrel measurements, mean / p95 / maximum milliseconds:
+
+| Scene | Retained engine | Copier trial |
+| --- | --- | --- |
+| Level 1 | 40.041 / 54.548 / 60.908 | 39.367 / 55.501 / 61.799 |
+| Level 1, turning | 35.422 / 63.219 / 69.581 | 35.375 / 63.118 / 69.660 |
+| Level 6 | 43.502 / 53.353 / 56.179 | 43.476 / 53.392 / 56.247 |
+| Level 6, turning | 51.532 / 63.432 / 66.859 | 51.476 / 63.436 / 66.838 |
+
+All four means fall, but three p95 values and three maxima rise. The level-1
+stationary p95 rises 0.953 ms and maximum 0.891 ms. The trial is rejected;
+the full release suite and staging are not run after this filter. Main keeps
+the verified bounds36 production renderer and native package, plus the retained
+wall26 indexed package. Large busy frames and physical 486 measurements remain
+open.
+
+Main retains 144 independent tall-band cases covering 2/3/31/240 rows,
+odd/even widths, the full 160-span capacity, changing and unused coverage,
+opaque black, complete masks/counts and guards. `5ba3268` reduces the test's
+storage by calculating expected pixels during checking, saving a second
+153,632-byte image allocation. This test-only amendment follows the frozen
+production build; all production inputs and objects remain unchanged.
+The expanded oracle passes against both the experimental and retained actual
+optimized production objects in 4 MB. Existing 1,280 copy-width cases and all
+other raster/arithmetic/movement cases also pass.
+
+The experiment is preserved on its branch, with evidence and explicit build
+versus test-amendment hashes in `build/dos/band37-development.json`,
+`build/dos-band37-trace/` and `build/dos-band37-release/`.
