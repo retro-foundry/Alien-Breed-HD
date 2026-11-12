@@ -35,6 +35,9 @@ static void check_touch(int32_t lx,int32_t lz,int32_t x,int32_t z,
     }
     int positive_word_side=mark_floorline_touch_if_near(&ctx,line,lx,lz,vx,vz,shift);
     assert(!memcmp(line,expected,sizeof(line)));
+    /* Repeated movers can encounter a line whose requested flags are set. */
+    assert(mark_floorline_touch_if_near(&ctx,line,lx,lz,vx,vz,shift)==positive_word_side);
+    assert(!memcmp(line,expected,sizeof(line)));
     int64_t rx=(int64_t)x-lx,rz=(int64_t)z-lz;
     int expected_side=flags && side>0 && rx>=INT16_MIN && rx<=INT16_MAX &&
                       rz>=INT16_MIN && rz<=INT16_MAX;
@@ -90,6 +93,12 @@ void check_movement_touch(void)
         check_touch(17,-23,17+word_edges[x],-23+word_edges[z],vectors[v][0],vectors[v][1],
                     (int16_t)(v&1?-32768:32767),(int16_t)(v&2?-32768:32767),mode?16:0,flags[f]);
         checked++;
+    }
+    /* The largest denominator's threshold, with unit changes in the cross
+     * while every coordinate/direction still fits a signed word. */
+    for(unsigned f=0;f<4;f++)for(int delta=-2;delta<=2;delta++) {
+        check_touch(17,-23,17+32-delta,-23+32+delta,-32768,32767,
+                    -32768,32767,0,flags[f]);checked++;
     }
     uint8_t empty_line[16]={0};MoveContext empty_ctx={0};
     assert(!mark_floorline_touch_if_near(NULL,empty_line,0,0,1,1,0));

@@ -543,6 +543,14 @@ static void mark_floorline_touch_flag(const MoveContext *ctx, const uint8_t *fli
     write_be16(fl + FLINE_AWAY, flags);
 }
 
+static inline int32_t floorline_touch_denominator(const MoveContext *ctx,const uint8_t *fline)
+{
+    int32_t length=(int32_t)(int16_t)read_be16(fline+FLINE_LENGTH);
+    if(length<0)length=-length;
+    int32_t denominator=length+ctx->extlen;
+    return denominator>0?denominator:1;
+}
+
 /* Amiga MoveObject "near wall" test that tags floorline +14 with wallflags:
  * d = ((newx-lx)*zlen - (newz-lz)*xlen) / (line_length + extlen)
  * if (d > 0 && d < 32) or.w wallflags,14(a2)
@@ -558,13 +566,23 @@ static int mark_floorline_touch_if_near(const MoveContext *ctx, const uint8_t *f
 
     {
         int32_t rx = ctx->newx - lx, rz = ctx->newz - lz;
+#ifdef AB3D_DOS
+        /* Integer movers with signed-word relative coordinates need only
+         * 32-bit arithmetic: their exact cross is bounded by 2147450880,
+         * and the largest positive denominator times 32 is 2097120.
+         * Preserve ObjectMove.s touch writes before returning its side proof. */
+        if(!ps && (((uint32_t)rx+32768u)|((uint32_t)rz+32768u))<=65535u) {
+            int32_t side=rx*(int32_t)lzlen-rz*(int32_t)lxlen;
+            if(side<=0)return 0;
+            if(side<floorline_touch_denominator(ctx,fline)*32)
+                mark_floorline_touch_flag(ctx,fline);
+            return 1;
+        }
+#endif
         int64_t side = (int64_t)rx * lzlen - (int64_t)rz * lxlen;
         if (side <= 0) return 0;
 
-        int32_t line_len = (int32_t)(int16_t)read_be16(fline + FLINE_LENGTH);
-        if (line_len < 0) line_len = -line_len;
-        int32_t denom = line_len + ctx->extlen;
-        if (denom <= 0) denom = 1;
+        int32_t denom = floorline_touch_denominator(ctx,fline);
 
         int64_t near_thresh = (int64_t)32 << ps;
         /* side and denom are positive, so trunc(side/denom) < near_thresh
