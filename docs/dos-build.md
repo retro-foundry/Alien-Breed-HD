@@ -3956,3 +3956,91 @@ Evidence is in `build/dos/bands21-performance.json`,
 `build/dos-bands21-source/build/dos/pgo/model-check/report.json` and
 `build/dos-bands21-trace/`. The native oracle log is under
 `build/dos-bands21-source/build/dos-raster-regression/RASTER.LOG`.
+
+### Reject positive integer walls before entering the collision worker
+
+`9144831` puts the existing DOS signed-word side/touch proof directly in
+the primary room and brute-force wall loops. Unshifted movers with negative
+`awayfromwall` use zero wall offsets. When their exact relative
+coordinates fit signed words, a positive cross proves that ObjectMove.s
+checkwalls would reject the line. The shared word-side helper preserves
+the original touch threshold and flag writes before continuing the scan.
+Zero touch flags can also use the geometric proof. Unsigned subtraction
+checks rejected wide inputs without adding signed overflow. Unproved
+lines retain the original worker, steps, room transitions and bounce math.
+The secondary wall pass retains its original traversal.
+
+Fresh native compiler feedback reduces the matched busy barrel frame
+from 90.217 to 86.992 ms. Update falls from 13.907 to 10.669 ms; rendering
+remains about 69.4 ms and audio about 3.44 ms. The comparison uses
+normal/486_slow, 40,000 fixed cycles, 4 MB, native 320x240, SB16/mouse and
+muted host sound. All 64 golden images, simulation hashes and recorded
+clock/latched-tick assertions match, with zero audio underruns.
+
+Ordinary-clock barrel probes use 64 frames, eight warmup frames and no
+capture writes. Mean/p95/worst milliseconds are below. Different elapsed
+times can change later animation states; the clock replay above compares
+the same busy state.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 40.030 / 58.093 / 66.564 | 39.884 / 56.664 / 64.744 |
+| Level 1, turning | 35.594 / 64.172 / 80.578 | 35.491 / 63.983 / 75.021 |
+| Level 6 | 44.569 / 57.051 / 58.300 | 44.593 / 56.859 / 58.341 |
+| Level 6, turning | 51.717 / 65.192 / 68.839 | 51.714 / 65.156 / 68.881 |
+
+Level-6 live maxima rise slightly, and its stationary mean also rises.
+The fixed-update level-6 turning burst maximum increases from 67.731 to
+68.189 ms despite lower mean/p95. All four indexed sound-on burst scenes
+improve mean/p95/worst, with zero audio underruns. These results do not
+establish uniformly better pacing. The unmodified 128-frame native start
+passes the 25.80 FPS gate at 26.18 FPS, 38.19 ms mean and 38.70/77.91 ms
+p95/worst, versus 26.21 FPS before. Large busy frames, the roughly 60.3 ms
+pool view and physical 486 measurements remain open.
+
+The actual 4 MB 486 oracle checks 73,876 touch inputs against the original
+volatile wide division, each called twice, and checks the inline proof
+against independent wide crosses, unchanged complete contexts and exact
+flag writes. The 128 added inputs cover full-width zero-flag coordinates,
+including INT32_MIN/MAX and word boundaries. Their random seed is restored
+afterward so the established complete-movement corpus remains unchanged.
+All 8,384 movements match the frozen pre-change scan/substep wrappers in
+`tests/dos_movement_reference.h`: 2,789 bulk clear proofs and 5,595 original
+paths. Every context, room and floorline byte and guard matches. The
+reference wrappers are verified against committed `bd5f6ed` source, so
+both sides cannot silently use the new primary-loop shortcut. Existing
+32,768 crossing heights, 3,072 direct row-table comparisons and all other
+arithmetic/raster cases pass.
+
+Scoped clear-cell reuse was measured and rejected: a 128-unit grid reused
+only eight of 47 moves in the busiest frame, saving about 0.106 ms in its
+update bucket. Larger cells produced no reusable proofs in this replay.
+Axis/monotonic margin shortcuts and replacing the crossing-height wide
+divisions also gave negligible gains. All prototype images/state hashes
+match. No cell cache or crossing-height change is shipped. Local evidence
+is in `build/dos-cell22-trace/probe-opportunity.json`,
+`build/dos-cell22-trace/reference-validation.json` and
+`build/dos-cell22-trace/trial-validation.json`.
+
+Fresh feedback completes 23 training runs, 22 original native captures
+and the real-time 4 MB level-4 exercise. All 512 native and 512 indexed
+release image/state pairs, 22 original indexed captures and 128 model
+comparisons at 4 versus 16 MB with 32 KiB extra residency match. Native
+level-1/4/15 and indexed level-1/4 4 MB sound/mouse exercises, package/map/
+active saved-level payload audits and Windows Release pass. Native
+text/data/BSS are 1,191,448/22,016/259,584 bytes. BSS reports 1,024 fewer
+bytes with unchanged named storage sizes. No allocation or resident table
+is added. Level-4 free memory is 144 KiB after shared assets and 44 KiB
+after loading, versus 140/44 KiB before.
+
+Both EXEs and ZIPs are staged, preserving all 241 native and 238 indexed
+non-EXE game files, including settings and saves. Both packages retain
+231 assets and 238 archive entries. The native EXE SHA-256 is
+`c7e133594b9ac55b8371108edc6b5000352269f439bce008371bac2dd3b29929`;
+the indexed EXE is
+`2b783e6788bf62b3448b82dd2cb2cf9f4735d2a3bcd271474f0ca52f8579cf7c`.
+Evidence is in `build/dos/cell22-performance.json`,
+`build/dos/cell22-validation.json`, `build/dos/cell22-staging.json`,
+`build/dos-cell22-source/build/dos/pgo/model-check/report.json` and
+`build/dos-cell22-trace/`. The native oracle log is under
+`build/dos-cell22-source/build/dos-raster-regression/RASTER.LOG`.
