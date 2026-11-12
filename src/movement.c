@@ -1364,7 +1364,8 @@ static void move_object_substep_loop(MoveContext* ctx, LevelState* level)
 #ifdef AB3D_DOS
 /* ObjectMove.s checkwalls rejects a positive word cross; FindRoom rejects
  * nonnegative crosses. Prove those rejections for every interpolated step,
- * including enough clearance that the near-wall flag writes cannot occur. */
+ * including enough clearance that near-wall flags cannot change. Already
+ * present bits make ObjectMove.s's flag OR idempotent on ordinary RAM. */
 static bool movement_clear_room_path(const MoveContext *ctx,const LevelState *level)
 {
     if(!ctx || !level || !level->data || !level->floor_lines || !ctx->objroom ||
@@ -1390,7 +1391,9 @@ static bool movement_clear_room_path(const MoveContext *ctx,const LevelState *le
          * by less than one unit, so its cross error is below |vx|+|vz|.
          * Signed-word operands keep both endpoint crosses in int32_t. */
         int32_t margin=abs(vx)+abs(vz);
-        if(ctx->wall_flags)margin+=floorline_touch_denominator(ctx,line)*32;
+        if(ctx->wall_flags &&
+           ((uint16_t)read_be16(line+FLINE_AWAY)&ctx->wall_flags)!=ctx->wall_flags)
+            margin+=floorline_touch_denominator(ctx,line)*32;
         if(ox*vz-oz*vx<=margin || nx*vz-nz*vx<=margin)return false;
     }
     return false;

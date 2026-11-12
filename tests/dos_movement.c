@@ -62,7 +62,7 @@ static void path_write_long(uint8_t *out,int32_t value)
 void check_movement_paths(void)
 {
     enum { DATA_BYTES=1024, LINE_BYTES=16*12, GUARD=16, ROOM0=64, ROOM1=448,
-           CASES=8192, EDGES=32*4 };
+           CASES=8192, EDGES=48*4 };
     static uint8_t data_store[DATA_BYTES+GUARD*2],line_store[LINE_BYTES+GUARD*2];
     static uint8_t data_seed[sizeof(data_store)],line_seed[sizeof(line_store)];
     static uint8_t data_expected[sizeof(data_store)],line_expected[sizeof(line_store)];
@@ -146,6 +146,7 @@ void check_movement_paths(void)
             static const uint16_t flags[]={0,1,0x400,0xffff};
             memset(&seed,0,sizeof(seed));
             seed.objroom=data+ROOM0;seed.awayfromwall=-1;seed.wall_flags=flags[flag];
+            for(unsigned i=0;i<8;i++)write_be16(lines+i*FLINE_SIZE+FLINE_AWAY,0);
             seed.oldy=-2048;seed.newy=-1024;seed.newx=16;
             seed.thing_height=128;seed.step_up_val=256;seed.step_down_val=0x1000000;
             seed.coll_id=-1;seed.stood_in_top=(int8_t)(flag&1);
@@ -208,6 +209,28 @@ void check_movement_paths(void)
                 for(unsigned i=0;i<128;i++)write_be16(list+i*2,0);
                 if(kind==30)write_be16(list+127*2,(uint16_t)-1);
                 expected_proof=kind==30;
+            }
+            if(kind>=32) {
+                static const uint16_t marked_flags[]={0x8000,0x8001,0x400,0xffff};
+                unsigned mode=(kind-32)/4,contents=(kind-32)%4;
+                seed.wall_flags=marked_flags[flag];
+                uint16_t old=contents==0?seed.wall_flags:
+                    contents==1?(uint16_t)(seed.wall_flags|0x5aa5):
+                    contents==2?(uint16_t)(seed.wall_flags&(seed.wall_flags-1)):0;
+                for(unsigned i=0;i<8;i++)write_be16(lines+i*FLINE_SIZE+FLINE_AWAY,old);
+                seed.oldx=-500;seed.newx=-484;
+                if(mode==1)seed.oldz=-500,seed.newz=-484;
+                if(mode==2) {
+                    /* Idempotent tags must not weaken the strict cross
+                     * margin needed for independently truncated substeps. */
+                    write_be16(list,0);write_be16(list+2,(uint16_t)-1);
+                    write_be16(line+FLINE_X,0);write_be16(line+FLINE_Z,0);
+                    write_be16(line+FLINE_XLEN,(uint16_t)-32768);
+                    write_be16(line+FLINE_ZLEN,32767);
+                    seed.oldx=seed.oldz=1;seed.newx=seed.newz=17;
+                }
+                if(mode==3)seed.newx=-530; /* An actual crossing still collides. */
+                expected_proof=mode<2 && (old&seed.wall_flags)==seed.wall_flags;
             }
         }
         MoveContext reference=seed,actual=seed;
