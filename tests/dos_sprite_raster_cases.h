@@ -303,6 +303,77 @@ static void check_sprite_batch_repeated_rows(void)
     puts("PASS: 54 repeated billboard bands preserve 160 copy ranges, changing masks, transparent margins and gaps, boundary words, outside clips, closed-word counts, black and guards");
 }
 
+static void check_sprite_band_masks(void)
+{
+    enum { HEIGHT=8, PIXELS=320*HEIGHT };
+    static RendererPixel actual[PIXELS+16],expected[PIXELS+16];
+    static const unsigned positions[]={0,1,2,15,30,31,32,33,63,64,255,319};
+    static const unsigned widths[]={1,33,65,320};
+    uint8_t wad[642]={0},ptr[1280]={0},texels[320];
+    RendererPixel palette[32];int rows[HEIGHT]={0};
+    struct GuardedMask { uint32_t before[4];DosSpriteBatch mask;uint32_t after[4]; } actual_mask,expected_mask;
+    unsigned checked=0;
+    for(unsigned test=0;test<192;test++)for(unsigned direct=0;direct<2;direct++) {
+        unsigned left=positions[test%12],width=widths[(test/12)%4];
+        if(width>320-left)width=320-left;
+        unsigned stencil=test/48,pattern=(test/3)%8,drawn=0;
+        int hidden=1;
+        if(!test){left=0;width=320;stencil=1;pattern=0;}
+        for(unsigned i=0;i<32;i++)palette[i]=(RendererPixel)(i==31?0:i*1973u+test);
+        for(unsigned column=0;column<320;column++) {
+            int opaque=stencil==0 || (stencil==1?(column&1):
+                          stencil==2?column%17<11:(column>=3 && column<29) || column>=63);
+            unsigned offset=2+column*2,mode=column%3;
+            texels[column]=(uint8_t)(opaque?1+(column+test)%31:0);
+            ptr[column*4]=(uint8_t)mode;
+            ptr[column*4+2]=(uint8_t)(offset>>8);ptr[column*4+3]=(uint8_t)offset;
+            sprite_word_write(wad+offset,(uint16_t)(texels[column]<<(mode*5)));
+        }
+        for(unsigned i=0;i<PIXELS+16;i++)actual[i]=expected[i]=(RendererPixel)0xa55a;
+        memset(&actual_mask,0xa5,sizeof(actual_mask));
+        dos_raster_sprite_batch_begin(actual+8,&actual_mask.mask);
+        for(unsigned y=0;y<HEIGHT;y++)for(unsigned x=0;x<320;x++) {
+            unsigned column=x>=left?x-left:320;
+            int inside=x>=left && x<left+width;
+            int covered=pattern==0?0:pattern==1?1:pattern==2?((x+y)&1):
+                pattern==3?(inside && texels[column]):
+                pattern==4?(x<160 && y>=4):pattern==5?(x!=31+y):
+                pattern==6?((x&31)<16 || (y&1)):((y<4)?(x&1):((x+y)&1));
+            if(covered) {
+                actual_mask.mask.covered[y][x/32]|=1u<<(x%32);
+                actual[8+y*320+x]=expected[8+y*320+x]=(RendererPixel)0x1357;
+            } else if(inside)hidden=0;
+        }
+        for(unsigned y=0;y<HEIGHT;y++) {
+            unsigned open=0;
+            for(unsigned word=0;word<10;word++)open+=actual_mask.mask.covered[y][word]!=UINT32_MAX;
+            actual_mask.mask.open_words[y]=(uint8_t)open;
+        }
+        expected_mask=actual_mask;
+        /* Independent original-order pixel writes and ownership oracle. */
+        for(unsigned y=0;y<HEIGHT;y++)for(unsigned dx=0;dx<width;dx++) {
+            unsigned x=left+dx;uint32_t bit=1u<<(x%32);
+            if(texels[dx] && !(expected_mask.mask.covered[y][x/32]&bit)) {
+                expected[8+y*320+x]=palette[texels[dx]];
+                expected_mask.mask.covered[y][x/32]|=bit;drawn++;
+            }
+        }
+        for(unsigned y=0;y<HEIGHT;y++) {
+            unsigned open=0;
+            for(unsigned word=0;word<10;word++)open+=expected_mask.mask.covered[y][word]!=UINT32_MAX;
+            expected_mask.mask.open_words[y]=(uint8_t)open;
+        }
+        DosSpriteRows sprite={wad,ptr,sizeof(wad),sizeof(ptr),palette,direct?NULL:rows,
+                              0,0,65536u,320,0,0,0,0};
+        DosSpriteCoverage got=dos_raster_sprite_rows(actual+8+left,width,HEIGHT,320,&sprite);
+        dos_raster_sprite_batch_end();
+        assert(got.visible==(hidden?0:width*HEIGHT) && got.drawn==drawn);
+        assert(!memcmp(actual,expected,sizeof(actual)));
+        assert(!memcmp(&actual_mask,&expected_mask,sizeof(actual_mask)));checked++;
+    }
+    printf("PASS: %u opaque band-mask cases preserve disjoint/same-word spans, 160 ranges, word joins, empty fresh rows, changing/outside coverage, direct/table sampling, black, complete masks/counts and guards\n",checked);
+}
+
 static void check_sprite_narrow_coverage(void)
 {
     enum { HEIGHT=8, PIXELS=320*HEIGHT };

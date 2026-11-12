@@ -219,10 +219,10 @@ static inline void sprite_mask_copy(uint32_t *out,const uint32_t *source,unsigne
     __asm__ volatile("rep movsl" : "+D"(out),"+S"(source),"+c"(words) : : "memory","cc");
 }
 
-/* Magnified rows often have the same previous coverage. Decode their fresh
- * copy ranges once; matching rows can replay those exact ranges and mask
- * updates. Comparing full words between the first and last opaque pixel
- * lets outer coverage differ while preserving boundary bits. */
+/* BitMapObj's index-zero cutouts form the same opaque mask throughout a
+ * magnified row band. Build it once, then subtract each row's prior coverage
+ * and copy its fresh runs, joining runs across mask-word boundaries.
+ * Matching prior words can reuse those ranges and exact mask updates. */
 static unsigned sprite_batch_rows(RendererPixel *out,unsigned height,
                                    unsigned pitch,const RendererPixel *row,
                                    const DosSpriteSpan *spans,unsigned span_count)
@@ -233,26 +233,61 @@ static unsigned sprite_batch_rows(RendererPixel *out,unsigned height,
     const DosSpriteSpan *last=spans+span_count-1;
     unsigned right=x+(unsigned)(last->source-row)+last->count;
     unsigned first=left/32,words=(right-1)/32-first+1,total=0;
+    /* Only the words between the first and last opaque texel are used. */
+    uint32_t opaque[10]={0};
+    for(unsigned i=0;i<span_count;i++) {
+        unsigned start=x+(unsigned)(spans[i].source-row),end=start+spans[i].count;
+        unsigned a=start/32,b=(end-1)/32;
+        uint32_t left=UINT32_MAX<<(start%32),right=UINT32_MAX>>(31-((end-1)%32));
+        if(a==b)opaque[a-first]|=left&right;
+        else {
+            opaque[a-first]|=left;opaque[b-first]|=right;
+            for(unsigned word=a+1;word<b;word++)opaque[word-first]=UINT32_MAX;
+        }
+    }
+
     uint32_t before[10];
-    DosSpriteSpan ranges[160]; /* At most 16 fresh runs in each of ten mask words. */
+    DosSpriteSpan ranges[160]; /* At most 16 fresh runs per 32-bit word. */
     for(unsigned dy=0;dy<height;) {
         uint32_t *covered=sprite_batch->covered[y+dy]+first;
         sprite_mask_copy(before,covered,words);
-        unsigned open=sprite_batch->open_words[y+dy];
+        unsigned open=sprite_batch->open_words[y+dy],run=0,length=0;
         DosSpriteSpan *end=ranges;
         RendererPixel *target=out+dy*pitch;
-        for(unsigned i=0;i<span_count;i++) {
-            const DosSpriteSpan *r=spans+i;
-            total+=sprite_batch_copy(target+(r->source-row),r->source,r->count,&end);
+        for(unsigned word=0;word<words;word++) {
+            uint32_t old=covered[word],fresh=opaque[word]&~old;
+            if(!fresh)continue;
+            uint32_t updated=old|opaque[word];covered[word]=updated;
+            if(updated==UINT32_MAX && old!=UINT32_MAX)sprite_batch->open_words[y+dy]--;
+            while(fresh) {
+                unsigned bit=(unsigned)__builtin_ctz(fresh);
+                uint32_t shifted=fresh>>bit;
+                unsigned count=shifted==UINT32_MAX?32:(unsigned)__builtin_ctz(~shifted);
+                unsigned offset=(first+word)*32+bit-x;
+                if(length && run+length!=offset) {
+                    sprite_copy_record(target+run,row+run,length,&end);total+=length;length=0;
+                }
+                if(!length)run=offset;
+                length+=count;
+                uint32_t bits=count==32?UINT32_MAX:((1u<<count)-1)<<bit;
+                fresh&=~bits;
+            }
         }
+        if(length){sprite_copy_record(target+run,row+run,length,&end);total+=length;}
         unsigned closed=open-sprite_batch->open_words[y+dy],next=dy+1;
+        if(end==ranges) {
+            /* No fresh bit means no mask or open-word count changed. */
+            for(;next<height;next++)
+                if(!sprite_words_equal(before,sprite_batch->covered[y+next]+first,words))break;
+            dy=next;continue;
+        }
         for(;next<height;next++) {
             uint32_t *other=sprite_batch->covered[y+next]+first;
             if(!sprite_words_equal(before,other,words))break;
             target=out+next*pitch;
-            for(const DosSpriteSpan *r=ranges;r<end;r++) {
-                sprite_copy(target+(r->source-row),r->source,r->count);
-                total+=r->count;
+            for(const DosSpriteSpan *span=ranges;span<end;span++) {
+                sprite_copy(target+(span->source-row),span->source,span->count);
+                total+=span->count;
             }
             sprite_mask_copy(other,covered,words);
             sprite_batch->open_words[y+next]-=(uint8_t)closed;

@@ -59,6 +59,7 @@ int main(void)
     setvbuf(stdout,NULL,_IOLBF,0);
     check_sprite_columns();check_sprite_rows();check_sprite_batches();
     check_sprite_batch_repeated_rows();check_sprite_narrow_coverage();check_sprite_history();
+    check_sprite_band_masks();
     check_sprite_dda_rows();
     check_indexed_colours();
     puts("DOS indexed raster regression passed");
