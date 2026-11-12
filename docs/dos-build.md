@@ -4371,3 +4371,76 @@ Evidence is in `build/dos/wall26-performance.json`,
 `build/dos-wall26-trace/`. Current/frozen native and indexed oracle logs
 are under `build/dos-wall26-source/build/` in their raster regression and
 reference directories.
+
+### Keep native billboard range copies in 486 registers
+
+`0735829` copies BitMapObj's recorded spans with source, destination,
+count and list position held in registers. This avoids rebuilding those
+values in C for every span of a repeated row. Native copies also use
+SHR's carry to select the final odd word after MOVS, which preserves that
+flag. Pixel ownership, masks, open-word counts and visible/drawn totals
+remain exact. The change adds no allocation or lookup table.
+
+The current 92-call RSF3 fixture falls from 21.689 to 20.957 ms, about
+3.4%. Tail handling alone gives 21.186 ms; the span-list loop alone gives
+21.123 ms. Every call runs 64 times with input I/O outside the timed
+kernel, checking complete pixels, masks, open-word counts and tallies.
+The fixture contains 3,326 copies totalling 85,902 pixels. Only 146 copies
+are one pixel long, so a previously rejected short-copy branch was not
+retried. Coverage prechecks, flags for source groups covered on every row,
+and deferring the first row's copies were slower. History subset checks
+found no additional hits. These trials are absent from the release.
+
+Fresh compiler feedback reduces the matched busy frame from 82.147 to
+81.715 ms. Rendering falls from 66.688 to 66.257 ms; update remains
+8.544 ms and audio changes from 3.443 to 3.442 ms. All 64 original images,
+simulation hashes and recorded clock/latched-tick assertions match, with
+zero audio underruns. Settings are normal/486_slow, 40,000 fixed cycles,
+4 MB, native 320x240, SB16/mouse and muted host sound.
+
+Ordinary-clock barrel probes use 64 frames, eight warmup frames and no
+capture writes. Mean/p95/worst milliseconds are below.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 39.511 / 57.193 / 62.802 | 39.507 / 56.900 / 62.388 |
+| Level 1, turning | 35.010 / 65.581 / 71.777 | 35.012 / 65.390 / 71.426 |
+| Level 6 | 43.604 / 55.193 / 57.496 | 43.587 / 55.004 / 57.307 |
+| Level 6, turning | 51.653 / 64.615 / 67.558 | 51.638 / 64.445 / 67.434 |
+
+All four live p95/worst values fall; turning level-1 mean rises by
+0.002 ms. All four fixed-update burst scenes improve mean/p95/worst.
+The fixed-update starting view rises by 0.004/0.003/0.002 ms; pool mean
+is 55.456 ms and its maximum rises by 0.002 ms. The unmodified 128-frame
+start retains 26.20 FPS, 38.17 ms mean and 38.68/77.90 ms p95/worst,
+passing the 25.80 FPS gate. Large busy frames, pool rendering, overall
+consistency and physical 486 measurements remain open.
+
+The independent pixel oracle adds 1,280 cases per pixel format covering
+every copy width 1..320, both dword alignments, black, ordinary painter
+and repeated-band copies, complete masks/counts and guards. These cases
+also pass with the frozen previous kernel. Existing 160-range, fresh-mask,
+sprite, wall, floor, water, arithmetic, movement and object-selection
+checks pass in their respective suites.
+
+Fresh feedback completes 23 training runs, 22 original native captures
+and the real-time 4 MB level-4 exercise. All 512 native release image/state
+pairs and 128 model comparisons at 4 versus 16 MB with 32 KiB extra
+residency match. Native level-1/4/15 sound/mouse exercises, package/map/
+active saved-level payload audits and Windows Release pass. Release
+probes report zero audio underruns. The indexed translation unit remains
+the same 293,954 preprocessed bytes, so its verified wall26 EXE/ZIP and
+capture corpus are retained.
+
+Native text/data/BSS remain 1,194,008/22,016/259,584 bytes. Level-4 free
+memory remains 140 KiB after shared assets and 40 KiB after loading.
+Staging updates the native EXE/ZIP while preserving all 241 other native
+game files and all 239 indexed game files, including settings and saves.
+Both packages retain 231 assets and 238 archive entries. Native EXE SHA-256:
+`ec9fbd684a1060165ff6755bb3083c5eef33b8abfb894b70fbf3af6810b8b782`.
+Evidence is in `build/dos/bprep27-performance.json`,
+`build/dos/bprep27-validation.json`, `build/dos/bprep27-staging.json`,
+`build/dos-bprep27-source/build/dos/pgo/model-check/report.json` and
+`build/dos-bprep27-trace/`. Current/frozen native and indexed oracle logs
+are under `build/dos-bprep27-source/build/` in their raster regression and
+reference directories.
