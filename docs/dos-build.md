@@ -3489,3 +3489,87 @@ Local evidence is in `build/dos/sprite14-performance.json`,
 `build/dos/sprite14-validation.json`, `build/dos/sprite14-staging.json`
 and `build/dos-sprite14-source/build/dos/pgo/model-check/report.json`.
 Private replays and experiments remain under `build/dos-sprite14-trace/`.
+
+### Select shots and gibs by room before constructing draw lists
+
+`d5de043` extends the existing DOS ObjDraw candidate preparation to both
+shot pools. Each frame builds linked lists for owned draw-room groups and
+raw source zones. A room query unions owned aliases and its actual adjacent
+zones into four mask words, then enumerates nasty-shot slots followed by
+player-shot slots in their original order. This retains equal-depth painter
+ownership and the existing section, spill, geometry and raster tests.
+The existing full scan handles zone/group IDs outside the bounded index.
+No particles, collisions, timers or drawing rules change. Both DOS pixel
+formats use the room query; desktop selection retains its existing path.
+
+In the recorded level-1 busy frame, the old room loops scan 1,088 shot
+candidates across 16 passes; 204 satisfy the original owned/adjacent room
+test. The new loops see those 204 candidates directly. Separate counter
+probes reproduce all 64 golden images and simulation hashes before and
+after the change. The query's 120-byte output and 16-byte mask use the
+already reserved DOS stack. Signed-byte links cover the original 100 nasty
+and 20 player slots, with a compile-time capacity check.
+
+The optimized release comparison uses normal/486_slow, 40,000 cycles,
+4 MB, native 320x240, SB16/mouse and muted host. The matched busy frame
+falls from 108.238 to 107.136 ms, with rendering falling from
+74.003 to 72.899 ms and update staying about 27.3 ms. All 64 replay
+images, simulation hashes and recorded clock/latched-tick assertions match.
+
+Ordinary-clock 64-frame probes, with eight warmup frames and no image
+writes, give these mean/p95/worst times in milliseconds. Elapsed-time
+differences can change subsequent animation states; the clock replay above
+compares the same busy state.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 41.106 / 76.448 / 89.353 | 41.091 / 73.956 / 88.288 |
+| Level 1, turning | 36.032 / 82.656 / 109.593 | 35.889 / 81.565 / 107.060 |
+| Level 6 | 44.882 / 62.152 / 63.311 | 44.804 / 61.899 / 63.063 |
+| Level 6, turning | 52.513 / 67.512 / 75.921 | 52.502 / 67.179 / 75.228 |
+
+The unmodified 128-frame real-time start passes the 25.80 FPS gate at
+26.19 FPS, with 38.19/38.69/77.89 ms mean/p95/worst. The fixed-update
+level-1 barrel mean improves from 48.952 to 48.302 ms, and its turning
+counterpart from 50.590 to 50.094 ms. Large live spikes remain; physical
+486 performance is unmeasured and the overall consistency goal is open.
+
+The actual 486 oracle adds 2,272 combined room-shot queries, checking
+4,544 pool lists against the original scalar ownership/adjacency tests.
+Coverage includes both full pools, slot/pool boundaries, aliases, duplicate
+neighbors, raw/negative/wide IDs and groups, invalid slots, empty and null
+pools, frame resets and count/output guards. The original 2,048 room-object
+queries, 300 history draws, 1,024 narrow-coverage cases and all existing
+raster/arithmetic checks also pass. All 512 diagnostic and 512 release
+images and simulation hashes match. Fresh compiler feedback completes
+23 training runs and 22 original native capture comparisons; all 22 fresh
+indexed comparisons match. The model oracle retains all 128 image/hash
+pairs at 4 versus 16 MB with 32 KiB extra residency. Full native 4 MB
+level-1/4/15 and real-time level-4 SB16/mouse exercises pass with zero
+profile audio underruns. Windows Release builds.
+
+Additional indexed coverage checks 256 burst images and simulation hashes
+at 40,000 cycles with sound disabled; all match. Full indexed 4 MB
+level-1/4 sound/mouse exercises pass at 200,000 cycles. A heavier indexed
+sound stress test at 40,000 cycles still fails in both releases: the old
+engine reports 108 underruns and the new engine 110, with worst frames
+of 966.041 and 964.968 ms. Its 64 images and simulation hashes also
+match. This existing indexed rendering/audio limitation remains unresolved;
+the sound-disabled image oracle does not establish sound-on performance.
+
+Native text/data/BSS are 1,189,912/22,016/260,608 bytes. BSS grows by
+512 bytes while code shrinks by 512 bytes, leaving the combined size and
+measured level-4 memory headroom unchanged: 144 KiB free after shared
+assets and 44 KiB after loading the level. Package checks retain all
+231 assets, 238 archive entries and the existing map/active save payload
+comparisons. Staging preserves all 241 native and 238 indexed non-EXE game
+files, including settings and saves. The native EXE SHA-256 is
+`1282c77bc5506701f9f12ba147a11e03ab9f189652326856a5d547508dfd5a8d`;
+the rebuilt indexed EXE is
+`25f9784d47a460b361152aae013730bba87203dca2fd3f50b5803b37dfafd367`.
+
+Local evidence is in `build/dos/select15-performance.json`,
+`build/dos/select15-validation.json`, `build/dos/select15-staging.json`
+and `build/dos-select15-source/build/dos/pgo/model-check/report.json`.
+Candidate counters, indexed image checks and the sound stress limitation
+are recorded under `build/dos-select15-trace/`.
