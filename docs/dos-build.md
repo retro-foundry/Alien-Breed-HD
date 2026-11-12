@@ -4869,3 +4869,87 @@ Evidence is in `build/dos/alpha35-performance.json`,
 `build/dos/alpha35-validation.json`, `build/dos/alpha35-staging.json`,
 `build/dos-alpha35-source/build/dos/pgo/report.json`,
 `build/dos-alpha35-release/` and `build/dos-alpha35-trace/`.
+
+### Skip transparent explosion column margins
+
+`8889871` extends the prepared BitMapObj source-row hints with conservative
+first/exclusive-last column bounds for the nine original explosion recipes.
+The bounds come from `frames_explosion` and the original WAD/PTR index-zero
+cutouts. Existing texel removals cannot introduce pixels outside those bounds;
+opaque black remains opaque. Magnified walks with consecutive source columns
+can trim their descriptor interval before decoding a row. U wrapping,
+minification, constant walks, truncated pointers and rows beyond the hint
+capacity retain the existing sampling rules.
+
+Native descriptors pack the destination start and width into their existing
+word. Their size stays 16 bytes, with no additional scratch array or allocation.
+The prepared bounds occupy 1,152 bytes; the bank pointers add eight bytes,
+bringing all row-hint metadata to 2,036 bytes. The main renderer and public
+`DosSpriteRows` layout remain unchanged. Indexed raster preprocessing remains
+byte-identical to the retained source26 build.
+
+In the immutable 92-call explosion capture, source bounds can skip 5,669 of
+11,615 explosion descriptor visits after existing row/history/coverage rejects.
+At normal/486_slow, fixed 40,000 cycles and 4 MB, the actual integrated raster
+improves 20.723193 to 19.521311 ms, about 5.8%, with 64 repetitions per call.
+The combined source lookup and descriptor setup are timed. Every pixel, full
+coverage mask, open-word count and visible/drawn total matches.
+
+Fresh feedback uses the same 27 training scenarios and selected native raster
+and alpha lookup units. Release measurements use normal/486_slow, fixed 40,000
+cycles, 4 MB, native 320x240 RGB565, SB16/mouse and muted host sound. The matched
+original-clock explosion peak falls 80.694 to 79.510 ms, with frame-10 rendering
+65.397 to 64.213 ms. Replay mean changes 33.968 to 33.987 ms and p95 falls
+62.665 to 62.628 ms. All 64 original images, simulation hashes and latched-clock
+assertions remain exact.
+
+Live barrel measurements, mean / p95 / maximum milliseconds:
+
+| Scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 39.605 / 54.645 / 61.238 | 40.041 / 54.548 / 60.908 |
+| Level 1, turning | 35.416 / 63.250 / 70.952 | 35.422 / 63.219 / 69.581 |
+| Level 6 | 43.497 / 54.366 / 56.684 | 43.502 / 53.353 / 56.179 |
+| Level 6, turning | 51.554 / 63.904 / 67.154 | 51.532 / 63.432 / 66.859 |
+
+All four live p95 values and maxima fall. The stationary level-1 mean rises
+0.436 ms; level-1 turning and level-6 stationary means rise 0.006/0.005 ms.
+All four fixed-update burst p95 values and maxima also fall; level-1 stationary
+p95 falls 61.113 to 58.337 ms, while its mean rises 0.020 ms. The other three
+burst means fall. Ordinary start/near-barrel/turning means rise
+0.009/0.067/0.037 ms; the straight pool rises 0.044 ms. Angled pool means rise
+0.058/0.039 ms, with similarly small tail increases. The real-time 128-frame
+start improves 26.19 to 26.22 FPS, mean 38.18 to 38.14 ms and p95 38.68 to
+38.65 ms; maximum changes 78.03 to 78.04 ms. The 25.8 FPS gate passes.
+These are pacing improvements with small tradeoffs. Large busy frames and
+performance on a physical 486 remain open.
+
+Fresh training preserves all 22 original 4 MB captures and passes the real-time
+level-4 sound/mouse exercise. The actual optimized-object raster oracle checks
+77 original recipes, 316 guarded painter/batch images, 1,546 empty source rows
+and 576 independently calculated source-row bounds. Cases include clipped U
+starts, magnification, final-column clamps, zero/minifying steps, unsigned
+wrapping, 320-pixel widths, opaque black, repeated rows, source identity/lifetime
+and row-cap boundaries. All existing raster/arithmetic/movement cases pass.
+
+Release checks preserve 512 complete images and game-state hashes plus 128
+angled pool images. All 128 model comparisons match at 4 versus 16 MB with
+32 KiB extra residency. Native level-1/4/15 exercises, maps and all active
+level/map bytes in the level-1/4 saves pass. Sound-enabled checks report zero
+audio underruns. Both packages retain 231 assets and 238 entries, with no
+instrumentation. Staging preserves 241 other native files and all 239 indexed
+game files, including settings and saves.
+
+Native text/data/BSS are 1,198,616/22,016/259,584 bytes: 1,024 more text bytes
+and unchanged BSS. Level-4 free memory remains 136 KiB after shared assets and
+36 KiB after loading. The retained indexed package is unchanged.
+
+Native EXE SHA-256:
+`695d288666985303b1b602be9ee14954bfee9425a8f19ac184fc3a65ebb0c973`.
+Native ZIP SHA-256:
+`76a18f7e28bc888a700cda94f365d8378028df0710dcc8259a0e3d56b7f212e9`.
+Evidence is in `build/dos/bounds36-performance.json`,
+`build/dos/bounds36-validation.json`, `build/dos/bounds36-staging.json`,
+`build/dos-bounds36-source/build/dos/pgo/report.json`,
+`build/dos-bounds36-release/`, `build/dos-runs36-trace/` and
+`build/dos-runs36-integrated-trace/`.
