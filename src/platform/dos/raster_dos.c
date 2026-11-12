@@ -333,6 +333,33 @@ static unsigned sprite_batch_rows(RendererPixel *out,unsigned height,
         unsigned open=sprite_batch->open_words[y+dy],run=0,length=0;
         DosSpriteSpan *end=ranges;
         RendererPixel *target=out+dy*pitch;
+#ifdef AB3D_NATIVE_RGB565
+        /* Without any previously claimed opaque bit, BitMapObj's original
+         * spans already describe the exact fresh ranges. Keep outside bits
+         * and open-word counts while avoiding range reconstruction. */
+        unsigned overlap=0;
+        for(unsigned word=0;word<words;word++)if(before[word]&opaque[word]) {
+            overlap=1;break;
+        }
+        if(!overlap) {
+            for(unsigned word=0;word<words;word++) {
+                uint32_t old=covered[word],updated=old|opaque[word];
+                covered[word]=updated;
+                if(updated==UINT32_MAX && old!=UINT32_MAX)sprite_batch->open_words[y+dy]--;
+            }
+            unsigned closed=open-sprite_batch->open_words[y+dy],next=dy;
+            for(;next<height;next++) {
+                if(next!=dy) {
+                    uint32_t *other=sprite_batch->covered[y+next]+first;
+                    if(!sprite_words_equal(before,other,words))break;
+                    sprite_mask_copy(other,covered,words);
+                    sprite_batch->open_words[y+next]-=(uint8_t)closed;
+                }
+                total+=sprite_copy_ranges(out+next*pitch,row,spans,spans+span_count);
+            }
+            dy=next;continue;
+        }
+#endif
         for(unsigned word=0;word<words;word++) {
             uint32_t old=covered[word],fresh=opaque[word]&~old;
             if(!fresh)continue;
