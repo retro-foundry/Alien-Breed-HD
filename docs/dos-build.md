@@ -4734,3 +4734,52 @@ Evidence is in `build/dos/spans33-performance.json`,
 `build/dos/spans33-validation.json`, `build/dos/spans33-staging.json`,
 `build/dos-spans33-source/build/dos/pgo/report.json`,
 `build/dos-spans33-release/` and `build/dos-spans33-trace/`.
+
+### Precomputed source-row occupancy experiment
+
+`15a1b5f` on `codex/dos-alpha34` is an experimental implementation, not part
+of the staged release. It derives conservative index-zero row masks from
+the original renderer frame arrays and WAD/PTR bytes. Its 71 sparse recipe
+keys and two bank descriptors occupy 876 bytes. Rows beyond the 64-row hint
+capacity and other source recipes retain ordinary sampling. Existing startup
+texel removals only make the original occupancy masks more conservative.
+
+The 92-call explosion capture contains 600 decoded bands. Whole-source
+transparency accounts for 56 bands and 510 screen rows; simple top/bottom
+bounds cover only 28 of those bands. Ideal masks supplied outside the timed
+draw reduce the matched raster replay from 21.199664 to 20.614346 ms.
+Timing the catalog lookup gives 21.200175 to 20.848410 ms. All pixels,
+coverage/open-word masks and visible/drawn totals remain exact. These are
+prototype raster measurements, not full-engine performance.
+
+Fresh feedback trains 23 ordinary plus four barrel scenarios, contributing
+the barrel counters only to the raster and new alpha lookup units. All 22
+original captures and the real-time 4 MB level-4 sound/mouse exercise pass.
+The optimized-object oracle also verifies 77 source recipes, 154 guarded
+painter/batch images and 1,546 empty source rows, including opaque black,
+repeated bands, unknown keys and source rows outside the hint capacity.
+All 64 original-clock images, game-state hashes and clock assertions match.
+
+The complete matched replay does not retain the raster gain: peak changes
+80.978 to 80.980 ms, rendering 65.681 to 65.683 ms, and p95 62.663 to
+62.999 ms. Live barrel measurements, mean / p95 / maximum milliseconds:
+
+| Scene | Staged engine | Experimental hints |
+| --- | --- | --- |
+| Level 1 | 39.693 / 55.724 / 61.375 | 39.646 / 54.982 / 61.711 |
+| Level 1, turning | 35.424 / 63.292 / 71.352 | 35.427 / 63.573 / 70.964 |
+| Level 6 | 43.526 / 54.539 / 56.920 | 43.544 / 54.416 / 56.739 |
+| Level 6, turning | 51.561 / 64.088 / 67.132 | 51.570 / 63.954 / 67.219 |
+
+A separate diagnostic confirms 616 calls receive hints and 1,059 bands are
+skipped across the original replay, with all 64 original images/state hashes
+preserved. Those counters verify use, not release timing. Native text grows
+1,536 bytes to 1,197,080; data/BSS remain 22,016/259,584. At 4 MB, level-4
+free memory falls from 140/40 KiB after shared assets/loading to 136/36 KiB.
+Indexed raster preprocessing remains identical.
+
+The mixed pacing and additional memory do not justify staging this version.
+The full release suite is not run after this filter; native/indexed packages
+retain the verified spans33 versions. Evidence and the frozen source hashes
+are in `build/dos/alpha34-development.json`, `build/dos-alpha34-trace/`,
+`build/dos-alpha34-release/` and the experimental branch.
