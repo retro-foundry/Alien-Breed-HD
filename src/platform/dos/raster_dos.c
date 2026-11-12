@@ -54,13 +54,10 @@ void water_span(RendererPixel *out,unsigned count,
                 const uint8_t *phase,const uint32_t (*brighten)[256],const int8_t *blend,
                 unsigned offset,uint32_t u,uint32_t v,uint32_t du,uint32_t dv,int one_row)
 {
-    /* The selected phase row wraps every 64 texels. Biasing U once keeps
-     * texturedwater's modulo-64 address exact, including 32-bit wraps. */
-    if(one_row)u+=(uint32_t)offset<<16;
     if(!background1) {
         for(unsigned x=0;x<count;x++,u+=du,v+=dv) {
             unsigned level;
-            if(one_row)level=phase[(u>>16)&63];
+            if(one_row)level=phase[((u>>16)+offset)&63];
             else {
                 uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
                 uv=(uint16_t)(uv+offset);
@@ -72,7 +69,7 @@ void water_span(RendererPixel *out,unsigned count,
     }
     for(unsigned x=0;x<count;x++,u+=du,v+=dv) {
         unsigned level;
-        if(one_row)level=phase[(u>>16)&63];
+        if(one_row)level=phase[((u>>16)+offset)&63];
         else {
             uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
             uv=(uint16_t)(uv+offset);
