@@ -38,6 +38,7 @@ original text fits on one screen. Press a key after loading to continue;
 the game restores its graphics mode, palette and mouse input automatically.
 UI uses opaque colors and cutout masks without alpha blending. Uncollected
 keys appear grey; collected keys use their colors. Damage uses a red border.
+HUD keys are prefiltered to 16x16 before loading, then drawn without scaling.
 Menus and text stay inside the visible screen.
 Key underlines and bars leave room for the complete HUD in 200-line output.
 Output retains all 4096 Amiga colors. The DOS build uses the same game logic

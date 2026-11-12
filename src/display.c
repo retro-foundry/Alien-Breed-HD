@@ -3955,18 +3955,47 @@ static void display_hud_texture_mipmaps(SDL_Texture *tex, GLint magnification)
 #endif
 }
 
+enum {
+    DISPLAY_KEY_SPRITE_SIZE = 32,
+#ifdef AB3D_DOS
+    DISPLAY_KEY_HUD_SIZE = DISPLAY_KEY_SPRITE_SIZE / 2
+#else
+    DISPLAY_KEY_HUD_SIZE = DISPLAY_KEY_SPRITE_SIZE
+#endif
+};
+
 static SDL_Texture *display_key_hud_texture_for_frame(int frame_idx)
 {
     if (frame_idx < 0 || frame_idx >= 4 || !g_sdl_ren) return NULL;
     if (g_key_hud_tex[frame_idx]) return g_key_hud_tex[frame_idx];
 
-    uint32_t pixels[32 * 32];
-    if (!renderer_key_sprite_rasterize_frame_argb(frame_idx, pixels, 32)) return NULL;
+    uint32_t pixels[DISPLAY_KEY_SPRITE_SIZE * DISPLAY_KEY_SPRITE_SIZE];
+    if (!renderer_key_sprite_rasterize_frame_argb(frame_idx, pixels, DISPLAY_KEY_SPRITE_SIZE)) return NULL;
+
+#ifdef AB3D_DOS
+    /* Filter the original type-5 key frame once, before level loading. Ignore
+     * transparent RGB when averaging and retain at least half-covered cells,
+     * so the opaque SDL blit has clean cutouts without dark fringes. Reducing
+     * into the front of this buffer is safe: all unread source rows are ahead. */
+    for (int y = 0; y < DISPLAY_KEY_HUD_SIZE; y++) {
+        for (int x = 0; x < DISPLAY_KEY_HUD_SIZE; x++) {
+            unsigned count = 0, red = 0, green = 0, blue = 0;
+            for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
+                uint32_t c = pixels[(y * 2 + dy) * DISPLAY_KEY_SPRITE_SIZE + x * 2 + dx];
+                if (!(c >> 24)) continue;
+                count++; red += (c >> 16) & 255; green += (c >> 8) & 255; blue += c & 255;
+            }
+            pixels[y * DISPLAY_KEY_HUD_SIZE + x] = count < 2 ? 0 :
+                0xFF000000u | (((red + count / 2) / count) << 16) |
+                (((green + count / 2) / count) << 8) | ((blue + count / 2) / count);
+        }
+    }
+#endif
 
     SDL_Texture *t = SDL_CreateTexture(g_sdl_ren, SDL_PIXELFORMAT_ARGB8888,
-                                         SDL_TEXTUREACCESS_STATIC, 32, 32);
+                         SDL_TEXTUREACCESS_STATIC, DISPLAY_KEY_HUD_SIZE, DISPLAY_KEY_HUD_SIZE);
     if (!t) return NULL;
-    if (SDL_UpdateTexture(t, NULL, pixels, (int)(32 * sizeof(uint32_t))) != 0) {
+    if (SDL_UpdateTexture(t, NULL, pixels, (int)(DISPLAY_KEY_HUD_SIZE * sizeof(uint32_t))) != 0) {
         SDL_DestroyTexture(t);
         return NULL;
     }
@@ -4151,7 +4180,7 @@ static void hud_key_row_layout(int lay_w, int lay_h, int *margin, int *kh, int *
     int g = k / 12;
     if (g < 2) g = 2;
 #ifdef AB3D_DOS
-    m=2;k=32;g=2;
+    m=2;k=DISPLAY_KEY_HUD_SIZE;g=2;
 #endif
     int gw = 4 * k + 3 * g;
     int ix = lay_w - m - gw;

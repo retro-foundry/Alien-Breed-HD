@@ -250,6 +250,11 @@ INI preserves local edits during rebuilds; the ZIP always contains clean default
   during level-4 reloads.
   HUD fonts, strips and all four key images are prepared before loading a
   level; bitmap invalidation follows sprite assets rather than key ownership.
+  DOS keys use 16x16 cached images, half their original 32x32 size. A mask-aware
+  2x2 box filter runs once during preparation, averaging only opaque colours
+  and retaining cells with at least half coverage. Both coloured and disabled
+  versions then draw with native-size SDL blits. Their RGB565/grey pixel buffers
+  use 9 KiB less RAM in total; the indexed caches also shrink.
   Key-to-frame lookup shares one authored object-table scan per HUD draw.
   HUD backgrounds and map lines use solid colors. Menus
   and transitions use solid fills, and damage feedback uses a red border.
