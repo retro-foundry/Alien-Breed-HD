@@ -48,7 +48,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_dos.ps1 `
 ```
 
 This rebuilds feedback from the current sources, using all sixteen levels,
-six turning runs and a save/load exercise. Instrumented training uses 16 MB;
+six turning runs, a save/load exercise and four dense barrel replays. The
+barrel replays contribute only to the native raster profile; ordinary
+gameplay, audio and production main profiles are retained. Instrumented
+training uses 16 MB;
 those timings are not performance measurements. Before packaging, the
 uninstrumented image must reproduce all 22 ordinary 4 MB captures exactly
 and pass the real-time 4 MB level-4 SB16/mouse exercise. Host audio is muted.
@@ -4530,3 +4533,91 @@ Evidence is in `build/dos/water30-performance.json`,
 `build/dos-water30-source/build/dos/pgo/model-check/report.json`, and
 `build/dos-water30-trace/`. Rejected trial evidence is retained under
 `build/dos-decode28-trace/` and `build/dos-water29-trace/`.
+
+### Train the repeated-row billboard paths
+
+`2c94a57` adds four 64-frame, authored barrel replays to the compiler-feedback
+build: levels 1 and 6, stationary and turning. The shared
+`tests/dos_model_scene.c` fixture invokes `object_handle_barrel` and advances
+the real game loop. Its training-only definition omits per-frame capture
+writes; the ordinary pixel oracle retains them. Engine function identities
+and source/control-flow checksums must match before counters are accepted.
+The production-main profile is checked byte-for-byte and preserved.
+
+The previous 23 training runs never entered `sprite_batch_rows`: all 27
+instrumented edges were zero. The additional replays exercise all 27;
+`dos_raster_sprite_rows` rises from 22/84 to 53/84 nonzero recorded edges.
+These are compiler counters, not timings or a replacement for the pixel
+oracle. Only `src/platform/dos/raster_dos.c` receives the additional
+feedback. Other translation units retain the ordinary level/turn/save
+profiles. Native profile-use raster builds also disable called-once
+inlining, loop unrolling and peeling, keeping large helpers separate and
+avoiding excess register use on the 486. Ordinary and indexed builds retain
+their previous options. No fixture or compiler counter enters the package.
+
+The fresh build uses normal/486_slow, fixed 40,000 cycles, 4 MB, native
+320x240 RGB565, SB16/mouse and muted host sound for release measurements.
+The matched original-clock explosion peak falls from 81.713 to 81.113 ms;
+rendering changes 66.253 to 65.814 ms, update 8.544 to 8.540 ms, and audio
+3.442 to 3.289 ms. Replay p95 falls from 63.417 to 62.810 ms. All 64
+original images, simulation hashes and latched-clock assertions match.
+
+Live explosion measurements, mean / p95 / maximum milliseconds:
+
+| Scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 39.504 / 56.896 / 62.385 | 39.789 / 55.862 / 61.660 |
+| Level 1, turning | 35.010 / 65.387 / 71.423 | 35.371 / 63.512 / 71.276 |
+| Level 6 | 43.594 / 54.998 / 57.303 | 43.558 / 54.838 / 57.122 |
+| Level 6, turning | 51.634 / 64.442 / 67.429 | 51.583 / 64.299 / 67.179 |
+
+All four live p95/maximum values fall. Level-1 means rise by 0.285/0.361 ms,
+so this is a pacing tradeoff. The fixed-20-ms, stationary level-1 burst
+also has a higher p95, 60.487 to 61.991 ms, while mean/maximum fall
+45.278/62.752 to 45.205/62.198 ms. The straight pool view changes
+54.723/56.224/56.489 to 54.696/56.210/56.476 ms. Angled pool means fall
+0.029/0.017 ms; the negative-yaw p95 rises 0.061 ms. The real-time
+128-frame starting check changes 26.20 to 26.23 FPS and 38.17 to 38.12 ms
+mean, with p95/maximum 38.67/77.90 to 38.62/78.02 ms. The 25.8 FPS gate
+passes. Large busy frames and physical 486 measurements remain open.
+
+Other feedback choices were rejected. Feeding all engine units plus three
+pool replays improved the matched explosion peak to 80.284 ms but raised
+pool mean from 54.723 to 56.814 ms. Barrel-only feedback for all units,
+raster-only feedback without the selected options, and combined renderer/
+raster feedback each worsened at least one live maximum. A single barrel
+replay, called-once inlining disabled without new feedback, and keeping
+unrolling enabled also failed to improve all four live p95/maximum pairs.
+Their complete measurements are retained in the local trial records.
+
+Fresh training completes 23 ordinary plus four scene runs at 16 MB, then
+matches all 22 ordinary 4 MB captures and passes the real-time level-4
+sound/mouse exercise. Eight release comparisons preserve 512 full images
+and simulation hashes; angled pool views preserve another 128. All 128
+model images match at 4 versus 16 MB with 32 KiB extra residency. Native
+level-1/4/15 exercises, map captures and all active saved-level/map bytes
+pass. The actual profile-use raster, palette, level and object-query
+objects also pass the complete independent native raster/arithmetic/
+movement oracle, including copy alignments, masks, cutouts, packed source
+words, water blending and all boundary cases. Sound-enabled release
+checks report zero underruns.
+
+Native text/data/BSS are 1,194,520/22,016/259,584 bytes: 512 bytes more
+text and unchanged BSS. Level-4 free memory remains 140 KiB after shared
+assets and 40 KiB after loading. Indexed preprocessing remains the same
+293,954 bytes and SHA-256
+`db80865a3b042bc38d092701d4a2ad43bbbb07760cf93199742d0ac44a764401`;
+the verified wall26 indexed package is retained. Staging preserves 241
+other native game files and all 239 indexed game files, including settings
+and saves. Packages retain 231 assets and 238 archive entries.
+
+Native EXE SHA-256:
+`cfc6a8b1b413431c926b017eda06efc4ea6c136bd6b4d41f28f3d657f9e00f40`.
+Native ZIP SHA-256:
+`900cf2573bd5bfcb0d2477235edc5fe162371c4cffb4afb3f8d732a3b0d5c646`.
+Evidence is in `build/dos/training31-performance.json`,
+`build/dos/training31-validation.json`, `build/dos/training31-staging.json`,
+`build/dos-training31-source/build/dos/pgo/report.json`,
+`build/dos-training31-source/build/dos/pgo/scene-training/report.json`,
+`build/dos-training31-release/optimized-oracle.log` and
+`build/dos-training31-trace/`.
