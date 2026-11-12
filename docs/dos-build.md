@@ -5113,3 +5113,40 @@ These packages are staged under `build/dos` and `build/dos-indexed`. Evidence is
 in `build/dos/hud-keys-validation.json`, `build/dos/hud-keys-staging.json`,
 `build/dos-hud-keys-trace/` and
 `build/dos-hud-keys-source/build/dos/pgo/report.json`.
+
+### Default DOS mouse startup
+
+`e92a9f4` fixes `dos_platform_init`: an unset `AB3D_DOS_MOUSE` now enables
+driver polling. Previously it silently disabled the mouse unless the variable
+was exactly `1`, while the normal launcher did not set it. Explicit `0` still
+disables polling; `1` remains supported. Input logs now identify disabled
+polling and successful gameplay capture. Sensitivity and Mouse Look preferences
+remain unchanged; DOS menus still use the keyboard.
+
+The preceding native engine reproduces the failure with an installed DOSBox
+driver and an unset environment: New Game reaches gameplay without capture.
+Both updated builds pass the 4 MB real-game startup matrix (unset, explicit
+enable, disable and absent driver). Real host movement changes the player's
+yaw and pitch in both directions, and released left/right taps reach
+fire/operate once and clear after consumption. These checks pass after the
+actual VGA briefing/load sequence and after Esc/menu recapture. The native
+check also passes against the final optimized engine objects.
+
+Fresh 27-scenario feedback retains all 22 gameplay images byte-for-byte and
+passes the real-time 4 MB level-4 sound/mouse exercise with zero underruns.
+Sources and SDL stay frozen during training. Both builds add 512 text bytes
+with unchanged data/BSS; native level-4 free XMS is 128 KiB after shared assets
+and 52 KiB after loading. Both packages retain 231 assets and 238 entries;
+only EXE/README change. Staging preserves 240 other native and 237 other
+indexed game files, including INI preferences and saves.
+
+| Package | EXE SHA-256 | ZIP SHA-256 |
+| --- | --- | --- |
+| Native | `bc1e2772537d689a89ae7a922f7d40ea5d46da3da9c617645df9031cb60ae9d2` | `09e9b46d5cf59ea71c86f805d4eddf756fa1f553d10fb777e3d58ab1e84c6ab8` |
+| Indexed | `02d3f3ba59f15a81af51784a5e5933531e5f2414fd5876cc2ef7bd7e29eafcd2` | `5d31043b7c4e52c097fa5b517446018104274206bd62f7239fec0759b860ce5f` |
+
+The updated packages are staged under `build/dos` and `build/dos-indexed`.
+Evidence is in `build/dos/mouse-startup-validation.json`,
+`build/dos/mouse-startup-staging.json`, `build/dos-mouse-startup-trace/`,
+each build's `mouse-game-check/report.json` and
+`build/dos-mouse-startup-source/build/dos/pgo/report.json`.
