@@ -5027,3 +5027,43 @@ other raster/arithmetic/movement cases also pass.
 The experiment is preserved on its branch, with evidence and explicit build
 versus test-amendment hashes in `build/dos/band37-development.json`,
 `build/dos-band37-trace/` and `build/dos-band37-release/`.
+
+### VGA level briefings
+
+`24d1725` switches DOS level briefings to VGA 80x25 text mode, following the
+Amiga's separate high-resolution `TextCop` screen. All sixteen original headings
+and blurbs fit on one screen. The same graphics mode, palette, display page and
+mouse ranges are restored on dismissal or quit. Gameplay retains the bounds36
+renderer; the paused setup38 experiment is separate.
+
+Both final packages pass the 4 MB level-4 exercise: all sixteen text-memory
+readbacks retain every glyph, one key dismisses each briefing, the existing
+graphics surface survives all switches, and the indexed DAC is restored exactly.
+The real New Game/loading/dismissal path passes for levels 1, 4 and 15 in both
+builds. Text remains identical throughout loading, with/without-briefing gameplay
+images match exactly, quit restores graphics, and sound checks report zero
+underruns. The native release completes fresh 27-scenario compiler feedback,
+all 22 original gameplay captures and the real-time 4 MB level-4 exercise.
+Material sources and the SDL library remain frozen throughout training.
+
+Native text/data/BSS are 1,204,248/22,016/259,584 bytes; indexed values are
+1,203,736/22,016/247,296. BSS is unchanged in both. Native level-4 free XMS is
+132 KiB after shared assets and 32 KiB after loading. Briefings use VGA text
+memory and its ROM font, with no additional heap framebuffer or resident font
+table. Physical 486 hardware remains untested.
+
+Both archives retain 231 assets and 238 entries; only the executable and readme
+change. Staging preserves 240 other native and 237 other indexed game files,
+including settings and saves. The root toolchain selects the verified private
+SDL with the new text patch; the older shared SDL is preserved.
+
+| Package | EXE SHA-256 | ZIP SHA-256 |
+| --- | --- | --- |
+| Native | `cd0d24c25399f39b5379621b857fdf0d6256ab66a4d0843a82244bd6b58da8e4` | `1769628e80540a8a75fee0a6a285493e27533f37fa8d4d4403fe8427e96a5f2b` |
+| Indexed | `313d9e5042f20525edfe0086f2820ace008e5de221efcba7b8b3a72fa09f63cd` | `61953c4c17c63288afb21c675c2d30ee807886f54c71ee25cc8f76bcdf1cc597` |
+
+Evidence is in `build/dos/briefing-validation.json`,
+`build/dos/briefing-staging.json`, `build/dos-briefing-trace/`,
+`build/dos-briefing-source/build/dos/pgo/report.json` and each build's
+`briefing-check/report.json`. The staged native/indexed packages now include
+the briefing change.
