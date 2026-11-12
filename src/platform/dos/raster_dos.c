@@ -136,7 +136,9 @@ static int sprite_history_match(const DosSpriteHistoryEntry *entry,const Rendere
         old->wad_bytes==sprite->wad_bytes && old->ptr_bytes==sprite->ptr_bytes &&
         old->ptr_offset==sprite->ptr_offset && old->u==sprite->u && old->du==sprite->du &&
         old->columns==sprite->columns && old->down_strip==sprite->down_strip &&
-        sprite_words_equal(entry->rows,sprite->rows,height);
+        (sprite->rows ? old->rows && sprite_words_equal(entry->rows,sprite->rows,height) :
+         !old->rows && old->row_v==sprite->row_v && old->row_dv==sprite->row_dv &&
+         old->row_last==sprite->row_last);
 }
 
 static void sprite_history_note(RendererPixel *out,unsigned width,unsigned height,unsigned pitch,
@@ -145,7 +147,7 @@ static void sprite_history_note(RendererPixel *out,unsigned width,unsigned heigh
     DosSpriteHistoryEntry *entry=sprite_history->entries+sprite_history->next;
     entry->out=out;entry->width=width;entry->height=height;entry->pitch=pitch;
     entry->sprite=*sprite;entry->visible=visible;
-    memcpy(entry->rows,sprite->rows,height*sizeof(*entry->rows));
+    if(sprite->rows)memcpy(entry->rows,sprite->rows,height*sizeof(*entry->rows));
     if(sprite_history->count<4)sprite_history->count++;
     sprite_history->next=(sprite_history->next+1)&3;
 }
@@ -449,9 +451,21 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
         if(groups[g].limit<minimum_limit)minimum_limit=groups[g].limit;
     } else all_sources=0;
     for(unsigned y=0;y<height;) {
-        int source_row=sprite->rows[y];
+        int source_row;
         unsigned end_y=y+1;
-        while(end_y<height && sprite->rows[end_y]==source_row)end_y++;
+        if(sprite->rows) {
+            source_row=sprite->rows[y];
+            while(end_y<height && sprite->rows[end_y]==source_row)end_y++;
+        } else {
+            uint32_t v=sprite->row_v+y*sprite->row_dv;
+            unsigned sample=v>>16;
+            source_row=(int)(sample>sprite->row_last?sprite->row_last:sample);
+            if(!sprite->row_dv || sample>=sprite->row_last)end_y=height;
+            else if(sprite->row_dv<65536u) {
+                unsigned run=(65535u-(v&65535u))/sprite->row_dv+1u;
+                end_y=run>height-y?height:y+run;
+            }
+        }
         if(batch && sprite_batch_hidden(out+y*pitch,width,end_y-y)) {
             y=end_y;continue;
         }

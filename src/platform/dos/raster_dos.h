@@ -43,6 +43,9 @@ typedef struct {
     const int *rows;
     uint32_t ptr_offset, u, du;
     unsigned columns, down_strip;
+    /* NULL rows selects an increasing 16.16 walk, clamped to row_last.
+     * row_v+(height-1)*row_dv must fit a nonnegative signed 32-bit value. */
+    uint32_t row_v,row_dv,row_last;
 } DosSpriteRows;
 typedef struct { unsigned visible, drawn; } DosSpriteCoverage;
 /* One 320-pixel-wide object pass, up to 240 rows, in RendererPixel format.

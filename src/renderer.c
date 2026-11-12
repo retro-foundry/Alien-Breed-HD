@@ -10354,15 +10354,6 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
         (height >= (eff_rows << 1) && eff_rows <= (int)sizeof(g_sprite_col_texel_lut)) ? 1 : 0;
 
     int *row_src_lut = g_sprite_src_row_lut;
-    {
-        int32_t row_fp_lut = (int32_t)(draw_top - sy) * src_row_step;
-        for (int row_i = 0; row_i < draw_row_count; row_i++) {
-            int src_row = row_fp_lut >> 16;
-            row_fp_lut += src_row_step;
-            if (src_row >= eff_rows) src_row = eff_rows - 1;
-            row_src_lut[row_i] = src_row;
-        }
-    }
 
     int32_t src_col_fp = (int32_t)dx_start * src_col_step;
 
@@ -10390,9 +10381,11 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
             for(int gi=0;gi<geom_dx_count;gi++) {
                 unsigned first=(unsigned)geom_dx_starts[gi];
                 unsigned count=(unsigned)(geom_dx_ends[gi]-geom_dx_starts[gi]);
-                DosSpriteRows sprite={wad,ptr_data,wad_size,ptr_size,spr_cw,row_src_lut,
+                DosSpriteRows sprite={wad,ptr_data,wad_size,ptr_size,spr_cw,NULL,
                                       ptr_offset,first*(uint32_t)src_col_step,(uint32_t)src_col_step,
-                                      (unsigned)eff_cols,(unsigned)down_strip_i};
+                                      (unsigned)eff_cols,(unsigned)down_strip_i,
+                                      (uint32_t)(draw_top-sy)*(uint32_t)src_row_step,
+                                      (uint32_t)src_row_step,(unsigned)eff_rows-1u};
                 DosSpriteCoverage part=dos_raster_sprite_rows(
                     cw+(size_t)draw_top*rw+(size_t)(sx+(int)first),
                     count,(unsigned)draw_row_count,(unsigned)rw,&sprite);
@@ -10409,6 +10402,16 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
         }
     }
 #endif
+
+    {
+        int32_t row_fp_lut = (int32_t)(draw_top - sy) * src_row_step;
+        for (int row_i = 0; row_i < draw_row_count; row_i++) {
+            int src_row = row_fp_lut >> 16;
+            row_fp_lut += src_row_step;
+            if (src_row >= eff_rows) src_row = eff_rows - 1;
+            row_src_lut[row_i] = src_row;
+        }
+    }
 
 #if defined(AB3D_DOS)
     int dos_decoded_column=-1;

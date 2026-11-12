@@ -444,4 +444,70 @@ static void check_sprite_history(void)
     puts("PASS: 300 cached billboard draws retain uncached pixels, coverage, sampling keys, palette changes, row storage reuse, high-byte changes, first/last rows, one/full-height clips, eviction, reset and guards");
 }
 
+static void check_sprite_dda_rows(void)
+{
+    enum { PIXELS=320*240, DRAWS=4 };
+    static RendererPixel pixels[2][PIXELS+16];
+    static const unsigned heights[]={1,2,3,7,31,63,127,240};
+    static const unsigned widths[]={1,2,31,32,33,64,127,320};
+    static const uint32_t steps[]={0,1,255,4095,4096,8191,32768,65535,65536,99991,7*65536};
+    uint8_t wad[514],ptr[40];
+    RendererPixel palette[32];int rows[240];
+    DosSpriteBatch mask[2];DosSpriteHistory history;
+    DosSpriteCoverage result[2][DRAWS];
+    unsigned checked=0;
+    for(unsigned i=0;i<sizeof(wad);i++)wad[i]=(uint8_t)next_value();
+    for(unsigned c=0;c<10;c++) {
+        unsigned offset=c==3?0:2+c*48;
+        ptr[c*4]=(uint8_t)(c==3?0:c%3);
+        ptr[c*4+1]=0;ptr[c*4+2]=(uint8_t)(offset>>8);ptr[c*4+3]=(uint8_t)offset;
+    }
+    for(unsigned test=0;test<128;test++)for(unsigned mode=0;mode<3;mode++) {
+        unsigned x=test%33,y=test%4,width=widths[test%8],height=heights[(test/8)%8];
+        if(width>320-x)width=320-x;
+        if(height>240-y)height=240-y;
+        uint32_t start=((test%25)<<16)+(test*1493u&65535u),step=steps[test%11];
+        unsigned last=test%65;
+        if(test%16==0)start=0x7ffe0000u,step=1; /* Clamping near the signed limit. */
+        assert((uint64_t)start+(height-1)*(uint64_t)step+3<=INT_MAX);
+        for(unsigned side=0;side<2;side++) {
+            for(unsigned i=0;i<PIXELS+16;i++)pixels[side][i]=(RendererPixel)0xa55a;
+            memset(&mask[side],0,sizeof(mask[side]));
+            if(mode) {
+                dos_raster_sprite_batch_begin(pixels[side]+8,&mask[side]);
+                if(mode==2)dos_raster_sprite_batch_history_begin(&history);
+                /* Partial existing coverage, including complete words and holes. */
+                for(unsigned r=y;r<y+height;r++)for(unsigned w=0;w<10;w++) {
+                    uint32_t bits=(r+w+test)%3==0?UINT32_MAX:(r&1?0x55555555u:0x80000001u);
+                    mask[side].covered[r][w]=bits;
+                    if(bits==UINT32_MAX)mask[side].open_words[r]--;
+                }
+            }
+            for(unsigned draw=0;draw<DRAWS;draw++) {
+                uint32_t v=start+(draw>=2?3u:0u);
+                unsigned clamp=last+(draw==3);
+                /* Independent per-pixel fixed-point reference, without band grouping. */
+                for(unsigned r=0;r<height;r++) {
+                    unsigned sample=(unsigned)(((uint64_t)v+(uint64_t)r*step)/65536u);
+                    rows[r]=(int)(sample>clamp?clamp:sample);
+                }
+                for(unsigned c=0;c<32;c++)palette[c]=(RendererPixel)(c==1?0:c==2?255:(c+draw*17u)*1973u);
+                DosSpriteRows sprite={wad,ptr,sizeof(wad),sizeof(ptr),palette,rows,0,
+                    (test%7)*65536u+173u,(test%3?58981u:4096u),10,test%3,v,step,clamp};
+                if(side && draw!=1)sprite.rows=NULL; /* Mix table/DDA history entries. */
+                result[side][draw]=dos_raster_sprite_rows(pixels[side]+8+y*320+x,width,height,320,&sprite);
+                if(side) {
+                    assert(result[side][draw].visible==result[0][draw].visible);
+                    assert(result[side][draw].drawn==result[0][draw].drawn);
+                }
+            }
+            if(mode)dos_raster_sprite_batch_end();
+        }
+        assert(!memcmp(pixels[0],pixels[1],sizeof(pixels[0])));
+        assert(!memcmp(&mask[0],&mask[1],sizeof(mask[0])));
+        checked+=DRAWS;
+    }
+    printf("PASS: %u direct sprite row walks match independent 64-bit row tables, clamping, fractional steps, zero/large steps, clips, packed modes, black/255, mixed history, coverage and guards\n",checked);
+}
+
 #endif
