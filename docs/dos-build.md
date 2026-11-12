@@ -49,7 +49,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_dos.ps1 `
 
 This rebuilds feedback from the current sources, using all sixteen levels,
 six turning runs, a save/load exercise and four dense barrel replays. The
-barrel replays contribute only to the native raster profile; ordinary
+barrel replays contribute only to the native billboard raster and source-row
+lookup profiles; ordinary
 gameplay, audio and production main profiles are retained. Instrumented
 training uses 16 MB;
 those timings are not performance measurements. Before packaging, the
@@ -4783,3 +4784,88 @@ The full release suite is not run after this filter; native/indexed packages
 retain the verified spans33 versions. Evidence and the frozen source hashes
 are in `build/dos/alpha34-development.json`, `build/dos-alpha34-trace/`,
 `build/dos-alpha34-release/` and the experimental branch.
+
+### Bind preconverted row masks to loaded sprite banks
+
+`c5ebf37` precomputes conservative row occupancy for the alien/gib and
+explosion source recipes from the existing renderer frame arrays and original
+WAD/PTR bytes. A clear bit proves the entire source row transparent, allowing
+`sprite_rows` to skip its decode/fill work. Source index zero defines the
+cutout; black palette entries remain opaque. The 71 sparse keys, 64-row masks
+and two bank descriptors occupy 876 bytes. Other recipes and higher source
+rows retain the existing sampler. No packed sprite words or palettes change.
+
+`io_load_objects` resets bindings before freeing the old banks and binds each
+new bank after the existing texel removals. The DOS raster matches the loaded
+buffer identities and sizes, then resolves a local hint after whole-rectangle
+coverage and exact-repeat rejects. The main renderer and `DosSpriteRows`
+layout remain unchanged. Bindings use 32 bytes; no per-frame allocation or
+additional frame buffer is introduced.
+
+At normal/486_slow, fixed 40,000 cycles and 4 MB, the immutable 92-call raster
+replay improves from 21.200201 to 20.723193 ms, about 2.25%, with 64 repetitions
+per call. All pixels, full coverage/open-word masks and visible/drawn totals
+match. The real source lookup is timed; bank binding occurs outside the draw.
+
+Fresh feedback trains all 27 scenarios, contributing the four barrel replays
+only to the native raster and alpha lookup units. Other units retain the 23
+ordinary profiles, including byte-identical production-main feedback.
+Release measurements use normal/486_slow, fixed 40,000 cycles, 4 MB, native
+320x240 RGB565, SB16/mouse and muted host sound.
+
+The matched original-clock explosion peak falls from 80.978 to 80.694 ms,
+with rendering 65.681 to 65.397 ms. Replay mean falls 33.992 to 33.968 ms;
+p95 changes 62.663 to 62.665 ms. All 64 original images, simulation hashes
+and latched-clock assertions remain exact.
+
+Live barrel measurements, mean / p95 / maximum milliseconds:
+
+| Scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 39.693 / 55.724 / 61.375 | 39.605 / 54.645 / 61.238 |
+| Level 1, turning | 35.424 / 63.292 / 71.352 | 35.416 / 63.250 / 70.952 |
+| Level 6 | 43.526 / 54.539 / 56.920 | 43.497 / 54.366 / 56.684 |
+| Level 6, turning | 51.561 / 64.088 / 67.132 | 51.554 / 63.904 / 67.154 |
+
+All four live means and p95 values fall. Three maxima also fall; level-6
+turning maximum rises 0.022 ms. The stationary level-1 p95 improves 1.079 ms.
+Fixed-update burst means and p95 values fall in all four scenes, while
+level-6 turning maximum rises 0.017 ms. Ordinary near-barrel/turning means
+rise 0.019/0.008 ms; the straight pool falls 0.005 ms. Angled pool means rise
+0.001/0.005 ms with small mixed tail changes. The real-time 128-frame start
+changes 26.21 to 26.19 FPS, 38.15 to 38.18 ms mean, 38.66 to 38.68 ms p95
+and 78.02 to 78.03 ms maximum. The 25.8 FPS gate passes. These are incremental
+gains with small tradeoffs; large busy frames and physical 486 tests remain open.
+
+Fresh training matches all 22 original native 4 MB captures and passes the
+real-time level-4 sound/mouse exercise. The actual optimized-object oracle
+checks 77 source recipes, 154 guarded painter/batch images and 1,546 empty
+source rows against independent pixel/mask calculations. It also verifies
+source identities, buffer lengths, reset/rebind lifetime, unknown keys,
+opaque black, repeated rows and source indices outside the hint capacity.
+The existing raster/arithmetic/movement boundary tests pass.
+
+Release comparisons preserve 512 full images and game-state hashes, plus
+128 angled pool images. All 128 model comparisons match at 4 versus 16 MB
+with 32 KiB additional residency. Native level-1/4/15 exercises, maps and all
+active level/map bytes in the level-1/4 saved payloads pass. Sound-enabled
+release checks report zero underruns.
+
+Native text/data/BSS are 1,197,592/22,016/259,584 bytes: 2,048 more text bytes
+and unchanged total BSS. At 4 MB, level-4 free memory is 136 KiB after shared
+assets and 36 KiB after loading, down from 140/40 KiB. The full 4 MB checks,
+including model residency pressure, pass with this additional page occupied.
+Indexed raster preprocessing remains the same 293,954 bytes and SHA-256
+`db80865a3b042bc38d092701d4a2ad43bbbb07760cf93199742d0ac44a764401`;
+the verified wall26 indexed package is retained. Staging preserves all 241
+other native game files and all 239 indexed game files, including settings
+and saves. Both archives retain 231 assets and 238 entries.
+
+Native EXE SHA-256:
+`fe3444082a5fd4a0fea1189622c73985917397da6cd212a032e6d1c48626faf7`.
+Native ZIP SHA-256:
+`db9067fd9ed6cfed198ae050cf2a683aad3cfc3c8b73da430428f8e16ceb92c0`.
+Evidence is in `build/dos/alpha35-performance.json`,
+`build/dos/alpha35-validation.json`, `build/dos/alpha35-staging.json`,
+`build/dos-alpha35-source/build/dos/pgo/report.json`,
+`build/dos-alpha35-release/` and `build/dos-alpha35-trace/`.
