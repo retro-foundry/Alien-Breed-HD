@@ -4664,3 +4664,73 @@ Evidence is retained in `build/dos/copy32-development.json`,
 The exact rejected production candidate is preserved separately as
 `build/dos-mask32-trace/raster-uncounted-frozen.c`; the experimental worktree
 has been restored to the staged renderer source.
+
+### Reuse unobscured native billboard spans
+
+`cac067f` lets `sprite_batch_rows` reuse BitMapObj's existing opaque spans
+when none of those pixels has been claimed by an earlier billboard. It
+updates coverage and closed-word counts directly, then copies rows whose
+prior mask words match. Coverage outside the opaque spans remains intact.
+Partially obscured rows retain the existing fresh-bit range reconstruction.
+The additional path is native RGB565 only and allocates no memory or table.
+
+The immutable 92-call explosion capture identifies 117 unobscured templates
+out of 665, covering 866 rows. At normal/486_slow, fixed 40,000 cycles and
+4 MB, 64 repetitions per call improve 21.410118 to 21.200201 ms, about 1%.
+Every pixel, full coverage mask, open-word count and visible/drawn total
+matches. Hoisting the first-row copy takes 21.242434 ms; sharing the ordinary
+range-recording loop takes 21.279074 ms. Those variants are not retained.
+
+The fresh compiler-feedback build uses the same 27 training scenarios.
+Release comparisons use normal/486_slow, fixed 40,000 cycles, 4 MB, native
+320x240 RGB565, SB16/mouse and muted host sound. The matched original-clock
+explosion peak falls from 81.113 to 80.978 ms, p95 from 62.810 to 62.663 ms,
+and frame-10 rendering from 65.814 to 65.681 ms. All 64 original images,
+simulation hashes and latched-clock assertions remain exact.
+
+Live barrel measurements, mean / p95 / maximum milliseconds:
+
+| Scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 39.789 / 55.862 / 61.660 | 39.693 / 55.724 / 61.375 |
+| Level 1, turning | 35.371 / 63.512 / 71.276 | 35.424 / 63.292 / 71.352 |
+| Level 6 | 43.558 / 54.838 / 57.122 | 43.526 / 54.539 / 56.920 |
+| Level 6, turning | 51.583 / 64.299 / 67.179 | 51.561 / 64.088 / 67.132 |
+
+All four live p95 values fall, as do three maxima. Level-1 turning mean
+and maximum rise by 0.053 and 0.076 ms. This is an incremental pacing
+tradeoff. Fixed-update burst p95 values also fall in all four scenes;
+level-6 turning mean rises 0.006 ms. The fixed starting view rises
+38.426 to 38.475 ms mean; the straight pool rises 54.696 to 54.708 ms.
+Angled pool means fall 0.022/0.023 ms, with lower p95 and maxima. The real-time
+128-frame starting check changes 26.23 to 26.21 FPS, 38.12 to 38.15 ms mean,
+and 38.62 to 38.66 ms p95; maximum remains 78.02 ms. The 25.8 FPS gate passes.
+Large busy frames and physical 486 measurements remain open.
+
+Fresh training matches all 22 original 4 MB captures and passes the real-time
+level-4 sound/mouse exercise. Release comparisons preserve 512 full images
+and simulation hashes, plus 128 angled pool images. All 128 model replays
+match at 4 versus 16 MB with 32 KiB extra residency. The actual optimized
+raster/arithmetic/movement oracle passes, including complete guarded masks,
+outside coverage, disjoint cutouts, opaque black, all 1..320 copy widths,
+fresh-bit runs, water carries and complete movement comparisons. Native
+level-1/4/15 exercises, map captures and all active level/map bytes in the
+level-1/4 saves pass. Sound-enabled release checks report zero underruns.
+
+Native text/data/BSS are 1,195,544/22,016/259,584 bytes: 1,024 extra text
+bytes and unchanged BSS. Level-4 free memory remains 140 KiB after shared
+assets and 40 KiB after loading. Indexed preprocessing remains the same
+293,954 bytes and SHA-256
+`db80865a3b042bc38d092701d4a2ad43bbbb07760cf93199742d0ac44a764401`;
+the verified wall26 indexed package is retained. Staging preserves 241 other
+native game files and all 239 indexed game files, including settings/saves.
+Both packages retain 231 assets and 238 archive entries.
+
+Native EXE SHA-256:
+`1fa48e5e243b811dd251ab5cad679c799495fa4ba86a321c87a7b50a40c0abe0`.
+Native ZIP SHA-256:
+`66811b2e83f9d61589bbc84f28e1b53ecb9cccb03360363b8c71d93afdbac935`.
+Evidence is in `build/dos/spans33-performance.json`,
+`build/dos/spans33-validation.json`, `build/dos/spans33-staging.json`,
+`build/dos-spans33-source/build/dos/pgo/report.json`,
+`build/dos-spans33-release/` and `build/dos-spans33-trace/`.
