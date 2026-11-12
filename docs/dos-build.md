@@ -4621,3 +4621,46 @@ Evidence is in `build/dos/training31-performance.json`,
 `build/dos-training31-source/build/dos/pgo/scene-training/report.json`,
 `build/dos-training31-release/optimized-oracle.log` and
 `build/dos-training31-trace/`.
+
+### Further billboard mask and copy trials
+
+The next trials retain the staged training31 engine. On the immutable
+92-call explosion raster capture, 64 repetitions per call at normal/486_slow,
+fixed 40,000 cycles and 4 MB, lightweight full-row identity tags increase
+time from 21.410118 to 21.925888 ms. Tags propagate only from preceding
+verified calls; captured rows are never deduplicated to seed them. Complete
+pixels, coverage masks, open-word counts and visible/drawn totals match.
+Folding the original-mask snapshot into the fresh-bit loop also loses,
+at 21.452481 ms. Neither change enters production.
+
+A separate native copier trial sums the first row's fresh pixels once and
+reuses that total for subsequent identical range lists. This frees the
+assembly copier's accumulator register and improves the raw capture to
+21.329255 ms. Fresh feedback completes all 27 training runs, matches all
+22 original 4 MB captures and passes the real-time level-4 sound/mouse
+exercise. The actual optimized objects pass the complete independent
+raster/arithmetic/movement oracle. Indexed preprocessing remains identical.
+
+The fresh engine's matched original-clock peak changes only 81.113 to
+81.082 ms; frame-10 rendering changes 65.814 to 65.783 ms. All 64 original
+images, simulation hashes and latched-clock assertions remain exact.
+Live barrel measurements, mean / p95 / maximum milliseconds:
+
+| Scene | Staged engine | Copier trial |
+| --- | --- | --- |
+| Level 1 | 39.789 / 55.862 / 61.660 | 39.795 / 55.996 / 61.616 |
+| Level 1, turning | 35.371 / 63.512 / 71.276 | 35.371 / 63.468 / 71.389 |
+| Level 6 | 43.558 / 54.838 / 57.122 | 43.557 / 54.821 / 57.125 |
+| Level 6, turning | 51.583 / 64.299 / 67.179 | 51.572 / 64.279 / 67.157 |
+
+The negligible matched gain and worse level-1 tails do not justify retaining
+the copier change. All runtime edits are discarded; native/indexed EXEs,
+archives, settings and saves retain the previous verified versions. The full
+release suite and staging are deliberately not run for this rejected trial.
+Large busy frames and physical 486 measurements remain open.
+
+Evidence is retained in `build/dos/copy32-development.json`,
+`build/dos-mask32-trace/` and `build/dos-copy32-release/`.
+The exact rejected production candidate is preserved separately as
+`build/dos-mask32-trace/raster-uncounted-frozen.c`; the experimental worktree
+has been restored to the staged renderer source.
