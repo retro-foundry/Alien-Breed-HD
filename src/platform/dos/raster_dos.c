@@ -193,14 +193,43 @@ static void sprite_copy(RendererPixel *out,const RendererPixel *source,unsigned 
     unsigned quads=count/4;
     __asm__ volatile("rep movsl" : "+S"(source), "+D"(out), "+c"(quads) : : "memory","cc");
     if(count&2)__asm__ volatile("movsw" : "+S"(source), "+D"(out) : : "memory","cc");
-#else
-    unsigned pairs=count/2;
-    __asm__ volatile("rep movsl" : "+S"(source), "+D"(out), "+c"(pairs) : : "memory","cc");
-#endif
     if(count&1)*out=*source;
+#else
+    /* MOVS preserves SHR's carry, which identifies the final odd word. */
+    __asm__ volatile("shrl $1,%%ecx; rep movsl; jnc 1f; movsw; 1:"
+                     : "+S"(source), "+D"(out), "+c"(count) : : "memory","cc");
+#endif
 }
 
 typedef struct { const RendererPixel *source;unsigned count; } DosSpriteSpan;
+
+#ifdef AB3D_NATIVE_RGB565
+/* The caller already proved this range list nonempty. Keep the whole
+ * row copy in registers; each span's source offset selects its target. */
+static unsigned sprite_copy_ranges(RendererPixel *out,const RendererPixel *row,
+                                    const DosSpriteSpan *span,const DosSpriteSpan *end)
+{
+    unsigned written;
+    uintptr_t delta=(uintptr_t)out-(uintptr_t)row;
+    __asm__ volatile(
+        "xorl %%eax,%%eax\n\t"
+        "1: movl (%%ebx),%%esi\n\t"
+        "leal (%%esi,%%edx),%%edi\n\t"
+        "movl 4(%%ebx),%%ecx\n\t"
+        "addl %%ecx,%%eax\n\t"
+        "shrl $1,%%ecx\n\t"
+        "rep movsl\n\t"
+        "jnc 2f\n\t"
+        "movsw\n\t"
+        "2: addl $8,%%ebx\n\t"
+        "cmpl %[end],%%ebx\n\t"
+        "jne 1b"
+        : "+&b"(span),"=&a"(written)
+        : "d"(delta),[end]"r"(end)
+        : "ecx","esi","edi","memory","cc");
+    return written;
+}
+#endif
 
 static inline void sprite_copy_record(RendererPixel *out,const RendererPixel *source,
                                       unsigned count,DosSpriteSpan **next)
@@ -320,10 +349,14 @@ static unsigned sprite_batch_rows(RendererPixel *out,unsigned height,
             uint32_t *other=sprite_batch->covered[y+next]+first;
             if(!sprite_words_equal(before,other,words))break;
             target=out+next*pitch;
+#ifdef AB3D_NATIVE_RGB565
+            total+=sprite_copy_ranges(target,row,ranges,end);
+#else
             for(const DosSpriteSpan *span=ranges;span<end;span++) {
                 sprite_copy(target+(span->source-row),span->source,span->count);
                 total+=span->count;
             }
+#endif
             sprite_mask_copy(other,covered,words);
             sprite_batch->open_words[y+next]-=(uint8_t)closed;
         }

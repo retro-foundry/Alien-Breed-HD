@@ -449,6 +449,45 @@ static void check_sprite_fresh_runs(void)
     printf("PASS: %u fresh-run pixel cases preserve every contiguous word gap, arbitrary multi-run coverage, unaligned PTRs, single/repeated rows, cutouts, black, ownership, counts and guards\n",checked);
 }
 
+/* A single opaque source texel produces every possible row-copy width.
+ * Cover both source/destination dword alignments, black, ordinary painter
+ * copies and the repeated-band range list, using independent pixel writes. */
+static void check_sprite_copy_widths(void)
+{
+    enum { HEIGHT=3, PIXELS=320*HEIGHT };
+    static RendererPixel actual[PIXELS+16],expected[PIXELS+16];
+    const uint8_t wad[4]={0,0,31,0},ptr[4]={0,0,0,2};
+    RendererPixel palette[32]={0};int rows[HEIGHT]={0};
+    struct GuardedMask { uint32_t before[4];DosSpriteBatch mask;uint32_t after[4]; } got_mask,want_mask;
+    unsigned checked=0;
+    for(unsigned width=1;width<=320;width++)for(unsigned alignment=0;alignment<2;alignment++)
+    for(unsigned batch=0;batch<2;batch++) {
+        unsigned left=alignment?320-width:0;
+        palette[31]=(RendererPixel)(width%4==0?0:width%4==1?0xffff:width%4==2?1:width*1973u);
+        for(unsigned i=0;i<PIXELS+16;i++)actual[i]=expected[i]=(RendererPixel)0xa55a;
+        memset(&got_mask,0xa5,sizeof(got_mask));
+        if(batch)dos_raster_sprite_batch_begin(actual+8,&got_mask.mask);
+        want_mask=got_mask;
+        for(unsigned y=0;y<HEIGHT;y++)for(unsigned x=left;x<left+width;x++) {
+            expected[8+y*320+x]=palette[31];
+            if(batch)want_mask.mask.covered[y][x/32]|=1u<<(x%32);
+        }
+        if(batch)for(unsigned y=0;y<HEIGHT;y++) {
+            unsigned open=0;
+            for(unsigned word=0;word<10;word++)open+=want_mask.mask.covered[y][word]!=UINT32_MAX;
+            want_mask.mask.open_words[y]=(uint8_t)open;
+        }
+        DosSpriteRows sprite={wad,ptr,sizeof(wad),sizeof(ptr),palette,rows,0,0,0,1,0};
+        DosSpriteCoverage got=dos_raster_sprite_rows(actual+8+left,width,HEIGHT,320,&sprite);
+        dos_raster_sprite_batch_end();
+        assert(got.visible==width*HEIGHT && got.drawn==width*HEIGHT);
+        assert(!memcmp(actual,expected,sizeof(actual)));
+        if(batch)assert(!memcmp(&got_mask,&want_mask,sizeof(got_mask)));
+        checked++;
+    }
+    printf("PASS: %u sprite-copy width cases preserve widths 1..320, dword alignments, black, painter/repeated-band copies, masks/counts and guards\n",checked);
+}
+
 static void check_sprite_narrow_coverage(void)
 {
     enum { HEIGHT=8, PIXELS=320*HEIGHT };
