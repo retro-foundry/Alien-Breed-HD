@@ -1167,8 +1167,15 @@ static void check_objects(void)
     const int near_z = ROT_Z_FROM_INT(50);
     level.object_data = objects; level.object_points = point_data; level.num_object_points = 256;
     level.nasty_shot_data = nasty; level.player_shot_data = player; level.draw_group_count = 64;
-    for (unsigned z = 0; z < 64; z++) level.draw_groups[z] = z / 2;
+    unsigned shot_queries = 0;
     for (unsigned frame = 0; frame < 32; frame++) {
+        for (unsigned z = 0; z < 64; z++) level.draw_groups[z] = z / 2;
+        if (frame % 8 == 1) level.draw_groups[5] = 300;
+        if (frame % 8 == 2) level.draw_groups[63] = -1;
+        if (frame % 8 == 5) level.draw_groups[63] = 255;
+        if (frame % 8 == 6) level.draw_groups[0] = 511;
+        level.nasty_shot_data = frame == 30 || frame == 31 ? NULL : nasty;
+        level.player_shot_data = frame == 29 || frame == 31 ? NULL : player;
         unsigned count = frame == 31 ? 0 : (frame * 43) % 257;
         memset(objects, 0, sizeof(objects));
         for (unsigned i = 0; i < 256; i++) {
@@ -1180,14 +1187,25 @@ static void check_objects(void)
             points[i].z = ROT_Z_FROM_INT((int)((i * 7 + frame) % 151) - 25);
         }
         if (count < 256) put_word(objects + count * OBJECT_SIZE, -1);
+        if (frame == 0 || frame == 16)
+            for (unsigned i = 0; i < 256; i++) points[i].z = near_z + 1;
         for (unsigned pool = 0; pool < 2; pool++) {
             uint8_t *data = pool ? player : nasty;
             unsigned slots = pool ? PLAYER_SHOT_SLOT_COUNT : NASTY_SHOT_SLOT_COUNT;
             for (unsigned i = 0; i < slots; i++) {
                 uint8_t *shot = data + i * OBJECT_SIZE;
                 put_word(shot, (i * 3) % 256);
-                put_word(shot + 12, i % 7 ? i % 64 : -1);
-                shot[16] = i % 5 ? OBJ_NBR_BULLET : OBJ_NBR_ALIEN;
+                put_word(shot + 12, frame == 16 ? 0 : frame == 0 ? i % 64 : i % 7 ? i % 64 : -1);
+                shot[16] = frame == 0 || frame == 16 || i % 5 ? OBJ_NBR_BULLET : OBJ_NBR_ALIEN;
+            }
+            if (frame != 0 && frame != 16) {
+                static const int16_t zones[] = {0,63,255,256,32767,-1,64,5};
+                put_word(data, 255); put_word(data + 12, zones[frame % 8]);
+                data[16] = OBJ_NBR_BULLET; points[255].z = near_z + 1;
+                uint8_t *last = data + (slots - 1) * OBJECT_SIZE;
+                put_word(last, 254); put_word(last + 12, 31 + pool);
+                last[16] = OBJ_NBR_BULLET; points[254].z = near_z + 1;
+                if (frame % 5 == 0) put_word(data + OBJECT_SIZE, 300);
             }
         }
         dos_objects_prepare(&level, points, near_z);
@@ -1196,12 +1214,14 @@ static void check_objects(void)
             const uint8_t *obj = objects + i * OBJECT_SIZE;
             int p = get_word(obj), z = get_word(obj + 12);
             if ((unsigned)p >= 256 || z < 0 || points[p].z <= (obj[6] == OBJ_3D_SPRITE ? 0 : near_z)) continue;
-            if (z >= 256) indexed = 0;
+            int group = z < level.draw_group_count ? level.draw_groups[z] : z;
+            if (z >= 256 || (unsigned)group >= 256) indexed = 0;
         }
         for (int zone = 0; zone < 64; zone++) {
             int16_t adjacent[] = {zone - 1, zone + 1, zone + 2, -1};
             uint8_t actual[256], expected[256];
             unsigned total = 0;
+            int query_group = level.draw_groups[zone];
             for (unsigned i = 0; i < count; i++) {
                 const uint8_t *obj = objects + i * OBJECT_SIZE;
                 int p = get_word(obj), z = get_word(obj + 12);
@@ -1209,18 +1229,19 @@ static void check_objects(void)
                 if ((unsigned)p >= 256 || z < 0 || points[p].z <= (polygon ? 0 : near_z)) continue;
                 int connected = 0;
                 for (unsigned a = 0; a < 4; a++) if (adjacent[a] == z) connected = 1;
-                if (indexed && !level_same_draw_room(&level, z, zone) && (polygon || !connected)) continue;
+                if (indexed && (unsigned)query_group < 256 &&
+                    !level_same_draw_room(&level, z, zone) && (polygon || !connected)) continue;
                 expected[total++] = i;
             }
             unsigned found = dos_objects_for_room(&level, zone, adjacent, 4, actual);
             assert(found == total && !memcmp(actual, expected, total));
         }
         for (unsigned pool = 0; pool < 2; pool++) {
-            const uint8_t *data = pool ? player : nasty;
+            const uint8_t *data = pool ? level.player_shot_data : level.nasty_shot_data;
             unsigned slots = pool ? PLAYER_SHOT_SLOT_COUNT : NASTY_SHOT_SLOT_COUNT;
             uint8_t expected[NASTY_SHOT_SLOT_COUNT + PLAYER_SHOT_SLOT_COUNT];
             unsigned total = 0, found;
-            for (unsigned i = 0; i < slots; i++) {
+            for (unsigned i = 0; data && i < slots; i++) {
                 const uint8_t *obj = data + i * OBJECT_SIZE;
                 int point = get_word(obj);
                 if (get_word(obj + 12) >= 0 && obj[16] == OBJ_NBR_BULLET &&
@@ -1229,8 +1250,59 @@ static void check_objects(void)
             const uint8_t *actual = dos_objects_shots(pool, &found);
             assert(found == total && !memcmp(actual, expected, total));
         }
+        /* Compare room preselection against the original per-slot ownership
+         * and raw-adjacency tests, including conservative wide-zone scans. */
+        int shots_indexed = 1;
+        for (unsigned pool = 0; pool < 2; pool++) {
+            const uint8_t *data = pool ? level.player_shot_data : level.nasty_shot_data;
+            unsigned slots = pool ? PLAYER_SHOT_SLOT_COUNT : NASTY_SHOT_SLOT_COUNT;
+            for (unsigned i = 0; data && i < slots; i++) {
+                const uint8_t *obj = data + i * OBJECT_SIZE;
+                int point = get_word(obj), z = get_word(obj + 12);
+                if (z < 0 || obj[16] != OBJ_NBR_BULLET || point < 0 || point >= 256 || points[point].z <= near_z) continue;
+                int group = z < level.draw_group_count ? level.draw_groups[z] : z;
+                if ((unsigned)z >= 256 || (unsigned)group >= 256) shots_indexed = 0;
+            }
+        }
+        static const int16_t extra_zones[] = {-1,64,255,256,300,32767,-32768};
+        for (unsigned query = 0; query < 64 + sizeof(extra_zones)/sizeof(*extra_zones); query++) {
+            int zone = query < 64 ? (int)query : extra_zones[query - 64];
+            int group = zone >= 0 && zone < level.draw_group_count ? level.draw_groups[zone] : zone;
+            int16_t adjacent[6] = {(int16_t)(zone-1),(int16_t)(zone+1),(int16_t)(zone+1),
+                                   (int16_t)zone,255,32767};
+            if (frame & 1) { adjacent[0] = -1; adjacent[2] = 256; adjacent[3] = (int16_t)(zone ^ 1); }
+            unsigned adjacent_count = frame % 4 ? 6 : 0;
+            const int16_t *neighbors = adjacent_count ? adjacent : NULL;
+            uint8_t actual[NASTY_SHOT_SLOT_COUNT + PLAYER_SHOT_SLOT_COUNT + 16];
+            uint8_t expected[NASTY_SHOT_SLOT_COUNT + PLAYER_SHOT_SLOT_COUNT];
+            unsigned total = 0, expected_counts[2] = {0,0};
+            for (unsigned pool = 0; pool < 2; pool++) {
+                const uint8_t *data = pool ? level.player_shot_data : level.nasty_shot_data;
+                unsigned slots = pool ? PLAYER_SHOT_SLOT_COUNT : NASTY_SHOT_SLOT_COUNT;
+                for (unsigned i = 0; data && i < slots; i++) {
+                    const uint8_t *obj = data + i * OBJECT_SIZE;
+                    int point = get_word(obj), z = get_word(obj + 12);
+                    if (z < 0 || obj[16] != OBJ_NBR_BULLET || point < 0 || point >= 256 || points[point].z <= near_z) continue;
+                    int connected = 0;
+                    for (unsigned a = 0; a < adjacent_count; a++) if (neighbors[a] == z) connected = 1;
+                    if (shots_indexed && (unsigned)group < 256 &&
+                        !level_same_draw_room(&level,z,zone) && !connected) continue;
+                    expected[total++] = (uint8_t)i; expected_counts[pool]++;
+                }
+            }
+            memset(actual,0x91,sizeof(actual));
+            unsigned counts[4] = {0x13579bdu,~0u,~0u,0x2468aceu};
+            dos_objects_shots_for_room(&level,zone,neighbors,adjacent_count,counts+1,actual+8);
+            assert(counts[0] == 0x13579bdu && counts[3] == 0x2468aceu);
+            assert(counts[1] == expected_counts[0] && counts[2] == expected_counts[1]);
+            assert(!memcmp(actual+8,expected,total));
+            for (unsigned i = 0; i < 8; i++) assert(actual[i] == 0x91);
+            for (unsigned i = total+8; i < sizeof(actual); i++) assert(actual[i] == 0x91);
+            shot_queries++;
+        }
     }
     level.num_object_points = -1;
+    level.nasty_shot_data = nasty; level.player_shot_data = player;
     dos_objects_prepare(&level, points, near_z);
     uint8_t empty[256];
     assert(dos_objects_for_room(&level, 0, NULL, 0, empty) == 0);
@@ -1239,7 +1311,11 @@ static void check_objects(void)
         dos_objects_shots(pool, &total);
         assert(total == 0);
     }
+    unsigned no_shots[2] = {~0u,~0u};
+    dos_objects_shots_for_room(&level,0,NULL,0,no_shots,empty);
+    assert(no_shots[0] == 0 && no_shots[1] == 0);
     puts("PASS: 2048 room candidate lists and both shot pools retain ObjDraw slot ordering and rejects");
+    printf("PASS: %u room shot queries preserve both pools, slot order, aliases, duplicate neighbors, wide IDs/groups, invalid slots, empty pools, frame resets and guards\n",shot_queries);
 }
 
 void check_movement_touch(void);

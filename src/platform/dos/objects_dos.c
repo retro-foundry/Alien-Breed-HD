@@ -8,8 +8,13 @@ static int16_t billboard_heads[ROOM_COUNT], billboard_next[OBJECT_COUNT];
 static uint8_t all_objects[OBJECT_COUNT];
 static unsigned all_count;
 static int indexed_rooms;
-static uint8_t shots[2][NASTY_SHOT_SLOT_COUNT + PLAYER_SHOT_SLOT_COUNT];
+enum { SHOT_COUNT = NASTY_SHOT_SLOT_COUNT + PLAYER_SHOT_SLOT_COUNT };
+_Static_assert(SHOT_COUNT <= 128, "DOS signed-byte shot links");
+static uint8_t shots[SHOT_COUNT];
 static unsigned shot_count[2];
+static int8_t shot_group_heads[ROOM_COUNT], shot_zone_heads[ROOM_COUNT];
+static int8_t shot_group_next[SHOT_COUNT], shot_zone_next[SHOT_COUNT];
+static int indexed_shots;
 
 static int read_word(const uint8_t *p) { return (int16_t)((p[0] << 8) | p[1]); }
 static int draw_group(const LevelState *level, int zone)
@@ -44,16 +49,30 @@ void dos_objects_prepare(const LevelState *level, const ObjRotatedPoint *points,
             billboard_heads[zone] = (int16_t)i;
         }
     }
+    memset(shot_group_heads, -1, sizeof(shot_group_heads));
+    memset(shot_zone_heads, -1, sizeof(shot_zone_heads));
+    indexed_shots = 1;
     for (unsigned pool = 0; pool < 2; pool++) {
         const uint8_t *data = pool ? level->player_shot_data : level->nasty_shot_data;
         unsigned slots = pool ? PLAYER_SHOT_SLOT_COUNT : NASTY_SHOT_SLOT_COUNT;
         shot_count[pool] = 0;
         for (unsigned i = 0; data && i < slots; i++) {
             const uint8_t *obj = data + i * OBJECT_SIZE;
-            int point = read_word(obj);
-            if (read_word(obj + 12) < 0 || (int8_t)obj[16] != OBJ_NBR_BULLET ||
+            int point = read_word(obj), zone = read_word(obj + 12);
+            if (zone < 0 || (int8_t)obj[16] != OBJ_NBR_BULLET ||
                 point < 0 || (unsigned)point >= (unsigned)point_count || points[point].z <= near_z) continue;
-            shots[pool][shot_count[pool]++] = (uint8_t)i;
+            unsigned base = pool ? NASTY_SHOT_SLOT_COUNT : 0;
+            shots[base + shot_count[pool]++] = (uint8_t)i;
+            int group = draw_group(level, zone);
+            if ((unsigned)zone >= ROOM_COUNT || (unsigned)group >= ROOM_COUNT) {
+                indexed_shots = 0;
+                continue;
+            }
+            unsigned slot = base + i;
+            shot_group_next[slot] = shot_group_heads[group];
+            shot_group_heads[group] = (int8_t)slot;
+            shot_zone_next[slot] = shot_zone_heads[zone];
+            shot_zone_heads[zone] = (int8_t)slot;
         }
     }
 }
@@ -87,5 +106,42 @@ unsigned dos_objects_for_room(const LevelState *level, int zone,
 const uint8_t *dos_objects_shots(unsigned pool, unsigned *count)
 {
     *count = shot_count[pool];
-    return shots[pool];
+    return shots + (pool ? NASTY_SHOT_SLOT_COUNT : 0);
+}
+
+void dos_objects_shots_for_room(const LevelState *level, int zone,
+                                 const int16_t *adjacent, unsigned adjacent_count,
+                                 unsigned counts[2], uint8_t out[NASTY_SHOT_SLOT_COUNT + PLAYER_SHOT_SLOT_COUNT])
+{
+    if (!(shot_count[0] | shot_count[1])) {
+        counts[0] = counts[1] = 0;
+        return;
+    }
+    int group = draw_group(level, zone);
+    if (!indexed_shots || (unsigned)group >= ROOM_COUNT) {
+        counts[0] = shot_count[0]; counts[1] = shot_count[1];
+        memcpy(out, shots, counts[0]);
+        memcpy(out + counts[0], shots + NASTY_SHOT_SLOT_COUNT, counts[1]);
+        return;
+    }
+    /* Own-room aliases and raw adjacent-zone membership are different tests.
+     * Union their lists, then enumerate slots in original ObjDraw order. */
+    uint32_t selected[(SHOT_COUNT + 31) / 32] = {0};
+    for (int slot = shot_group_heads[group]; slot >= 0; slot = shot_group_next[slot])
+        selected[slot / 32] |= 1u << (slot % 32);
+    for (unsigned i = 0; i < adjacent_count; i++) {
+        if ((unsigned)adjacent[i] >= ROOM_COUNT) continue;
+        for (int slot = shot_zone_heads[adjacent[i]]; slot >= 0; slot = shot_zone_next[slot])
+            selected[slot / 32] |= 1u << (slot % 32);
+    }
+    unsigned count = 0; counts[0] = counts[1] = 0;
+    for (unsigned word = 0; word < (SHOT_COUNT + 31) / 32; word++) {
+        uint32_t bits = selected[word];
+        while (bits) {
+            unsigned slot = word * 32 + __builtin_ctz(bits);
+            unsigned pool = slot >= NASTY_SHOT_SLOT_COUNT;
+            out[count++] = (uint8_t)(slot - (pool ? NASTY_SHOT_SLOT_COUNT : 0));
+            counts[pool]++; bits &= bits - 1;
+        }
+    }
 }

@@ -13944,6 +13944,13 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
 
     /* Add bullets, gibs, and blast particles from both shot pools. Spill into
      * adjacent zones uses the same geometry-clipped path as level billboards. */
+#ifdef AB3D_DOS
+    uint8_t room_shots[NASTY_SHOT_SLOT_COUNT + PLAYER_SHOT_SLOT_COUNT];
+    unsigned room_shot_count[2];
+    if (g_dos_draw_objects_active)
+        dos_objects_shots_for_room(level, zone_id, adjacent_source_zones, adjacent_source_count,
+                                    room_shot_count, room_shots);
+#endif
     int shot_pool_slots[2] = { NASTY_SHOT_SLOT_COUNT, PLAYER_SHOT_SLOT_COUNT };
     for (int pool = 0; pool < 2 && obj_count < max_draw_entries; pool++) {
         const uint8_t *shots = (pool == 0) ? level->nasty_shot_data : level->player_shot_data;
@@ -13952,9 +13959,8 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
 #ifdef AB3D_DOS
         const uint8_t *shot_indices = NULL;
         if (g_dos_draw_objects_active) {
-            unsigned selected_count;
-            shot_indices = dos_objects_shots(pool, &selected_count);
-            slots = selected_count;
+            shot_indices = room_shots + (pool ? room_shot_count[0] : 0);
+            slots = room_shot_count[pool];
         }
 #endif
         for (int scan = 0; scan < slots && obj_count < max_draw_entries; scan++) {
