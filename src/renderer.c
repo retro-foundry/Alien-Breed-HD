@@ -36,6 +36,9 @@
 #include "platform_dos.h"
 #include "raster_dos.h"
 #include "objects_dos.h"
+#ifdef AB3D_NATIVE_RGB565
+#include "sprite_alpha_dos.h"
+#endif
 #endif
 #include "renderer_alloc.h"
 #include "renderer_3dobj.h"
@@ -10386,6 +10389,13 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                       (unsigned)eff_cols,(unsigned)down_strip_i,
                                       (uint32_t)(draw_top-sy)*(uint32_t)src_row_step,
                                       (uint32_t)src_row_step,(unsigned)eff_rows-1u};
+#ifdef AB3D_NATIVE_RGB565
+                if((unsigned)sprite_type<MAX_SPRITE_TYPES &&
+                   wad==g_renderer.sprite_wad[sprite_type] && wad_size==g_renderer.sprite_wad_size[sprite_type] &&
+                   ptr_data==g_renderer.sprite_ptr[sprite_type] && ptr_size==g_renderer.sprite_ptr_size[sprite_type])
+                    sprite.nonempty_rows=dos_sprite_alpha_rows((unsigned)sprite_type,ptr_offset,
+                                                               (unsigned)down_strip_i,(unsigned)eff_cols);
+#endif
                 DosSpriteCoverage part=dos_raster_sprite_rows(
                     cw+(size_t)draw_top*rw+(size_t)(sx+(int)first),
                     count,(unsigned)draw_row_count,(unsigned)rw,&sprite);

@@ -10,6 +10,7 @@ import struct
 import sys
 from dos_wall import prepare_wall
 from dos_sprite import prepare_sprite
+from dos_sprite_alpha import ALPHA_ROWS, alpha_sources, write_sprite_alpha
 from dos_water import prepare_water
 from pal_to_header import rgb565_words
 
@@ -26,6 +27,18 @@ def main():
     (run / 'WALL.BIN').write_bytes(prepare_wall(packed))
     (run / 'COLORS.BIN').write_bytes(rgb565_words(struct.pack('>4096H', *range(4096))))
     (run / 'SWORDS.BIN').write_bytes(prepare_sprite(struct.pack('>65536H', *range(65536)), b'\x01\0\0\0'))
+    write_sprite_alpha(root, run / 'sprite_alpha_data.h')
+    assets = list(alpha_sources(root))
+    with (run / 'ALPHA.BIN').open('wb') as fixture:
+        fixture.write(struct.pack('<4sII', b'ALF1', len(assets), ALPHA_ROWS))
+        for asset in assets:
+            native = prepare_sprite(asset['wad'], asset['ptr'])[8:]
+            fixture.write(struct.pack('<4I', asset['sprite_type'], len(native),
+                                      len(asset['ptr']), len(asset['queries'])))
+            fixture.write(native)
+            fixture.write(asset['ptr'])
+            for query in asset['queries']:
+                fixture.write(struct.pack('<3I', *query))
     water = (root / 'amiga/data/helper/WaterFile').read_bytes()
     (run / 'WATER.BIN').write_bytes(prepare_water(water))
     (run / 'WATERRAW.BIN').write_bytes(water)
@@ -63,6 +76,7 @@ def main():
                     '-include', 'src/platform/dos/math_compat.h',
                     'tests/dos_raster.c', 'tests/dos_movement.c', 'src/level.c', 'src/platform/dos/raster_dos.c',
                     'src/platform/dos/objects_dos.c',
+                    'src/platform/dos/sprite_alpha_dos.c',
                     'src/sprite_palettes.c',
                     '-lm', '-o', str(run / 'RASTER.EXE')], cwd=root, env=env, check=True)
     subprocess.run([str(djgpp / 'i586-pc-msdosdjgpp/bin/stubedit.exe'), str(run / 'RASTER.EXE'),

@@ -1,4 +1,4 @@
-"""Add real barrel-scene feedback for the native DOS raster translation unit."""
+"""Add real barrel-scene feedback for native DOS billboard raster/alpha units."""
 import json
 from pathlib import Path
 import re
@@ -9,11 +9,13 @@ import subprocess
 def train_raster_scenes(root, work, commands, counters, env, run, check, sdl_library):
     main_index = next(i for i, cmd in enumerate(commands)
                       if Path(cmd[cmd.index('-c') + 1]).name == 'main.c')
+    selected_sources = ['src/platform/dos/raster_dos.c',
+                        'src/platform/dos/sprite_alpha_dos.c']
     selected = {f'S{i:03d}.GCD' for i, cmd in enumerate(commands)
                 if Path(cmd[cmd.index('-c') + 1]).resolve().relative_to(root).as_posix()
-                == 'src/platform/dos/raster_dos.c'}
-    if len(selected) != 1 or not selected <= counters.keys():
-        raise RuntimeError('Native raster feedback is missing from ordinary training')
+                in selected_sources}
+    if len(selected) != len(selected_sources) or not selected <= counters.keys():
+        raise RuntimeError('Native billboard raster/alpha feedback is missing from ordinary training')
     compiler = Path(commands[main_index][0])
     dump = compiler.parent / 'i586-pc-msdosdjgpp-gcov-dump.exe'
     if not dump.is_file():
@@ -101,7 +103,7 @@ def train_raster_scenes(root, work, commands, counters, env, run, check, sdl_lib
         print(f'PGO: trained barrel scene level {level}, turn={turn}', flush=True)
     for name in selected:
         counters[name] = rolling[name]
-    report = dict(scenes=records, selected_sources=['src/platform/dos/raster_dos.c'],
+    report = dict(scenes=records, selected_sources=selected_sources,
                   production_main_profile_preserved=True, training_memory_mb=16,
                   counters_are_not_performance_measurements=True)
     (scene / 'report.json').write_text(json.dumps(report, indent=2) + '\n')

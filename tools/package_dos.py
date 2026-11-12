@@ -12,6 +12,7 @@ import zipfile
 from dos_palette import stage_palettes
 from dos_wall import prepare_wall
 from dos_sprite import prepare_sprite
+from dos_sprite_alpha import write_sprite_alpha
 from dos_water import prepare_water
 
 
@@ -93,6 +94,8 @@ def main():
         if unpacked.stat().st_size!=expected:raise SystemExit(f'Incomplete unpacked level: {source}')
         sources[logical]=unpacked
     stage_palettes(root, generated, sources)
+    if not args.indexed:
+        write_sprite_alpha(root, generated / 'sprite_alpha_data.h')
     # Native water planes replace the renderer's duplicate 32 KiB phase LUT.
     # Preserve all source bytes, including those outside the sampled planes.
     for logical, source in list(sources.items()):

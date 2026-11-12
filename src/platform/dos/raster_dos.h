@@ -46,6 +46,11 @@ typedef struct {
     /* NULL rows selects an increasing 16.16 walk, clamped to row_last.
      * row_v+(height-1)*row_dv must fit a nonnegative signed 32-bit value. */
     uint32_t row_v,row_dv,row_last;
+#ifdef AB3D_NATIVE_RGB565
+    /* Optional conservative occupancy for source rows 0..63. Every nonzero
+     * texel in the complete source-column range must have its row marked. */
+    const uint32_t *nonempty_rows;
+#endif
 } DosSpriteRows;
 typedef struct { unsigned visible, drawn; } DosSpriteCoverage;
 /* One 320-pixel-wide object pass, up to 240 rows, in RendererPixel format.
