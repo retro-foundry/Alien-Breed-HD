@@ -5072,3 +5072,30 @@ Evidence is in `build/dos/briefing-validation.json`,
 `build/dos-briefing-source/build/dos/pgo/report.json` and each build's
 `briefing-check/report.json`. The staged native/indexed packages now include
 the briefing change.
+
+### Half-size DOS HUD keys
+
+`db2ff64` prepares 16x16 DOS key images from the original 32x32 type-5 sprite
+frames, using the mask-aware filter described above. The key row, underlines
+and native canvas preservation bounds share the same size constant. Four
+coloured/grey pixel buffers save 9 KiB; there is no per-frame resampling.
+
+Both packages pass their 4 MB level-4 exercise, including grey cutouts, owned
+keys, underlines, menus, all sixteen briefings and zero sound underruns. Fresh
+native feedback completes all 27 scenarios and 22 image comparisons with frozen
+sources/SDL. All 22 gameplay captures remain identical to the preceding
+briefing build outside the former 134x36 key area. Native level-4 free XMS is
+132 KiB after shared assets and 52 KiB after loading. Both builds add 512 text
+bytes with unchanged data/BSS. Both archives retain 231 assets and 238 entries;
+only EXE/README change. Staging preserves 240 other native and 237 other indexed
+game files, including settings and saves.
+
+| Package | EXE SHA-256 | ZIP SHA-256 |
+| --- | --- | --- |
+| Native | `a67bd31768eddb6179de9572f69e17dd196c322aebbd37a6fe53e6e092e2f946` | `14238737529fcc2391f4ed12660edea826ca0a1cb0bfea39c33354a8d28502a4` |
+| Indexed | `8fb90cff846d2f38c26160865591c401c0b239b56299e3c34513528c8cbcb869` | `59bf848c8f8789e33efcc89874afb5ceb752ef67379fbfbdd2026744369e3148` |
+
+These packages are staged under `build/dos` and `build/dos-indexed`. Evidence is
+in `build/dos/hud-keys-validation.json`, `build/dos/hud-keys-staging.json`,
+`build/dos-hud-keys-trace/` and
+`build/dos-hud-keys-source/build/dos/pgo/report.json`.
