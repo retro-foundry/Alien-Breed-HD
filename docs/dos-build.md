@@ -3573,3 +3573,62 @@ Local evidence is in `build/dos/select15-performance.json`,
 and `build/dos-select15-source/build/dos/pgo/model-check/report.json`.
 Candidate counters, indexed image checks and the sound stress limitation
 are recorded under `build/dos-select15-trace/`.
+
+### Apply the billboard samplers and coverage masks to indexed DOS
+
+`09598ff` enables the existing DOS row/column samplers, repeated-column
+decode reuse, reverse painter coverage and alpha-footprint history for the
+optional 320x200 indexed build. Both DOS packages already contain the same
+little-endian sprite words. Indexed stores and row copies now use byte
+pixels, including exact two-byte and one-byte copy tails; source index zero
+remains the only transparent value. Palette values zero and 255 stay opaque
+when their source texel is nonzero. The indexed batch threshold uses its
+200-row display height. The scratch buffers use the reserved DOS stack;
+there is no new shading table or asset conversion.
+
+Captured fixed-update barrel scenes use normal/486_slow, 40,000 cycles,
+4 MB and mouse, with image writes outside the measured update. These are
+matching-state scene timings, not ordinary-clock FPS measurements. With
+sound disabled, mean/p95/worst milliseconds are:
+
+| Indexed barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 243.883 / 945.411 / 963.490 | 65.711 / 85.204 / 85.819 |
+| Level 1, turning | 214.837 / 865.912 / 876.678 | 60.974 / 86.726 / 93.126 |
+| Level 6 | 110.986 / 294.942 / 297.803 | 68.167 / 76.361 / 78.569 |
+| Level 6, turning | 132.781 / 359.460 / 363.221 | 74.298 / 79.602 / 83.525 |
+
+All four new sound-on runs also retain the exact images and simulation
+hashes, with zero audio underruns. The level-1 sound-on worst frame falls
+from the previous release's 964.968 ms to 89.991 ms, and its underrun count
+falls from 110 to zero. The new sound-on turning level-1 worst frame is
+97.083 ms. An unmodified 128-frame indexed start with ordinary clock,
+SB16/mouse and the same 40,000-cycle/4 MB setup gives 15.24 FPS,
+65.64 ms mean and 65.58/120.35 ms p95/worst, with zero audio underruns.
+The default native renderer's remaining consistency work is still open.
+
+The actual 486 byte-pixel oracle reuses the six independent native sprite
+test groups and adds 1,024 cases covering all 256 palette values, clipped
+origins, transparency, repeated rows, byte-copy tails and bounds guards.
+Run it with `python tools/check_dos_indexed_raster.py --dosbox <dosbox.exe>`
+after setting up the DOS dependencies. Both raster oracle executables pass.
+All 512 new indexed burst captures match the previous 256 silent reference
+frames, once with sound disabled and once enabled. A native build with the
+changed renderer/raster retains all 512 release reference images and state
+hashes. All 22 original indexed captures also match. Full indexed 4 MB
+level-1/4 sound/mouse exercises pass at 200,000 cycles; level 4 has 184 KiB
+free after loading. Windows Release builds with the existing warnings.
+
+This iteration stages the tested indexed EXE and ZIP in `build/dos-indexed`.
+All 231 asset payloads and 238 archive entries pass validation, and all
+238 existing non-EXE game files, including settings and saves, are preserved.
+The indexed EXE SHA-256 is
+`d3b57de5625f2690fd6180ee4b3f4e57fc2f7ee0cdfa4ac6bb3485761c5345a7`;
+the ZIP SHA-256 is
+`b83834e8d4b113ecb0f4ce4a023cbe1acd74e3819e69ed989d80df4c3385bed5`.
+The default native package retains the previously verified `1282c77b...`
+EXE. Local results are in `build/dos-indexed16-trace/scene-validation.json`,
+`build/dos-indexed16-trace/package-validation.json` and
+`build/dos/indexed16-staging.json`; oracle logs are under
+`build/dos-indexed16-source/build/dos-raster-regression` and
+`build/dos-indexed16-source/build/dos-indexed-raster-regression`.
