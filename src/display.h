@@ -74,6 +74,7 @@ void display_dos_end_level_text(void);
 void display_dos_check_text_layouts(GameState *state);
 void display_dos_check_text_screen(const char *label, int allow_pages);
 void display_dos_check_hud_bounds(GameState *state);
+void display_dos_check_hit_flash(GameState *state);
 void display_dos_prepare_gameplay_ui(GameState *state);
 void display_dos_check_gun_frames(GameState *state);
 #endif

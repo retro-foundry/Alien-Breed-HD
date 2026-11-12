@@ -48,6 +48,7 @@ int dos_ui_clear(DosUiRenderer *r);
 int dos_ui_fill(DosUiRenderer *r,const SDL_Rect *rect);
 int dos_ui_line(DosUiRenderer *r,int x0,int y0,int x1,int y1);
 int dos_ui_outline(DosUiRenderer *r,const SDL_Rect *rect);
+bool dos_ui_hit_flash(DosUiRenderer *r,const SDL_Rect *rect,unsigned alpha);
 bool dos_ui_viewport(DosUiRenderer *r,const SDL_Rect *rect);
 bool dos_ui_clip(DosUiRenderer *r,const SDL_Rect *rect);
 #ifdef AB3D_NATIVE_RGB565

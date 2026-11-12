@@ -271,7 +271,10 @@ INI preserves local edits during rebuilds; the ZIP always contains clean default
   use 9 KiB less RAM in total; the indexed caches also shrink.
   Key-to-frame lookup shares one authored object-table scan per HUD draw.
   HUD backgrounds and map lines use solid colors. Menus
-  and transitions use solid fills, and damage feedback uses a red border.
+  and transitions use solid fills. Damage feedback tints the full view red
+  before drawing the HUD, using the existing hit intensity/fade. A 256-byte
+  lookup cache handles native RGB565 components or indexed palette entries;
+  no extra framebuffer or per-pixel division is needed. Unhurt frames skip it.
 - Original `LoadFromDisk.s SFX_NAMES` samples mix at 8007 Hz with integer math.
   Voice selection, sample mapping and `SoundPlayer.s MakeSomeNoise` distance
   volume follow the existing port. Underwater filtering uses a fixed-point

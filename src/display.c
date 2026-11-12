@@ -4730,12 +4730,9 @@ static void display_hit_flash_overlay(const GameState *state)
     if (hit <= 0) return;
     if (hit > 0xF00) hit = 0xF00;
 #ifdef AB3D_DOS
-    /* Keep damage feedback without blending every world pixel on a 486. */
-    SDL_Rect r = g_present_dst_rect;
-    int red = hit * 255 / 0xF00;
-    SDL_Rect edges[4] = {{r.x,r.y,r.w,2},{r.x,r.y+r.h-2,r.w,2},
-                         {r.x,r.y+2,2,r.h-4},{r.x+r.w-2,r.y+2,2,r.h-4}};
-    for (int i=0;i<4;i++) display_overlay_fill_rect_abs(&edges[i],red,0,0,255);
+    if(!dos_ui_hit_flash(g_sdl_ren,&g_present_dst_rect,(unsigned)(hit*88/0xF00))) {
+        fprintf(stderr,"DOS hit flash failed: %s\n",SDL_GetError());exit(1);
+    }
 #else
     /* Original hitcol red pulse, adapted to a borderless view. */
     display_overlay_fill_rect_abs(&g_present_dst_rect, 255, 0, 0,
@@ -5656,6 +5653,32 @@ static void display_dos_check_canvas(GameState *state)
 }
 #endif
 
+static uint32_t display_dos_surface_hash(const SDL_Surface *surface)
+{
+    const uint8_t *bytes=surface->pixels;uint32_t hash=2166136261u;
+    for(unsigned i=0;i<(unsigned)surface->pitch*surface->h;i++)hash=(hash^bytes[i])*16777619u;
+    return hash;
+}
+
+void display_dos_check_hit_flash(GameState *state)
+{
+    GameState test=*state;
+    test.cfg_hud_bars=1;test.cfg_show_fps=0;test.cfg_crosshair_colour=0;
+    test.automap_visible=false;test.infinite_health=false;
+    SDL_Surface *world=display_dos_frame_surface(renderer_get_cw_buffer(),renderer_get_width(),renderer_get_height());
+    uint32_t hash=display_dos_surface_hash(world);
+    const int levels[]={0,0xF00,0xF00,0x800,0};
+    const char *names[]={"HIT0.BMP","HITMAX.BMP","HITREP.BMP","HITMID.BMP","HITOFF.BMP"};
+    for(unsigned i=0;i<sizeof(levels)/sizeof(levels[0]);i++) {
+        test.hitcol=test.hitcol2=levels[i];
+        display_present_cw_frame(&test);dos_capture_frame(names[i]);
+        if(display_dos_surface_hash(world)!=hash) {
+            fprintf(stderr,"DOS damage flash modified renderer/water history\n");exit(1);
+        }
+    }
+    printf("[DOSCHECK] full-view hit flash leaves renderer/water history unchanged\n");
+}
+
 void display_dos_check_hud_bounds(GameState *state)
 {
 #ifdef AB3D_NATIVE_RGB565
@@ -5699,13 +5722,6 @@ void display_dos_check_hud_bounds(GameState *state)
     game_conditions=conditions;
     g_present_width=saved_w;g_present_height=saved_h;g_present_dst_rect=saved_rect;
     printf("[DOSCHECK] HUD bars/numbers, four keys/underlines, 9999 FPS, crosshair and map fit 320x200/240\n");
-}
-
-static uint32_t display_dos_surface_hash(const SDL_Surface *surface)
-{
-    const uint8_t *bytes=surface->pixels;uint32_t hash=2166136261u;
-    for(unsigned i=0;i<(unsigned)surface->pitch*surface->h;i++)hash=(hash^bytes[i])*16777619u;
-    return hash;
 }
 
 void display_dos_check_text_layouts(GameState *state)

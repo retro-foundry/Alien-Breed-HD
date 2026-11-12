@@ -252,6 +252,7 @@ void dos_check_saves(GameState *state)
 }
 void dos_check_ui_screens(GameState *state)
 {
+    display_dos_check_hit_flash(state);
     renderer_dos_check_projection_cache();
     renderer_dos_check_zone_order_cache(state);
     /* Repeat after gameplay, with discovered map walls and live enemy state. */

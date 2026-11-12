@@ -37,7 +37,8 @@ fast SDL blits. Level briefings use VGA 80-column text mode so the complete
 original text fits on one screen. Press a key after loading to continue;
 the game restores its graphics mode, palette and mouse input automatically.
 UI uses opaque colors and cutout masks without alpha blending. Uncollected
-keys appear grey; collected keys use their colors. Damage uses a red border.
+keys appear grey; collected keys use their colors. Damage flashes the full
+view red while keeping the scene visible and the HUD readable.
 HUD keys are prefiltered to 16x16 before loading, then drawn without scaling.
 Menus and text stay inside the visible screen.
 Key underlines and bars leave room for the complete HUD in 200-line output.

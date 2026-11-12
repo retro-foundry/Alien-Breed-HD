@@ -76,6 +76,8 @@ def main():
         (run / name).unlink(missing_ok=True)
     for capture in run.glob('BLURB??.BIN'):
         capture.unlink()
+    for name in ['HIT0.BMP','HITMAX.BMP','HITREP.BMP','HITMID.BMP','HITOFF.BMP']:
+        (run / name).unlink(missing_ok=True)
     config = run / 'profile.conf'
     config.write_text(f'''[sdl]
 fullscreen=false
@@ -196,6 +198,7 @@ exit
                       'frame zone-order cases match linear search',
                       'four keys/underlines, 9999 FPS, crosshair and map fit 320x200/240',
                       'main/options/autosaves/load/new-game/pause menus fit 320x200/240',
+                      'full-view hit flash leaves renderer/water history unchanged',
                       'all 16 level texts fit VGA 80x25 on one screen; exact glyphs, single-key dismissal and graphics restoration passed']:
             if check not in log:
                 raise SystemExit(f'DOS diagnostic check missing: {check}; see {run}')
@@ -203,6 +206,22 @@ exit
             raise SystemExit(f'DOS disabled-key rendering check failed; see {run}')
         if (run / 'INTRO0.BMP').read_bytes() != (run / 'INTRO2.BMP').read_bytes():
             raise SystemExit(f'DOS briefing changed the graphics image; see {run}')
+        normal=(run/'HIT0.BMP').read_bytes();peak=(run/'HITMAX.BMP').read_bytes()
+        if normal!=(run/'HITOFF.BMP').read_bytes() or peak!=(run/'HITREP.BMP').read_bytes():
+            raise SystemExit(f'DOS hit flash accumulates or does not clear; see {run}')
+        width,height=struct.unpack_from('<ii',normal,18);stride=(width*3+3)&~3
+        def centre_colours(capture):
+            offset=struct.unpack_from('<I',capture,10)[0];totals=[0,0,0]
+            for y in range(20,height//2):
+                for x in range(32,width-32):
+                    at=offset+(height-1-y)*stride+x*3
+                    for channel in range(3):totals[channel]+=capture[at+channel]
+            return totals
+        base=centre_colours(normal);strong=centre_colours(peak)
+        middle=centre_colours((run/'HITMID.BMP').read_bytes())
+        redness=lambda colour:2*colour[2]-colour[1]-colour[0]
+        if not (redness(base)<redness(middle)<=redness(strong) and strong[1]<base[1] and strong[0]<base[0]):
+            raise SystemExit(f'DOS hit flash does not tint the centre and fade; see {run}')
         if struct.unpack_from('<ii', (run / 'INTRO1.BMP').read_bytes(), 18) != (720, 400):
             raise SystemExit(f'DOS briefing did not capture the VGA ROM-font screen; see {run}')
         for level in range(1, 17):
