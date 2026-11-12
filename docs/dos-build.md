@@ -3632,3 +3632,75 @@ EXE. Local results are in `build/dos-indexed16-trace/scene-validation.json`,
 `build/dos/indexed16-staging.json`; oracle logs are under
 `build/dos-indexed16-source/build/dos-raster-regression` and
 `build/dos-indexed16-source/build/dos-indexed-raster-regression`.
+
+### Generate DOS billboard row bands without a sampling table
+
+`d685b11` passes the existing vertical 16.16 start, step and last source row
+directly to the DOS row sampler. It generates repeated-row bands after the
+whole-rectangle coverage/history checks, avoiding a full row-index table
+for sprites those checks reject. History entries compare the direct sampling
+parameters instead of copying and comparing their generated row arrays.
+The existing table interface serves the column path and explicit table
+callers. Both formats retain BitMapObj samples, clamping, transparency,
+palette values, clipping and painter ownership. No asset format changes,
+heap allocations or shading tables are introduced.
+
+Fresh native compiler feedback completes 23 training runs and 22 capture
+checks. The optimized matching-state clock replay uses normal/486_slow,
+40,000 cycles, 4 MB, native 320x240, SB16/mouse and muted host sound.
+The level-1 busy frame falls from 107.136 to 101.942 ms. Its rendering
+bucket falls from 72.899 to 69.372 ms, update remains about 27.32 ms,
+and audio work falls from 3.445 to 1.778 ms. All 64 golden images,
+simulation hashes and clock/latched-tick assertions match, with zero
+audio underruns.
+
+Ordinary-clock 64-frame barrel probes, excluding eight warmup frames and
+without capture writes, give these mean/p95/worst milliseconds. Different
+elapsed times can change subsequent animation states; the clock replay
+above compares the same busy state.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 41.091 / 73.956 / 88.288 | 41.057 / 72.998 / 85.328 |
+| Level 1, turning | 35.889 / 81.565 / 107.060 | 35.887 / 78.963 / 94.105 |
+| Level 6 | 44.804 / 61.899 / 63.063 | 44.743 / 61.173 / 62.394 |
+| Level 6, turning | 52.502 / 67.179 / 75.228 | 52.434 / 67.965 / 74.384 |
+
+The unmodified 128-frame native start retains 26.19 FPS and passes the
+25.80 FPS gate, with 38.19 ms mean and 38.70/77.89 ms p95/worst.
+Normal enemy-view mean improves from 38.468 to 38.371 ms; the starting
+and pool views remain effectively unchanged at about 38.49 and 60.3 ms.
+The indexed level-1 sound-on burst worst frame improves from 89.991 to
+85.866 ms, and the turning version from 97.083 to 93.806 ms. All four
+indexed sound-on burst scenes have zero audio underruns.
+
+Both actual 486 C oracles pass, including 1,536 new direct/table comparisons
+per pixel format against independently computed 64-bit row tables. Cases
+cover fractional/zero/large steps, source clamping, signed-limit starts,
+one/full-height clips, packed modes, black/255, partial/full coverage,
+mixed history modes and framebuffer/mask guards. All 512 native release
+and 512 indexed burst images and state hashes match their references.
+All 22 original indexed captures match. The model oracle retains all
+128 image/hash pairs at 4 versus 16 MB with 32 KiB extra residency.
+Full native 4 MB level-1/4/15 and indexed level-1/4 sound/mouse exercises,
+native real-time level-4 exercise, package/map/save checks and Windows
+Release pass. Native text/data/BSS remain 1,189,912/22,016/260,608 bytes;
+level-4 headroom remains 144 KiB after shared assets and 44 KiB after loading.
+
+Separate captured-raster trials did not justify coordinate sharing, extra
+mask intersections, masked equality, wider magnified stores or short word
+comparisons. Those changes were left out. The direct sampling change
+improves burst work; physical 486 timings remain unmeasured, and large
+busy-frame spikes and the overall consistency goal remain open.
+
+Staging updates both EXEs and ZIPs while preserving all 241 native and
+238 indexed non-EXE game files, including settings and saves. All 231
+assets and 238 archive entries pass validation. The native EXE SHA-256 is
+`92e6e91062f70535bd71d3e2f109e65ae99d9c0a1fcd852d1d45a34e04423b6f`;
+the indexed EXE is
+`18af27166bf50f229f335edf34a4b6fdc36fc1951936e430c69d2a59f5fe7ed3`.
+Local evidence is in `build/dos/span17-performance.json`,
+`build/dos/span17-validation.json`, `build/dos/span17-staging.json`,
+`build/dos-span17-source/build/dos/pgo/model-check/report.json` and
+`build/dos-span17-trace/`. Both raster logs are under
+`build/dos-span17-source/build/` in their usual regression directories.
