@@ -54,10 +54,14 @@ void water_span(RendererPixel *out,unsigned count,
                 const uint8_t *phase,const uint32_t (*brighten)[256],const int8_t *blend,
                 unsigned offset,uint32_t u,uint32_t v,uint32_t du,uint32_t dv,int one_row)
 {
+    /* AB3DI.s texturedwater wraps this selected phase row every 64
+     * texels. Keep its six integer bits at the top of the accumulator;
+     * unsigned overflow then supplies the exact modulo-64 wrap. */
+    if(one_row){u=(u+((uint32_t)offset<<16))<<10;du<<=10;}
     if(!background1) {
         for(unsigned x=0;x<count;x++,u+=du,v+=dv) {
             unsigned level;
-            if(one_row)level=phase[((u>>16)+offset)&63];
+            if(one_row)level=phase[u>>26];
             else {
                 uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
                 uv=(uint16_t)(uv+offset);
@@ -69,7 +73,7 @@ void water_span(RendererPixel *out,unsigned count,
     }
     for(unsigned x=0;x<count;x++,u+=du,v+=dv) {
         unsigned level;
-        if(one_row)level=phase[((u>>16)+offset)&63];
+        if(one_row)level=phase[u>>26];
         else {
             uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
             uv=(uint16_t)(uv+offset);
@@ -89,6 +93,16 @@ void water_span(RendererPixel *out,unsigned count,
         unsigned b=((c0>>16)&15)+blend[difference&31];
         out[x]=water_rg[(r<<4)|g]|water_blue[b];
     }
+}
+
+/* Keep horizontal sampling state separate from byte-carry segmentation. */
+__attribute__((noinline,optimize("O3,unroll-loops")))
+static void water_span_row(RendererPixel *out,unsigned count,
+                           const RendererPixel *background0,const RendererPixel *background1,
+                           const uint8_t *phase,const uint32_t (*brighten)[256],const int8_t *blend,
+                           unsigned offset,uint32_t u,uint32_t du)
+{
+    water_span(out,count,background0,background1,phase,brighten,blend,offset,u,0,du,0,1);
 }
 
 __attribute__((noinline,optimize("O3,unroll-loops")))
@@ -118,8 +132,8 @@ void dos_raster_water(RendererPixel *out,unsigned count,
             /* At most 319 one-texel steps keep this product in 32 bits.
              * A span ending before the boundary needs no division. */
             if((count-1)*du>=limit-low)run=(limit-1-low)/du+1;
-            water_span(out,run,background0,background1,phase+(((base+carry)&63)*64),
-                       brighten,blend,bias,u,0,du,0,1);
+            water_span_row(out,run,background0,background1,phase+(((base+carry)&63)*64),
+                           brighten,blend,bias,u,du);
             out+=run;background0+=run;if(background1)background1+=run;
             u+=run*du;count-=run;
         }
