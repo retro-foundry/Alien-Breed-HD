@@ -4287,3 +4287,87 @@ Evidence is in `build/dos/pool25-performance.json`,
 `build/dos-pool25-trace/`. Current and frozen-kernel oracle logs are under
 `build/dos-pool25-source/build/dos-raster-regression/` and
 `build/dos-pool25-source/build/dos-raster-reference/`.
+
+### Extract billboard coverage runs with fewer word operations
+
+`a9c01fa` finds each fresh BitMapObj coverage run by adding its lowest set
+bit. That unsigned addition clears the run and carries to its end; a zero
+result identifies a run ending at bit 32. This removes the variable masks
+previously constructed to clear each run. Sprite column descriptors also
+use one unaligned-safe word load and the 486 BSWAP instruction to read the
+original big-endian PTR entry. Both native and indexed drawing retain
+source-index-zero transparency, opaque black and existing pixel ownership.
+No allocation, lookup table or asset-format change is introduced.
+
+The current 92-call RSF3 busy-frame fixture falls from 21.916 to 21.689 ms,
+about 1%. Each call runs 64 times with input-file I/O outside the timed
+kernel; all pixels, coverage masks, open-word counts and visible/drawn
+counts match. Hoisting copied-pixel counts and copying repeated bands in
+span order were slower and were discarded.
+
+Fresh native compiler feedback reduces the matched busy frame from
+82.348 to 82.147 ms. Rendering falls from 66.888 to 66.688 ms; update
+remains 8.544 ms and audio remains 3.443 ms. All 64 original images,
+simulation hashes and recorded clock/latched-tick assertions match, with
+zero audio underruns. Settings are normal/486_slow, 40,000 fixed cycles,
+4 MB, native 320x240, SB16/mouse and muted host sound.
+
+Ordinary-clock barrel probes use 64 frames, eight warmup frames and no
+capture writes. Mean/p95/worst milliseconds are below.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 39.442 / 58.021 / 62.121 | 39.511 / 57.193 / 62.802 |
+| Level 1, turning | 35.040 / 65.721 / 72.000 | 35.010 / 65.581 / 71.777 |
+| Level 6 | 43.661 / 55.274 / 57.573 | 43.604 / 55.193 / 57.496 |
+| Level 6, turning | 51.661 / 64.642 / 67.618 | 51.653 / 64.615 / 67.558 |
+
+All four live p95 values fall, but stationary level-1 mean/worst rise by
+0.069/0.681 ms. Elapsed-time changes can alter later animation states;
+the clock replay compares the same busy state. All eight native fixed-
+update scenes and all four indexed sound-on burst scenes improve mean,
+p95 and worst time. The pool view changes from 55.492 to 55.457 ms. The
+unmodified 128-frame native start passes the 25.80 FPS gate at 26.20 FPS,
+38.17 ms mean and 38.68/77.90 ms p95/worst, versus 26.19 FPS before.
+These are modest gains; large busy frames, overall pacing and physical
+486 measurements remain open.
+
+The independent pixel oracle adds 2,048 cases per pixel format. It covers
+all 528 contiguous word gaps, arbitrary multi-run masks, unaligned PTRs,
+single/repeated rows, cutouts, black, complete masks/counts and guards.
+The new cases also pass against the frozen previous kernel in both
+formats. Existing sprite, wall, floor, water, arithmetic, movement and
+object-selection checks pass in their respective suites.
+
+Fresh feedback completes 23 training runs, 22 original native captures
+and the real-time 4 MB level-4 exercise. All 512 native and 512 indexed
+release image/state pairs, 22 original indexed captures and 128 model
+comparisons at 4 versus 16 MB with 32 KiB extra residency match. Native
+level-1/4/15 and indexed level-1/4 sound/mouse exercises, package/map/active
+saved-level payload audits and Windows Release pass. Release probes
+report zero audio underruns.
+
+Separate wall investigations retain the existing renderer. Buffered
+column groups, separate projection/drawing passes and per-wall height
+quotient reuse were slower in all three measured scenes. Row-copy and
+independent-load scheduling trials gave negligible or negative gains.
+Depth probes found no repeated depth in the starting/pool views and
+less than 30% reuse in the burst view. All diagnostic image/state checks
+match; instrumented and capture-file I/O timings are excluded from the
+release results above.
+
+Native text grows by 512 bytes to 1,194,008; data/BSS remain
+22,016/259,584 bytes. Level-4 free memory remains 140 KiB after shared
+assets and 40 KiB after loading. Both EXEs and ZIPs are staged, preserving
+all 241 native and 238 indexed non-EXE game files, including settings and
+saves. Both packages retain 231 assets and 238 archive entries.
+Native EXE SHA-256:
+`c1afac328a4f9e0a7eb282f86880e8af05c26e946aca1b0048ab89b8b1c42f69`;
+indexed EXE:
+`832fb014b6d1da85c2c2fdb87374f1e5a2a122efddbf90fa9ed30e236bf47708`.
+Evidence is in `build/dos/wall26-performance.json`,
+`build/dos/wall26-validation.json`, `build/dos/wall26-staging.json`,
+`build/dos-wall26-source/build/dos/pgo/model-check/report.json` and
+`build/dos-wall26-trace/`. Current/frozen native and indexed oracle logs
+are under `build/dos-wall26-source/build/` in their raster regression and
+reference directories.
