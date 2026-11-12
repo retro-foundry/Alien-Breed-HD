@@ -61,10 +61,10 @@ def main():
                     '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',
                     '-Isrc', '-Isrc/platform/dos', '-I' + str(run),
                     '-include', 'src/platform/dos/math_compat.h',
-                    'tests/dos_raster.c', 'tests/dos_movement.c', 'src/platform/dos/raster_dos.c',
+                    'tests/dos_raster.c', 'tests/dos_movement.c', 'src/level.c', 'src/platform/dos/raster_dos.c',
                     'src/platform/dos/objects_dos.c',
                     'src/sprite_palettes.c',
-                    '-o', str(run / 'RASTER.EXE')], cwd=root, env=env, check=True)
+                    '-lm', '-o', str(run / 'RASTER.EXE')], cwd=root, env=env, check=True)
     subprocess.run([str(djgpp / 'i586-pc-msdosdjgpp/bin/stubedit.exe'), str(run / 'RASTER.EXE'),
                     'minstack=128K'], env=env, check=True)
     shutil.copy2(Path(deps['dpmi']) / 'bin/CWSDPMI.EXE', run / 'CWSDPMI.EXE')

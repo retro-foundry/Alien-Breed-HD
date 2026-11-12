@@ -1293,7 +1293,7 @@ static void find_room(MoveContext* ctx, LevelState* level,
 /* -----------------------------------------------------------------------
  * move_object_substepped - Sub-step movement to avoid tunneling through walls
  * ----------------------------------------------------------------------- */
-void move_object_substepped(MoveContext* ctx, LevelState* level)
+static void move_object_substep_loop(MoveContext* ctx, LevelState* level)
 {
     int32_t start_x = ctx->oldx;
     int32_t start_z = ctx->oldz;
@@ -1359,6 +1359,54 @@ void move_object_substepped(MoveContext* ctx, LevelState* level)
     ctx->wall_xsize = hit_wx;
     ctx->wall_zsize = hit_wz;
     ctx->wall_length = hit_wlen;
+}
+
+#ifdef AB3D_DOS
+/* ObjectMove.s checkwalls rejects a positive word cross; FindRoom rejects
+ * nonnegative crosses. Prove those rejections for every interpolated step,
+ * including enough clearance that the near-wall flag writes cannot occur. */
+static bool movement_clear_room_path(const MoveContext *ctx,const LevelState *level)
+{
+    if(!ctx || !level || !level->data || !level->floor_lines || !ctx->objroom ||
+       ctx->pos_shift || ctx->extlen || ctx->awayfromwall>=0)return false;
+    uint32_t positions=((uint32_t)ctx->oldx+32768u)|((uint32_t)ctx->oldz+32768u)|
+                       ((uint32_t)ctx->newx+32768u)|((uint32_t)ctx->newz+32768u);
+    if(positions>65535u)return false;
+    int32_t dx=ctx->newx-ctx->oldx,dz=ctx->newz-ctx->oldz;
+    if(abs(dx)<12 && abs(dz)<12)return false; /* At least four original substeps. */
+    const uint8_t *list=ctx->objroom+read_be16(ctx->objroom+ZONE_EXIT_LIST);
+    for(unsigned i=0;i<128;i++) {
+        int entry=read_be16(list+i*2u);
+        if(entry<0)return true;
+        if(entry>=level->num_floor_lines)continue;
+        const uint8_t *line=level->floor_lines+entry*FLINE_SIZE;
+        int32_t lx=read_be16(line+FLINE_X),lz=read_be16(line+FLINE_Z);
+        int32_t ox=ctx->oldx-lx,oz=ctx->oldz-lz,nx=ctx->newx-lx,nz=ctx->newz-lz;
+        uint32_t relative=((uint32_t)ox+32768u)|((uint32_t)oz+32768u)|
+                          ((uint32_t)nx+32768u)|((uint32_t)nz+32768u);
+        if(relative>65535u)return false;
+        int32_t vx=read_be16(line+FLINE_XLEN),vz=read_be16(line+FLINE_ZLEN);
+        /* Each separately truncated coordinate differs from the ideal path
+         * by less than one unit, so its cross error is below |vx|+|vz|.
+         * Signed-word operands keep both endpoint crosses in int32_t. */
+        int32_t margin=abs(vx)+abs(vz);
+        if(ctx->wall_flags)margin+=floorline_touch_denominator(ctx,line)*32;
+        if(ox*vz-oz*vx<=margin || nx*vz-nz*vx<=margin)return false;
+    }
+    return false;
+}
+#endif
+
+void move_object_substepped(MoveContext* ctx, LevelState* level)
+{
+#ifdef AB3D_DOS
+    if(movement_clear_room_path(ctx,level)) {
+        ctx->hitwall=0;ctx->wall_hit_y=ctx->newy;
+        ctx->wall_xsize=0;ctx->wall_zsize=0;ctx->wall_length=0;
+        return;
+    }
+#endif
+    move_object_substep_loop(ctx,level);
 }
 
 /* -----------------------------------------------------------------------

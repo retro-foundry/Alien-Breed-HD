@@ -881,6 +881,7 @@ static void check_objects(void)
 }
 
 void check_movement_touch(void);
+void check_movement_paths(void);
 
 int main(void)
 {
@@ -901,6 +902,7 @@ int main(void)
     check_sprite_dda_rows();
     check_water_transport();check_water();
     check_movement_touch();
+    check_movement_paths();
     check_objects();
     puts("DOS raster regression passed");
     return 0;
