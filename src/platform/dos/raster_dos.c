@@ -246,6 +246,39 @@ static unsigned sprite_copy_ranges(RendererPixel *out,const RendererPixel *row,
         : "ecx","esi","edi","memory","cc");
     return written;
 }
+/* BitMapObj row bands reuse the same sampled opaque ranges. Walk one span
+ * across all matching rows before loading the next. Rows/pixels are disjoint;
+ * coverage has already been updated without changing the source scratch row. */
+static unsigned sprite_copy_band(RendererPixel *out,const RendererPixel *row,
+                                  const DosSpriteSpan *span,const DosSpriteSpan *end,
+                                  unsigned rows,unsigned pitch)
+{
+    unsigned pixels=0;
+    uintptr_t delta=(uintptr_t)out-(uintptr_t)row;
+    unsigned step=pitch*sizeof(*out);
+    __asm__ volatile(
+        "1: movl 4(%%ebx),%%ecx\n\t"
+        "addl %%ecx,%[pixels]\n\t"
+        "movl %[rows],%%eax\n\t"
+        "movl %[delta],%%edx\n\t"
+        "2: movl (%%ebx),%%esi\n\t"
+        "leal (%%esi,%%edx),%%edi\n\t"
+        "movl 4(%%ebx),%%ecx\n\t"
+        "shrl $1,%%ecx\n\t"
+        "rep movsl\n\t"
+        "jnc 3f\n\t"
+        "movsw\n\t"
+        "3: addl %[step],%%edx\n\t"
+        "decl %%eax\n\t"
+        "jnz 2b\n\t"
+        "addl $8,%%ebx\n\t"
+        "cmpl %[end],%%ebx\n\t"
+        "jne 1b"
+        : "+&b"(span),[pixels]"+m"(pixels)
+        : [rows]"m"(rows),[delta]"m"(delta),[step]"m"(step),[end]"r"(end)
+        : "eax","ecx","edx","esi","edi","memory","cc");
+    return pixels*rows;
+}
 #endif
 
 static inline void sprite_copy_record(RendererPixel *out,const RendererPixel *source,
@@ -358,8 +391,9 @@ static unsigned sprite_batch_rows(RendererPixel *out,unsigned height,
                     sprite_mask_copy(other,covered,words);
                     sprite_batch->open_words[y+next]-=(uint8_t)closed;
                 }
-                total+=sprite_copy_ranges(out+next*pitch,row,spans,spans+span_count);
             }
+            total+=next-dy>1?sprite_copy_band(out+dy*pitch,row,spans,spans+span_count,next-dy,pitch):
+                               sprite_copy_ranges(out+dy*pitch,row,spans,spans+span_count);
             dy=next;continue;
         }
 #endif
@@ -394,7 +428,7 @@ static unsigned sprite_batch_rows(RendererPixel *out,unsigned height,
             if(!sprite_words_equal(before,other,words))break;
             target=out+next*pitch;
 #ifdef AB3D_NATIVE_RGB565
-            total+=sprite_copy_ranges(target,row,ranges,end);
+            /* Native copies follow after gathering equal mask rows. */
 #else
             for(const DosSpriteSpan *span=ranges;span<end;span++) {
                 sprite_copy(target+(span->source-row),span->source,span->count);
@@ -404,6 +438,12 @@ static unsigned sprite_batch_rows(RendererPixel *out,unsigned height,
             sprite_mask_copy(other,covered,words);
             sprite_batch->open_words[y+next]-=(uint8_t)closed;
         }
+#ifdef AB3D_NATIVE_RGB565
+        unsigned copy_first=dy+1;
+        if(next>copy_first)total+=next-copy_first>1?
+            sprite_copy_band(out+copy_first*pitch,row,ranges,end,next-copy_first,pitch):
+            sprite_copy_ranges(out+copy_first*pitch,row,ranges,end);
+#endif
         dy=next;
     }
     return total;

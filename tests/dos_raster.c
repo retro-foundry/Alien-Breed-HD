@@ -938,6 +938,7 @@ int main(void)
     check_sprite_band_masks();
     check_sprite_fresh_runs();
     check_sprite_copy_widths();
+    check_sprite_tall_bands();
     check_sprite_narrow_coverage();
     check_sprite_history();
     check_sprite_dda_rows();
