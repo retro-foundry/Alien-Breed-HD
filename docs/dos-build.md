@@ -4201,3 +4201,89 @@ Evidence is in `build/dos/rows24-performance.json`,
 `build/dos-rows24-source/build/dos-raster-regression/`,
 `build/dos-rows24-source/build/dos-raster-reference/` and
 `build/dos-rows24-source/build/dos-indexed-raster-regression/`.
+
+### Resolve horizontal water phase rows before sampling pixels
+
+`474b4a5` resolves AB3DI.s texturedwater's phase row once per horizontal
+segment when V is constant, U advances by at most one texel per pixel and
+the span fits 320 pixels. The original packed 16-bit UV plus wateroff
+addition can carry from the U byte into the V byte. Segments end at that
+carry or U-byte wrap, retaining both exactly. A bounded endpoint product
+proves spans that need no split before doing a division. Other walks use
+the existing general sampling calculation.
+
+Both paths share the original native Brighten colours, single-source
+shortcut and rounded four-bit blend. No new allocation, lookup table,
+colour approximation or animation change is introduced. The profile
+attributes about 29.1 ms to water and 13.4 ms to walls in the pool view;
+its floor bucket includes water. Fifteen matched probes reject packed
+channel arithmetic and early source-equality checks, and select the
+shared span implementation. The unchanged indexed translation unit
+preprocesses to the same 294,021 bytes as the previous release.
+
+Fresh compiler feedback produces the following native pool results.
+Mean/p95/worst milliseconds cover frames 8-63 of 64 fixed updates at
+normal/486_slow, 40,000 fixed cycles, 4 MB, 320x240 RGB565, SB16/mouse and
+muted host sound. Detailed profiling and captures are disabled for timing;
+frame 23 is written outside the timed update.
+
+| Pool yaw | Before | After |
+| --- | --- | --- |
+| 0 | 60.305 / 61.639 / 61.820 | 55.492 / 56.948 / 57.192 |
+| +1024 | 50.734 / 51.247 / 51.382 | 50.954 / 51.551 / 51.632 |
+| -1024 | 51.873 / 52.363 / 52.527 | 52.101 / 52.617 / 52.798 |
+
+The straight pool view improves by 4.813 ms, about 8%; angled means rise
+by 0.220/0.228 ms. Other fixed-update means change by at most about
+0.05 ms. The matched busy barrel replay changes from 82.336 to 82.348 ms,
+with update fixed at 8.544 ms and rendering 66.874 to 66.888 ms. All 64
+original images, state hashes and clock/latched-tick assertions match,
+with zero audio underruns.
+
+Ordinary-clock barrel probes use 64 frames, eight warmup frames and no
+capture writes. Mean/p95/worst milliseconds are below.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 39.821 / 56.234 / 62.747 | 39.442 / 58.021 / 62.121 |
+| Level 1, turning | 35.362 / 63.746 / 72.531 | 35.040 / 65.721 / 72.000 |
+| Level 6 | 43.679 / 55.297 / 57.591 | 43.661 / 55.274 / 57.573 |
+| Level 6, turning | 51.665 / 64.706 / 67.967 | 51.661 / 64.642 / 67.618 |
+
+All four live means and maxima fall, but both level-1 p95 values rise by
+about 1.8-2.0 ms. Elapsed-time changes can alter later animation states;
+the clock replay compares the same busy state. Pacing remains mixed.
+The unmodified 128-frame start retains 26.19 FPS, 38.18 ms mean and
+38.69/77.92 ms p95/worst, passing the 25.80 FPS gate. Large busy frames,
+angled-water overhead, wall costs and physical 486 measurements remain
+open.
+
+The actual 4 MB 486 C oracle adds 2,048 independent per-pixel cases for
+U-byte/V-row/word carries, step boundaries, zero steps, source overlap,
+clipping, alpha symmetry, single-source rounding and guards. Counts
+321/322 check the general path outside the optimized width bound. The
+new cases also pass with the frozen previous kernel. Existing 5,632
+colours, all 65,536 native inputs and alpha/colour pairs, 768 water spans
+and the complete raster/arithmetic/movement oracles pass.
+
+Fresh feedback completes 23 training runs, 22 original native captures
+and the real-time 4 MB level-4 exercise. All 512 standard release image/
+state pairs, 128 extra angled-pool pairs and 128 model comparisons at
+4 versus 16 MB with 32 KiB extra residency match. Native level-1/4/15
+sound/mouse exercises, package/map/active saved-level payload audits and
+Windows Release pass. Release probes report zero audio underruns.
+
+Native text grows by 512 bytes to 1,193,496; data/BSS remain
+22,016/259,584 bytes. Level-4 free memory remains 140 KiB after shared
+assets and 40 KiB after loading. The native EXE and ZIP are staged,
+preserving 241 other native game files and all 239 indexed game files,
+including settings and saves. The indexed EXE/ZIP retain their previous
+hashes. Both packages retain 231 assets and 238 archive entries.
+Native EXE SHA-256:
+`3a0538ddcb16f37b725a7c720c8b9fd6ef62d8b1106605c844b99324fb44d0b7`.
+Evidence is in `build/dos/pool25-performance.json`,
+`build/dos/pool25-validation.json`, `build/dos/pool25-staging.json`,
+`build/dos-pool25-source/build/dos/pgo/model-check/report.json` and
+`build/dos-pool25-trace/`. Current and frozen-kernel oracle logs are under
+`build/dos-pool25-source/build/dos-raster-regression/` and
+`build/dos-pool25-source/build/dos-raster-reference/`.
