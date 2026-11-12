@@ -4372,6 +4372,92 @@ Evidence is in `build/dos/wall26-performance.json`,
 are under `build/dos-wall26-source/build/` in their raster regression and
 reference directories.
 
+### Keep horizontal water sampling separate from segmentation
+
+`b103a6e` keeps the selected water phase row's six integer coordinate bits
+at the top of a 32-bit accumulator. Unsigned overflow supplies the exact
+modulo-64 wrap, removing the pixel loop's offset addition and mask. A separate
+native horizontal row function keeps its sampling state independent of the
+caller's U-byte carry segmentation. AB3DI.s `texturedwater` addressing, the
+existing interpolation and RGB565 output remain exact. No lookup bank or
+allocation is added.
+
+The final feedback build, compared with the staged bprep27 engine at
+normal/486_slow, fixed 40,000 cycles, 4 MB, 320x240 RGB565, SB16/mouse and
+muted host audio, gives these mean / p95 / maximum times in milliseconds:
+
+| Level-1 pool yaw | Before | After |
+| --- | --- | --- |
+| 0 | 55.455 / 56.910 / 57.155 | 54.722 / 56.236 / 56.489 |
+| +1024 | 50.923 / 51.523 / 51.600 | 50.979 / 51.566 / 51.645 |
+| -1024 | 52.081 / 52.597 / 52.779 | 52.140 / 52.647 / 52.824 |
+
+The straight pool view improves about 1.3%; angled means increase by
+0.056/0.059 ms. This is a view-dependent gain. The real-time 128-frame
+starting-view check remains 26.20 FPS, 38.17 ms mean, with p95/max changing
+38.68/77.90 to 38.67/77.90 ms; the 25.8 FPS gate passes.
+
+Live explosion runs retain practically the same pacing:
+
+| Scene | Before mean / p95 / maximum | After mean / p95 / maximum |
+| --- | --- | --- |
+| Level 1 | 39.507 / 56.900 / 62.388 | 39.504 / 56.896 / 62.385 |
+| Level 1, turning | 35.012 / 65.390 / 71.426 | 35.010 / 65.387 / 71.423 |
+| Level 6 | 43.587 / 55.004 / 57.307 | 43.594 / 54.998 / 57.303 |
+| Level 6, turning | 51.638 / 64.445 / 67.434 | 51.634 / 64.442 / 67.429 |
+
+The matched original-clock busy frame changes 81.715 to 81.713 ms, with
+render 66.257 to 66.253 ms, update 8.544 ms and audio 3.442 ms. Dense
+billboard/explosion pacing remains open; physical 486 performance is unmeasured.
+
+Fresh feedback trains all 23 scenarios at 16 MB and matches all 22 ordinary 4 MB
+captures, then passes the real-time level-4 sound/mouse exercise. Eight
+matched scenes preserve 512 complete images and simulation hashes; the
+additional angled pool views preserve another 128. All 64 original-clock
+images, simulation hashes and latched-clock assertions match. Both barrel
+scenes retain all 128 images at 4 versus 16 MB with the extra 32 KiB residency
+allocation. Native level-1/4/15 exercises, map captures and all active saved
+level/map payloads pass. The existing native raster oracle passes, including
+2,048 water carry/alias/wrap spans and 65,536 alpha/colour pairs. Windows
+Release also builds. All sound-enabled checks report zero underruns.
+
+Two simpler water changes were rejected after full feedback builds. Folding
+only the offset once improved the isolated O3 test, but raised the final pool
+mean from 55.456 to 56.640 ms. `1946401` was reverted by `34a8422`; its binary
+was never staged. Using the high-six-bit accumulator without the separate row
+function still took 56.163 ms. Their linked disassembly shows the coordinate
+spilling to the stack, while the older single-source loop kept it in ECX.
+
+Further billboard trials also retain the prior kernel. The exact 92-call,
+64-repeat replay takes 20.956852 ms. Four/eight/combined direct-store fill
+loops take 21.873952/21.117151/21.838648 ms; a one-span coverage path takes
+21.402877 ms. A specialized one-word mask loop saves only 0.034100 ms,
+and combining it with the span path takes 21.341250 ms. None was selected.
+The peak frame already batches 92 bitmap row calls and 85,902 written pixels;
+only four calls and 1,160 pixels are outside batching. Leading transparent
+source margins skip zero of 623 positive source-row bands in that replay.
+Extra mixed-pass machinery and preconverted leading-margin metadata therefore
+have little opportunity in this captured view. Instrumented decode timing
+and counter-logging frame times are excluded from performance claims.
+
+Indexed raster preprocessing remains byte-identical: 293,954 bytes, SHA-256
+`db80865a3b042bc38d092701d4a2ad43bbbb07760cf93199742d0ac44a764401`.
+Its previously verified wall26 executable, package and captures are retained.
+Native text/data/BSS remain 1,194,008/22,016/259,584 bytes; level-4 free memory
+remains 140 KiB after shared assets and 40 KiB after loading. Staging preserves
+all 241 other native game files and all 239 indexed game files, including
+settings and saves. Both packages retain 231 assets and 238 archive entries.
+
+Native EXE SHA-256:
+`492fc66d9f60e6c91a2fb37ad5a2e3225ba046c4313ce3c71a7eb7dda85b42fc`.
+Native ZIP SHA-256:
+`fb887c0dbfa27d372a90f5289572620146c9a05c3e432c79e74b67afac41ffbe`.
+Evidence is in `build/dos/water30-performance.json`,
+`build/dos/water30-validation.json`, `build/dos/water30-staging.json`,
+`build/dos-water30-source/build/dos/pgo/model-check/report.json`, and
+`build/dos-water30-trace/`. Rejected trial evidence is retained under
+`build/dos-decode28-trace/` and `build/dos-water29-trace/`.
+
 ### Keep native billboard range copies in 486 registers
 
 `0735829` copies BitMapObj's recorded spans with source, destination,
