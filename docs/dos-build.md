@@ -3798,3 +3798,80 @@ Evidence is in `build/dos/touch19-performance.json`,
 `build/dos-touch19-source/build/dos/pgo/model-check/report.json` and
 `build/dos-touch19-trace/`. The native oracle log is under
 `build/dos-touch19-source/build/dos-raster-regression/RASTER.LOG`.
+
+### Prove clear particle paths before repeating wall scans
+
+`ab04110` adds a DOS proof before the original movement substep loop.
+For unshifted, zero-extent movers with negative wall clearance, it checks
+the current room's floorlines once. Both endpoints must fit signed words,
+and their exact crosses must exceed the near-touch threshold plus
+`abs(vx) + abs(vz)`. Separately truncated intermediate coordinates differ
+from their ideal segment by less than one unit per axis, so this margin
+proves every original substep remains on the rejected side of every wall
+and cannot write touch flags. Absolute and relative signed-word guards
+retain the original subtraction behavior. The path only runs when the
+original movement would need at least four substeps; every unproved case
+uses the unchanged loop. It preserves collision, room/layer transitions,
+touch writes and the complete movement context.
+
+Fresh native compiler feedback completes 23 training runs and all 22
+original capture checks. At normal/486_slow, 40,000 fixed cycles, 4 MB,
+native 320x240, SB16/mouse and muted host sound, the matching-state busy
+frame improves from 99.640 to 94.175 ms. Update falls from 24.995 to
+17.860 ms; rendering remains about 69.4 ms. Audio work changes from
+1.776 to 3.447 ms with its scheduling phase. All 64 golden images,
+simulation hashes and clock/latched-tick assertions match, with zero
+audio underruns.
+
+Ordinary-clock barrel probes use 64 frames, eight warmup frames and no
+capture writes. Mean/p95/worst milliseconds improve in all four scenes.
+Elapsed-time differences can change later animation states; the clock
+replay above supplies the matching-state comparison.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 40.857 / 71.953 / 75.397 | 40.206 / 61.691 / 69.653 |
+| Level 1, turning | 35.779 / 77.669 / 92.225 | 35.705 / 64.172 / 83.268 |
+| Level 6 | 44.719 / 60.673 / 62.084 | 44.101 / 57.734 / 58.300 |
+| Level 6, turning | 52.307 / 70.766 / 77.673 | 51.750 / 65.594 / 68.840 |
+
+The unmodified 128-frame native start passes the 25.80 FPS gate at
+26.21 FPS, 38.15 ms mean and 38.66/77.91 ms p95/worst. Fixed-update
+native burst means improve, but turning maxima rise from 77.925 to
+79.163 ms on level 1 and 67.362 to 68.012 ms on level 6. All eight
+captured indexed burst means improve; level-1 sound-on p95/worst rise
+from 83.645/86.219 to 83.936/86.419 ms. All have zero audio underruns.
+These measurements do not establish uniformly better pacing. The pool
+view remains about 60.3 ms, large busy frames remain, and physical 486
+timings are unmeasured.
+
+The actual 4 MB 486 C oracle adds 8,320 complete movement comparisons
+against the unchanged original substep worker: 2,753 clear proofs and
+5,567 original paths. It compares every context, room and floorline byte,
+including guards, and checks that the proof itself is read-only. Cases
+cover room transitions, collisions, layers, touch flags, signed-word
+limits, diagonal truncation, invalid/unterminated exit lists and inputs
+that require the original loop. Real level-index functions are linked.
+The existing 73,748 touch inputs, each called twice, 32,768 crossing
+heights, 3,072 direct row-table comparisons and other raster cases pass.
+
+All 512 native and 512 indexed release image/state pairs, 22 original
+indexed captures and 128 model comparisons at 4 versus 16 MB with
+32 KiB extra residency match. Native 4 MB level-1/4/15 and indexed
+level-1/4 sound/mouse exercises, native real-time level-4, package/map/save
+audits and Windows Release pass. Native text grows by 512 bytes to
+1,191,448; data/BSS remain 22,016/260,608 bytes. No heap allocation,
+BSS or lookup table is added. Level-4 free memory is 140 KiB after shared
+assets and 44 KiB after loading, versus 144/44 KiB before this change.
+
+Both EXEs and ZIPs are staged, preserving all 241 native and 238 indexed
+non-EXE game files, including settings and saves. Both packages retain
+231 assets and 238 archive entries. The native EXE SHA-256 is
+`15bca377c0d2660463dfb2477c5f7c2daea8e6dc4ffd87e5c391ea3f49f939c2`;
+the indexed EXE is
+`6354f8bb6b793ff8b986f9ffdd1e51def5083b4fe2b91865c5ec5a757217205d`.
+Evidence is in `build/dos/clear20-performance.json`,
+`build/dos/clear20-validation.json`, `build/dos/clear20-staging.json`,
+`build/dos-clear20-source/build/dos/pgo/model-check/report.json` and
+`build/dos-clear20-trace/`. The native oracle log is under
+`build/dos-clear20-source/build/dos-raster-regression/RASTER.LOG`.
