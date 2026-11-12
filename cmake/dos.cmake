@@ -27,6 +27,10 @@ if(AB3D_DOS_PROFILE_DIR)
     message(FATAL_ERROR "DOS compiler feedback currently targets native RGB565")
   endif()
   include("${AB3D_DOS_PROFILE_DIR}/sources.cmake")
+  # Keep the large billboard helpers separate and avoid register-heavy loop
+  # expansion on a 486 after dense scene feedback makes those paths hot.
+  set_property(SOURCE src/platform/dos/raster_dos.c APPEND_STRING PROPERTY COMPILE_FLAGS
+    " -fno-inline-functions-called-once -fno-unroll-loops -fno-peel-loops")
   file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}" dos_profile_prefix)
   set(dos_profile_options "-fprofile-use=${AB3D_DOS_PROFILE_DIR}"
     "-fprofile-prefix-path=${dos_profile_prefix}" -fprofile-correction -fno-tracer

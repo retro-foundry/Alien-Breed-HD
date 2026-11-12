@@ -32,12 +32,14 @@ static GameObject *scene_nearest_barrel(const GameState *state)
     return nearest;
 }
 
+#ifndef AB3D_DOS_PROFILE_SCENE
 static unsigned scene_hash(unsigned hash, const void *data, size_t bytes)
 {
     const uint8_t *p = data;
     while (bytes--) hash = (hash ^ *p++) * 16777619u;
     return hash;
 }
+#endif
 
 static void model_scene_tick(GameState *state, GameLoopCtx *ctx)
 {
@@ -70,6 +72,10 @@ static void model_scene_tick(GameState *state, GameLoopCtx *ctx)
         object_handle_barrel(barrel, state);
     }
     game_loop_tick(state, ctx);
+#ifdef AB3D_DOS_PROFILE_SCENE
+    /* Compiler training retains engine counters and the shared scene state. */
+    frame++;
+#else
     unsigned hash = 2166136261u;
     for (int i = 0; state->level.object_data; i++) {
         const GameObject *obj = (const GameObject *)(state->level.object_data + i * OBJECT_SIZE);
@@ -94,4 +100,5 @@ static void model_scene_tick(GameState *state, GameLoopCtx *ctx)
         pixels += count; bytes -= count;
     }
     if (close(fd)) exit(4);
+#endif
 }
