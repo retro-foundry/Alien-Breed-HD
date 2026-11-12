@@ -1466,11 +1466,17 @@ void move_object(MoveContext* ctx, LevelState* level)
         int total_iterations = 0;
         const int max_total = 200;
 
+#ifdef AB3D_DOS
+        int primary_clear=0;
+#endif
         if (zone_data) {
         gobackanddoitallagain:
             if (total_iterations >= max_total) return;
 
             if (total_iterations >= max_total) goto phase3;
+#ifdef AB3D_DOS
+            primary_clear=ctx->extlen==0;
+#endif
 
             {
                 int16_t list_off = read_be16(zone_data + ZONE_EXIT_LIST);
@@ -1487,6 +1493,7 @@ void move_object(MoveContext* ctx, LevelState* level)
                         const uint8_t* fline = level->floor_lines + entry * FLINE_SIZE;
 #ifdef AB3D_DOS
                         if(movement_integer_wall_clear(ctx,fline))continue;
+                        primary_clear=0;
 #endif
                         int result = check_wall_line(ctx, level, fline, zone_data, &xdiff, &zdiff, MOVE_PASS_WALLS);
 
@@ -1498,6 +1505,13 @@ void move_object(MoveContext* ctx, LevelState* level)
                     }
                 }
             }
+
+#ifdef AB3D_DOS
+            /* Every valid primary line was rejected at the unchanged new
+             * position. FindRoom would reject the same positive crosses.
+             * Legacy calls, secondary passes and incomplete scans keep it. */
+            if(primary_clear)return;
+#endif
 
             if (ctx->extlen != 0) {
                 if (total_iterations >= max_total) goto phase3;

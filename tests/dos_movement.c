@@ -71,6 +71,83 @@ static void path_write_long(uint8_t *out,int32_t value)
     out[2]=(uint8_t)(bits>>8);out[3]=(uint8_t)bits;
 }
 
+static void check_movement_scan_limits(void)
+{
+    enum { DATA_BYTES=1280, LINE_BYTES=12*FLINE_SIZE, GUARD=16 };
+    static uint8_t data_store[DATA_BYTES+2*GUARD],line_store[LINE_BYTES+2*GUARD];
+    static uint8_t data_seed[sizeof(data_store)],line_seed[sizeof(line_store)];
+    static uint8_t data_expected[sizeof(data_store)],line_expected[sizeof(line_store)];
+    static const int32_t rooms[]={64,448,832};
+    static const int16_t corners[4][2]={{-512,-512},{-512,512},{512,512},{512,-512}};
+    uint8_t *data=data_store+GUARD,*lines=line_store+GUARD,adds[12];
+    LevelState level={0};level.data=data;level.data_byte_count=DATA_BYTES;
+    level.floor_lines=lines;level.num_floor_lines=12;level.zone_adds=adds;
+    level.num_zones=level.num_zone_slots=3;
+    for(unsigned test=0;test<16;test++) {
+        unsigned variant=test/2;
+        memset(data_store,0xa5,sizeof(data_store));memset(line_store,0x96,sizeof(line_store));
+        memset(data,0,DATA_BYTES);memset(lines,0,LINE_BYTES);
+        for(unsigned zone=0;zone<3;zone++) {
+            uint8_t *header=data+rooms[zone];path_write_long(adds+zone*4,rooms[zone]);
+            write_be16(header,(uint16_t)zone);write_be16(header+ZONE_EXIT_LIST,64);
+            path_write_long(header+ZONE_FLOOR_HEIGHT,0);path_write_long(header+ZONE_ROOF_HEIGHT,-8192);
+            for(unsigned edge=0;edge<4;edge++) {
+                unsigned next=(edge+1)%4,index=zone*4+edge;
+                uint8_t *line=lines+index*FLINE_SIZE;
+                write_be16(line+FLINE_X,(uint16_t)((int32_t)zone*1024+corners[edge][0]));
+                write_be16(line+FLINE_Z,(uint16_t)corners[edge][1]);
+                write_be16(line+FLINE_XLEN,(uint16_t)(corners[next][0]-corners[edge][0]));
+                write_be16(line+FLINE_ZLEN,(uint16_t)(corners[next][1]-corners[edge][1]));
+                write_be16(line+FLINE_LENGTH,1024);
+                int connect=edge==0 && zone>0?(int)zone-1:edge==2 && zone<2?(int)zone+1:-1;
+                write_be16(line+FLINE_CONNECT,(uint16_t)connect);
+                write_be16(header+64+edge*2,(uint16_t)index);
+            }
+            write_be16(header+72,(uint16_t)-1);
+        }
+        MoveContext seed={0};seed.objroom=data+rooms[0];seed.awayfromwall=-1;
+        seed.oldy=-2048;seed.newy=-1024;seed.newx=2000;seed.thing_height=128;
+        seed.step_up_val=256;seed.step_down_val=0x1000000;seed.coll_id=-1;
+        seed.wall_flags=test&1?0x400:0;seed.exitfirst=1;
+        seed.hitwall=1;seed.wall_hit_y=12345;seed.wall_xsize=123;seed.wall_zsize=-456;seed.wall_length=789;
+        uint8_t *first=data+rooms[0]+64,*second=data+rooms[1]+64;
+        if(variant<4) {
+            unsigned prefix=variant==2?64:127;
+            for(unsigned i=0;i<prefix;i++)write_be16(first+i*2,0);
+            write_be16(first+prefix*2,2);
+            if(prefix<127)write_be16(first+(prefix+1)*2,(uint16_t)-1);
+            unsigned next_prefix=variant==0?100:variant==1?70:127;
+            for(unsigned i=0;i<next_prefix;i++)write_be16(second+i*2,4);
+            write_be16(second+next_prefix*2,(uint16_t)(variant==3?4:6));
+            if(next_prefix<127)write_be16(second+(next_prefix+1)*2,(uint16_t)-1);
+        }
+        if(variant==4)write_be16(first,(uint16_t)-1),seed.newx=16;
+        if(variant==5) {
+            write_be16(first,999);write_be16(first+2,(uint16_t)-1);
+            seed.pos_shift=16;seed.newx=65536;seed.newz=-65536;
+        }
+        if(variant==6)seed.extlen=80;
+        if(variant==7) {
+            write_be16(lines+6*FLINE_SIZE+FLINE_CONNECT,(uint16_t)-1);
+            seed.wallbounce=1;seed.exitfirst=0;
+        }
+        memcpy(data_seed,data_store,sizeof(data_store));memcpy(line_seed,line_store,sizeof(line_store));
+        MoveContext reference=seed,actual=seed;
+        reference_move_object(&reference,&level);
+        memcpy(data_expected,data_store,sizeof(data_store));memcpy(line_expected,line_store,sizeof(line_store));
+        memcpy(data_store,data_seed,sizeof(data_store));memcpy(line_store,line_seed,sizeof(line_store));
+        move_object(&actual,&level);
+        if(memcmp(&actual,&reference,sizeof(actual)) || memcmp(data_store,data_expected,sizeof(data_store)) ||
+           memcmp(line_store,line_expected,sizeof(line_store))) {
+            fprintf(stderr,"Movement scan limit mismatch case=%u\n",test);assert(0);
+        }
+        if(variant<3)assert(reference.objroom==data+rooms[2]);
+        if(variant==3 || variant==7)assert(reference.objroom==data+rooms[1]);
+        if(variant==7)assert(reference.hitwall);
+    }
+    puts("PASS: 16 direct room-scan edge cases retain iteration-cap transitions, complete/unterminated lists, invalid/empty exits, shifted inputs, extents, prior hits and all guards");
+}
+
 void check_movement_paths(void)
 {
     enum { DATA_BYTES=1024, LINE_BYTES=16*12, GUARD=16, ROOM0=64, ROOM1=448,
@@ -271,9 +348,23 @@ void check_movement_paths(void)
             assert(!actual.hitwall && actual.newx==seed.newx && actual.newz==seed.newz);
             assert(!memcmp(line_store,line_seed,sizeof(line_store)));
         }
+        /* A direct scan also exercises positive primary passes in cases
+         * where the bulk substep proof would bypass move_object entirely. */
+        reference=seed;actual=seed;
+        memcpy(data_store,data_seed,sizeof(data_store));memcpy(line_store,line_seed,sizeof(line_store));
+        reference_move_object(&reference,&level);
+        memcpy(data_expected,data_store,sizeof(data_store));memcpy(line_expected,line_store,sizeof(line_store));
+        memcpy(data_store,data_seed,sizeof(data_store));memcpy(line_store,line_seed,sizeof(line_store));
+        move_object(&actual,&level);
+        if(memcmp(&actual,&reference,sizeof(actual)) || memcmp(data_store,data_expected,sizeof(data_store)) ||
+           memcmp(line_store,line_expected,sizeof(line_store))) {
+            fprintf(stderr,"Movement direct scan mismatch case=%u\n",test);assert(0);
+        }
     }
     assert(proved && rejected);
     printf("PASS: %u complete substep comparisons (%u clear proofs, %u original paths) retain every context/room/floorline byte, transitions, touches, collision modes and guards\n",CASES+EDGES,proved,rejected);
+    printf("PASS: %u direct movement scans retain every context/room/floorline byte against the frozen scan wrapper\n",CASES+EDGES);
+    check_movement_scan_limits();
 }
 
 void check_movement_touch(void)
