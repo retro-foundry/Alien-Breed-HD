@@ -11,6 +11,8 @@ enum { DOS_SPRITE_ALPHA_ROWS=64 };
 void dos_sprite_alpha_reset(void);
 void dos_sprite_alpha_bind(unsigned type,const uint8_t *wad,size_t wad_bytes,
                             const uint8_t *ptr,size_t ptr_bytes);
-const uint32_t *dos_sprite_alpha_source(const DosSpriteRows *sprite);
+/* The optional row intervals are conservative source-column bounds, with an
+ * exclusive end. Both outputs are cleared when the source recipe is unknown. */
+const uint32_t *dos_sprite_alpha_source(const DosSpriteRows *sprite,const uint8_t (**bounds)[2]);
 
 #endif

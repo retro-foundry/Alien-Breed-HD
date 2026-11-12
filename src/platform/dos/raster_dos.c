@@ -517,10 +517,20 @@ unsigned dos_raster_sprite_texel_column(RendererPixel *out,unsigned count,unsign
 
 typedef struct { const uint8_t *source; unsigned limit,shift,width; } DosSpriteGroup;
 
+#ifdef AB3D_NATIVE_RGB565
+static inline void sprite_group_source(DosSpriteGroup *g,const DosSpriteRows *sprite,
+                                       unsigned column,unsigned width,unsigned x)
+#else
 static inline void sprite_group_source(DosSpriteGroup *g,const DosSpriteRows *sprite,
                                        unsigned column,unsigned width)
+#endif
 {
     g->source=NULL;g->width=width;
+#ifdef AB3D_NATIVE_RGB565
+    /* Widths and destination starts fit in 16 bits at the 320-pixel cap.
+     * Keep the original 16-byte descriptor without another scratch array. */
+    g->width|=x<<16;
+#endif
     const uint8_t *entry=sprite->ptr+sprite->ptr_offset+column*4u;
     /* ObjDraw3 PTR entries retain their original big-endian layout. One
      * unaligned-safe word load and 486 BSWAP replaces four byte loads. */
@@ -565,7 +575,8 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
     unsigned available=(sprite->ptr_bytes-sprite->ptr_offset)/4u;
     if(!available)return result;
 #ifdef AB3D_NATIVE_RGB565
-    const uint32_t *nonempty_rows=dos_sprite_alpha_source(sprite);
+    const uint8_t (*row_bounds)[2];
+    const uint32_t *nonempty_rows=dos_sprite_alpha_source(sprite,&row_bounds);
 #endif
     unsigned count=0,previous=UINT32_MAX;
     uint32_t u=sprite->u;
@@ -584,7 +595,11 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             if(sample==previous)groups[count-1].width+=length;
             else {
                 previous=sample;
+#ifdef AB3D_NATIVE_RGB565
+                sprite_group_source(&groups[count++],sprite,sample,length,x);
+#else
                 sprite_group_source(&groups[count++],sprite,sample,length);
+#endif
             }
             x+=length;
             column=(column+1u)&65535u;
@@ -597,12 +612,27 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
         if(column>=available)column=available-1;
         if(column==previous){groups[count-1].width++;continue;}
         previous=column;
+#ifdef AB3D_NATIVE_RGB565
+        sprite_group_source(&groups[count++],sprite,column,1,x);
+#else
         sprite_group_source(&groups[count++],sprite,column,1);
+#endif
     }
     unsigned minimum_limit=UINT32_MAX;
     int all_sources=1;
+#ifdef AB3D_NATIVE_RGB565
+    unsigned first_column=sprite->u>>16;
+    /* Magnification visits consecutive source columns until the final clamp.
+     * Exclude a wrapped U walk or a truncated PTR before indexing by column. */
+    if(!sprite->du || sprite->du>=65536u || first_column>=sprite->columns ||
+       available<sprite->columns || sprite->u>UINT32_MAX-(width-1)*sprite->du)row_bounds=NULL;
+#endif
     for(unsigned g=0;g<count;g++)if(groups[g].source) {
+#ifdef AB3D_NATIVE_RGB565
+        result.visible+=(groups[g].width&65535u)*height;
+#else
         result.visible+=groups[g].width*height;
+#endif
         if(groups[g].limit<minimum_limit)minimum_limit=groups[g].limit;
     } else all_sources=0;
     for(unsigned y=0;y<height;) {
@@ -632,10 +662,24 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
         }
         Group *group=groups;
         const Group *groups_end=groups+count;
+#ifdef AB3D_NATIVE_RGB565
+        if(row_bounds && (unsigned)source_row<DOS_SPRITE_ALPHA_ROWS) {
+            unsigned first=row_bounds[source_row][0],last=row_bounds[source_row][1];
+            first=first>first_column?first-first_column:0;
+            last=last>first_column?last-first_column:0;
+            if(last>count)last=count;
+            if(first>=last){y=end_y;continue;}
+            group=groups+first;groups_end=groups+last;
+        }
+#endif
         /* Ordinary painter draws can decode their first row directly into
          * the framebuffer. Repeated rows still copy only its opaque spans. */
         RendererPixel *decoded_row=batch?row:out+y*pitch;
+#ifdef AB3D_NATIVE_RGB565
+        RendererPixel *destination=decoded_row+(group->width>>16);
+#else
         RendererPixel *destination=decoded_row;
+#endif
         Span *span=spans;
         /* BitMapObj uses source index zero for cutouts. Separate transparent
          * and opaque loops retain that state in control flow, so sampling a
@@ -657,6 +701,7 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             "andl $31,%%eax\n\t" \
             "jz " REJECT_ "\n\t"
 #ifdef AB3D_DOS_INDEXED
+#define SPRITE_ROW_SKIP "3: movl 12(%%esi),%%eax\n\t"
 #define SPRITE_ROW_ADVANCE "leal (%%edi,%%eax),%%edi\n\t"
 #define SPRITE_ROW_PIXEL_COUNT ""
 #define SPRITE_ROW_FILL \
@@ -664,11 +709,12 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             "movl 12(%%esi),%%ecx\n\t" \
             "rep stosb\n\t"
 #else
+#define SPRITE_ROW_SKIP "3: movzwl 12(%%esi),%%eax\n\t"
 #define SPRITE_ROW_ADVANCE "leal (%%edi,%%eax,2),%%edi\n\t"
 #define SPRITE_ROW_PIXEL_COUNT "shrl $1,%%eax\n\t"
 #define SPRITE_ROW_FILL \
             "movw (%%ebx,%%eax,2),%%ax\n\t" \
-            "movl 12(%%esi),%%ecx\n\t" \
+            "movzwl 12(%%esi),%%ecx\n\t" \
             "rep stosw\n\t"
 #endif
 #define SPRITE_ROW_CLOSE \
@@ -684,7 +730,7 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             "movl %%edi,(%[span])\n\t" \
             "jmp 2f\n\t" \
             /* Transparent run: skip the destination, then sample again. */ \
-            "3: movl 12(%%esi),%%eax\n\t" \
+            SPRITE_ROW_SKIP \
             SPRITE_ROW_ADVANCE \
             "addl $16,%%esi\n\t" \
             "cmpl %[end],%%esi\n\t" \
@@ -716,6 +762,7 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
         } else
             SPRITE_ROW_DECODE(SPRITE_ROW_SOURCE_CHECK,SPRITE_ROW_CHECK);
 #undef SPRITE_ROW_DECODE
+#undef SPRITE_ROW_SKIP
 #undef SPRITE_ROW_FILL
 #undef SPRITE_ROW_PIXEL_COUNT
 #undef SPRITE_ROW_ADVANCE

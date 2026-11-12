@@ -57,10 +57,13 @@ def prepare_sprite_alpha(root):
     for asset in alpha_sources(root):
         wad, ptr = asset['wad'], asset['ptr']
         records = []
+        bounds = [] if asset['sprite_type'] == 8 else None
         for offset, down, columns in asset['queries']:
             mask = [0, 0]
+            row_bounds = []
             available = max(0, (len(ptr) - offset) // 4)
             for row in range(ALPHA_ROWS):
+                first, last = columns, 0
                 for col in range(min(columns, available)):
                     entry = ptr[offset + col * 4:offset + col * 4 + 4]
                     mode, start = entry[0], int.from_bytes(entry[1:], 'big')
@@ -73,11 +76,16 @@ def prepare_sprite_alpha(root):
                     word = int.from_bytes(wad[at:at + 2], 'big')
                     if (word >> (0 if mode == 0 else 5 if mode == 1 else 10)) & 31:
                         mask[row >> 5] |= 1 << (row & 31)
-                        break
+                        first, last = min(first, col), col + 1
+                row_bounds.append((first, last) if last else (0, 0))
             # An all-set mask cannot skip any row and needs no resident entry.
             if mask != [0xffffffff, 0xffffffff]:
                 records.append(((offset << 16) | (down << 8) | columns, *mask))
-        banks.append(dict(sprite_type=asset['sprite_type'], records=sorted(records),
+                if bounds is not None:
+                    bounds.append(row_bounds)
+        # Queries sort in the same order as their packed unsigned keys.
+        assert records == sorted(records)
+        banks.append(dict(sprite_type=asset['sprite_type'], records=records, bounds=bounds,
                           wad_sha256=hashlib.sha256(wad).hexdigest(),
                           ptr_sha256=hashlib.sha256(ptr).hexdigest()))
     return banks
@@ -93,10 +101,16 @@ def write_sprite_alpha(root, output):
         lines.extend(f'    {{0x{key:08x}u,0x{a:08x}u,0x{b:08x}u}},'
                      for key, a, b in bank['records'])
         lines.append('};')
+        if bank['bounds'] is not None:
+            lines.append(f'static const uint8_t {name}_bounds[][DOS_SPRITE_ALPHA_ROWS][2]={{')
+            lines.extend('    {' + ','.join('{%d,%d}' % pair for pair in rows) + '},'
+                         for rows in bank['bounds'])
+            lines.append('};')
     lines.append('static const DosSpriteAlphaBank sprite_alpha_banks[]={')
     for bank in banks:
         name = f'sprite_alpha_{bank["sprite_type"]}'
-        lines.append(f'    {{{bank["sprite_type"]},sizeof({name})/sizeof(*{name}),{name}}},')
+        bounds = name + '_bounds' if bank['bounds'] is not None else 'NULL'
+        lines.append(f'    {{{bank["sprite_type"]},sizeof({name})/sizeof(*{name}),{name},{bounds}}},')
     lines.append('};')
     text = '\n'.join(lines) + '\n'
     if not output.exists() or output.read_text() != text:
