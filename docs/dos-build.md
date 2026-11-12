@@ -4124,3 +4124,80 @@ Evidence is in `build/dos/room23-performance.json`,
 `build/dos-room23-source/build/dos/pgo/model-check/report.json` and
 `build/dos-room23-trace/`. The native oracle log is under
 `build/dos-room23-source/build/dos-raster-regression/RASTER.LOG`.
+
+### Share opaque masks across repeated billboard rows
+
+`fa2417b` builds BitMapObj's opaque footprint once per repeated source-row
+band. Each destination row subtracts its existing coverage from that
+footprint, joins adjacent fresh runs across word boundaries and copies
+only those runs. Matching prior mask words still reuse the exact copy
+ranges and updates. Empty fresh words and rows avoid redundant writes.
+Index-zero transparency, opaque black, painter ownership and closed-word
+counts retain their existing meaning. The mask uses 40 bytes on the
+already reserved stack; no allocation or resident lookup table is added.
+
+The new RSF3 direct-row fixture now replays all 92 captured calls against
+their full incoming/outgoing pixels, masks, open-word counts and visible/
+drawn counts. Sixty-four repetitions of each incoming state reduce its
+summed raster time from 24.041 to 21.916 ms, about 8.8%. The fixed-cycle
+4 MB replay reads fixture data outside the timed kernel. Capture-file I/O
+and its four capture-only audio underruns remain excluded. Separate
+closed-row and footprint-prequery trials were slower and were discarded.
+Three initially uncovered draws rise by at most 0.017 ms each; the large,
+heavily overlapping calls account for the net gain.
+
+Fresh native compiler feedback reduces the matched busy barrel frame
+from 84.932 to 82.320 ms. Rendering falls from 69.470 to 66.862 ms; update
+remains 8.544 ms and audio changes from 3.446 to 3.441 ms. Settings are
+normal/486_slow, 40,000 fixed cycles, 4 MB, native 320x240, SB16/mouse and
+muted host sound. All 64 original images, simulation hashes and recorded
+clock/latched-tick assertions match, with zero audio underruns.
+
+Ordinary-clock barrel probes use 64 frames, eight warmup frames and no
+capture writes. Mean/p95/worst milliseconds are below.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 39.860 / 55.820 / 63.960 | 39.811 / 56.221 / 62.735 |
+| Level 1, turning | 35.362 / 63.888 / 73.763 | 35.359 / 63.730 / 72.519 |
+| Level 6 | 43.759 / 56.617 / 58.347 | 43.704 / 55.315 / 57.606 |
+| Level 6, turning | 51.666 / 65.095 / 68.887 | 51.640 / 64.722 / 67.984 |
+
+All four live worst frames fall; stationary level-1 p95 rises by 0.401 ms.
+All four native fixed-update and indexed sound-on burst scenes improve
+mean/p95/worst. Ordinary-clock changes can alter later animation states;
+the matched clock replay above compares the same busy state. The pool
+view remains 60.306 ms. The unmodified 128-frame start retains 26.19 FPS,
+38.18 ms mean and 38.69 ms p95, passing the 25.80 FPS gate; its maximum
+changes from 77.91 to 77.92 ms. Large busy frames, wall/floor costs, pool
+rendering and physical 486 measurements remain open.
+
+The 4 MB 486 native and indexed C oracles each add 384 independent
+per-pixel/full-mask cases covering disjoint and same-word opaque spans,
+160 fresh ranges, word joins, empty fresh rows, changing/outside coverage,
+direct/table sampling, black and guards. The new cases also pass against
+the frozen pre-change kernel. All existing raster, arithmetic, movement,
+candidate-list and shot-pool oracles pass. Fresh feedback completes 23
+training runs, 22 original native captures and the real-time 4 MB level-4
+exercise. All 512 native and 512 indexed release image/state pairs, 22
+original indexed captures and 128 model comparisons at 4 versus 16 MB
+with 32 KiB extra residency match. Native level-1/4/15 and indexed
+level-1/4 sound/mouse exercises, package/map/active saved-level payload
+audits and Windows Release pass.
+
+Native text grows by 1,024 bytes to 1,192,984; data/BSS remain
+22,016/259,584 bytes. Measured level-4 free memory changes from 144/44 KiB
+after shared assets/level loading to 140/40 KiB. Both EXEs and ZIPs are
+staged, preserving all 241 native and 238 indexed non-EXE game files,
+including settings and saves. Both packages retain 231 assets and 238
+archive entries. Native EXE SHA-256:
+`e6222549370c46c67fe79bc5214e94cbad42ad41225f23560d6320a90d2895db`;
+indexed EXE:
+`2460d4af838bcb7f82f2ff766fe075f9b5e6ca3df98fd488ef9525a328ce8303`.
+Evidence is in `build/dos/rows24-performance.json`,
+`build/dos/rows24-validation.json`, `build/dos/rows24-staging.json`,
+`build/dos-rows24-source/build/dos/pgo/model-check/report.json` and
+`build/dos-rows24-trace/`. Oracle logs are under
+`build/dos-rows24-source/build/dos-raster-regression/`,
+`build/dos-rows24-source/build/dos-raster-reference/` and
+`build/dos-rows24-source/build/dos-indexed-raster-regression/`.
