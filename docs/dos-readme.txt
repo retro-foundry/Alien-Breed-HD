@@ -17,9 +17,9 @@ cards are supported by the SDL DOS backend. To run without sound:
 
 Keyboard: arrows move/turn; A/D strafe; Ctrl fire; Space use; 1-6 weapons;
 Esc menu; Enter selects; Tab map; F5/F9 save/load. See the in-game options.
-DOS menus use the keyboard. Optional mouse input requires a DOS mouse driver:
-  SET AB3D_DOS_MOUSE=1
-This enables automatic capture in-game; Esc releases it for menus. Mouse
+DOS menus use the keyboard. Mouse input is enabled automatically when a DOS
+mouse driver is installed; DOSBox's built-in driver works. Capture starts
+in-game; Esc releases it for menus. Set AB3D_DOS_MOUSE=0 to disable it. Mouse
 Look in Options, or mouse_look=1 in AB3D.INI, enables vertical look. Options
 save with DOS 8.3 filenames. In DOSBox, click inside its window to capture the
 host mouse; Ctrl+F10 releases it. Mouse behavior still needs real-hardware

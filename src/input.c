@@ -530,6 +530,9 @@ static void input_apply_relative_mouse(SDL_bool want_capture, uint8_t *key_map)
         input_force_cursor_visible();
         input_emscripten_canvas_cursor_default();
     } else {
+#ifdef AB3D_DOS
+        if(!g_input_capture_active)printf("[DOS MOUSE] gameplay capture active\n");
+#endif
         g_input_capture_active = SDL_TRUE;
         SDL_ShowCursor(SDL_DISABLE);
     }

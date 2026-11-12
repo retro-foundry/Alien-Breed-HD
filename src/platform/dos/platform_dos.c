@@ -357,7 +357,7 @@ void dos_platform_init(int argc,char **argv)
 {
     SDL_SetHint("SDL_DOS_SKIP_EVENT_YIELD","1");
     const char *mouse=getenv("AB3D_DOS_MOUSE");
-    SDL_SetHint("SDL_DOS_SKIP_MOUSE_PUMP",mouse && !strcmp(mouse,"1")?"0":"1");
+    SDL_SetHint("SDL_DOS_SKIP_MOUSE_PUMP",mouse && !strcmp(mouse,"0")?"1":"0");
     SDL_SetHint(SDL_HINT_DOS_ALLOW_DIRECT_FRAMEBUFFER,"1");
     SDL_SetHint(SDL_HINT_RENDER_DRIVER,"software");
     setenv("AB3D_RENDER_DRIVER","software",1);
@@ -379,6 +379,8 @@ void dos_platform_init(int argc,char **argv)
         fprintf(stderr,"Use --dos-bench 1..1024 [--dos-check]\n");exit(1);
     }
     printf("[DOS] 486 DX2/DX4 target; software VESA; i486 instructions and tuning\n");
+    printf("[DOS MOUSE] %s\n",mouse && !strcmp(mouse,"0")?
+        "disabled by AB3D_DOS_MOUSE=0":"driver polling enabled; DOS mouse driver required");
     if(dos_fixed_test_ticks)printf("[DOS] Fixed diagnostic ticks; FPS is not a real-game benchmark\n");
     dos_memory_report("startup");
 }

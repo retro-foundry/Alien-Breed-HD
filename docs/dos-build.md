@@ -142,8 +142,9 @@ The DOS build includes keyboard and mouse input; gamepad/HID drivers are omitted
 to keep the executable small. Keyboard controls match the desktop port: arrows/W/S move, A/D strafe, Ctrl
 fires, Space operates, 1-6 select weapons, Esc opens the menu, Enter selects,
 Tab opens the map, F5/F9 save/load. DOS menus default to keyboard input.
-`SET AB3D_DOS_MOUSE=1` enables the DOS mouse driver transport and captures the
-mouse in-game; Esc releases it for menus. Enable Mouse Look in Options, or set
+The installed DOS mouse driver is used by default, with automatic capture
+in-game; Esc releases it for menus. `SET AB3D_DOS_MOUSE=0` explicitly disables
+mouse polling. Enable Mouse Look in Options, or set
 `mouse_look=1` in `AB3D.INI`, for vertical look. Menu options save using DOS 8.3
 temporary filenames. In DOSBox, click inside the window to capture the host
 mouse; Ctrl+F10 releases it. DOSBox's `[mouse] dos_mouse_driver=true` enables its
@@ -160,6 +161,19 @@ On Windows, append `--physical` to also send small host mouse movements into
 a dedicated DOSBox window. It verifies both game input axes through INT 33h
 and refuses to send input if that test process loses focus. All checks mute
 host audio; the default check does not move the host pointer.
+
+The startup regression links the selected build's actual engine objects and
+follows New Game, the VGA briefing, level loading and Esc/menu resume:
+
+```powershell
+python tools/check_dos_mouse_game.py --dosbox <dosbox.exe>
+```
+
+It checks an unset mouse environment, explicit enable/disable and an absent
+driver in 4 MB. On Windows, `--physical` also sends real host motion and both
+buttons, asserting changes to the player's yaw/pitch and fire/operate input
+before and after menu recapture. Input is sent only while that test's DOSBox
+owns focus. Use `--build-dir build/dos-indexed` for the indexed build.
 
 The smallest RGB565 mode meeting the configured minimum size is selected.
 The world fills that entire mode behind the keys and HUD, with 1:1 pixels and
