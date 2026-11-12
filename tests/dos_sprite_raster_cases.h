@@ -451,6 +451,9 @@ static void check_sprite_dda_rows(void)
     static const unsigned heights[]={1,2,3,7,31,63,127,240};
     static const unsigned widths[]={1,2,31,32,33,64,127,320};
     static const uint32_t steps[]={0,1,255,4095,4096,8191,32768,65535,65536,99991,7*65536};
+    static const uint32_t edge_steps[]={1,2,255,256,4095,4096,4097,8191,8192,8193,
+        16383,16384,16385,21845,21846,32767,32768,32769,65534,65535};
+    static const uint32_t edge_fractions[]={0,1,2,32767,32768,65534,65535};
     uint8_t wad[514],ptr[40];
     RendererPixel palette[32];int rows[240];
     DosSpriteBatch mask[2];DosSpriteHistory history;
@@ -462,11 +465,15 @@ static void check_sprite_dda_rows(void)
         ptr[c*4]=(uint8_t)(c==3?0:c%3);
         ptr[c*4+1]=0;ptr[c*4+2]=(uint8_t)(offset>>8);ptr[c*4+3]=(uint8_t)offset;
     }
-    for(unsigned test=0;test<128;test++)for(unsigned mode=0;mode<3;mode++) {
+    for(unsigned test=0;test<256;test++)for(unsigned mode=0;mode<3;mode++) {
         unsigned x=test%33,y=test%4,width=widths[test%8],height=heights[(test/8)%8];
         if(width>320-x)width=320-x;
         if(height>240-y)height=240-y;
         uint32_t start=((test%25)<<16)+(test*1493u&65535u),step=steps[test%11];
+        if(test>=128) {
+            step=edge_steps[(test-128)%20];
+            start=((test%25)<<16)+edge_fractions[(test-128)%7];
+        }
         unsigned last=test%65;
         if(test%16==0)start=0x7ffe0000u,step=1; /* Clamping near the signed limit. */
         assert((uint64_t)start+(height-1)*(uint64_t)step+3<=INT_MAX);

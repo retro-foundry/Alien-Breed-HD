@@ -3704,3 +3704,29 @@ Local evidence is in `build/dos/span17-performance.json`,
 `build/dos-span17-source/build/dos/pgo/model-check/report.json` and
 `build/dos-span17-trace/`. Both raster logs are under
 `build/dos-span17-source/build/` in their usual regression directories.
+
+### Recheck billboard walk and coverage shortcuts
+
+Further matched native probes leave the staged span17 renderer in place.
+A quotient/remainder vertical walk reduces the busy-frame rendering bucket
+only from 69.078 to 69.061 ms. Checking full coverage before palette/geometry
+preparation increases its matched bucket from about 70.177 to 70.428 ms;
+checking rows from bottom to top increases 69.081 to 69.481 ms. Combining
+those changes is slower again. Testing the right edge before interior mask
+words gives only about 0.054 ms, with no useful mean-frame gain. None of
+these runtime changes is retained. Every probe preserves all 64 original
+clock-replay images and simulation hashes, with zero audio underruns.
+
+The independent row-table oracle expands from 1,536 to 3,072 comparisons
+per pixel format. New cases cover quotient/remainder boundaries around
+half/third/fourth source steps and fractional positions 0/1/2, 32767/32768
+and 65534/65535. Both 4 MB raster oracle executables pass against the
+unchanged production sampler.
+
+A separate instrumented replay also preserves all 64 golden images and
+state hashes. At busy frame 10, object update is 28.132 ms; its nasty
+shot/gib pool is 25.475 ms and movement calls take 24.128 ms. These are
+overlapping measured buckets, not additive costs. This identifies movement
+as a substantial remaining part of the barrel spike. Evidence, discarded
+sources and timing logs are under `build/dos-walk18-trace/`; the staged
+EXEs and ZIPs retain their verified span17 hashes.
