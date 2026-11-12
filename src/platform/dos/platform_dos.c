@@ -298,7 +298,7 @@ void dos_check_ui_screens(GameState *state)
     check_key(state,&ctx,SDL_SCANCODE_DOWN);
     dos_capture_frame("PAUSE.BMP");
     printf("[DOSCHECK] main/options/autosaves/load/new-game/pause menus fit 320x200/240\n");
-    display_dos_check_text_layouts();
+    display_dos_check_text_layouts(state);
 #if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
     display_release_title_memory();
     display_dos_check_gun_frames(state);

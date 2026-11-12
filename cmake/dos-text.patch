@@ -1,0 +1,96 @@
+diff --git a/src/video/dos/SDL_dosmodes.c b/src/video/dos/SDL_dosmodes.c
+--- a/src/video/dos/SDL_dosmodes.c
++++ b/src/video/dos/SDL_dosmodes.c
+@@ -685,4 +685,92 @@
+     return true;
+ }
+ 
++
++/* AB3D briefings use VGA's 80-column screen without resizing SDL's retained
++ * graphics surfaces or releasing their VESA mapping. Restore the same banked
++ * or LFB mode and displayed page before SDL presents graphics again. */
++static bool ab3d_text_screen;
++extern void Ab3dDos_EndCanvas(SDL_Window *window);
++extern bool Ab3dDos_MaterializeCanvas(SDL_Window *window);
++bool Ab3dDos_EndTextScreen(SDL_Window *window);
++
++bool Ab3dDos_BeginTextScreen(SDL_Window *window)
++{
++    SDL_VideoDevice *device = SDL_GetVideoDevice();
++    SDL_VideoData *data = device ? device->internal : NULL;
++    if (ab3d_text_screen) return true;
++    if (!data || !data->current_mode.internal || !window)
++        return SDL_SetError("DOS briefing needs an initialized graphics window");
++    Ab3dDos_EndCanvas(window);
++    if (!Ab3dDos_MaterializeCanvas(window)) return false;
++    __dpmi_regs regs;
++    SDL_zero(regs);
++    regs.x.ax = 0x0003;
++    __dpmi_int(0x10, &regs);
++    ab3d_text_screen = true;
++    SDL_zero(regs);
++    regs.h.ah = 0x0F;
++    __dpmi_int(0x10, &regs);
++    Uint8 last_row;
++    dosmemget(0x484, 1, &last_row);
++    if ((regs.h.al & 0x7F) != 3 || regs.h.ah != 80 || last_row != 24) {
++        Ab3dDos_EndTextScreen(window);
++        return SDL_SetError("VGA 80x25 briefing mode was not selected");
++    }
++    SDL_zero(regs);
++    regs.x.ax = 0x0100;
++    regs.x.cx = 0x2000; /* Hide the text caret. */
++    __dpmi_int(0x10, &regs);
++    return true;
++}
++
++bool Ab3dDos_EndTextScreen(SDL_Window *window)
++{
++    SDL_VideoDevice *device = SDL_GetVideoDevice();
++    SDL_VideoData *data = device ? device->internal : NULL;
++    if (!ab3d_text_screen) return true;
++    if (!data || !data->current_mode.internal || !window)
++        return SDL_SetError("DOS briefing lost its graphics mode");
++    const SDL_DisplayModeData *mode = data->current_mode.internal;
++    __dpmi_regs regs;
++    SDL_zero(regs);
++    if (mode->mode_id == VGA_MODE_13H_SENTINEL) {
++        regs.x.ax = 0x0013;
++        __dpmi_int(0x10, &regs);
++        SDL_zero(regs);
++        regs.h.ah = 0x0F;
++        __dpmi_int(0x10, &regs);
++        if ((regs.h.al & 0x7F) != 0x13)
++            return SDL_SetError("DOS briefing could not restore VGA graphics");
++    } else {
++        regs.x.ax = 0x4F02;
++        regs.x.bx = mode->mode_id | (data->banked_mode ? 0 : VBE_SETMODE_LFB);
++        __dpmi_int(0x10, &regs);
++        if (regs.x.ax != 0x004F)
++            return SDL_SetError("DOS briefing could not restore VESA graphics");
++        if (data->page_flip_available) {
++            SDL_zero(regs);
++            regs.x.ax = 0x4F07;
++            regs.x.dx = (Uint16)(data->page_offset[data->current_page] / mode->pitch);
++            __dpmi_int(0x10, &regs);
++            if (regs.x.ax != 0x004F)
++                return SDL_SetError("DOS briefing could not restore the display page");
++        }
++    }
++    data->palette_version = 0; /* Mode 3 replaced the VGA DAC. */
++    if (SDL_GetMouse()->internal) {
++        SDL_zero(regs);
++        regs.x.ax = 7; regs.x.dx = (Uint16)(mode->w - 1);
++        __dpmi_int(0x33, &regs);
++        SDL_zero(regs);
++        regs.x.ax = 8; regs.x.dx = (Uint16)(mode->h - 1);
++        __dpmi_int(0x33, &regs);
++        SDL_zero(regs);
++        regs.x.ax = 0x0B; /* Do not carry briefing motion into mouse look. */
++        __dpmi_int(0x33, &regs);
++    }
++    ab3d_text_screen = false;
++    return true;
++}
++
+ #endif // SDL_VIDEO_DRIVER_DOSVESA

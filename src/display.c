@@ -18,6 +18,8 @@
 #include "display.h"
 #ifdef AB3D_DOS
 #include "platform_dos.h"
+#include "control_loop.h"
+#include "text_dos.h"
 #include <errno.h>
 #endif
 #include "renderer.h"
@@ -3699,6 +3701,7 @@ void display_toggle_fullscreen(void)
 void display_shutdown(void)
 {
 #ifdef AB3D_DOS
+    display_dos_end_level_text();
     free(g_dos_map_scratch);g_dos_map_scratch=NULL;g_dos_map_capacity=0;
     for(int i=0;i<2;i++) {
         if(g_dos_frame_surfaces[i])SDL_DestroySurface(g_dos_frame_surfaces[i]);
@@ -5317,11 +5320,45 @@ void display_present_text_screen(void)
     display_present_text_screen_alpha(255);
 }
 
+#ifdef AB3D_DOS
+void display_dos_begin_level_text(void)
+{
+    if(dos_text_active())return;
+#ifdef AB3D_NATIVE_RGB565
+    dos_ui_restore_canvas(g_sdl_ren);
+    dos_ui_materialize_canvas(g_sdl_ren);
+#endif
+    display_text_reset_pages();
+    dos_text_begin(g_window);
+}
+
+void display_dos_end_level_text(void) { dos_text_end(g_window); }
+
+static void display_dos_present_level_text(int alpha)
+{
+    int first=-1,last=-1;
+    for(int row=0;row<DISPLAY_TEXT_MAX_LINES;row++)
+        if(g_text_line_used[row] && !display_ascii_text_is_blank(g_text_lines[row])) {
+            if(first<0)first=row;last=row;
+        }
+    const char *lines[DISPLAY_TEXT_MAX_LINES];
+    unsigned count=first<0?0:(unsigned)(last-first+1);
+    for(unsigned row=0;row<count;row++)lines[row]=g_text_lines[first+(int)row];
+    dos_text_present(lines,count,alpha);
+}
+#endif
+
 void display_present_text_screen_alpha(int alpha)
 {
     if (!g_sdl_ren) return;
     if (alpha < 0) alpha = 0;
     if (alpha > 255) alpha = 255;
+#ifdef AB3D_DOS
+    if(dos_text_active()) {
+        display_dos_present_level_text(alpha);
+        return;
+    }
+#endif
 
     int out_w = 0;
     int out_h = 0;
@@ -5635,41 +5672,89 @@ void display_dos_check_hud_bounds(GameState *state)
     printf("[DOSCHECK] HUD bars/numbers, four keys/underlines, 9999 FPS, crosshair and map fit 320x200/240\n");
 }
 
-void display_dos_check_text_layouts(void)
+static uint32_t display_dos_surface_hash(const SDL_Surface *surface)
 {
-    SDL_Rect r={0,0,g_present_width,g_present_height};
+    const uint8_t *bytes=surface->pixels;uint32_t hash=2166136261u;
+    for(unsigned i=0;i<(unsigned)surface->pitch*surface->h;i++)hash=(hash^bytes[i])*16777619u;
+    return hash;
+}
+
+void display_dos_check_text_layouts(GameState *state)
+{
+#ifdef AB3D_NATIVE_RGB565
+    dos_ui_materialize_canvas(g_sdl_ren);
+#endif
+    SDL_Surface *surface=g_sdl_ren->surface;
+    void *pixels=surface->pixels;
+    int width=surface->w,height=surface->h,pitch=surface->pitch;
+    uint32_t original_hash=display_dos_surface_hash(surface);
+    dos_capture_frame("INTRO0.BMP");
     for(int lev=0;lev<MAX_LEVELS;lev++) {
-        display_clear_text_screen();display_text_reset_pages();
-        display_draw_line_of_text(level_text_heading[lev],0);
-        for(int row=0;row<LEVEL_TEXT_VISIBLE_ROWS;row++)
-            display_draw_line_of_text(level_text[lev][row],row+2);
-        display_dos_check_text_screen(level_text_heading[lev],1);
-        DisplayTextRun runs[DISPLAY_TEXT_LAYOUT_MAX_RUNS];
-        int count,scale,line_h,draw_h,top,mx,my;
-        if(!display_text_layout_in_rect(r,runs,DISPLAY_TEXT_LAYOUT_MAX_RUNS,
-                &count,&scale,&line_h,&draw_h,&top,&mx,&my) || scale!=DISPLAY_ASCII_SCALE_ONE) {
-            fprintf(stderr,"DOS level %d native font layout failed\n",lev+1);exit(1);
-        }
-        unsigned expected=0,actual=0;
-        for(int row=0;row<DISPLAY_TEXT_MAX_LINES;row++)
-            for(const char *p=g_text_lines[row];*p;p++)if(*p!=' ' && *p!='\t')expected++;
-        for(int i=0;i<count;i++) {
-            if(runs[i].len*DISPLAY_ASCII_XADVANCE>r.w-2*mx) {
-                fprintf(stderr,"DOS level %d text exceeds screen width\n",lev+1);exit(1);
-            }
-            for(int j=0;j<runs[i].len;j++) {
-                char c=runs[i].text[runs[i].start+j];if(c!=' ' && c!='\t')actual++;
-            }
-        }
-        if(actual!=expected){fprintf(stderr,"DOS level %d text lost glyphs\n",lev+1);exit(1);}
+        /* Exercise the exact content/heading placement used by PlayTheGame. */
+        play_the_game_prepare_level_text_lines(lev);
+        display_dos_begin_level_text();
         if(lev==0) {
-            display_present_text_screen_alpha(255);dos_capture_frame("INTRO1.BMP");
-            while(display_text_next_page())display_present_text_screen_alpha(255);
-            dos_capture_frame("INTRO2.BMP");
+            display_present_text_screen_alpha(0);
+            uint16_t blank[DOS_TEXT_ROWS][DOS_TEXT_COLUMNS];dos_text_read(blank);
+            for(int y=0;y<DOS_TEXT_ROWS;y++)for(int x=0;x<DOS_TEXT_COLUMNS;x++)
+                if(blank[y][x]!=0x0720){fprintf(stderr,"DOS zero-alpha briefing was not blank\n");exit(1);}
         }
+        display_present_text_screen_alpha(255);
+        uint16_t cells[DOS_TEXT_ROWS][DOS_TEXT_COLUMNS];dos_text_read(cells);
+        int first=-1,last=-1;
+        for(int row=0;row<DISPLAY_TEXT_MAX_LINES;row++)
+            if(g_text_line_used[row] && !display_ascii_text_is_blank(g_text_lines[row])) {
+                if(first<0)first=row;last=row;
+            }
+        if(first<0 || last-first+1>DOS_TEXT_ROWS) {
+            fprintf(stderr,"DOS level %d briefing rows do not fit 80x25\n",lev+1);exit(1);
+        }
+        unsigned glyphs=0,expected_glyphs=0;
+        for(int y=0;y<DOS_TEXT_ROWS;y++)for(int x=0;x<DOS_TEXT_COLUMNS;x++) {
+            uint8_t ch=(uint8_t)cells[y][x];
+            if(ch!=' ')glyphs++;
+            if((cells[y][x]>>8)!=7) {
+                fprintf(stderr,"DOS level %d unexpected text attribute\n",lev+1);exit(1);
+            }
+        }
+        for(int row=first;row<=last;row++) {
+            const char *text=g_text_lines[row];
+            while(*text==' ' || *text=='\t')text++;
+            int length=(int)strlen(text);
+            while(length && (text[length-1]==' ' || text[length-1]=='\t'))length--;
+            if(length>DOS_TEXT_COLUMNS){fprintf(stderr,"DOS level %d briefing line too wide\n",lev+1);exit(1);}
+            int y=(DOS_TEXT_ROWS-(last-first+1))/2+row-first;
+            int x=(DOS_TEXT_COLUMNS-length)/2;
+            for(int i=0;i<length;i++) {
+                if((uint8_t)cells[y][x+i]!=(uint8_t)text[i]) {
+                    fprintf(stderr,"DOS level %d briefing lost/reordered a glyph\n",lev+1);exit(1);
+                }
+                if(text[i]!=' ')expected_glyphs++;
+            }
+        }
+        if(glyphs!=expected_glyphs){fprintf(stderr,"DOS briefing has stray/missing glyphs\n");exit(1);}
+        char filename[13];snprintf(filename,sizeof(filename),"BLURB%02d.BIN",lev+1);
+        FILE *file=fopen(filename,"wb");
+        if(!file || fwrite(cells,1,sizeof(cells),file)!=sizeof(cells) || fclose(file)) {
+            fprintf(stderr,"DOS briefing readback capture failed\n");exit(1);
+        }
+        if(lev==0)dos_capture_frame("INTRO1.BMP");
+        if(play_the_game_drain_level_text_input(state)<0 || !Ab3dDos_PushKey(SDL_SCANCODE_RETURN,true) ||
+           play_the_game_poll_level_text_input(state)!=1 || !Ab3dDos_PushKey(SDL_SCANCODE_RETURN,false)) {
+            fprintf(stderr,"DOS briefing single-key dismissal failed\n");exit(1);
+        }
+        play_the_game_clear_level_text(state);
+        if(dos_text_active() || surface!=g_sdl_ren->surface || pixels!=surface->pixels ||
+           width!=surface->w || height!=surface->h || pitch!=surface->pitch ||
+           original_hash!=display_dos_surface_hash(surface)) {
+            fprintf(stderr,"DOS briefing changed the retained gameplay surface\n");exit(1);
+        }
+        SDL_RenderPresent(g_sdl_ren);
+        dos_text_check_graphics_palette(surface);
     }
+    dos_capture_frame("INTRO2.BMP");
     display_clear_text_screen();display_text_reset_pages();
-    printf("[DOSCHECK] all 16 level texts fit native font pages without lost glyphs\n");
+    printf("[DOSCHECK] all 16 level texts fit VGA 80x25 on one screen; exact glyphs, single-key dismissal and graphics restoration passed\n");
 }
 #endif
 
@@ -5687,6 +5772,7 @@ void display_draw_display(GameState *state) {
 
 #ifdef AB3D_DOS
 void dos_capture_frame(const char *filename) {
+    if(dos_text_active()){dos_text_capture(filename);return;}
     /* DOS drawing is synchronous; stream the resident native surface directly. */
 #ifdef AB3D_NATIVE_RGB565
     dos_ui_materialize_canvas(g_sdl_ren);

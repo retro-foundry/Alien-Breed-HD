@@ -69,7 +69,9 @@ void display_clear_text_screen(void);
 #ifdef AB3D_DOS
 void display_text_reset_pages(void);
 int display_text_next_page(void);
-void display_dos_check_text_layouts(void);
+void display_dos_begin_level_text(void);
+void display_dos_end_level_text(void);
+void display_dos_check_text_layouts(GameState *state);
 void display_dos_check_text_screen(const char *label, int allow_pages);
 void display_dos_check_hud_bounds(GameState *state);
 void display_dos_prepare_gameplay_ui(GameState *state);

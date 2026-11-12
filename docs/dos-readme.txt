@@ -31,12 +31,14 @@ S3 with RGB565, or standard 320x200 VGA in the indexed build. Existing INI
 files requesting 320x200 also fill the selected mode. Native RGB565 pixels
 are presented 1:1 with SDL: no conversion, enlargement, borders or OpenGL.
 
-Menus, HUD, text and the map use native pixel sizes through SDL. Weapons
+Menus, HUD and the map use native pixel sizes through SDL. Weapons
 still scale to the game view; their exact sampled frames are cached for
-fast SDL blits. Long level text wraps into pages; press a key to continue.
+fast SDL blits. Level briefings use VGA 80-column text mode so the complete
+original text fits on one screen. Press a key after loading to continue;
+the game restores its graphics mode, palette and mouse input automatically.
 UI uses opaque colors and cutout masks without alpha blending. Uncollected
 keys appear grey; collected keys use their colors. Damage uses a red border.
-Menus and text stay inside the visible screen, with paging for long text.
+Menus and text stay inside the visible screen.
 Key underlines and bars leave room for the complete HUD in 200-line output.
 Output retains all 4096 Amiga colors. The DOS build uses the same game logic
 and source assets as the desktop port. Original samples mix at 8007 Hz;

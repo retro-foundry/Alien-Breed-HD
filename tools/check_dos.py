@@ -69,11 +69,13 @@ def main():
         ini = re.sub(rf'^{key}=.*$', f'{key}={value}', ini, flags=re.M)
     (run / 'AB3D.INI').write_text(ini, encoding='ascii')
     for name in ['ab3d.log', 'FRAME.BMP', 'MENU.BMP', 'MAP.BMP', 'HUD.BMP', 'KEYS.BMP',
-                 'OPTIONS.BMP', 'INTRO1.BMP', 'INTRO2.BMP', 'PASS.TXT', 'SAVEGAME.BIN',
+                 'OPTIONS.BMP', 'INTRO0.BMP', 'INTRO1.BMP', 'INTRO2.BMP', 'PASS.TXT', 'SAVEGAME.BIN',
                  'HUD200.BMP', 'HUD240.BMP', 'BAR200.BMP', 'BAR240.BMP',
                  'AUTOS.BMP', 'LOAD.BMP', 'NEWGAME.BMP', 'PAUSE.BMP', 'BOOT.LOG',
                  'AUTOSAVE.BIN', 'AUTO1.BIN', 'AUTO2.BIN', 'AUTO3.BIN', 'AUTO4.BIN']:
         (run / name).unlink(missing_ok=True)
+    for capture in run.glob('BLURB??.BIN'):
+        capture.unlink()
     config = run / 'profile.conf'
     config.write_text(f'''[sdl]
 fullscreen=false
@@ -193,11 +195,20 @@ exit
                       'level-point projection cache cases match uncached results',
                       'frame zone-order cases match linear search',
                       'four keys/underlines, 9999 FPS, crosshair and map fit 320x200/240',
-                      'main/options/autosaves/load/new-game/pause menus fit 320x200/240']:
+                      'main/options/autosaves/load/new-game/pause menus fit 320x200/240',
+                      'all 16 level texts fit VGA 80x25 on one screen; exact glyphs, single-key dismissal and graphics restoration passed']:
             if check not in log:
                 raise SystemExit(f'DOS diagnostic check missing: {check}; see {run}')
         if 'opaque grey UI images preserve exact cutout masks' not in log:
             raise SystemExit(f'DOS disabled-key rendering check failed; see {run}')
+        if (run / 'INTRO0.BMP').read_bytes() != (run / 'INTRO2.BMP').read_bytes():
+            raise SystemExit(f'DOS briefing changed the graphics image; see {run}')
+        if struct.unpack_from('<ii', (run / 'INTRO1.BMP').read_bytes(), 18) != (720, 400):
+            raise SystemExit(f'DOS briefing did not capture the VGA ROM-font screen; see {run}')
+        for level in range(1, 17):
+            cells = (run / f'BLURB{level:02}.BIN').read_bytes()
+            if len(cells) != 4000 or any(value != 7 for value in cells[1::2]):
+                raise SystemExit(f'DOS level {level} briefing has invalid text memory; see {run}')
         for name in ['HUD200.BMP', 'BAR200.BMP']:
             capture = (run / name).read_bytes()
             width, height = struct.unpack_from('<ii', capture, 18)

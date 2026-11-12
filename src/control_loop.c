@@ -293,12 +293,9 @@ int play_the_game_level_text_alpha_for_step(int step)
     return ((step + 1) * 255 + steps - 1) / steps;
 }
 
-void play_the_game_present_level_text(GameState *state, int alpha)
+void play_the_game_prepare_level_text_lines(int lev)
 {
-    if (!play_the_game_should_show_level_text(state)) return;
-
     display_clear_text_screen();
-    int lev = state->current_level;
     int heading_row = 0;
     for (int row = 0; row < LEVEL_TEXT_VISIBLE_ROWS; row++) {
         const char *line = level_text[lev][row];
@@ -312,6 +309,15 @@ void play_the_game_present_level_text(GameState *state, int alpha)
         display_draw_line_of_text((line && line[0]) ? line : " ", row);
     }
     display_draw_line_of_text(level_text_heading[lev], heading_row);
+}
+
+void play_the_game_present_level_text(GameState *state, int alpha)
+{
+    if (!play_the_game_should_show_level_text(state)) return;
+#ifdef AB3D_DOS
+    display_dos_begin_level_text();
+#endif
+    play_the_game_prepare_level_text_lines(state->current_level);
     display_present_text_screen_alpha(alpha);
 }
 
@@ -403,6 +409,7 @@ int play_the_game_drain_level_text_input(GameState *state)
 void play_the_game_clear_level_text(GameState *state)
 {
 #ifdef AB3D_DOS
+    display_dos_end_level_text();
     display_text_reset_pages();
 #endif
     if (state) input_clear_keyboard(state->key_map);
@@ -694,6 +701,10 @@ int play_the_game_after_game_loop(GameState *state)
 
 void play_the_game_finalize_session(GameState *state)
 {
+#ifdef AB3D_DOS
+    /* Quit during the briefing must restore graphics before menu cleanup. */
+    display_dos_end_level_text();
+#endif
     /* ---- Cleanup for main menu (AB3DI.s CleanupForMainMenu ~4774) ---- */
     audio_mt_end();
     display_release_copper_screen();

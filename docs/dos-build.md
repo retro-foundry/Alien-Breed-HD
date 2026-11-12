@@ -174,10 +174,15 @@ effect. Errors and diagnostics are written beside the executable in `AB3D.LOG`.
 `AB3D.INI` defaults to true 320x240 RGB565 world rendering, presented 1:1 without
 enlargement, one rendering thread and normal game rules. DOS requires
 `supersampling=1`. Menus, HUD, fonts and the map draw at native pixel sizes
-with SDL; weapons continue scaling to the game view. Long level text wraps
-into pages, with a key press advancing to the next page before dismissal.
-Text is laid out inside the visible screen even when the native title artwork
-is cropped. Key ownership underlines stay above the bottom margin, and bars
+with SDL; weapons continue scaling to the game view. Level briefings temporarily
+select VGA 80x25 text mode, fitting each original heading and blurb on one screen.
+Press a key to dismiss the briefing after loading. The Amiga similarly selects
+its high-resolution `TextCop` screen (`amiga/AB3DI.s` and `amiga/TextCop.s`).
+DOS uses the VGA ROM font and text memory, retaining its existing gameplay
+surfaces and restoring the same graphics mode, palette and mouse ranges afterward.
+No additional framebuffer or resident font table is allocated. Menus stay inside
+the visible screen even when the native title artwork is cropped.
+Key ownership underlines stay above the bottom margin, and bars
 leave room above the key row in 200-line output.
 Map lines are clipped to the UI viewport. The runner checks that the 200-line
 HUD captures leave every pixel below that viewport black.
@@ -300,11 +305,20 @@ python tools/check_dos.py --dosbox ../GloomAmiga/build/dos-toolchain/dosbox-stag
 python tools/check_dos.py --dosbox ../GloomAmiga/build/dos-toolchain/dosbox-staging/dosbox-staging-v0.82.2/dosbox.exe --exercise
 python tools/check_dos.py --dosbox ../GloomAmiga/build/dos-toolchain/dosbox-staging/dosbox-staging-v0.82.2/dosbox.exe --cycles 40000 --exercise
 python tools/check_dos.py --dosbox ../GloomAmiga/build/dos-toolchain/dosbox-staging/dosbox-staging-v0.82.2/dosbox.exe --exercise --sb sbpro2 --mouse
+python tools/check_dos_briefings.py --dosbox ../GloomAmiga/build/dos-toolchain/dosbox-staging/dosbox-staging-v0.82.2/dosbox.exe
 1..16 | ForEach-Object {
   python tools/check_dos.py --dosbox ../GloomAmiga/build/dos-toolchain/dosbox-staging/dosbox-staging-v0.82.2/dosbox.exe --cycles 40000 --frames 4 --level $_ --frontend --mouse
   if ($LASTEXITCODE -ne 0) { throw "DOS level $_ failed" }
 }
 ```
+
+The briefing check runs the real New Game and level-loader path for levels 1,
+4 and 15 in 4 MB, comparing text memory captures before/after loading and exact
+fixed-tick gameplay images with/without the briefing. It also checks one-key
+dismissal and restoring graphics when quitting from a loaded briefing.
+Use `--build-dir build/dos-indexed` to check the indexed package. The ordinary
+`--exercise` runner checks all sixteen briefings directly against VGA text memory,
+the indexed hardware palette and the retained graphics surface across mode switches.
 
 The runner creates isolated trees under `build/dos/checks`. Each contains its
 exact emulator config, startup log and a real, nonblank `FRAME.BMP`. It checks
