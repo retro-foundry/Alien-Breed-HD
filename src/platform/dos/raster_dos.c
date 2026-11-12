@@ -1,5 +1,8 @@
 #include "raster_dos.h"
 #include "sprite_format.h"
+#ifdef AB3D_NATIVE_RGB565
+#include "sprite_alpha_dos.h"
+#endif
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -561,6 +564,9 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
     }
     unsigned available=(sprite->ptr_bytes-sprite->ptr_offset)/4u;
     if(!available)return result;
+#ifdef AB3D_NATIVE_RGB565
+    const uint32_t *nonempty_rows=dos_sprite_alpha_source(sprite);
+#endif
     unsigned count=0,previous=UINT32_MAX;
     uint32_t u=sprite->u;
     if(sprite->du && sprite->du<65536u) {
@@ -615,6 +621,12 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
                 end_y=run>height-y?height:y+run;
             }
         }
+#ifdef AB3D_NATIVE_RGB565
+        if(nonempty_rows && (unsigned)source_row<DOS_SPRITE_ALPHA_ROWS &&
+           !(nonempty_rows[(unsigned)source_row>>5]&(1u<<((unsigned)source_row&31)))) {
+            y=end_y;continue;
+        }
+#endif
         if(batch && sprite_batch_hidden(out+y*pitch,width,end_y-y)) {
             y=end_y;continue;
         }

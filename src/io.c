@@ -32,6 +32,9 @@
 #if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
 #include "raster_dos.h"
 #endif
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#include "sprite_alpha_dos.h"
+#endif
 #define printf ab3d_log_printf
 #if defined(_WIN32) || defined(_WIN64)
 #include <direct.h>
@@ -2071,6 +2074,10 @@ void io_load_objects(void)
     printf("[IO] Loading object sprites...\n");
     extern RendererState g_renderer;
 
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    dos_sprite_alpha_reset();
+#endif
+
     for (int i = 0; i < MAX_SPRITE_TYPES; i++) {
         free(g_sprite_data[i]);       g_sprite_data[i] = NULL;
         free(g_sprite_ptr_data[i]);   g_sprite_ptr_data[i] = NULL;
@@ -2143,6 +2150,10 @@ void io_load_objects(void)
                                         g_sprite_data[i], g_renderer.sprite_wad_size[i],
                                         g_sprite_ptr_data[i], g_renderer.sprite_ptr_size[i]);
         }
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+        dos_sprite_alpha_bind((unsigned)i,g_renderer.sprite_wad[i],g_renderer.sprite_wad_size[i],
+                               g_renderer.sprite_ptr[i],g_renderer.sprite_ptr_size[i]);
+#endif
 
         /* .pal: embedded tables only (from data/pal via sprite_palettes_data.h). No runtime load. */
         if (sprite_pal_names[i]) {

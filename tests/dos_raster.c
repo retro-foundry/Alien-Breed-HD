@@ -27,6 +27,8 @@ static uint32_t next_value(void)
     return random_state;
 }
 
+#include "dos_sprite_alpha_cases.h"
+
 static void check_water_transport(void)
 {
     static uint8_t native[WATER_FILE_BYTES],original[WATER_FILE_BYTES];
@@ -939,6 +941,7 @@ int main(void)
     check_sprite_narrow_coverage();
     check_sprite_history();
     check_sprite_dda_rows();
+    check_sprite_alpha_hints();
     check_water_transport();check_water();
     check_movement_touch();
     check_movement_paths();
