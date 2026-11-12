@@ -494,8 +494,7 @@ static void check_sprite_tall_bands(void)
 {
     enum { HEIGHT=240,PIXELS=320*HEIGHT };
     RendererPixel *actual=malloc((PIXELS+16)*sizeof(*actual));
-    RendererPixel *expected=malloc((PIXELS+16)*sizeof(*expected));
-    assert(actual && expected);
+    assert(actual);
     const unsigned widths[]={1,2,33,160,319,320},heights[]={2,3,31,240};
     const uint8_t wad[6]={0,0,31,0,0,0};uint8_t ptr[1280]={0};
     RendererPixel palette[32]={0};
@@ -509,7 +508,7 @@ static void check_sprite_tall_bands(void)
             int opaque=shape==0 || (shape==1?x&1:x%64<7 || x%64>=49);
             ptr[x*4+3]=(uint8_t)(opaque?2:4);
         }
-        for(unsigned i=0;i<PIXELS+16;i++)actual[i]=expected[i]=(RendererPixel)0xa55a;
+        for(unsigned i=0;i<PIXELS+16;i++)actual[i]=(RendererPixel)0xa55a;
         memset(&got_mask,0xa5,sizeof(got_mask));
         dos_raster_sprite_batch_begin(actual+8,&got_mask.mask);
         for(unsigned y=0;y<HEIGHT;y++)for(unsigned x=0;x<320;x++)
@@ -524,7 +523,7 @@ static void check_sprite_tall_bands(void)
             unsigned at=left+x;
             any_open|=!(want_mask.mask.covered[y][at/32]&(1u<<(at%32)));
             if(ptr[x*4+3]!=2 || (want_mask.mask.covered[y][at/32]&(1u<<(at%32))))continue;
-            expected[8+y*320+at]=palette[31];drawn++;
+            drawn++;
             want_mask.mask.covered[y][at/32]|=1u<<(at%32);
         }
         for(unsigned y=0;y<HEIGHT;y++) {
@@ -536,10 +535,16 @@ static void check_sprite_tall_bands(void)
         DosSpriteCoverage got=dos_raster_sprite_rows(actual+8+left,width,height,320,&sprite);
         dos_raster_sprite_batch_end();
         assert(got.visible==(any_open?width*height:0) && got.drawn==drawn);
-        assert(!memcmp(actual,expected,(PIXELS+16)*sizeof(*actual)));
+        for(unsigned i=0;i<8;i++)assert(actual[i]==(RendererPixel)0xa55a && actual[8+PIXELS+i]==(RendererPixel)0xa55a);
+        for(unsigned y=0;y<HEIGHT;y++)for(unsigned x=0;x<320;x++) {
+            int claimed=covered && ((x%11==0)^((y/7)&1));
+            int opaque=y<height && x>=left && x<left+width && ptr[(x-left)*4+3]==2;
+            RendererPixel pixel=(RendererPixel)(opaque && !claimed?palette[31]:0xa55a);
+            assert(actual[8+y*320+x]==pixel);
+        }
         assert(!memcmp(&got_mask,&want_mask,sizeof(got_mask)));checked++;
     }
-    free(expected);free(actual);
+    free(actual);
     printf("PASS: %u tall sprite bands preserve 2/3/31/240 rows, odd/even copy widths, 160 spans, changing/unused coverage, masks/counts, black and guards\n",checked);
 }
 
