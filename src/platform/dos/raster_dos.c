@@ -519,7 +519,8 @@ typedef struct { const uint8_t *source; unsigned limit,shift,width; } DosSpriteG
 
 #ifdef AB3D_NATIVE_RGB565
 static inline void sprite_group_source(DosSpriteGroup *g,const DosSpriteRows *sprite,
-                                       unsigned column,unsigned width,unsigned x)
+                                       unsigned column,unsigned width,unsigned x,
+                                       const uint8_t *source_base,unsigned last_offset)
 #else
 static inline void sprite_group_source(DosSpriteGroup *g,const DosSpriteRows *sprite,
                                        unsigned column,unsigned width)
@@ -539,11 +540,17 @@ static inline void sprite_group_source(DosSpriteGroup *g,const DosSpriteRows *sp
     descriptor=__builtin_bswap32(descriptor);
     unsigned mode=descriptor>>24;
     uint32_t offset=descriptor&0xffffffu;
+#ifdef AB3D_NATIVE_RGB565
+    if(!descriptor || offset>last_offset)return;
+    g->source=source_base+offset;
+    g->limit=(last_offset-offset)/2u;
+#else
     if((!mode && !offset) || offset>=sprite->wad_bytes)return;
     unsigned words=(sprite->wad_bytes-offset)/2u;
     if(words<=sprite->down_strip)return;
     g->source=sprite->wad+offset+sprite->down_strip*2u;
     g->limit=words-1-sprite->down_strip;
+#endif
     g->shift=!mode?0:mode==1?5:10;
 }
 
@@ -575,6 +582,15 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
     unsigned available=(sprite->ptr_bytes-sprite->ptr_offset)/4u;
     if(!available)return result;
 #ifdef AB3D_NATIVE_RGB565
+    /* A valid first word needs offset+2*(down_strip+1)<=wad_bytes.
+     * Hoist the draw-constant part, preserving odd byte offsets and lengths. */
+    if(sprite->wad_bytes<2 || sprite->down_strip>(sprite->wad_bytes-2)/2u) {
+        if(batch && sprite_history && height<=240)
+            sprite_history_note(out,width,height,pitch,sprite,0);
+        return result;
+    }
+    const uint8_t *source_base=sprite->wad+sprite->down_strip*2u;
+    unsigned last_offset=sprite->wad_bytes-sprite->down_strip*2u-2u;
     const uint8_t (*row_bounds)[2];
     const uint32_t *nonempty_rows=dos_sprite_alpha_source(sprite,&row_bounds);
 #endif
@@ -596,7 +612,7 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
             else {
                 previous=sample;
 #ifdef AB3D_NATIVE_RGB565
-                sprite_group_source(&groups[count++],sprite,sample,length,x);
+                sprite_group_source(&groups[count++],sprite,sample,length,x,source_base,last_offset);
 #else
                 sprite_group_source(&groups[count++],sprite,sample,length);
 #endif
@@ -613,7 +629,7 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
         if(column==previous){groups[count-1].width++;continue;}
         previous=column;
 #ifdef AB3D_NATIVE_RGB565
-        sprite_group_source(&groups[count++],sprite,column,1,x);
+        sprite_group_source(&groups[count++],sprite,column,1,x,source_base,last_offset);
 #else
         sprite_group_source(&groups[count++],sprite,column,1);
 #endif
@@ -629,12 +645,16 @@ DosSpriteCoverage sprite_rows(RendererPixel *out,unsigned width,
 #endif
     for(unsigned g=0;g<count;g++)if(groups[g].source) {
 #ifdef AB3D_NATIVE_RGB565
-        result.visible+=(groups[g].width&65535u)*height;
+        result.visible+=groups[g].width&65535u;
 #else
         result.visible+=groups[g].width*height;
 #endif
         if(groups[g].limit<minimum_limit)minimum_limit=groups[g].limit;
     } else all_sources=0;
+#ifdef AB3D_NATIVE_RGB565
+    /* Sum valid destination widths before the common height multiplication. */
+    result.visible*=height;
+#endif
     for(unsigned y=0;y<height;) {
         int source_row;
         unsigned end_y=y+1;

@@ -66,7 +66,7 @@ static void check_sprite_rows(void)
      * native words do not overlap any other sampled column in this fixture. */
     native[4097]=wad[4098];native[4098]=wad[4097];
     for(unsigned i=0;i<32;i++)palette[i]=(RendererPixel)(i==1?0:i*1973u);
-    for(unsigned test=0;test<540;test++) {
+    for(unsigned test=0;test<600;test++) {
         unsigned width=widths[test%9],height=test==287?240:1+(test%61);
         for(unsigned i=1;i<32;i++) {
             /* Adjacent opaque samples may share a colour, including black.
@@ -87,7 +87,7 @@ static void check_sprite_rows(void)
         DosSpriteRows sprite={native,ptr,sizeof(wad)-(test%5),sizeof(ptr)-(test%7),palette,rows,
                               test%4,(test%3)*65536u+333u,test%4==0?0:65536u/(1+test%8),
                               32,test%13==0?65535u:test%3};
-        if(test>=288) {
+        if(test>=288 && test<540) {
             /* Compare the row renderer with the independent per-pixel DDA
              * across fractional boundaries, clamped columns and 32-bit wraps. */
             static const uint32_t steps[]={0,1,2,3,127,4095,4096,4097,8191,8192,8193,
@@ -98,6 +98,19 @@ static void check_sprite_rows(void)
             unsigned n=test-288;
             sprite.du=steps[n%21];sprite.u=origins[n/21];
             if(n%7==0)sprite.columns=1;
+        }
+        if(test>=540) {
+            /* The original byte-address test below remains independent of
+             * the raster's word-limit calculations, including tiny/odd WADs
+             * and down-strip values whose doubled form would overflow. */
+            static const unsigned strips[]={0,1,2,3,4,5,65535,INT_MAX,UINT32_MAX/2,UINT32_MAX};
+            sprite.wad_bytes=(test-540)%6;
+            sprite.down_strip=strips[(test-540)/6];
+            sprite.ptr_offset=0;sprite.u=0;sprite.du=32768;
+            for(unsigned i=0;i<32;i++) {
+                ptr[i*4]=(uint8_t)(i%4);
+                ptr[i*4+1]=ptr[i*4+2]=0;ptr[i*4+3]=(uint8_t)(i%6);
+            }
         }
         DosSpriteCoverage coverage={0,0};
         unsigned available=(sprite.ptr_bytes-sprite.ptr_offset)/4;
@@ -626,7 +639,7 @@ static void check_sprite_history(void)
     /* Compare the optional cache with the same uncached mask kernel, including
      * every sampling input, palette-only changes, reused row storage and reset.
      * Transparent holes keep repeated rectangles out of the whole-box reject. */
-    for(unsigned variant=0;variant<25;variant++)for(unsigned cached=0;cached<2;cached++) {
+    for(unsigned variant=0;variant<28;variant++)for(unsigned cached=0;cached<2;cached++) {
         RendererPixel *surface=cached?actual:expected;
         for(unsigned i=0;i<PIXELS+16;i++)surface[i]=((RendererPixel)0xa55a);
         dos_raster_sprite_batch_begin(surface+8,&scratch);
@@ -671,6 +684,9 @@ static void check_sprite_history(void)
                 case 17:for(unsigned y=0;y<240;y++)rows[y]=(y&1)?-1:INT_MAX;break;
                 case 18:case 19:case 20:case 21:case 22:case 23:case 24:
                     rows[changed_row]=(int)((changed_row/4)%24);break;
+                case 25:sprite.down_strip=UINT32_MAX;break;
+                case 26:sprite.wad_bytes=0;break;
+                case 27:sprite.wad_bytes=1;break;
             }
             /* More than four distinct footprints exercise eviction, then
              * revisiting the original verifies that missing entries are safe. */
@@ -686,7 +702,7 @@ static void check_sprite_history(void)
             assert(!memcmp(&scratch,&expected_mask,sizeof(scratch)));
         }
     }
-    puts("PASS: 300 cached billboard draws retain uncached pixels, coverage, sampling keys, palette changes, row storage reuse, high-byte changes, first/last rows, one/full-height clips, eviction, reset and guards");
+    puts("PASS: 336 cached billboard draws retain uncached pixels, coverage, sampling keys, palette changes, row storage reuse, high-byte changes, first/last rows, one/full-height clips, tiny sources/large strips, eviction, reset and guards");
 }
 
 static void check_sprite_dda_rows(void)
