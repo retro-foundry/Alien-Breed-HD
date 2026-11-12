@@ -4044,3 +4044,83 @@ Evidence is in `build/dos/cell22-performance.json`,
 `build/dos-cell22-source/build/dos/pgo/model-check/report.json` and
 `build/dos-cell22-trace/`. The native oracle log is under
 `build/dos-cell22-source/build/dos-raster-regression/RASTER.LOG`.
+
+### Skip a proven redundant room scan
+
+`8243206` skips ObjectMove.s FindRoom after a completed zero-extent primary
+scan when every valid line passed the existing positive integer wall
+proof. Those lines have strictly positive crosses at the unchanged new
+position, so FindRoom would reject them again. Every call to the original
+wall worker invalidates the proof. Each room rescan starts a new proof;
+incomplete scans retain the original phase3 path, including the shared
+200-iteration limit and room transitions. Nonzero extents retain the
+secondary pass. Touch writes still occur in the primary proof.
+
+Fresh native compiler feedback reduces the matched busy barrel frame
+from 86.992 to 84.932 ms. Update falls from 10.669 to 8.544 ms; rendering
+changes from 69.410 to 69.470 ms and audio from 3.440 to 3.446 ms. The
+comparison uses normal/486_slow, 40,000 fixed cycles, 4 MB, native 320x240,
+SB16/mouse and muted host sound. All 64 original images, simulation
+hashes and clock/latched-tick assertions match, with zero audio underruns.
+
+Ordinary-clock barrel probes use 64 frames, eight warmup frames and no
+capture writes. Mean/p95/worst milliseconds are below; the clock replay
+above fixes the busy state independently of elapsed-time changes.
+
+| Live barrel scene | Before | After |
+| --- | --- | --- |
+| Level 1 | 39.884 / 56.664 / 64.744 | 39.860 / 55.820 / 63.960 |
+| Level 1, turning | 35.491 / 63.983 / 75.021 | 35.362 / 63.888 / 73.763 |
+| Level 6 | 44.593 / 56.859 / 58.341 | 43.759 / 56.617 / 58.347 |
+| Level 6, turning | 51.714 / 65.156 / 68.881 | 51.666 / 65.095 / 68.887 |
+
+Both level-6 live worst frames rise by 0.006 ms. The fixed-update level-6
+turning p95 rises from 65.672 to 65.948 ms while its maximum falls from
+68.189 to 66.803 ms. All four indexed sound-on burst scenes improve
+mean/p95/worst. The pool view remains about 60.314 ms. The unmodified
+128-frame start passes the 25.80 FPS gate at 26.19 FPS, 38.18 ms mean and
+38.69/77.91 ms p95/worst, versus 26.18 FPS before. Large busy frames,
+renderer cost and physical 486 measurements remain open.
+
+The actual 4 MB 486 C oracle now compares 8,384 direct scans against the
+frozen `bd5f6ed` wrapper in `tests/dos_movement_reference.h`, in addition
+to all 8,384 complete substeps. Sixteen targeted direct cases cover the
+200-iteration transition, complete and unterminated lists, invalid/empty
+exits, shifted inputs, nonzero extents and prior hits. Every context,
+room and floorline byte and guard matches. The frozen wrappers remain
+verified against their original commit. Existing 73,876 touch/inline
+wall-proof cases, 32,768 crossing heights, 3,072 direct row-table cases
+and all other raster/arithmetic cases pass. A broader connection-only
+proof produced no further measured gain and was discarded.
+
+Fresh feedback completes 23 training runs, 22 original native captures
+and the real-time 4 MB level-4 exercise. All 512 native and 512 indexed
+release image/state pairs, 22 original indexed captures and 128 model
+comparisons at 4 versus 16 MB with 32 KiB extra residency match. Native
+level-1/4/15 and indexed level-1/4 sound/mouse exercises, package/map/active
+saved-level payload audits and Windows Release pass. Native text grows
+by 512 bytes to 1,191,960; data/BSS remain 22,016/259,584 bytes. The change
+adds no allocation or resident table. Level-4 free memory remains
+144 KiB after shared assets and 44 KiB after loading.
+
+A new local RSF3 fixture captures 92 current direct-row billboard calls
+from the matched busy frame, preserving all 64 complete images and state
+hashes. Its 32,163,228 bytes include incoming/outgoing pixels and masks,
+stable source/batch identities and direct sampling parameters. Writing
+that fixture inside drawing causes four capture-only audio underruns;
+its timings and audio are excluded from release performance results.
+Standalone replay of this new fixture remains pending. Renderer work
+should use these current direct-row inputs rather than treating the old
+table-row fixture as a measurement of the current path.
+
+Both EXEs and ZIPs are staged, preserving all 241 native and 238 indexed
+non-EXE game files, including settings and saves. Both packages retain
+231 assets and 238 archive entries. The native EXE SHA-256 is
+`1d6ca436851772522748216ad25d31420ac6729448cadb9c08023fc3dde6a69c`;
+the indexed EXE is
+`0d09d92d03204f17f22d4790912fc3f87a9478e8b2ff20efac52e1eb10213cc7`.
+Evidence is in `build/dos/room23-performance.json`,
+`build/dos/room23-validation.json`, `build/dos/room23-staging.json`,
+`build/dos-room23-source/build/dos/pgo/model-check/report.json` and
+`build/dos-room23-trace/`. The native oracle log is under
+`build/dos-room23-source/build/dos-raster-regression/RASTER.LOG`.
