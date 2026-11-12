@@ -120,6 +120,42 @@ static void check_water(void)
         }
         assert(!memcmp(actual,expected,sizeof(actual)));
     }
+    /* AB3DI texturedwater forms a 16-bit UV word before adding wateroff.
+     * Target both U-byte carries and V/word wraps with independent sampling,
+     * including the boundaries of the optional horizontal span walk. */
+    static const uint32_t steps[]={0,1,65535,65536,65537,131071,131072,131073,
+                                  262143,262144,262145,524288,1048576,0xffffff,0x1000000,UINT32_MAX};
+    static const unsigned offsets[]={0,1,63,64,127,128,192,255,256,65535,65536,0x12345};
+    static const unsigned vrows[]={0,1,62,63,64,255,256,65535};
+    static const unsigned lengths[]={0,1,2,3,7,31,32,63,64,65,159,319,320,321,322};
+    uint32_t seed=0xa93c715du;
+    for(unsigned test=0;test<2048;test++) {
+        for(unsigned i=0;i<PITCH*ROWS;i++) {
+            seed=seed*1664525u+1013904223u;
+            actual[i]=expected[i]=(RendererPixel)(seed>>8);
+        }
+        unsigned offset=offsets[test%12],boundary=(256-(offset&255))<<16;
+        uint32_t starts[]={boundary-1,boundary,boundary+1,0,0xfffffe,0xffffff,0x1000000,UINT32_MAX};
+        uint32_t u=(seed&0xff000000u)|(starts[(test/12)%8]&0xffffffu);
+        uint32_t v=(vrows[(test/192)%8]<<16)|0x1234u;
+        uint32_t du=steps[(test/3)%16],dv=test%8==0?1:test%8==1?65536u:0;
+        unsigned count=lengths[(test/9)%15],shade=(test/17)%13,alpha=(test*29)&255;
+        unsigned out=PITCH*2+2,src0=(test%5)*PITCH+2,src1=((test+1)%5)*PITCH+2;
+        if(test%7==0)src0=out-1;
+        if(test%7==1)src1=out+1;
+        int single=(test/13)%3==0;
+        dos_raster_water(actual+out,count,actual+src0,single?NULL:actual+src1,
+                         phase,shade,offset,alpha,u,v,du,dv);
+        for(unsigned x=0;x<count;x++,u+=du,v+=dv) {
+            uint16_t uv=(uint16_t)((((v>>16)&255)<<8)|((u>>16)&255));
+            uv=(uint16_t)(uv+offset);
+            unsigned level=phase[(((uv>>8)&63)*64)+(uv&63)];
+            expected[out+x]=reference_water_pixel(expected[src0+x],single?expected[src0+x]:expected[src1+x],
+                                                  brighten,shade+level,single?0:alpha);
+        }
+        assert(!memcmp(actual,expected,sizeof(actual)));
+    }
+    puts("PASS: 2048 water carry spans preserve U-byte/V-row/word wraps, step limits, zero steps, clipping, source overlap, alpha symmetry, single-source rounding and guards");
     printf("Water: 5632 shared colours, 65536 native inputs, 65536 alpha/colour pairs and 768 single/blended wrapping/alias/clip spans passed\n");
 }
 

@@ -46,36 +46,35 @@ RendererPixel dos_raster_water_color(unsigned row,unsigned sample)
     return (RendererPixel)water_brighten[row][sample];
 }
 
-__attribute__((noinline,optimize("O3,unroll-loops")))
-void dos_raster_water(RendererPixel *out,unsigned count,
-                        const RendererPixel *background0,const RendererPixel *background1,
-                        const uint8_t *phase,unsigned shade,unsigned offset,unsigned alpha,
-                        uint32_t u,uint32_t v,uint32_t du,uint32_t dv)
+/* A constant one_row selects an already resolved 64-byte phase row.
+ * Both samplers share the original native Brighten/blend operations. */
+__attribute__((always_inline)) static inline
+void water_span(RendererPixel *out,unsigned count,
+                const RendererPixel *background0,const RendererPixel *background1,
+                const uint8_t *phase,const uint32_t (*brighten)[256],const int8_t *blend,
+                unsigned offset,uint32_t u,uint32_t v,uint32_t du,uint32_t dv,int one_row)
 {
-    const uint32_t (*brighten)[256]=water_brighten+shade;
-    /* Exact rounded interpolation is symmetric: exchange the samples and
-     * replace alpha with 255-alpha. Only half the delta rows are needed. */
-    if(background1 && alpha>127) {
-        const RendererPixel *swap=background0;background0=background1;background1=swap;
-        alpha=255-alpha;
-    }
-    /* floor((difference*alpha+120)/255) is zero for every -15..15
-     * difference at alpha 0..8. A missing second row is also single-source. */
-    if(alpha<=8 || background0==background1)background1=NULL;
     if(!background1) {
         for(unsigned x=0;x<count;x++,u+=du,v+=dv) {
-            uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
-            uv=(uint16_t)(uv+offset);
-            unsigned level=phase[((uv>>2)&0xfc0)|(uv&63)];
+            unsigned level;
+            if(one_row)level=phase[((u>>16)+offset)&63];
+            else {
+                uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
+                uv=(uint16_t)(uv+offset);
+                level=phase[((uv>>2)&0xfc0)|(uv&63)];
+            }
             out[x]=(RendererPixel)brighten[level][water_gb_index[background0[x]&2047]];
         }
         return;
     }
-    const int8_t *blend=water_blend_delta[alpha];
     for(unsigned x=0;x<count;x++,u+=du,v+=dv) {
-        uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
-        uv=(uint16_t)(uv+offset);
-        unsigned level=phase[((uv>>2)&0xfc0)|(uv&63)];
+        unsigned level;
+        if(one_row)level=phase[((u>>16)+offset)&63];
+        else {
+            uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
+            uv=(uint16_t)(uv+offset);
+            level=phase[((uv>>2)&0xfc0)|(uv&63)];
+        }
         uint32_t c0=brighten[level][water_gb_index[background0[x]&2047]];
         uint32_t c1=brighten[level][water_gb_index[background1[x]&2047]];
         if(c0==c1) {
@@ -90,6 +89,42 @@ void dos_raster_water(RendererPixel *out,unsigned count,
         unsigned b=((c0>>16)&15)+blend[difference&31];
         out[x]=water_rg[(r<<4)|g]|water_blue[b];
     }
+}
+
+__attribute__((noinline,optimize("O3,unroll-loops")))
+void dos_raster_water(RendererPixel *out,unsigned count,
+                        const RendererPixel *background0,const RendererPixel *background1,
+                        const uint8_t *phase,unsigned shade,unsigned offset,unsigned alpha,
+                        uint32_t u,uint32_t v,uint32_t du,uint32_t dv)
+{
+    const uint32_t (*brighten)[256]=water_brighten+shade;
+    /* Exact rounded interpolation is symmetric under swapping the samples. */
+    if(background1 && alpha>127) {
+        const RendererPixel *swap=background0;background0=background1;background1=swap;
+        alpha=255-alpha;
+    }
+    /* At half-alpha 0..8 every possible 4-bit channel delta rounds to zero. */
+    if(alpha<=8 || background0==background1)background1=NULL;
+    const int8_t *blend=background1?water_blend_delta[alpha]:NULL;
+    if(!dv && du && du<=65536u && count<=320) {
+        /* AB3DI texturedwater adds wateroff to the packed 16-bit UV word.
+         * With constant V, only the low U-byte carry can change its phase
+         * row. Split at that carry or the U-byte wrap, preserving both. */
+        unsigned bias=offset&255,base=((v>>16)+(offset>>8))&63;
+        while(count) {
+            unsigned low=u&0xffffffu,carry=((low>>16)+bias)>>8;
+            unsigned limit=carry?0x1000000u:((256-bias)<<16);
+            unsigned run=count;
+            /* At most 319 one-texel steps keep this product in 32 bits.
+             * A span ending before the boundary needs no division. */
+            if((count-1)*du>=limit-low)run=(limit-1-low)/du+1;
+            water_span(out,run,background0,background1,phase+(((base+carry)&63)*64),
+                       brighten,blend,bias,u,0,du,0,1);
+            out+=run;background0+=run;if(background1)background1+=run;
+            u+=run*du;count-=run;
+        }
+    }
+    else water_span(out,count,background0,background1,phase,brighten,blend,offset,u,v,du,dv,0);
 }
 
 #endif
