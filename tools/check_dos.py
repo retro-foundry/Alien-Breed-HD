@@ -139,7 +139,9 @@ exit
         startup.dwFlags = subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 0
     with (run / 'host.out').open('w') as out, (run / 'host.err').open('w') as err:
-        process = subprocess.Popen([str(args.dosbox.resolve()), '-conf', str(config)], cwd=run,
+        # Staging otherwise keeps the shell open when a successful short check
+        # exits within 1.5 seconds. Its -exit flag disables that interactive guard.
+        process = subprocess.Popen([str(args.dosbox.resolve()), '-exit', '-conf', str(config)], cwd=run,
                                    stdout=out, stderr=err, creationflags=flags, startupinfo=startup)
         hide_windows = None
         if os.name == 'nt' and not args.visible:
