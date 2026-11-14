@@ -75,7 +75,7 @@ def main():
                     '-Isrc', '-Isrc/platform/dos', '-I' + str(run),
                     '-include', 'src/platform/dos/math_compat.h',
                     'tests/dos_raster.c', 'tests/dos_movement.c', 'src/level.c', 'src/platform/dos/raster_dos.c',
-                    'src/platform/dos/objects_dos.c',
+                    'src/renderer_objects.c',
                     'src/platform/dos/sprite_alpha_dos.c',
                     'src/sprite_palettes.c',
                     '-lm', '-o', str(run / 'RASTER.EXE')], cwd=root, env=env, check=True)

@@ -216,6 +216,7 @@ weapon_post_gl=0
 volume=100
 run_speed=100
 hud_bars=1
+dos_screen_size=100
 quicksave_load=1
 '''
     if args.indexed:

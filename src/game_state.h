@@ -401,6 +401,7 @@ typedef struct {
     bool            cfg_hud_bars; /* Options HUD: bars (default) or previous numbers. */
     /* Append preferences so earlier full-save GameState fields keep their offsets. */
     int16_t         cfg_run_speed; /* Percentage of original Amiga running speed. */
+    int16_t         cfg_dos_screen_size; /* DOS 3D view percentage; HUD stays native. */
 
 } GameState;
 

@@ -7,6 +7,7 @@ extern int dos_benchmark_frames;
 extern int dos_capture_next_frame;
 extern int dos_check_enabled;
 extern int dos_frontend_check_enabled;
+extern int dos_screen_size_check_enabled;
 extern int dos_fixed_test_ticks;
 void dos_platform_init(int argc,char **argv);
 void dos_platform_bootstrap(const char *executable);

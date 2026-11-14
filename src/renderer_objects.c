@@ -1,9 +1,24 @@
-#include "objects_dos.h"
+#include "renderer_objects.h"
 #include "level.h"
 #include <string.h>
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
 
-enum { ROOM_COUNT = 256, OBJECT_COUNT = 256, MASK_WORDS = OBJECT_COUNT / 32 };
-static uint32_t room_objects[ROOM_COUNT][MASK_WORDS];
+static unsigned first_set_bit(uint32_t bits)
+{
+#ifdef _MSC_VER
+    unsigned long index;
+    _BitScanForward(&index, bits);
+    return (unsigned)index;
+#else
+    return (unsigned)__builtin_ctz(bits);
+#endif
+}
+
+enum { ROOM_COUNT = 256, OBJECT_COUNT = 256, MASK_WORDS = OBJECT_COUNT / 32,
+       ROOM_WORDS = (RENDERER_OBJECT_SLOTS + 31) / 32 };
+static uint32_t room_objects[ROOM_COUNT][ROOM_WORDS];
 static int16_t billboard_heads[ROOM_COUNT], billboard_next[OBJECT_COUNT];
 static uint8_t all_objects[OBJECT_COUNT];
 static unsigned all_count;
@@ -20,7 +35,26 @@ static int read_word(const uint8_t *p) { return (int16_t)((p[0] << 8) | p[1]); }
 static int draw_group(const LevelState *level, int zone)
 { return zone >= 0 && zone < level->draw_group_count ? level->draw_groups[zone] : zone; }
 
-void dos_objects_prepare(const LevelState *level, const ObjRotatedPoint *points, int32_t near_z)
+void renderer_objects_add_room(const LevelState *level, int zone, unsigned slot)
+{
+    int group = draw_group(level, zone);
+    if ((unsigned)group < ROOM_COUNT && slot < RENDERER_OBJECT_SLOTS)
+        room_objects[group][slot / 32] |= 1u << (slot % 32);
+}
+
+int renderer_objects_in_room(const LevelState *level, int zone, unsigned slot)
+{
+    int group = draw_group(level, zone);
+    return (unsigned)group < ROOM_COUNT && slot < RENDERER_OBJECT_SLOTS &&
+        ((room_objects[group][slot / 32] >> (slot % 32)) & 1u);
+}
+
+int renderer_objects_room_is_exact(const LevelState *level, int zone)
+{
+    return indexed_rooms && indexed_shots && (unsigned)draw_group(level, zone) < ROOM_COUNT;
+}
+
+void renderer_objects_prepare(const LevelState *level, const ObjRotatedPoint *points, int32_t near_z)
 {
     memset(room_objects, 0, sizeof(room_objects));
     memset(billboard_heads, 0xff, sizeof(billboard_heads));
@@ -77,7 +111,7 @@ void dos_objects_prepare(const LevelState *level, const ObjRotatedPoint *points,
     }
 }
 
-unsigned dos_objects_for_room(const LevelState *level, int zone,
+unsigned renderer_objects_for_room(const LevelState *level, int zone,
                                const int16_t *adjacent, unsigned adjacent_count, uint8_t out[256])
 {
     int group = draw_group(level, zone);
@@ -96,20 +130,20 @@ unsigned dos_objects_for_room(const LevelState *level, int zone,
     for (unsigned word = 0; word < MASK_WORDS; word++) {
         uint32_t bits = selected[word];
         while (bits) {
-            out[count++] = (uint8_t)(word * 32 + __builtin_ctz(bits));
+            out[count++] = (uint8_t)(word * 32 + first_set_bit(bits));
             bits &= bits - 1;
         }
     }
     return count;
 }
 
-const uint8_t *dos_objects_shots(unsigned pool, unsigned *count)
+const uint8_t *renderer_objects_shots(unsigned pool, unsigned *count)
 {
     *count = shot_count[pool];
     return shots + (pool ? NASTY_SHOT_SLOT_COUNT : 0);
 }
 
-void dos_objects_shots_for_room(const LevelState *level, int zone,
+void renderer_objects_shots_for_room(const LevelState *level, int zone,
                                  const int16_t *adjacent, unsigned adjacent_count,
                                  unsigned counts[2], uint8_t out[NASTY_SHOT_SLOT_COUNT + PLAYER_SHOT_SLOT_COUNT])
 {
@@ -127,6 +161,9 @@ void dos_objects_shots_for_room(const LevelState *level, int zone,
     /* Own-room aliases and raw adjacent-zone membership are different tests.
      * Union their lists, then enumerate slots in original ObjDraw order. */
     uint32_t selected[(SHOT_COUNT + 31) / 32] = {0};
+    memcpy(selected, room_objects[group] + MASK_WORDS, sizeof(selected));
+    if (SHOT_COUNT % 32)
+        selected[SHOT_COUNT / 32] &= (1u << (SHOT_COUNT % 32)) - 1u;
     for (int slot = shot_group_heads[group]; slot >= 0; slot = shot_group_next[slot])
         selected[slot / 32] |= 1u << (slot % 32);
     for (unsigned i = 0; i < adjacent_count; i++) {
@@ -138,7 +175,7 @@ void dos_objects_shots_for_room(const LevelState *level, int zone,
     for (unsigned word = 0; word < (SHOT_COUNT + 31) / 32; word++) {
         uint32_t bits = selected[word];
         while (bits) {
-            unsigned slot = word * 32 + __builtin_ctz(bits);
+            unsigned slot = word * 32 + first_set_bit(bits);
             unsigned pool = slot >= NASTY_SHOT_SLOT_COUNT;
             out[count++] = (uint8_t)(slot - (pool ? NASTY_SHOT_SLOT_COUNT : 0));
             counts[pool]++; bits &= bits - 1;

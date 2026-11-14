@@ -220,6 +220,78 @@ static void check_explosive_weapons(void)
     puts("PASS: actual rocket floor impact, grenade fuse and barrel detonation gib corpses; only the weapon explosion sound plays");
 }
 
+/* Independent .dyinganim lookup in the original countdown direction:
+ * NormalAlien.s: 11*33,15*32; HalfWorm.s: 6*20,10*19,10*18;
+ * MutantMarine.s / ToughMarine.s / FlameMarine.s: 6*18,10*17,10*16.
+ * Each handler subtracts TempFrames from ThirdTimer, initially 25. */
+static int source_dying_frame(int type, int remaining)
+{
+    if (type == OBJ_NBR_ALIEN) return remaining < 11 ? 33 : 32;
+    if (type == OBJ_NBR_WORM) return remaining < 6 ? 20 : remaining < 16 ? 19 : 18;
+    return remaining < 6 ? 18 : remaining < 16 ? 17 : 16;
+}
+
+static void check_death_animation_timing(void)
+{
+    const int types[] = {OBJ_NBR_ALIEN, OBJ_NBR_WORM, OBJ_NBR_MARINE,
+                         OBJ_NBR_TOUGH_MARINE, OBJ_NBR_FLAME_MARINE};
+    /* 50, 25, 16.7, 10 and 3.3 updates/s, plus uneven/zero-tick updates. */
+    const int16_t cadence[][6] = {{1,1,1,1,1,1}, {2,2,2,2,2,2},
+        {3,3,3,3,3,3}, {5,5,5,5,5,5}, {15,15,15,15,15,15}, {0,1,0,3,15,2}};
+    int checks = 0;
+    for (unsigned t = 0; t < sizeof(types) / sizeof(types[0]); t++) {
+        for (unsigned c = 0; c < sizeof(cadence) / sizeof(cadence[0]); c++) {
+            int type = types[t], elapsed = 0;
+            GameObject *obj = setup(type);
+            enemy_apply_death_outcome(obj, &enemy_params[obj_type_to_enemy_index(type)], false);
+            for (int step = 0; step < 40; step++) {
+                state.temp_frames = cadence[c][step % 6];
+                elapsed += state.temp_frames;
+                int remaining = elapsed < 25 ? 25 - elapsed : 0;
+                objects_update(&state);
+                if (OBJ_DEADH(obj) != source_dying_frame(type, remaining)) {
+                    fprintf(stderr, "Death timing type=%d cadence=%u elapsed=%d: frame=%d expected=%d\n",
+                            type, c, elapsed, OBJ_DEADH(obj), source_dying_frame(type, remaining));
+                    abort();
+                }
+                assert(obj->obj.type_data[1] == type);
+                assert(obj->obj.number == OBJ_NBR_DEAD && OBJ_ZONE(obj) == 1);
+                assert(dead_object_is_runtime_corpse(obj));
+                assert(OBJ_DEADL(obj) == 0 && noises == 0 && gib_count() == 0);
+                checks++;
+            }
+        }
+    }
+    printf("PASS: %d death countdown checkpoints match original tables at equal elapsed time across six update cadences\n", checks);
+
+    /* BigRedThing.s / BigClaws.s add #1 to 10(a0) once per call, even when
+     * TempFrames > 1. Keep their separate source cadence and resting frame. */
+    const int per_call_types[] = {OBJ_NBR_HUGE_RED_THING, OBJ_NBR_SMALL_RED_THING};
+    for (unsigned t = 0; t < sizeof(per_call_types) / sizeof(per_call_types[0]); t++) {
+        GameObject *obj = setup(per_call_types[t]);
+        enemy_apply_death_outcome(obj, &enemy_params[obj_type_to_enemy_index(per_call_types[t])], false);
+        for (int step = 1; step <= 40; step++) {
+            state.temp_frames = 15;
+            objects_update(&state);
+            assert(OBJ_DEADH(obj) == (step < 9 ? step : 9));
+            assert(obj->obj.number == OBJ_NBR_DEAD && OBJ_ZONE(obj) == 1);
+        }
+    }
+
+    for (int vector = 0; vector < 2; vector++) {
+        GameObject *obj = setup(OBJ_NBR_MARINE);
+        enemy_apply_death_outcome(obj, &enemy_params[6], false);
+        if (vector) obj->raw[6] = OBJ_3D_SPRITE;
+        else OBJ_SET_DEADH(obj, 0); /* An authored billboard, not a corpse. */
+        GameObject before = *obj;
+        state.temp_frames = 15;
+        objects_update(&state);
+        assert(!memcmp(obj->raw + 8, before.raw + 8, 4));
+        assert(!memcmp(obj->obj.type_data, before.obj.type_data, 2));
+    }
+    puts("PASS: per-call red-enemy death cadence, persistent corpses and authored prop frames retained");
+}
+
 int main(void)
 {
     math_tables_init(); size_t bytes;
@@ -232,5 +304,6 @@ int main(void)
     check_all_corpse_frames();
     check_boundaries();
     check_explosive_weapons();
+    check_death_animation_timing();
     return 0;
 }

@@ -1,6 +1,29 @@
 # Releasing
 
-Alien Breed 3D I releases are Windows x64 and Linux x64 builds produced by GitHub Actions.
+Alien Breed 3D I releases include DOS / 486, Windows x64 and Linux x64 builds
+produced by GitHub Actions.
+
+## Build and Validate Before Creating a Tag
+
+Update the numeric CMake version and add release notes under
+`docs/releases/<tag>.md`, then commit and push the release-ready source. To
+publish a new tag only after its builds and DOS validation succeed:
+
+```bash
+gh workflow run release.yml --ref main -f tag=v1.0.4 -f source_ref=<full-main-commit-sha>
+```
+
+The source SHA must equal the workflow ref's commit, so provenance identifies
+the source actually built. Every job checks out that SHA. After all three
+platform builds pass, publishing creates an annotated tag at the checked
+commit, generates checksums and publishes the release. An existing tag must
+already point to that commit; the workflow refuses to move it.
+
+The DOS release installs checksum-pinned DOSBox Staging 0.82.2 and runs the
+profile-guided build. The final native executable must match all 22 ordinary
+captures and pass the real-time 4 MB SB16/mouse UI/save/load exercise before
+the DOS ZIP is uploaded. An ordinary compile-only DOS build is not the
+validated 4 MB release package.
 
 ## Create a Stable Release
 
@@ -13,7 +36,10 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Tags matching `v*.*.*` run `.github/workflows/release.yml`. The workflow builds clean Windows x64 and Linux x64 Release binaries, packages the staged runtime files, creates `SHA256SUMS.txt` covering both archives, creates GitHub artifact attestations where supported, and publishes a GitHub release after both builds succeed.
+Tags matching `v*.*.*` run `.github/workflows/release.yml`. The workflow builds
+clean DOS, Windows x64 and Linux x64 binaries, packages the staged runtime
+files, creates `SHA256SUMS.txt` covering all three archives, creates GitHub
+artifact attestations, and publishes after every platform build succeeds.
 
 Tags with a prerelease suffix, such as `v1.0.0-beta.1` or `v1.0.0-rc.1`, use the same workflow but are marked as GitHub prereleases and are not marked latest.
 
@@ -21,9 +47,11 @@ Release assets appear on the GitHub Release for the tag:
 
 - `alien-breed-3d-i-<tag>-windows-x64.zip`
 - `alien-breed-3d-i-<tag>-linux-x64.tar.gz`
+- `ABHD-DOS.zip`
 - `SHA256SUMS.txt`
 
 The bundled `VERIFY_RELEASE.md` explains how players can verify checksums and provenance.
+Version-specific notes are included ahead of those verification instructions.
 
 ## CI
 

@@ -5,6 +5,7 @@
 
 #include "game_state.h"
 #include "game_data.h"
+#include "dos_screen_size.h"
 #include <string.h>
 
 /* Global game state instance */
@@ -107,6 +108,7 @@ void game_state_init(GameState *state)
     state->cfg_run_default = true;
     state->cfg_run_speed = RUN_SPEED_PERCENT_DEFAULT;
     state->cfg_hud_bars = true;
+    state->cfg_dos_screen_size = DOS_SCREEN_SIZE_DEFAULT;
     state->plr1_clumptime = 0;
     state->plr2_clumptime = 0;
     state->cfg_footsteps_water_only = false;

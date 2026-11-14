@@ -7,16 +7,46 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag to package, for example v1.0.0 or v1.0.0-beta.1"
+        description: "Release tag, for example v1.0.4; existing unless source_ref is supplied"
         required: true
+        type: string
+      source_ref:
+        description: "Optional full commit SHA to build and validate before creating a new tag"
+        required: false
         type: string
 
 permissions:
   contents: read
 
 jobs:
+  validate-release:
+    name: Validate release request
+    if: github.repository == 'retro-foundry/Alien-Breed-HD'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate version and source
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          RELEASE_SOURCE: ${{ inputs.source_ref }}
+          WORKFLOW_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          if [[ -n "$RELEASE_SOURCE" ]]; then
+            if [[ ! "$RELEASE_SOURCE" =~ ^[0-9a-fA-F]{40}$ || "${RELEASE_SOURCE,,}" != "$WORKFLOW_COMMIT" ]]; then
+              echo "source_ref must be the full commit SHA of the workflow ref, keeping provenance tied to the built source" >&2
+              exit 1
+            fi
+          fi
+
   build-dos:
     name: Build DOS / 486 package
+    needs: validate-release
+    timeout-minutes: 45
     if: github.repository == 'retro-foundry/Alien-Breed-HD'
     runs-on: windows-latest
     permissions:
@@ -28,7 +58,7 @@ jobs:
       - name: Check out tagged source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.source_ref || inputs.tag) || github.ref }}
           persist-credentials: false
 
       - name: Set up Python
@@ -44,9 +74,16 @@ jobs:
         shell: pwsh
         run: ./tools/setup_dos.ps1
 
-      - name: Build DOS package
+      - name: Set up pinned DOSBox Staging
+        id: dosbox
         shell: pwsh
-        run: ./tools/build_dos.ps1
+        run: |
+          $dosbox = ./tools/setup_dosbox.ps1
+          "executable=$dosbox" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Build and validate optimized DOS package
+        shell: pwsh
+        run: ./tools/build_dos.ps1 -ProfileGuided -DosBox '${{ steps.dosbox.outputs.executable }}'
 
       - name: Validate DOS archive
         run: python -m zipfile -t build/dos/ABHD-DOS.zip
@@ -65,6 +102,7 @@ jobs:
 
   build-windows:
     name: Build Windows package
+    needs: validate-release
     if: github.repository == 'retro-foundry/Alien-Breed-HD'
     runs-on: windows-latest
     permissions:
@@ -76,7 +114,7 @@ jobs:
       - name: Check out tagged source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.source_ref || inputs.tag) || github.ref }}
           persist-credentials: false
 
       - name: Set release version
@@ -151,6 +189,7 @@ jobs:
 
   build-linux:
     name: Build Linux x64 package
+    needs: validate-release
     if: github.repository == 'retro-foundry/Alien-Breed-HD'
     runs-on: ubuntu-22.04
     permissions:
@@ -162,7 +201,7 @@ jobs:
       - name: Check out tagged source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.source_ref || inputs.tag) || github.ref }}
           persist-credentials: false
 
       - name: Set up Python
@@ -223,17 +262,16 @@ jobs:
       - name: Check out tagged source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.source_ref || inputs.tag) || github.ref }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set release version
         shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "AB3D_RELEASE_VERSION=${{ inputs.tag }}" >> "$GITHUB_ENV"
-          else
-            echo "AB3D_RELEASE_VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
-          fi
+          echo "AB3D_RELEASE_VERSION=$RELEASE_TAG" >> "$GITHUB_ENV"
 
       - name: Validate release tag
         shell: bash
@@ -251,6 +289,37 @@ jobs:
             echo "AB3D_RELEASE_MAKE_LATEST=true" >> "$GITHUB_ENV"
           fi
 
+      - name: Create or verify release tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SOURCE: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          if [[ -n "$RELEASE_SOURCE" && ! "$RELEASE_SOURCE" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "source_ref must be a full commit SHA" >&2
+            exit 1
+          fi
+          if [[ -n "$RELEASE_SOURCE" && "${RELEASE_SOURCE,,}" != "$commit" ]]; then
+            echo "Checked-out source differs from the requested release commit" >&2
+            exit 1
+          fi
+          if git show-ref --verify --quiet "refs/tags/$AB3D_RELEASE_VERSION"; then
+            tagged=$(git rev-parse "$AB3D_RELEASE_VERSION^{commit}")
+            if [[ "$tagged" != "$commit" ]]; then
+              echo "Existing release tag points to another commit; refusing to move it" >&2
+              exit 1
+            fi
+          else
+            tag_object=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
+              -f "tag=$AB3D_RELEASE_VERSION" \
+              -f "message=Alien Breed 3D I $AB3D_RELEASE_VERSION" \
+              -f "object=$commit" -f type=commit --jq .sha)
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/tags/$AB3D_RELEASE_VERSION" -f "sha=$tag_object"
+          fi
+
       - name: Download package artifact
         uses: actions/download-artifact@v4
         with:
@@ -265,6 +334,16 @@ jobs:
         with:
           subject-path: "release-assets/SHA256SUMS.txt"
 
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          notes="docs/releases/$AB3D_RELEASE_VERSION.md"
+          if [[ -f "$notes" ]]; then
+            cat "$notes" > release-notes.md
+            printf '\n\n' >> release-notes.md
+          fi
+          cat VERIFY_RELEASE.md >> release-notes.md
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -272,7 +351,7 @@ jobs:
           name: Alien Breed 3D I ${{ env.AB3D_RELEASE_VERSION }}
           prerelease: ${{ env.AB3D_RELEASE_PRERELEASE }}
           make_latest: ${{ env.AB3D_RELEASE_MAKE_LATEST }}
-          body_path: VERIFY_RELEASE.md
+          body_path: release-notes.md
           files: |
             release-assets/*.zip
             release-assets/*.tar.gz

@@ -13,7 +13,8 @@ Run from the repository root in PowerShell:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/setup_dos.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_dos.ps1
+$dosbox = ./tools/setup_dosbox.ps1
+./tools/build_dos.ps1 -ProfileGuided -DosBox $dosbox
 ```
 
 Setup downloads DJGPP GCC 12.2 and CWSDPMI release 7, verifies their archive
@@ -40,7 +41,9 @@ Only the distribution manifest is archived, excluding local saves, logs and test
 
 ### Compiler feedback build
 
-For the faster native build, supply an installed DOSBox Staging executable:
+The recommended 4 MB release build uses compiler feedback. The setup command
+above installs checksum-pinned DOSBox Staging 0.82.2. To use another installed
+copy of that version:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_dos.ps1 `
@@ -6537,3 +6540,171 @@ types; its results are preserved as `rejected-mixed-object-*` and excluded.
 Corrected evidence: `build/native72_width_gate_trial.py` and
 `build/dos-project72-trace/width-trials.json`. No further runtime experiment
 is in progress.
+
+### Enemy death animation at low frame rates
+
+Marine death poses were held too long when a display update latched multiple
+50 Hz game ticks. The corpse path accumulated `temp_frames` but discarded the
+extra ticks after advancing only one table entry. At 25 updates/s, a marine's
+first two ten-tick poses each lasted about 0.4 seconds instead of 0.2 seconds.
+
+`enemy_update_corpse_animation` now owns corpse validation and sequence
+advancement. It preserves the full elapsed tick count for the original
+`NormalAlien.s`, `HalfWorm.s`, `MutantMarine.s`, `ToughMarine.s` and
+`FlameMarine.s` death paths: each subtracts `TempFrames` from `ThirdTimer`
+before indexing `.dyinganim`. The port's reversed tables advance by that
+same count and retain the final corpse pose. `BigRedThing.s` and `BigClaws.s`
+retain their separate `add.w #1,10(a0)` cadence. Authored vector/billboard
+props retain their existing guard. No animation-speed multiplier or new
+timing constant is introduced.
+
+The helper was extracted before changing timing; the existing 429 corpse
+frame/blast-strength cases and weapon/debris/audio checks still pass.
+`tests/feedback_corpses.c` adds 1,200 independent original-countdown/frame
+checkpoints across five timed enemy types and six update cadences, including
+two/three/five/fifteen elapsed ticks and uneven/zero-tick updates. The old
+code fails this test at 25 updates/s. The corrected code passes in WebAssembly
+and native DOS, including a separate driver linked against the actual fresh
+PGO engine objects. DOS checks use normal/486_slow, fixed 40,000 cycles and
+4 MB RAM. Per-call red-enemy sequences, persistent corpses and authored props
+also pass. Desktop Release builds. Evidence is under
+`build/dos-animation-trace`; the DOS driver uses the original level_h geometry
+with short DOS filename aliases.
+
+Fresh compiler feedback completes all 27 training scenarios. All 22 optimized
+captures match both the new ordinary build and release 71's single-tick
+captures. The real-time 4 MB SB16/mouse/UI exercise completes 16 full quickloads
+with zero audio underruns. Text/data/BSS remain
+1,224,216 / 22,016 / 272,384 bytes; the fix adds no allocation or lookup.
+
+The verified executable is staged in `build/dos/game/ABHD.EXE`,
+`build/dos/ABHD.exe` and `build/dos/ABHD-DOS.zip` (3,433,368 bytes).
+Executable SHA-256:
+`2570f6e14d39caf44bab7336134338162baf31d749d398c3d49a57b6d736b753`.
+Archive SHA-256:
+`a6b1fd5597aefa1518291bc1aeaa150800c2166fe419cd438c5bc562add627d9`.
+Only `ABHD.EXE` changes in the archive. All 241 other native files/settings/saves
+and 239 indexed files are preserved. The previous package is under
+`build/dos-animation-trace/previous-package`. Build/profiling output is under
+`build/dos-animation`; source digests, before/after regression logs and staging
+evidence are under `build/dos-animation-trace` and `build/feedback-tests`.
+
+### Plain label areas on the small DOS HUD keys
+
+The small DOS HUD badges omit the PASS inscription. The original mask-aware
+filter was first extracted into `display_key_hud_minify`; the helper now fills
+only the original 15x5 inscription at (10,23) with the card's own paper colour
+before reducing it. Source coordinates come from the original 32x32 type-5
+cards in `ObjDraw3.ChipRam.s:KEYS_FRAMES`.
+
+This retains the original 16x16 badge shape, key art, layout, ownership
+underlines and coloured/grey caching. Only the inscription's 8x3 filtered
+area can change. World/automap sprites and desktop HUD preparation retain
+their original source pixels. Preparation uses the existing in-place cache
+buffer, with no new allocation, per-frame filtering or draw call. Final
+wordless-badge build and capture evidence is under `build/dos-no-pass-trace`.
+
+The staged native executable retains the animation release's 30 unchanged
+PGO engine objects and rebuilds the display unit with O3/LTO, without applying
+stale feedback to the edited function. Its fixed-tick 128-frame start compares
+at 36.65 ms before / 36.64 ms after (27.28 / 27.29 FPS), with every captured
+pixel outside the four 8x3 inscription areas identical. Coloured and grey key
+captures verify blank label interiors while retaining the original edge
+shading. The real-time start passes at 27.74 FPS, mean 36.05 ms, at
+normal/486_slow, 40,000 cycles, 4 MB, SB16 and mouse, with zero underruns.
+
+The full 4 MB UI/save/load correctness exercise uses 200,000 cycles and fixed
+ticks; those timings are excluded from performance results. All 16 quickloads,
+grey cutouts, HUD bounds/readbacks, 24 weapon frames, menus and sixteen text
+screens pass, with zero underruns. Text/data/BSS are
+1,233,432 / 22,016 / 271,360 bytes (+9 KiB text / -1 KiB BSS compared with the
+animation build). The level-4 post-load snapshot reports 36 KiB free versus
+40 KiB before. The existing heap reservation and image allocations are retained.
+
+The verified native package is staged in `build/dos/game/ABHD.EXE`,
+`build/dos/ABHD.exe` and `build/dos/ABHD-DOS.zip` (3,412,643 bytes).
+Executable SHA-256:
+`aa394ac24345f3f6ed7fe388d35bcdb88cc051140586931e45ac904c267dabf4`.
+Archive SHA-256:
+`ef9af095e8dececaf13a27dc715f2178bfccfda18e7c3190ac9557b397ab4255`.
+Only the executable's contents change in the archive. Staging preserves all
+241 other native files/settings/saves and all 239 indexed files. The previous
+package is under `build/dos-no-pass-trace/previous-package`; reproduction and
+staging scripts are `build/build_no_pass.py` and `build/stage_no_pass.py`.
+
+### Optional smaller DOS game views
+
+DOS Options now includes SCREEN SIZE. Left/Right selects 100%, 80%, 60% or
+40%; Enter cycles to the next smaller size, then wraps to full size. The choice
+saves as `dos_screen_size` in `AB3D.INI` and is preserved when loading an older
+full save. The default is 100%. The native video mode, HUD, map and menus keep
+their size; reduced views draw at 1:1 pixels in the centre of a black border.
+
+| Setting | RGB565 320x240 view | Indexed 320x200 view |
+| --- | --- | --- |
+| 100% | 320x240 | 320x200 |
+| 80% | 256x192 | 256x160 |
+| 60% | 192x144 | 192x120 |
+| 40% | 128x96 | 128x80 |
+
+The renderer retains its original full-size framebuffer, clip/scratch arrays
+and largest weapon-cache reservation. Screen changes select a compact view
+inside those allocations, reset view-dependent clipping/projection caches and
+clear incompatible water history. Shared assets and weapon caches are prepared
+at full size before applying the saved choice. The existing projection and
+wall/floor/water/sprite samplers draw at the selected dimensions. The crosshair
+uses the game-view rectangle; HUD and menu layout use the physical surface.
+
+The native presenter copies reduced rows and clears their border in one pass,
+keeping the full-size contiguous-copy/direct-canvas paths. This avoids the
+separate SDL rectangle fills and intermediate surface blit that initially made
+the 80% view slower. Compiler feedback now covers all four sizes: 27 ordinary
+training scenarios plus four raster scenes, 31 total. Cold settings and view
+setup/diagnostic code are optimized for size; heap reservation remains unchanged.
+
+Real-time 128-frame starting-scene measurements use normal/486_slow,
+40,000 cycles, 4 MB, 320x240 RGB565, SB16 and mouse:
+
+| Size | FPS | Mean | p95 | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| 100% | 27.99 | 35.73 ms | 36.46 ms | 76.26 ms |
+| 80% | 28.60 | 34.97 ms | 34.28 ms | 91.78 ms |
+| 60% | 34.48 | 29.01 ms | 28.29 ms | 91.35 ms |
+| 40% | 42.15 | 23.72 ms | 22.98 ms | 91.01 ms |
+
+The smaller views retain worse cold-start maxima in this sample. Interactive
+size changes render their preview while paused, before resetting the game clock.
+These figures describe the starting scene, not a guarantee for every level.
+
+The settings regression covers defaults, all four INI round trips, duplicate-key
+avoidance, invalid values and bounds. DOS diagnostics compare every presented
+pixel against the compact framebuffer and black border, verify renderer/water
+history remains unchanged by presentation, retain the framebuffer pointer across
+32 switches and compare 96 scaled weapon frames with the original draws. Native
+and indexed 4 MB runs pass; 200,000-cycle correctness checks are excluded from
+performance results. The actual menu decrease/increase/save path also passes.
+All 22 full-size default captures match the previous renderer outside the
+already removed old PASS lettering. Desktop Release builds. Evidence and
+reproduction scripts are under `build/dos-screen-size-trace`,
+`build/build_screen_size_fix.py`, `build/measure_screen_sizes.py` and
+`build/stage_screen_size_fix.py`.
+
+The final optimized build completes the real-time level-4 UI exercise at
+40,000 cycles with 4 MB, SB16 and mouse: all 16 full quickloads, all save slots,
+screen-size menu changes/persistence, weapon/HUD/readbacks and sixteen text
+screens pass with zero audio underruns. Text/data/BSS are
+1,222,680 / 22,016 / 272,384 bytes. The shared-assets snapshot has 96 KiB free;
+the level-4 snapshot has 40 KiB free. The indexed 4 MB UI exercise also passes
+at 200,000 cycles with fixed ticks, used for correctness only.
+
+The updated native package is staged in `build/dos/game/ABHD.EXE`,
+`build/dos/ABHD.exe` and `build/dos/ABHD-DOS.zip` (3,433,699 bytes).
+Executable SHA-256:
+`bbdf30cd901706a1a851a85181258d829417ad979e17a99f92b25571ad859aeb`.
+Archive SHA-256:
+`273b6e0e4ff02fd7ebf45d2a99a81544923402353ae43b33f66ed437cf9affa6`.
+Archive changes are limited to the executable, default INI and README. Local
+staging updates the executable and README, retaining 240 other native files
+including existing settings/saves and all 239 indexed files. Previous native
+artifacts are under `build/dos-screen-size-trace/previous-package`; final source
+and package hashes are recorded in `source-freeze.json` and `staging.json`.

@@ -5,6 +5,7 @@
 #include "settings.h"
 #include "renderer.h"
 #include "game_types.h"
+#include "dos_screen_size.h"
 #include <SDL.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -15,6 +16,12 @@
 #endif
 #include "logging.h"
 #define printf ab3d_log_printf
+
+#ifdef AB3D_DOS
+/* INI parsing/writing runs during startup or a paused menu. Keep this cold
+ * code compact so the 4 MB budget remains available to the live level. */
+#pragma GCC optimize ("Os")
+#endif
 
 #define SETTINGS_PATH_MAX 1024
 
@@ -204,7 +211,8 @@ static int settings_write_menu_options_line(FILE *out,
                                             int *saw_gamepad_look_speed,
                                             int *saw_run_default,
                                             int *saw_hud_bars,
-                                            int *saw_run_speed)
+                                            int *saw_run_speed,
+                                            int *saw_dos_screen_size)
 {
     char key[64];
 
@@ -256,6 +264,10 @@ static int settings_write_menu_options_line(FILE *out,
         *saw_hud_bars = 1;
         return fprintf(out, "hud_bars=%d\n", state->cfg_hud_bars ? 1 : 0) >= 0;
     }
+    if (strcmp(key, "dos_screen_size") == 0) {
+        *saw_dos_screen_size = 1;
+        return fprintf(out, "dos_screen_size=%d\n", (int)state->cfg_dos_screen_size) >= 0;
+    }
     if (strcmp(key, "run_default") == 0 ||
         strcmp(key, "always_run") == 0) {
         *saw_run_default = 1;
@@ -276,13 +288,16 @@ static int settings_append_missing_menu_options(FILE *out,
                                                 int saw_gamepad_look_speed,
                                                 int saw_run_default,
                                                 int saw_hud_bars,
-                                                int saw_run_speed)
+                                                int saw_run_speed,
+                                                int saw_dos_screen_size)
 {
     if (saw_mouse_look && saw_invert_mouse && saw_show_fps && saw_volume &&
-        saw_crosshair && saw_gamepad_look_speed && saw_run_default && saw_hud_bars && saw_run_speed) {
+        saw_crosshair && saw_gamepad_look_speed && saw_run_default && saw_hud_bars && saw_run_speed && saw_dos_screen_size) {
         return 1;
     }
     if (fprintf(out, "\n# Runtime menu options\n") < 0) return 0;
+    if (!saw_dos_screen_size &&
+        fprintf(out, "dos_screen_size=%d\n", (int)state->cfg_dos_screen_size) < 0) return 0;
     if (!saw_mouse_look &&
         fprintf(out, "mouse_look=%d\n", state->cfg_mouse_look ? 1 : 0) < 0) {
         return 0;
@@ -343,6 +358,7 @@ static void settings_save_menu_options_to_ini(const GameState *state)
     int saw_run_default = 0;
     int saw_hud_bars = 0;
     int saw_run_speed = 0;
+    int saw_dos_screen_size = 0;
     int ok = 1;
 
     if (!state) return;
@@ -394,7 +410,8 @@ static void settings_save_menu_options_to_ini(const GameState *state)
                                                   &saw_gamepad_look_speed,
                                                   &saw_run_default,
                                                   &saw_hud_bars,
-                                                  &saw_run_speed)) {
+                                                  &saw_run_speed,
+                                                  &saw_dos_screen_size)) {
                 ok = 0;
                 break;
             }
@@ -413,7 +430,8 @@ static void settings_save_menu_options_to_ini(const GameState *state)
                                                   saw_gamepad_look_speed,
                                                   saw_run_default,
                                                   saw_hud_bars,
-                                                  saw_run_speed);
+                                                  saw_run_speed,
+                                                  saw_dos_screen_size);
     }
     if (fclose(out) != 0) ok = 0;
 
@@ -608,6 +626,10 @@ static void apply_line(GameState *state, char *line)
             printf("[SETTINGS] run_speed ignored (use 50..200): %s\n", val);
     } else if (strcmp(key, "hud_bars") == 0) {
         state->cfg_hud_bars = parse_bool(val) ? true : false;
+    } else if (strcmp(key, "dos_screen_size") == 0) {
+        int n = atoi(val);
+        if (dos_screen_size_valid(n)) state->cfg_dos_screen_size = (int16_t)n;
+        else printf("[SETTINGS] dos_screen_size ignored (use 40,60,80,100): %s\n", val);
     } else if (strcmp(key, "run_default") == 0 ||
                strcmp(key, "always_run") == 0) {
         state->cfg_run_default = parse_bool(val) ? true : false;
@@ -701,6 +723,8 @@ static void apply_line(GameState *state, char *line)
 
 static void apply_runtime_constraints(GameState *state)
 {
+    if (!dos_screen_size_valid(state->cfg_dos_screen_size))
+        state->cfg_dos_screen_size = DOS_SCREEN_SIZE_DEFAULT;
 #ifdef AB3D_NO_THREADS
     static int logged = 0;
     if (!logged) {

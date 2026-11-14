@@ -227,6 +227,7 @@ int main(int argc, char *argv[])
         dos_capture_next_frame=1;
         display_draw_display(&g_state);
         if(dos_check_enabled)dos_check_ui_screens(&g_state);
+        if(dos_screen_size_check_enabled)display_dos_check_screen_sizes(&g_state);
     } else
 #endif
     play_game(&g_state);

@@ -203,6 +203,17 @@ int16_t *player_weapon_ammo_ptr(PlayerState *plr, int gun_idx)
     return &plr->gun_data[ammo_idx].ammo;
 }
 
+/* Selection writes share one transition point; callers retain ownership and
+ * key-priority checks from Plr1Control.s/Plr2Control.s pickweap. */
+static void player_set_weapon_selection(PlayerState *plr, int gun_idx)
+{
+    if (plr->gun_selected == gun_idx) return;
+    plr->gun_selected = (int16_t)gun_idx;
+    /* AB3DI.s GunAnims[*][0] is the new weapon's rest graphic. A previous
+     * weapon's countdown must not index this weapon's animation table. */
+    plr->gun_frame = 0;
+}
+
 static void player_ensure_valid_weapon_selection(PlayerState *plr)
 {
     if (!plr) return;
@@ -211,7 +222,7 @@ static void player_ensure_valid_weapon_selection(PlayerState *plr)
     for (int i = 0; i < GUN_KEY_COUNT; i++) {
         int gun_idx = gun_key_map[i];
         if (player_weapon_is_selectable(plr, gun_idx)) {
-            plr->gun_selected = (int16_t)gun_idx;
+            player_set_weapon_selection(plr, gun_idx);
             return;
         }
     }
@@ -224,7 +235,7 @@ static void player_disable_weapon(PlayerState *plr, int gun_idx)
     plr->gun_data[gun_idx].visible = 0;
     plr->gun_data[gun_idx].ammo = 0;
     if (plr->gun_selected == gun_idx) {
-        plr->gun_selected = 0;
+        player_set_weapon_selection(plr, 0);
         player_ensure_valid_weapon_selection(plr);
     }
 }
@@ -261,13 +272,31 @@ static void player_flamethrower_mark_used(GameState *state, int plr_num)
     if (accum) *accum = 0;
 }
 
+/* Refill accounting is separate from the cooldown and shared inventory. */
+static void player_flamethrower_refill(int16_t *ammo, int16_t *accum, int16_t frames)
+{
+    const int max_ammo = FLAMETHROWER_CHARGE_MAX * FLAMETHROWER_CHARGE_AMMO;
+    int32_t acc;
+    acc = (int32_t)*accum + (int32_t)frames;
+    while (acc >= FLAMETHROWER_RECHARGE_STEP_TICKS &&
+           *ammo < max_ammo) {
+        *ammo += FLAMETHROWER_CHARGE_AMMO;
+        acc -= FLAMETHROWER_RECHARGE_STEP_TICKS;
+    }
+
+    if (*ammo >= max_ammo) {
+        *ammo = (int16_t)max_ammo;
+        acc = 0;
+    }
+    *accum = (int16_t)acc;
+}
+
 static void player_flamethrower_tick_recharge(GameState *state, PlayerState *plr,
                                               int plr_num, bool fire_held)
 {
     int16_t *delay;
     int16_t *accum;
     int16_t frames;
-    int32_t acc;
     const int max_ammo = FLAMETHROWER_CHARGE_MAX * FLAMETHROWER_CHARGE_AMMO;
 
     if (!state || !plr || !state->cfg_flamethrower_weapon)
@@ -304,18 +333,10 @@ static void player_flamethrower_tick_recharge(GameState *state, PlayerState *plr
         *delay = 0;
     }
 
-    acc = (int32_t)*accum + (int32_t)frames;
-    while (acc >= FLAMETHROWER_RECHARGE_STEP_TICKS &&
-           *ammo < max_ammo) {
-        *ammo += FLAMETHROWER_CHARGE_AMMO;
-        acc -= FLAMETHROWER_RECHARGE_STEP_TICKS;
-    }
-
-    if (*ammo >= max_ammo) {
-        *ammo = (int16_t)max_ammo;
-        acc = 0;
-    }
-    *accum = (int16_t)acc;
+    /* Sharing ammo does not give the starting rifle passive regeneration.
+     * Only equipped flamethrower time earns refill progress. */
+    if (plr->gun_selected == AB3D_GUN_FLAMETHROWER)
+        player_flamethrower_refill(ammo, accum, frames);
 }
 
 static void player_enable_flamethrower(GameState *state, PlayerState *plr, int plr_num)
@@ -361,7 +382,7 @@ static void player_cycle_weapon(PlayerState *plr, int direction)
         slot = (slot + step_dir + GUN_KEY_COUNT) % GUN_KEY_COUNT;
         int gun_idx = gun_key_map[slot];
         if (player_weapon_is_selectable(plr, gun_idx)) {
-            plr->gun_selected = (int16_t)gun_idx;
+            player_set_weapon_selection(plr, gun_idx);
             return;
         }
     }
@@ -837,14 +858,16 @@ static void player_always_keys(PlayerState *plr, uint8_t *key_map,
     plr->s_height = h;
 
     /* Weapon selection (number keys) */
+    int selected_gun = plr->gun_selected;
     for (int i = 0; i < GUN_KEY_COUNT; i++) {
         if (key_map[i + 1]) {
             int gun_idx = gun_key_map[i];
             if (player_weapon_is_selectable(plr, gun_idx)) {
-                plr->gun_selected = (int16_t)gun_idx;
+                selected_gun = gun_idx;
             }
         }
     }
+    player_set_weapon_selection(plr, selected_gun);
 
     /* Mouse wheel cycles through the mapped weapon slots. */
     {
@@ -2785,6 +2808,7 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     bool    ini_cfg_run_default = state->cfg_run_default;
     int16_t ini_cfg_run_speed = state->cfg_run_speed;
     bool    ini_cfg_hud_bars = state->cfg_hud_bars;
+    int16_t ini_cfg_dos_screen_size = state->cfg_dos_screen_size;
     bool    ini_cfg_footsteps_water_only = state->cfg_footsteps_water_only;
     uint8_t ini_cfg_crosshair_colour = state->cfg_crosshair_colour;
     int16_t ini_cfg_render_width = state->cfg_render_width;
@@ -2819,6 +2843,7 @@ static bool player_apply_pending_full_save_after_level_load(GameState *state)
     state->cfg_run_default = ini_cfg_run_default;
     state->cfg_run_speed = ini_cfg_run_speed;
     state->cfg_hud_bars = ini_cfg_hud_bars;
+    state->cfg_dos_screen_size = ini_cfg_dos_screen_size;
     state->cfg_footsteps_water_only = ini_cfg_footsteps_water_only;
     state->cfg_crosshair_colour = ini_cfg_crosshair_colour;
     state->cfg_render_width = ini_cfg_render_width;

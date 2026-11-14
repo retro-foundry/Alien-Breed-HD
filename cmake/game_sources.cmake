@@ -13,6 +13,7 @@ set(SOURCES
     src/game_loop.c
     src/player.c
     src/renderer.c
+    src/renderer_objects.c
     src/renderer_3dobj.c
     src/display.c
     src/input.c

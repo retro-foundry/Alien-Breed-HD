@@ -26,10 +26,15 @@ host mouse; Ctrl+F10 releases it. Mouse behavior still needs real-hardware
 validation. DOS always uses a full screen.
 
 AB3D.INI requests a small video mode, one renderer thread and normal game
-rules. The world fills the entire selected mode behind the HUD: 320x240 on
-S3 with RGB565, or standard 320x200 VGA in the indexed build. Existing INI
+rules. By default the world fills the selected mode behind the HUD: 320x240
+on S3 with RGB565, or standard 320x200 VGA in the indexed build. Existing INI
 files requesting 320x200 also fill the selected mode. Native RGB565 pixels
-are presented 1:1 with SDL: no conversion, enlargement, borders or OpenGL.
+are presented 1:1 with SDL, without conversion, enlargement or OpenGL.
+
+For better performance, open Options and change SCREEN SIZE with Left/Right
+or Enter. Choose 100%, 80%, 60% or 40%. Smaller settings draw the 3D view in
+the middle of a black border; the HUD and menus keep their native size.
+The choice saves as dos_screen_size in AB3D.INI; the default is 100%.
 
 Menus, HUD and the map use native pixel sizes through SDL. Weapons
 still scale to the game view; their exact sampled frames are cached for

@@ -335,6 +335,10 @@ void renderer_shutdown(void);
 
 /* Resize framebuffer (call on window resize) */
 void renderer_resize(int w, int h);
+#ifdef AB3D_DOS
+/* Select a smaller compact view within the original full-size reservation. */
+void renderer_dos_set_view_size(int w, int h);
+#endif
 
 /* Clear the framebuffer to a color */
 void renderer_clear(uint8_t color);

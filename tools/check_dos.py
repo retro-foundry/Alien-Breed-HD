@@ -23,6 +23,8 @@ def main():
     parser.add_argument('--frames', type=int, default=32)
     parser.add_argument('--width', type=int, default=320)
     parser.add_argument('--height', type=int, help='Minimum video height (defaults to the packaged INI)')
+    parser.add_argument('--screen-size', type=int, choices=[40,60,80,100], default=100, help='DOS 3D view percentage')
+    parser.add_argument('--screen-sizes', action='store_true', help='Check all view sizes, border copies and framebuffer reuse')
     parser.add_argument('--level', type=int, default=1)
     parser.add_argument('--sound', choices=['on', 'off'], default='on')
     parser.add_argument('--frontend', action='store_true', help='Enter the map through the real title keyboard path')
@@ -56,6 +58,10 @@ def main():
         case += '-fixed'
     if args.render_profile:
         case += '-rprof'
+    if args.screen_size!=100:
+        case += f'-view{args.screen_size}'
+    if args.screen_sizes:
+        case += '-views'
     run = build / 'checks' / case
     run.mkdir(parents=True, exist_ok=True)
     mapping = json.loads((build / 'generated/assets.json').read_text())
@@ -67,6 +73,10 @@ def main():
     for key, value in {'render_width': args.width, 'render_height': args.height,
                        'start_level': args.level}.items():
         ini = re.sub(rf'^{key}=.*$', f'{key}={value}', ini, flags=re.M)
+    if re.search(r'^dos_screen_size=',ini,re.M):
+        ini=re.sub(r'^dos_screen_size=.*$',f'dos_screen_size={args.screen_size}',ini,flags=re.M)
+    else:
+        ini+=f'\ndos_screen_size={args.screen_size}\n'
     (run / 'AB3D.INI').write_text(ini, encoding='ascii')
     for name in ['ab3d.log', 'FRAME.BMP', 'MENU.BMP', 'MAP.BMP', 'HUD.BMP', 'KEYS.BMP',
                  'OPTIONS.BMP', 'INTRO0.BMP', 'INTRO1.BMP', 'INTRO2.BMP', 'PASS.TXT', 'SAVEGAME.BIN',
@@ -116,7 +126,7 @@ set AB3D_DOS_BENCH_TURN={1 if args.turn else 0}
 set AB3D_PROFILE_RENDER={1 if args.render_profile else 0}
 set AB3D_PROFILE_RENDER_EVERY_MS=1000
 CWSDPMI.EXE -s-
-ABHD.EXE --dos-bench {args.frames} {'--dos-check' if args.exercise else '--dos-check-frontend' if args.frontend else ''} {'--dos-fixed-ticks' if args.fixed_ticks else ''} >BOOT.LOG
+ABHD.EXE --dos-bench {args.frames} {'--dos-check' if args.exercise else '--dos-check-frontend' if args.frontend else ''} {'--dos-fixed-ticks' if args.fixed_ticks else ''} {'--dos-check-screen-sizes' if args.screen_sizes else ''} >BOOT.LOG
 if errorlevel 1 goto failed
 echo PASS>PASS.TXT
 :failed
@@ -175,12 +185,14 @@ exit
         raise SystemExit(f'DOS run failed; see {run}')
     if f'PlayTheGame: level {args.level - 1} ===' not in log or f'draws={args.frames} menu=0' not in log:
         raise SystemExit(f'DOS loaded the wrong map or skipped frames; see {run}')
-    native = re.search(r'\[DOS VIDEO\] render (\d+)x(\d+); native', log)
+    native = re.search(r'\[DOS VIDEO\] full-surface world (\d+)x(\d+)', log)
     actual_w, actual_h = (int(v) for v in native.groups()) if native else (args.width, args.height)
-    if actual_w < args.width or actual_h < args.height or f'present rect {actual_w}x{actual_h}' not in log:
+    view_w,view_h=actual_w*args.screen_size//100,actual_h*args.screen_size//100
+    expected_rect=f'present rect {view_w}x{view_h} at ({(actual_w-view_w)//2},{(actual_h-view_h)//2})'
+    if actual_w < args.width or actual_h < args.height or expected_rect not in log:
         raise SystemExit(f'DOS did not present its native resolution at 1:1; see {run}')
-    if '[DOS VIDEO] full-surface world' in log and f'present rect {actual_w}x{actual_h} at (0,0)' not in log:
-        raise SystemExit(f'DOS world is not covering the native surface; see {run}')
+    if args.screen_sizes and '32 allocation-free framebuffer switches passed' not in log:
+        raise SystemExit(f'DOS screen-size checks did not complete; see {run}')
     if re.search(r'audio underruns during profile=[1-9]', log):
         raise SystemExit(f'Sound Blaster audio underrun; see {run}')
     if (args.frontend or args.exercise) and 'title, streamed music and keyboard New Game passed' not in log:

@@ -1881,6 +1881,45 @@ static bool dead_object_is_runtime_corpse(const GameObject *obj)
     return OBJ_DEADH(obj) == expected_frame;
 }
 
+static void enemy_update_corpse_animation(GameObject *obj, int16_t frames)
+{
+    /* Negative object numbers also identify authored vector/billboard props. */
+    if ((uint8_t)obj->raw[6] == (uint8_t)OBJ_3D_SPRITE ||
+        !dead_object_is_runtime_corpse(obj))
+        return;
+
+    int param_idx = obj_type_to_enemy_index(obj->obj.type_data[1]);
+    const EnemyParams *params = &enemy_params[param_idx];
+    int8_t death_index = obj->obj.type_data[0];
+    int16_t dead_l = OBJ_DEADL(obj);
+    dead_l += frames;
+    if (dead_l >= 1) {
+        int advances = 1;
+        /* NormalAlien.s, HalfWorm.s and the three Marine.s .stillalive
+         * death paths subtract the full TempFrames from ThirdTimer. Our
+         * reversed tables therefore advance by elapsed vblanks, including
+         * when a slow display frame latches several of them at once.
+         * BigRedThing.s / BigClaws.s instead add #1 per call. */
+        switch (obj->obj.type_data[1]) {
+        case OBJ_NBR_ALIEN:
+        case OBJ_NBR_WORM:
+        case OBJ_NBR_MARINE:
+        case OBJ_NBR_TOUGH_MARINE:
+        case OBJ_NBR_FLAME_MARINE:
+            advances = dead_l;
+            break;
+        }
+        dead_l = 0;
+        while (advances-- > 0 && death_index + 1 < 30 &&
+               params->death_frames[death_index + 1] >= 0) {
+            death_index++;
+            obj->obj.type_data[0] = death_index;
+            OBJ_SET_DEADH(obj, params->death_frames[death_index]);
+        }
+    }
+    OBJ_SET_DEADL(obj, dead_l);
+}
+
 /* Both dead-state formats remain blast targets: animated OBJ_NBR_DEAD
  * records store their original type in raw[19], while soft-dead floaters
  * retain their enemy type and have zero lives. Decorative props are not
@@ -2529,37 +2568,7 @@ void objects_update(GameState *state)
             object_handle_gas_pipe(obj, state);
             break;
         case OBJ_NBR_DEAD:
-            /* Decorative vector objects in level data also use obj.number == -1.
-             * Amiga ObjectDataHandler skips all negative objNumber entries; do not run
-             * corpse animation logic on 3D vector props (e.g. EXIT sign), or their
-             * objVectNumber/frame fields at +8/+10 get clobbered. */
-            if ((uint8_t)obj->raw[6] == (uint8_t)OBJ_3D_SPRITE ||
-                !dead_object_is_runtime_corpse(obj))
-                break;
-
-            /* Advance death animation; original type stored in type_data[1] when we died.
-             * Amiga: ThirdTimer counts down from 25, one step per ObjMoveAnim (~0.5 s at 50 Hz).
-             * Advance every tick (dead_l >= 1) to match. */
-            {
-                int8_t original_type = obj->obj.type_data[1];
-                param_idx = obj_type_to_enemy_index(original_type);
-                if (param_idx >= 0 && param_idx < num_enemy_types) {
-                    const EnemyParams *ep = &enemy_params[param_idx];
-                    int8_t death_index = obj->obj.type_data[0];
-                    int16_t dead_l = OBJ_DEADL(obj);
-                    dead_l += state->temp_frames;
-                    if (dead_l >= 1) {
-                        dead_l = 0;
-                        /* Only advance if next frame is valid; otherwise keep showing last frame (don't remove) */
-                        if (death_index + 1 < 30 && ep->death_frames[death_index + 1] >= 0) {
-                            death_index++;
-                            obj->obj.type_data[0] = death_index;
-                            OBJ_SET_DEADH(obj, ep->death_frames[death_index]);
-                        }
-                    }
-                    OBJ_SET_DEADL(obj, dead_l);
-                }
-            }
+            enemy_update_corpse_animation(obj, state->temp_frames);
             break;
         default:
             break;

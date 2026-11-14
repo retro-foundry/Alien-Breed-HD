@@ -20,6 +20,15 @@ static void shoot(GameState *state, int player, int gun)
     p->p_fire = p->p_clicked = 0;
 }
 
+static void idle_with_weapon(GameState *state, PlayerState *p, int player, int gun, int ticks)
+{
+    p->gun_selected = gun;
+    p->p_fire = p->p_clicked = 0;
+    state->temp_frames = (int16_t)ticks;
+    player_shoot_internal(state, p, player,
+                         player == 1 ? default_plr1_guns : default_plr2_guns);
+}
+
 int main(void)
 {
     math_tables_init();
@@ -90,6 +99,33 @@ int main(void)
         }
         p->p_fire = 0; p->time_to_shoot = 0;
 
+        /* Sharing inventory must not give the rifle or other weapons a refill.
+         * Exercise the real idle shooting path, including empty/low ammo. */
+        const int idle_guns[] = { AB3D_GUN_PISTOL, AB3D_GUN_PLASMA, 2, 4, 7 };
+        const int initial_ammo[] = { 0, 8, 80 };
+        for (unsigned gi = 0; gi < sizeof(idle_guns) / sizeof(*idle_guns); gi++) {
+            for (unsigned ai = 0; ai < sizeof(initial_ammo) / sizeof(*initial_ammo); ai++) {
+                *pool = (int16_t)initial_ammo[ai];
+                player_flamethrower_mark_used(&state, player);
+                for (int tick = 0; tick < 500; tick++)
+                    idle_with_weapon(&state, p, player, idle_guns[gi], 1);
+                assert(*pool == initial_ammo[ai]);
+                assert(*player_flamethrower_recharge_accum_ptr(&state, player) == 0);
+            }
+        }
+        /* The elapsed cooldown still counts while unequipped. Only time with
+         * the flamethrower selected advances the actual refill accumulator. */
+        *pool = 80;
+        player_flamethrower_reset_recharge(&state, player);
+        idle_with_weapon(&state, p, player, AB3D_GUN_FLAMETHROWER, 2);
+        assert(*pool == 80);
+        idle_with_weapon(&state, p, player, AB3D_GUN_PISTOL, 500);
+        assert(*pool == 80);
+        idle_with_weapon(&state, p, player, AB3D_GUN_FLAMETHROWER, 3);
+        assert(*pool == 88);
+        shoot(&state, player, AB3D_GUN_PISTOL);
+        assert(*pool == 80); /* Regenerated fuel remains shared ammunition. */
+
         /* Pickups go straight to the shared counter, including above 20 rounds. */
         *pool = 160;
         GameObject clip = {0};
@@ -120,6 +156,6 @@ int main(void)
         shoot(&state, player, AB3D_GUN_FLAMETHROWER);
         assert(*pool == 72); /* Preserve the existing rechargeable-flamer cheat behavior. */
     }
-    puts("PASS: both players share rifle/flamethrower ammo; firing, empty clicks, pickups, refill delay/rate/ceiling, config and other guns");
+    puts("PASS: both players share rifle/flamethrower ammo; only the equipped flamethrower refills, with firing, empty clicks, pickups, cooldown, switching, ceiling, config and other guns");
     return 0;
 }

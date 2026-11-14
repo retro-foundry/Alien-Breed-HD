@@ -1,7 +1,7 @@
 /* Compare the DOS kernels with the existing WallRoutine3/AB3DI expressions. */
 #include "raster_dos.h"
 #include "renderer_fixed.h"
-#include "objects_dos.h"
+#include "renderer_objects.h"
 #include "sprite_palettes.h"
 #include "sprite_format.h"
 #include "water_format.h"
@@ -1159,7 +1159,7 @@ static void check_objects(void)
                 if (frame % 5 == 0) put_word(data + OBJECT_SIZE, 300);
             }
         }
-        dos_objects_prepare(&level, points, near_z);
+        renderer_objects_prepare(&level, points, near_z);
         int indexed = 1;
         for (unsigned i = 0; i < count; i++) {
             const uint8_t *obj = objects + i * OBJECT_SIZE;
@@ -1184,7 +1184,7 @@ static void check_objects(void)
                     !level_same_draw_room(&level, z, zone) && (polygon || !connected)) continue;
                 expected[total++] = i;
             }
-            unsigned found = dos_objects_for_room(&level, zone, adjacent, 4, actual);
+            unsigned found = renderer_objects_for_room(&level, zone, adjacent, 4, actual);
             assert(found == total && !memcmp(actual, expected, total));
         }
         for (unsigned pool = 0; pool < 2; pool++) {
@@ -1198,7 +1198,7 @@ static void check_objects(void)
                 if (get_word(obj + 12) >= 0 && obj[16] == OBJ_NBR_BULLET &&
                     point >= 0 && point < 256 && points[point].z > near_z) expected[total++] = i;
             }
-            const uint8_t *actual = dos_objects_shots(pool, &found);
+            const uint8_t *actual = renderer_objects_shots(pool, &found);
             assert(found == total && !memcmp(actual, expected, total));
         }
         /* Compare room preselection against the original per-slot ownership
@@ -1243,7 +1243,7 @@ static void check_objects(void)
             }
             memset(actual,0x91,sizeof(actual));
             unsigned counts[4] = {0x13579bdu,~0u,~0u,0x2468aceu};
-            dos_objects_shots_for_room(&level,zone,neighbors,adjacent_count,counts+1,actual+8);
+            renderer_objects_shots_for_room(&level,zone,neighbors,adjacent_count,counts+1,actual+8);
             assert(counts[0] == 0x13579bdu && counts[3] == 0x2468aceu);
             assert(counts[1] == expected_counts[0] && counts[2] == expected_counts[1]);
             assert(!memcmp(actual+8,expected,total));
@@ -1254,16 +1254,16 @@ static void check_objects(void)
     }
     level.num_object_points = -1;
     level.nasty_shot_data = nasty; level.player_shot_data = player;
-    dos_objects_prepare(&level, points, near_z);
+    renderer_objects_prepare(&level, points, near_z);
     uint8_t empty[256];
-    assert(dos_objects_for_room(&level, 0, NULL, 0, empty) == 0);
+    assert(renderer_objects_for_room(&level, 0, NULL, 0, empty) == 0);
     for (unsigned pool = 0; pool < 2; pool++) {
         unsigned total;
-        dos_objects_shots(pool, &total);
+        renderer_objects_shots(pool, &total);
         assert(total == 0);
     }
     unsigned no_shots[2] = {~0u,~0u};
-    dos_objects_shots_for_room(&level,0,NULL,0,no_shots,empty);
+    renderer_objects_shots_for_room(&level,0,NULL,0,no_shots,empty);
     assert(no_shots[0] == 0 && no_shots[1] == 0);
     puts("PASS: 2048 room candidate lists and both shot pools retain ObjDraw slot ordering and rejects");
     printf("PASS: %u room shot queries preserve both pools, slot order, aliases, duplicate neighbors, wide IDs/groups, invalid slots, empty pools, frame resets and guards\n",shot_queries);

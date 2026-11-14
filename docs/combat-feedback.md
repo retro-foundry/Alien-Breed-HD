@@ -164,7 +164,10 @@ assembly-parity correction. Each shot consumes eight internal ammo units
 (one displayed round), preserving one flamethrower charge per shot.
 The existing three-second recharge delay, one charge per five VBlanks and
 20-charge refill ceiling remain. Firing either shared weapon holds off the
-refill; it also runs while another weapon is selected. The refill ceiling
+refill. Only time with the flamethrower equipped advances the refill; gun 1
+and other selected weapons do not regenerate the shared stock. The cooldown
+still elapses while unequipped, and switching retains partial flamethrower
+refill progress. The refill ceiling
 does not trim ammo gained from the original `Anims.s` `ItsAnAmmoClip` pickup.
 Flamethrower enable/disable and saved-game config application leave the
 shared stock intact. The existing gun 0 counter in passwords and full saves
@@ -173,13 +176,75 @@ own ammunition.
 
 `tests/feedback_shared_ammo.c` checks both players' shared consumption and
 empty clicks, actual rifle ammo pickups, unrelated plasma ammo, delayed and
-batched refill, stopping refill while firing, preserving stock above the
+batched refill, stopping refill while firing, no refill while the rifle or
+other weapons are selected (including empty/low ammo), switching with partial
+refill progress, preserving stock above the
 refill ceiling, config toggles and existing infinite-ammo behavior.
-The browser runtime check passes on GL and SDL: both weapons consume the
-same displayed supply, refill resumes after emptying it, and an actual
-autosave/load restores 37 shared rounds without trimming them to 20.
-Windows and single-threaded Emscripten Release builds and the full feedback
-regression suite pass.
+Earlier browser GL/SDL checks verified shared consumption and an actual
+autosave/load restoring 37 shared rounds without trimming them to 20. The
+equipped-only correction passes both-player shooting/shared-ammo regressions
+in WebAssembly and a native 4 MB DOSBox fixture; Windows Release builds.
+
+The updated native DOS executable retains the 30 unchanged optimized engine
+objects from the billboard-spill release. The player unit is rebuilt with
+Os/LTO without applying stale compiler feedback. An O3-only player rebuild
+was rejected after exceeding the 4 MB asset-allocation budget. The compact
+build passes all 22 starting/turning pixel comparisons and the 4 MB SB16/mouse
+UI exercise (16 full quickloads, all save slots, zero underruns). That UI
+exercise uses 200,000 cycles and fixed ticks for correctness only. A real-time
+128-frame start at normal/486_slow, 40,000 cycles, 4 MB, SB16 and mouse measures
+26.65 FPS / 37.53 ms, consistent with the previous 26.62 FPS / 37.56 ms.
+Text/data/BSS are 1,220,632 / 22,016 / 278,528 bytes.
+
+The native update is staged in `build/dos/game/ABHD.EXE`, `build/dos/ABHD.exe`
+and `build/dos/ABHD-DOS.zip` (3,407,663 bytes). Executable SHA-256:
+`74f9eb838744e3ebf11cfdd8b96fdc4e82787bb74ff127b3c595adfe6ea1f3fd`.
+Archive SHA-256:
+`8ef47560d9af0e050432ff35828fb385bda0e551b4568cbc912c4514fd42e82f`.
+Only the executable changes in the archive. Staging retains 241 other native
+files/settings/saves and all 239 indexed files. Source/object hashes, build
+commands and validation logs are under `build/flame-recharge`; the previous
+native package is retained there under `previous-package`.
+
+## Weapon animation when switching
+
+Weapon selection previously carried the old weapon's `gun_frame` countdown
+into the newly selected weapon. This could show the new gun firing or reloading
+without a shot. A long shotgun countdown could initially appear harmless,
+then show incorrect frames once it reached another gun's shorter animation.
+
+`src/player.c` now commits weapon changes through one helper that selects
+frame zero from the new gun's authored `AB3DI.s:GunAnims` table. Keyboard,
+wheel/controller cycling and availability corrections use that helper. Holding
+the current selection keeps its animation; simultaneous number keys resolve
+their original priority before committing the selection. Ammo and firing
+cooldown are retained, and the equipped-only flamethrower refill remains intact.
+
+`tests/feedback_weapon_switch.c` reproduces the original failure through the
+real controls and `renderer_get_gun_draw_info`. Its 1,340 checks cover both
+players, every firing/reload countdown position, number keys, wheel/controller
+cycling, hidden guns, held keys, availability and cooldown/ammo preservation.
+The tests pass in WebAssembly and a native 4 MB DOSBox fixture. Shooting and
+shared-ammo regressions pass; Windows Release builds.
+
+The native update retains the 30 unchanged optimized engine objects and
+rebuilds the player unit with Os/LTO without stale feedback. All 22 standard
+starting/turning captures remain exact. The 4 MB SB16/mouse UI exercise passes
+16 full quickloads and all save slots with zero underruns (200,000 cycles,
+fixed ticks, correctness only). The real-time 128-frame start at
+normal/486_slow, 40,000 cycles, 4 MB, SB16 and mouse retains 26.65 FPS /
+37.53 ms. Text/data/BSS remain 1,220,632 / 22,016 / 278,528 bytes.
+
+The verified native executable is staged at `build/dos/game/ABHD.EXE` and
+`build/dos/ABHD.exe`; `build/dos/ABHD-DOS.zip` is 3,407,684 bytes.
+Executable SHA-256:
+`6d3e5cd7b79c98fd7c8ae8ad354edf48e7f1a92392a73787bf2ebb39abbe4b57`.
+Archive SHA-256:
+`4a8de75f4d1902cf1f98227b16e4ada2f5df32502482ba328dcdec848377a9fd`.
+Only the executable's archive entry changes. Staging preserves 241 other
+native files/settings/saves and all 239 indexed files. Evidence and reproduction
+scripts are under `build/weapon-switch`, with the prior package retained under
+`previous-package` there.
 
 ## Windows crash after death on level 12
 

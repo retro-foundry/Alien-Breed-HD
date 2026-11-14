@@ -76,6 +76,9 @@ void display_dos_check_text_screen(const char *label, int allow_pages);
 void display_dos_check_hud_bounds(GameState *state);
 void display_dos_check_hit_flash(GameState *state);
 void display_dos_prepare_gameplay_ui(GameState *state);
+/* Native video/HUD stay full size; percent changes the reserved 3D view. */
+void display_dos_set_screen_size(GameState *state, int percent);
+void display_dos_check_screen_sizes(GameState *state);
 void display_dos_check_gun_frames(GameState *state);
 #endif
 int display_text_line_at_point(int window_x, int window_y, int title_screen,

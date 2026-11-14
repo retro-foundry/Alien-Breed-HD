@@ -16,6 +16,7 @@
  */
 
 #include "display.h"
+#include "dos_screen_size.h"
 #ifdef AB3D_DOS
 #include "platform_dos.h"
 #include "control_loop.h"
@@ -206,6 +207,7 @@ static int g_dos_canvas_disabled;
 #endif
 static unsigned char *g_dos_map_scratch;
 static int g_dos_map_capacity;
+static void display_dos_clear_view_border(const SDL_Rect *view);
 
 /* Renderer output already matches SDL and VESA: native RGB565, row-major.
  * Fallback surface descriptors borrow the engine image. No conversion or scaling. */
@@ -254,7 +256,31 @@ static void display_dos_copy_cw(const RendererPixel *src,int w,int h,const SDL_R
         return;
     }
     dos_ui_materialize_canvas(g_sdl_ren);
+    if (rect->x>=0 && rect->y>=0 && rect->x+w<=surface->w && rect->y+h<=surface->h &&
+        SDL_GetSurfaceClipRect(surface,&clip) && !clip.x && !clip.y &&
+        clip.w==surface->w && clip.h==surface->h) {
+        if(!SDL_LockSurface(surface)) {
+            fprintf(stderr,"DOS view framebuffer lock failed: %s\n",SDL_GetError());exit(1);
+        }
+        /* Copy the compact view and clear its border in one native pass.
+         * Avoid SDL blit descriptors and four separate rectangle fills. */
+        Uint8 *pixels=surface->pixels;
+        memset(pixels,0,(size_t)rect->y*surface->pitch);
+        for(int y=0;y<h;y++) {
+            Uint8 *row=pixels+(size_t)(rect->y+y)*surface->pitch;
+            memset(row,0,(size_t)rect->x*DOS_PIXEL_BYTES);
+            memcpy(row+(size_t)rect->x*DOS_PIXEL_BYTES,src+(size_t)y*w,(size_t)w*DOS_PIXEL_BYTES);
+            memset(row+(size_t)(rect->x+w)*DOS_PIXEL_BYTES,0,
+                   (size_t)(surface->w-rect->x-w)*DOS_PIXEL_BYTES);
+        }
+        memset(pixels+(size_t)(rect->y+h)*surface->pitch,0,
+               (size_t)(surface->h-rect->y-h)*surface->pitch);
+        SDL_UnlockSurface(surface);
+        dos_ui_discard_canvas_readback(g_sdl_ren);
+        return;
+    }
 #endif
+    display_dos_clear_view_border(rect);
     int slot;
     if(g_dos_frame_pixels[0]==src)slot=0;
     else if(g_dos_frame_pixels[1]==src)slot=1;
@@ -2950,8 +2976,8 @@ static void display_update_letterbox(int win_w, int win_h)
 
 #ifdef AB3D_DOS
     int dw=rw,dh=rh;
-    if(rw!=win_w || rh!=win_h) {
-        fprintf(stderr,"DOS world %dx%d must cover native surface %dx%d\n",rw,rh,win_w,win_h);exit(1);
+    if(rw>win_w || rh>win_h) {
+        fprintf(stderr,"DOS world %dx%d exceeds native surface %dx%d\n",rw,rh,win_w,win_h);exit(1);
     }
     printf("[DOS VIDEO] render %dx%d; native %s SDL surface; 1:1 viewport\n",rw,rh,
 #ifdef AB3D_DOS_INDEXED
@@ -2988,6 +3014,45 @@ static void display_update_letterbox(int win_w, int win_h)
     }
 #endif
 }
+
+#ifdef AB3D_DOS
+__attribute__((cold)) void display_dos_set_screen_size(GameState *state, int percent)
+{
+    if (!state || !g_sdl_ren || !dos_screen_size_valid(percent)) {
+        fprintf(stderr,"Cannot select DOS screen size %d\n",percent);exit(1);
+    }
+    /* Keep projection based on the physical mode, not an older INI or a
+     * previously reduced view. Shared assets are prepared at 100% first. */
+    state->cfg_render_width=(int16_t)g_present_width;
+    state->cfg_render_height=(int16_t)g_present_height;
+    int w,h;
+    dos_screen_size_dimensions(g_present_width,g_present_height,percent,&w,&h);
+    if(w==renderer_get_width() && h==renderer_get_height() &&
+       w==g_internal_w && h==g_internal_h)return;
+    renderer_dos_set_view_size(w,h);
+    g_internal_w=w;g_internal_h=h;
+    display_update_letterbox(g_present_width,g_present_height);
+    printf("[DOS VIDEO] screen size=%d%%; present rect %dx%d at (%d,%d)\n",
+           percent,w,h,g_present_dst_rect.x,g_present_dst_rect.y);
+}
+
+static void display_dos_clear_view_border(const SDL_Rect *view)
+{
+    SDL_Rect r=*view;
+    if(!r.x && !r.y && r.w==g_present_width && r.h==g_present_height)return;
+#ifdef AB3D_NATIVE_RGB565
+    dos_ui_materialize_canvas(g_sdl_ren);
+#endif
+    SDL_Rect border[4]={{0,0,g_present_width,r.y},
+        {0,r.y+r.h,g_present_width,g_present_height-r.y-r.h},
+        {0,r.y,r.x,r.h},{r.x+r.w,r.y,g_present_width-r.x-r.w,r.h}};
+    SDL_SetRenderDrawBlendMode(g_sdl_ren,SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(g_sdl_ren,0,0,0,255);
+    for(int i=0;i<4;i++)if(border[i].w>0 && border[i].h>0)
+        SDL_RenderFillRect(g_sdl_ren,&border[i]);
+    SDL_SetRenderDrawBlendMode(g_sdl_ren,SDL_BLENDMODE_BLEND);
+}
+#endif
 
 static int display_sync_present_output_size(int *out_w, int *out_h)
 {
@@ -3086,7 +3151,11 @@ int display_text_line_at_point(int window_x, int window_y, int title_screen,
             r = display_fit_rect(out_w, out_h, DISPLAY_TITLE_W, DISPLAY_TITLE_H);
         }
     } else {
+#ifdef AB3D_DOS
+        r=(SDL_Rect){0,0,g_present_width,g_present_height};
+#else
         r = g_present_dst_rect;
+#endif
     }
 
 #ifdef AB3D_DOS
@@ -3964,19 +4033,20 @@ enum {
 #endif
 };
 
-static SDL_Texture *display_key_hud_texture_for_frame(int frame_idx)
-{
-    if (frame_idx < 0 || frame_idx >= 4 || !g_sdl_ren) return NULL;
-    if (g_key_hud_tex[frame_idx]) return g_key_hud_tex[frame_idx];
-
-    uint32_t pixels[DISPLAY_KEY_SPRITE_SIZE * DISPLAY_KEY_SPRITE_SIZE];
-    if (!renderer_key_sprite_rasterize_frame_argb(frame_idx, pixels, DISPLAY_KEY_SPRITE_SIZE)) return NULL;
-
 #ifdef AB3D_DOS
-    /* Filter the original type-5 key frame once, before level loading. Ignore
-     * transparent RGB when averaging and retain at least half-covered cells,
-     * so the opaque SDL blit has clean cutouts without dark fringes. Reducing
-     * into the front of this buffer is safe: all unread source rows are ahead. */
+static void display_key_hud_minify(uint32_t pixels[DISPLAY_KEY_SPRITE_SIZE * DISPLAY_KEY_SPRITE_SIZE])
+{
+    /* Omit the tiny PASS text from the DOS HUD. ObjDraw3.ChipRam.s
+     * KEYS_FRAMES places its inscription at (10,23), size 15x5. Replace
+     * only that source area with the card's own paper before filtering;
+     * the original badge shape and world/automap sprites stay intact. */
+    uint32_t paper = pixels[22 * DISPLAY_KEY_SPRITE_SIZE + 10];
+    for (int y = 23; y < 28; y++)
+        for (int x = 10; x < 25; x++)
+            pixels[y * DISPLAY_KEY_SPRITE_SIZE + x] = paper;
+
+    /* Ignore transparent RGB when averaging and retain half-covered cells.
+     * Output precedes every unread source row, permitting in-place reduction. */
     for (int y = 0; y < DISPLAY_KEY_HUD_SIZE; y++) {
         for (int x = 0; x < DISPLAY_KEY_HUD_SIZE; x++) {
             unsigned count = 0, red = 0, green = 0, blue = 0;
@@ -3990,6 +4060,21 @@ static SDL_Texture *display_key_hud_texture_for_frame(int frame_idx)
                 (((green + count / 2) / count) << 8) | ((blue + count / 2) / count);
         }
     }
+
+}
+#endif
+
+static SDL_Texture *display_key_hud_texture_for_frame(int frame_idx)
+{
+    if (frame_idx < 0 || frame_idx >= 4 || !g_sdl_ren) return NULL;
+    if (g_key_hud_tex[frame_idx]) return g_key_hud_tex[frame_idx];
+
+    uint32_t pixels[DISPLAY_KEY_SPRITE_SIZE * DISPLAY_KEY_SPRITE_SIZE];
+    if (!renderer_key_sprite_rasterize_frame_argb(frame_idx, pixels, DISPLAY_KEY_SPRITE_SIZE)) return NULL;
+
+#ifdef AB3D_DOS
+    /* Prepare the original type-5 key frame once, before level loading. */
+    display_key_hud_minify(pixels);
 #endif
 
     SDL_Texture *t = SDL_CreateTexture(g_sdl_ren, SDL_PIXELFORMAT_ARGB8888,
@@ -5166,6 +5251,7 @@ void display_dos_prepare_gameplay_ui(GameState *state)
     areas[2]=(SDL_Rect){kx,ky,gw,kh+1+hud_key_mark_height(kh)};
     dos_ui_prepare_canvas(g_sdl_ren,areas,3);
 #endif
+    display_dos_set_screen_size(state,state->cfg_dos_screen_size);
 }
 #endif
 
@@ -5255,7 +5341,13 @@ static void display_present_cw_frame(GameState *state)
         display_hit_flash_overlay(state);
         display_hud_stats_sdl_overlay(state);
         display_key_hud_sdl_overlay(state);
+#ifdef AB3D_DOS
+        g_present_dst_rect=dos_world_rect;
+#endif
         display_crosshair_sdl_overlay(state);
+#ifdef AB3D_DOS
+        g_present_dst_rect=(SDL_Rect){0,0,g_present_width,g_present_height};
+#endif
         if (state->automap_visible)
             display_automap_sdl_overlay(state);
         display_fps_overlay(state);
@@ -5412,7 +5504,11 @@ void display_present_text_screen_alpha(int alpha)
         SDL_SetRenderDrawBlendMode(g_sdl_ren, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(g_sdl_ren, 0, 0, 0, 255);
         SDL_RenderClear(g_sdl_ren);
+#ifdef AB3D_DOS
+        display_text_screen_draw_in_rect((Uint8)alpha,(SDL_Rect){0,0,g_present_width,g_present_height});
+#else
         display_text_screen_draw((Uint8)alpha);
+#endif
     }
 
     SDL_RenderPresent(g_sdl_ren);
@@ -5677,6 +5773,63 @@ void display_dos_check_hit_flash(GameState *state)
         }
     }
     printf("[DOSCHECK] full-view hit flash leaves renderer/water history unchanged\n");
+}
+
+__attribute__((cold)) void display_dos_check_screen_sizes(GameState *state)
+{
+    const int sizes[]={100,80,60,40,80,100};
+    const RendererPixel *reserved=renderer_get_cw_buffer();
+    int saved=state->cfg_dos_screen_size;
+    for(unsigned i=0;i<sizeof(sizes)/sizeof(sizes[0]);i++) {
+        display_dos_set_screen_size(state,sizes[i]);
+        int w=renderer_get_width(),h=renderer_get_height();
+        SDL_Rect r=g_present_dst_rect;
+        if(renderer_get_cw_buffer()!=reserved || r.w!=w || r.h!=h ||
+           r.x!=(g_present_width-w)/2 || r.y!=(g_present_height-h)/2) {
+            fprintf(stderr,"DOS screen-size reservation/centering mismatch\n");exit(1);
+        }
+        renderer_draw_display(state);
+        const RendererPixel *history=renderer_get_cw_buffer();
+        uint32_t history_hash=2166136261u;
+        for(int n=0;n<w*h;n++)history_hash=(history_hash^history[n])*16777619u;
+        display_dos_copy_cw(renderer_get_cw_buffer(),w,h,&r);
+        uint32_t copied_hash=2166136261u;
+        for(int n=0;n<w*h;n++)copied_hash=(copied_hash^history[n])*16777619u;
+        if(copied_hash!=history_hash) {
+            fprintf(stderr,"DOS screen copy modified renderer/water history\n");exit(1);
+        }
+        SDL_Surface *surface=SDL_GetWindowSurface(g_window);
+        if(!surface || !SDL_LockSurface(surface)) {
+            fprintf(stderr,"DOS screen-size comparison surface unavailable\n");exit(1);
+        }
+        const RendererPixel *src=renderer_get_cw_buffer();
+        for(int y=0;y<surface->h;y++) {
+            const RendererPixel *row=(const RendererPixel *)((const Uint8 *)surface->pixels+y*surface->pitch);
+            for(int x=0;x<surface->w;x++) {
+                RendererPixel expected=0;
+                if(x>=r.x && x<r.x+w && y>=r.y && y<r.y+h)
+                    expected=src[(y-r.y)*w+x-r.x];
+                if(row[x]!=expected) {
+                    fprintf(stderr,"DOS view %d%% copy/border differs at %d,%d\n",sizes[i],x,y);exit(1);
+                }
+            }
+        }
+        SDL_UnlockSurface(surface);
+        display_present_last_frame(state);
+        char name[13];snprintf(name,sizeof(name),"VIEW%03d.BMP",sizes[i]);
+        dos_capture_frame(name);
+#if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
+        if(i<4)display_dos_check_gun_frames(state);
+#endif
+    }
+    for(int i=0;i<32;i++) {
+        display_dos_set_screen_size(state,sizes[i%6]);
+        if(renderer_get_cw_buffer()!=reserved) {
+            fprintf(stderr,"DOS view change replaced the reserved framebuffer\n");exit(1);
+        }
+    }
+    display_dos_set_screen_size(state,saved);
+    printf("[DOSCHECK] screen sizes: exact 1:1 views, black borders, native HUD and 32 allocation-free framebuffer switches passed\n");
 }
 
 void display_dos_check_hud_bounds(GameState *state)

@@ -32,10 +32,10 @@
 #include "renderer_fixed.h"
 #include "sprite_format.h"
 #include "water_format.h"
+#include "renderer_objects.h"
 #ifdef AB3D_DOS
 #include "platform_dos.h"
 #include "raster_dos.h"
-#include "objects_dos.h"
 #endif
 #include "renderer_alloc.h"
 #include "renderer_3dobj.h"
@@ -245,6 +245,7 @@ static RendererPixel *indexed_wall_palettes[MAX_WALL_TILES];
 #ifdef AB3D_DOS
 /* DOS draws synchronously; scratch follows the framebuffer width. */
 static DosWallColumn *g_dos_wall_columns;
+static int g_dos_buffer_width, g_dos_buffer_height;
 #endif
 /* When zero (default), raster skips redundant ARGB writes; display unpacks from cw_buffer. */
 #ifdef AB3D_DOS
@@ -264,6 +265,7 @@ static SDL_Palette *g_dos_gun_palette;
 #endif
 static SDL_Rect g_dos_gun_crops[32];
 static uint8_t *g_dos_gun_pixels;
+static size_t g_dos_gun_capacity;
 static unsigned char g_dos_gun_empty[32];
 static RendererPixel *g_dos_gun_target_pixels[2];
 static int g_dos_gun_width,g_dos_gun_height,g_dos_gun_next_target,g_dos_gun_cached_slot=-1;
@@ -287,6 +289,7 @@ void renderer_dos_release_gun_frames(void)
 #endif
     g_dos_gun_next_target=0;
     free(g_dos_gun_pixels);g_dos_gun_pixels=NULL;
+    g_dos_gun_capacity=0;
     g_dos_gun_width=g_dos_gun_height=0;
     memset(g_dos_gun_empty,0,sizeof(g_dos_gun_empty));
 }
@@ -774,7 +777,7 @@ static int renderer_resolve_lgr_entry_zone_id(const LevelState *level, int16_t e
 
 /* Forward decls used by early helpers (defined later). */
 static uint32_t amiga12_to_argb(uint16_t c12);
-static int renderer_zone_contains_point(const LevelState *level, int16_t zone_id, int32_t x, int32_t z);
+static int renderer_zone_contains_point(const LevelState *level, int16_t zone_id, double x, double z);
 static int renderer_zone_clip_segment_to_dx_ranges(const LevelState *level,
                                                    int16_t zone_id,
                                                    int32_t seg_x0,
@@ -4945,6 +4948,9 @@ static const uint32_t gun_ptr_frame_offsets[32] = {
  * ----------------------------------------------------------------------- */
 static void free_buffers(void)
 {
+#ifdef AB3D_DOS
+    g_dos_buffer_width=g_dos_buffer_height=0;
+#endif
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
     free(g_dos_wall_columns);
     g_dos_wall_columns = NULL;
@@ -5022,12 +5028,33 @@ int renderer_set_graphic_picking(int enabled)
     return 1;
 }
 
+static void renderer_reset_view_bounds(int w, int h)
+{
+    g_renderer.top_clip = 0;
+    g_renderer.bot_clip = (int16_t)(h - 1);
+    g_renderer.wall_top_clip = -1;
+    g_renderer.wall_bot_clip = -1;
+    g_renderer.left_clip = 0;
+    g_renderer.right_clip = (int16_t)w;
+    g_renderer.floor_uv_dist_max = 30000;
+    g_renderer.floor_uv_dist_near = 32000;
+}
+
+static void renderer_reset_view_projection(void)
+{
+    g_proj_base_width = renderer_proj_effective_base_width_from_dims(g_renderer.width, g_renderer.height);
+    g_renderer.view_center_x = (g_renderer.width * 47) / 96;
+}
+
 static void allocate_buffers(int w, int h)
 {
     g_renderer.width = w;
     g_renderer.height = h;
     g_renderer.present_width = w;
     g_renderer.present_height = h;
+#ifdef AB3D_DOS
+    g_dos_buffer_width=w;g_dos_buffer_height=h;
+#endif
 #if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
     _Static_assert(GUN_COLS<=256,"DOS byte gun-column cache fits the original source");
     /* Size all synchronous raster scratch to this viewport. The 96-column
@@ -5104,16 +5131,8 @@ static void allocate_buffers(int w, int h)
         exit(1);
     }
 
-    g_renderer.top_clip = 0;
-    g_renderer.bot_clip = (int16_t)(h - 1);
-    g_renderer.wall_top_clip = -1;
-    g_renderer.wall_bot_clip = -1;
-    g_renderer.left_clip = 0;
-    g_renderer.right_clip = (int16_t)w;
-
-    /* Safe defaults before first renderer_draw_display sets y_proj_scale-based caps. */
-    g_renderer.floor_uv_dist_max = 30000;
-    g_renderer.floor_uv_dist_near = 32000;
+    /* Safe defaults before renderer_draw_display sets projection-based caps. */
+    renderer_reset_view_bounds(w, h);
 
     /* Pre-size main-thread scratch to current render dimensions so normal frame
      * rendering does not need first-use allocations. Worker-thread scratch is
@@ -5140,8 +5159,7 @@ void renderer_init(int width, int height)
     if(!g_wall_pair_lookup){fprintf(stderr,"[RENDERER] Cannot allocate native wall-pair workspace\n");exit(1);}
     dos_raster_prepare_wall_pairs(g_wall_pair_lookup);
 #endif
-    g_proj_base_width = renderer_proj_effective_base_width_from_dims(g_renderer.width, g_renderer.height);
-    g_renderer.view_center_x = (g_renderer.width * 47) / 96;
+    renderer_reset_view_projection();
     g_automap_mutex = SDL_CreateMutex();
     if (!g_automap_mutex) {
         printf("[RENDERER] Warning: automap mutex unavailable (possible data races with threaded draw)\n");
@@ -5159,9 +5177,30 @@ void renderer_resize(int w, int h)
     if (h > RENDER_INTERNAL_MAX_DIM) h = RENDER_INTERNAL_MAX_DIM;
     free_buffers();
     allocate_buffers(w, h);
-    g_proj_base_width = renderer_proj_effective_base_width_from_dims(g_renderer.width, g_renderer.height);
-    g_renderer.view_center_x = (g_renderer.width * 47) / 96;
+    renderer_reset_view_projection();
 }
+
+#ifdef AB3D_DOS
+__attribute__((cold)) void renderer_dos_set_view_size(int w, int h)
+{
+    if (w < 96 || h < 80 || w > g_dos_buffer_width || h > g_dos_buffer_height ||
+        !g_renderer.cw_buffer) {
+        fprintf(stderr,"DOS view %dx%d exceeds its reserved %dx%d canvas\n",
+                w,h,g_dos_buffer_width,g_dos_buffer_height);exit(1);
+    }
+    if (w == g_renderer.width && h == g_renderer.height) return;
+    /* Compact rows reuse the full-size reservation. Keep every clip/scratch
+     * allocation and the largest weapon cache alive while changing the view. */
+    g_renderer.width=w;g_renderer.height=h;
+    g_renderer.present_width=w;g_renderer.present_height=h;
+    renderer_reset_view_bounds(w,h);
+    renderer_reset_view_projection();
+    memset(g_renderer.cw_buffer,0,(size_t)g_dos_buffer_width*g_dos_buffer_height*sizeof(RendererPixel));
+#ifdef AB3D_NATIVE_RGB565
+    g_floor_row_abs_recip_limit=0;g_dos_sky_offsets_valid=0;
+#endif
+}
+#endif
 
 void renderer_shutdown(void)
 {
@@ -6310,6 +6349,24 @@ void renderer_rotate_level_pts(GameState *state)
  * Rotates object (enemy/pickup/bullet) positions from world space
  * to view space for sprite rendering.
  * ----------------------------------------------------------------------- */
+/* Use the displayed position for both rotation and the billboard footprint.
+ * ObjectMove's current point and its previous tick are interpolated together. */
+static void renderer_object_world_position(const GameState *state, int point,
+                                            int32_t *x, int32_t *z)
+{
+    const uint8_t *pts = state->level.object_points + (size_t)point * 8u;
+    const uint8_t *prev = state->level.prev_object_points;
+    int16_t px = rd16(pts), pz = rd16(pts + 4);
+    float alpha = state->obj_interp_alpha;
+    if (prev && alpha > 0.0f) {
+        int16_t px0 = rd16(prev + (size_t)point * 8u);
+        int16_t pz0 = rd16(prev + (size_t)point * 8u + 4);
+        px = (int16_t)(px0 + (int16_t)((float)(px - px0) * alpha));
+        pz = (int16_t)(pz0 + (int16_t)((float)(pz - pz0) * alpha));
+    }
+    *x = px; *z = pz;
+}
+
 void renderer_rotate_object_pts(GameState *state)
 {
     RendererState *r = &g_renderer;
@@ -6325,10 +6382,6 @@ void renderer_rotate_object_pts(GameState *state)
     if (num_pts <= 0) return;
     if (num_pts > MAX_OBJ_POINTS) num_pts = MAX_OBJ_POINTS;
 
-    const uint8_t *pts      = state->level.object_points;
-    const uint8_t *prev_pts = state->level.prev_object_points;
-    float alpha = state->obj_interp_alpha;
-
     /* Amiga ObjDraw: ObjRotated is indexed by POINT number, not object index.
      * Rotate every point; when drawing, object uses (object_data[0]) as pt num
      * to look up ObjRotated[pt_num]. So keys (and others) scale correctly.
@@ -6338,18 +6391,8 @@ void renderer_rotate_object_pts(GameState *state)
      * (0 = just ticked, 1 = about to tick next).  This produces sub-tick
      * smooth motion at display frame rate without changing the 50 Hz simulation. */
     for (int pt = 0; pt < num_pts; pt++) {
-        int16_t px, pz;
-        if (prev_pts && alpha > 0.0f) {
-            int16_t px0 = rd16(prev_pts + pt * 8);
-            int16_t pz0 = rd16(prev_pts + pt * 8 + 4);
-            int16_t px1 = rd16(pts      + pt * 8);
-            int16_t pz1 = rd16(pts      + pt * 8 + 4);
-            px = (int16_t)(px0 + (int16_t)((float)(px1 - px0) * alpha));
-            pz = (int16_t)(pz0 + (int16_t)((float)(pz1 - pz0) * alpha));
-        } else {
-            px = rd16(pts + pt * 8);
-            pz = rd16(pts + pt * 8 + 4);
-        }
+        int32_t px, pz;
+        renderer_object_world_position(state, pt, &px, &pz);
 
         int16_t dx = (int16_t)(px - cam_x);
         int16_t dz = (int16_t)(pz - cam_z);
@@ -10362,8 +10405,6 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
                                      int16_t billboard_view_right_x,
                                      int16_t billboard_view_right_z)
 {
-    (void)clip_top_world;
-    (void)clip_bot_world;
     (void)sprite_type;
     uint32_t *rgb = renderer_active_rgb();
     RendererPixel *cw = renderer_active_cw();
@@ -10404,7 +10445,9 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     /* --- Vertical clipping (invariant across columns) --- */
     int draw_top = sy;
     int draw_bot = sy + height - 1;
-    const int have_plane_clip = (clip_top_sy < clip_bot_sy);
+    /* A real room band can project to one row, or no rows after clipping.
+     * World bounds distinguish that band from the public draw's unset clip. */
+    const int have_plane_clip = (clip_top_world < clip_bot_world || clip_top_sy < clip_bot_sy);
     if (draw_top < 0) draw_top = 0;
     if (draw_bot >= rh) draw_bot = rh - 1;
     if (!have_plane_clip) {
@@ -10502,7 +10545,7 @@ static void renderer_draw_sprite_ctx(RenderSliceContext *ctx,
     const int fast_common_no_spill =
         (!have_pick) ? 1 : 0;
     const int have_geometric_zone_clip =
-        (is_spill && geom_clip_level && geom_clip_zone >= 0 &&
+        (geom_clip_level && geom_clip_zone >= 0 &&
          billboard_world_w > 0 && width > 0) ? 1 : 0;
     int geom_dx_starts[RENDERER_GEOM_CLIP_MAX_SPANS];
     int geom_dx_ends[RENDERER_GEOM_CLIP_MAX_SPANS];
@@ -11379,7 +11422,7 @@ void renderer_dos_prepare_gun_cache(void)
     if(!renderer_gun_scaled_size(&w,&h) || !g_renderer.gun_ptr ||
        !g_renderer.gun_pal || !g_renderer.gun_wad)return;
     if(g_dos_gun_pixels && w==g_dos_gun_width && h==g_dos_gun_height)return;
-    renderer_dos_release_gun_frames();
+    renderer_dos_clear_gun_surfaces();
     int edge_x[GUN_COLS+1],edge_y[GUN_LINES+1];
     for(int i=0;i<=GUN_COLS;i++)edge_x[i]=(i*w+GUN_COLS-1)/GUN_COLS;
     for(int i=0;i<=GUN_LINES;i++)edge_y[i]=(i*h+GUN_LINES-1)/GUN_LINES;
@@ -11407,8 +11450,12 @@ void renderer_dos_prepare_gun_cache(void)
     }
     /* Reserve the largest single frame before loading level data. Animation
      * changes reuse it instead of fragmenting the live 4 MB heap. */
-    g_dos_gun_pixels=malloc(capacity?capacity:1);
-    if(!g_dos_gun_pixels){fprintf(stderr,"DOS weapon cache %lu-byte reservation failed\n",(unsigned long)capacity);exit(1);}
+    size_t needed=capacity?capacity:1;
+    if(needed>g_dos_gun_capacity) {
+        uint8_t *pixels=realloc(g_dos_gun_pixels,needed);
+        if(!pixels){fprintf(stderr,"DOS weapon cache %lu-byte reservation failed\n",(unsigned long)needed);exit(1);}
+        g_dos_gun_pixels=pixels;g_dos_gun_capacity=needed;
+    }
     g_dos_gun_width=w;g_dos_gun_height=h;
     printf("[DOS VIDEO] weapon cache: %lu bytes, exact source indices\n",(unsigned long)capacity);
 }
@@ -12000,40 +12047,11 @@ static inline int32_t renderer_billboard_half_height_world_fp(int world_h)
 #define RENDERER_FLINE_XLEN_OFF     4
 #define RENDERER_FLINE_ZLEN_OFF     6
 #define RENDERER_FLINE_CONNECT_OFF  8
-#define RENDERER_MAX_ADJ_ZONES      64
-#define RENDERER_MAX_ADJ_LINES      512
-
-typedef struct {
-    int16_t zone_id;
-    int16_t line_start;
-    int16_t line_count;
-    uint8_t ambiguous;
-} RendererAdjZone;
-
-static int renderer_collect_adjacent_zone_sources(const RenderSliceContext *ctx,
-                                                  GameState *state,
-                                                  int16_t zone_id,
-                                                  RendererAdjZone *out_adj,
-                                                  int max_adj,
-                                                  int16_t *out_lines,
-                                                  int max_lines);
-
 static int renderer_resolve_zone_section_world_bounds(const LevelState *level,
                                                       int16_t zone_id,
                                                       int level_filter,
                                                       int32_t *out_top_world,
                                                       int32_t *out_bot_world);
-static int renderer_billboard_crosses_zone_portal_mode(const LevelState *level,
-                                                       int16_t from_zone,
-                                                       int16_t to_zone,
-                                                       int32_t world_x,
-                                                       int32_t world_z,
-                                                       int32_t half_span_world,
-                                                       int16_t view_right_x,
-                                                       int16_t view_right_z,
-                                                       int allow_ambiguous,
-                                                       int allow_near_fallback);
-
 #ifdef AB3D_DOS
 static int16_t g_dos_zone_order_indices[RENDERER_MAX_ZONE_ORDER];
 static const GameState *g_dos_zone_order_state;
@@ -12108,35 +12126,10 @@ void renderer_dos_check_zone_order_cache(const GameState *live_state)
 }
 #endif
 
-static int renderer_spill_zone_order_allows(const GameState *state,
-                                            int16_t source_zone,
-                                            int16_t draw_zone)
-{
-    int src_order;
-    int draw_order;
-    int order_delta;
-
-    if (!state || source_zone < 0 || draw_zone < 0) return 1;
-    if (source_zone == draw_zone) return 1;
-
-    src_order = renderer_zone_order_index(state, source_zone);
-    draw_order = renderer_zone_order_index(state, draw_zone);
-    if (src_order < 0 || draw_order < 0) {
-        /* Missing zone-order info: fail open to avoid suppressing valid spill. */
-        return 1;
-    }
-
-    order_delta = draw_order - src_order;
-
-    /* Zone list is rendered back-to-front. Most spill should go towards
-     * nearer zones (positive delta), but tight stair/portal layouts can place
-     * direct neighbors a few slots earlier in the frame order. Allow a small
-     * backward tolerance for lateral continuity while still rejecting clearly
-     * far-behind spill that causes smear artifacts. */
-    if (order_delta > 0) return 1;
-    if (order_delta >= -10) return 1;
-    return 0;
-}
+static int renderer_collect_billboard_zones(const LevelState *level, int16_t source_zone,
+                                            int32_t x, int32_t z, int width,
+                                            int16_t right_x, int16_t right_z,
+                                            int16_t *out_zones, int capacity);
 
 static int renderer_spill_draw_still_valid(const GameState *state,
                                            int16_t source_zone,
@@ -12151,89 +12144,55 @@ static int renderer_spill_draw_still_valid(const GameState *state,
                                            int32_t scr_x,
                                            int32_t sprite_w)
 {
-    int allow_ambiguous = 1;
-    int strict_order = 0;
-    int deep_backward_order = 0;
-    int spr_l;
-    int spr_r;
+    int left = scr_x - sprite_w / 2;
+    if (!state || draw_clip_left >= draw_clip_right || sprite_w <= 0 ||
+        left + sprite_w <= draw_clip_left || left >= draw_clip_right) return 0;
+    int16_t zones[RENDERER_MAX_ZONE_ORDER];
+    int count = renderer_collect_billboard_zones(&state->level, source_zone,
+                                                 billboard_world_x, billboard_world_z,
+                                                 billboard_world_w,
+                                                 billboard_view_right_x, billboard_view_right_z,
+                                                 zones, RENDERER_MAX_ZONE_ORDER);
+    for (int i = 0; i < count; i++) if (zones[i] == draw_zone) return 1;
+    return 0;
+}
 
-    if (draw_clip_left >= draw_clip_right) return 0;
+static int renderer_compute_billboard_world_segment(int32_t world_x,
+                                                    int32_t world_z,
+                                                    int32_t world_w,
+                                                    int16_t view_right_x,
+                                                    int16_t view_right_z,
+                                                    int32_t *out_x0,
+                                                    int32_t *out_z0,
+                                                    int32_t *out_x1,
+                                                    int32_t *out_z1)
+{
+    int32_t half_span_world;
+    int64_t off_x64;
+    int64_t off_z64;
 
-    spr_l = (int)scr_x - (int)sprite_w / 2;
-    spr_r = spr_l + (int)sprite_w;
-    if (spr_r <= (int)draw_clip_left || spr_l >= (int)draw_clip_right)
-        return 0;
+    if (!out_x0 || !out_z0 || !out_x1 || !out_z1) return 0;
+    if (world_w <= 0) return 0;
 
-    if (source_zone >= 0 && draw_zone >= 0 && source_zone != draw_zone && state) {
-        const LevelState *level = &state->level;
-        int src_order = renderer_zone_order_index(state, source_zone);
-        int draw_order = renderer_zone_order_index(state, draw_zone);
-        int order_delta = 0;
-        int32_t half_w = billboard_world_w / 2;
+    half_span_world = world_w / 2;
+    if (half_span_world < 1) half_span_world = 1;
 
-        if (src_order >= 0 && draw_order >= 0) {
-            order_delta = draw_order - src_order;
-            if (order_delta <= 0) {
-                /* Backward/in-order spills are where rare smear artifacts occur.
-                 * Require concrete shared-boundary data here (no fail-open). */
-                allow_ambiguous = 0;
-                strict_order = 1;
-            }
-
-            /* The widened order tolerance admits deeper backward spill. Keep it,
-             * but for those deepest backward cases require stricter geometry to
-             * prevent smear regressions. */
-            if (order_delta <= -6)
-                deep_backward_order = 1;
+    off_x64 = ((int64_t)view_right_x * (int64_t)half_span_world) / 16384;
+    off_z64 = ((int64_t)view_right_z * (int64_t)half_span_world) / 16384;
+    if (off_x64 == 0 && off_z64 == 0) {
+        if (view_right_x != 0) {
+            off_x64 = (view_right_x > 0) ? 1 : -1;
+        } else if (view_right_z != 0) {
+            off_z64 = (view_right_z > 0) ? 1 : -1;
+        } else {
+            off_x64 = 1;
         }
-
-        if (half_w < 1) half_w = 1;
-        if (!renderer_billboard_crosses_zone_portal_mode(level,
-                                                         source_zone,
-                                                         draw_zone,
-                                                         billboard_world_x,
-                                                         billboard_world_z,
-                                                         half_w,
-                                                         billboard_view_right_x,
-                                                         billboard_view_right_z,
-                                                         allow_ambiguous,
-                                                         deep_backward_order ? 0 : 1)) {
-            return 0;
-        }
-
-        if (strict_order) {
-            int32_t src_top = 0, src_bot = 0;
-            int32_t draw_top = 0, draw_bot = 0;
-            int have_src_bounds = renderer_resolve_zone_section_world_bounds(level, source_zone, 0,
-                                                                             &src_top, &src_bot);
-            int have_draw_bounds = renderer_resolve_zone_section_world_bounds(level, draw_zone, 0,
-                                                                              &draw_top, &draw_bot);
-
-            if (have_src_bounds && have_draw_bounds) {
-                int32_t floor_delta = src_bot - draw_bot;
-                if (floor_delta < 0) floor_delta = -floor_delta;
-
-                /* For stepped-floor backward spill, capsule-only acceptance can
-                 * smear. Require true centerline boundary intersection. */
-                if (floor_delta > 1024) {
-                    if (!renderer_billboard_crosses_zone_portal_mode(level,
-                                                                     source_zone,
-                                                                     draw_zone,
-                                                                     billboard_world_x,
-                                                                     billboard_world_z,
-                                                                     half_w,
-                                                                     billboard_view_right_x,
-                                                                     billboard_view_right_z,
-                                                                     0,
-                                                                     0)) {
-                        return 0;
-                    }
-                }
-            }
-        }
-
     }
 
+    *out_x0 = (int32_t)((int64_t)world_x - off_x64);
+    *out_z0 = (int32_t)((int64_t)world_z - off_z64);
+    *out_x1 = (int32_t)((int64_t)world_x + off_x64);
+    *out_z1 = (int32_t)((int64_t)world_z + off_z64);
     return 1;
 }
 
@@ -12254,8 +12213,6 @@ static int renderer_spill_narrow_clip_to_zone_geometry(
     int16_t *io_clip_left,
     int16_t *io_clip_right)
 {
-    int32_t half_w;
-    int64_t off_x64, off_z64;
     int32_t seg_x0, seg_z0, seg_x1, seg_z1;
     int spr_l;
     int clip_dx_start, clip_dx_end;
@@ -12269,24 +12226,10 @@ static int renderer_spill_narrow_clip_to_zone_geometry(
     if (*io_clip_left >= *io_clip_right)
         return 0;
 
-    half_w = billboard_world_w / 2;
-    if (half_w < 1) half_w = 1;
-
-    off_x64 = ((int64_t)billboard_view_right_x * (int64_t)half_w) / 16384;
-    off_z64 = ((int64_t)billboard_view_right_z * (int64_t)half_w) / 16384;
-    if (off_x64 == 0 && off_z64 == 0) {
-        if (billboard_view_right_x != 0)
-            off_x64 = (billboard_view_right_x > 0) ? 1 : -1;
-        else if (billboard_view_right_z != 0)
-            off_z64 = (billboard_view_right_z > 0) ? 1 : -1;
-        else
-            off_x64 = 1;
-    }
-
-    seg_x0 = (int32_t)((int64_t)billboard_world_x - off_x64);
-    seg_z0 = (int32_t)((int64_t)billboard_world_z - off_z64);
-    seg_x1 = (int32_t)((int64_t)billboard_world_x + off_x64);
-    seg_z1 = (int32_t)((int64_t)billboard_world_z + off_z64);
+    if (!renderer_compute_billboard_world_segment(billboard_world_x, billboard_world_z,
+                                                   billboard_world_w,
+                                                   billboard_view_right_x, billboard_view_right_z,
+                                                   &seg_x0, &seg_z0, &seg_x1, &seg_z1)) return 0;
 
     spr_l = (int)scr_x - (int)sprite_w / 2;
     clip_dx_start = (int)*io_clip_left - spr_l;
@@ -12322,47 +12265,6 @@ static int renderer_spill_narrow_clip_to_zone_geometry(
     if ((int16_t)geom_right < *io_clip_right)
         *io_clip_right = (int16_t)geom_right;
     return geom_span_count;
-}
-
-static int renderer_lookup_zone_prepass_clip_span(const RenderSliceContext *ctx,
-                                                  int16_t zone_id,
-                                                  int16_t *out_left,
-                                                  int16_t *out_right)
-{
-    if (!ctx || !ctx->zone_prepass || !out_left || !out_right || zone_id < 0)
-        return 0;
-
-    const RendererWorldZonePrepass *prepass = ctx->zone_prepass;
-    int count = prepass->count;
-    if (count < 0) count = 0;
-    if (count > RENDERER_MAX_ZONE_ORDER) count = RENDERER_MAX_ZONE_ORDER;
-
-    if ((uint16_t)zone_id < RENDERER_MAX_ZONE_ORDER) {
-        int idx = (int)prepass->index_by_zone_id[(uint16_t)zone_id];
-        if (idx >= 0 && idx < count && prepass->valid[idx] && prepass->zone_ids[idx] == zone_id) {
-            *out_left = prepass->left_px[idx];
-            *out_right = prepass->right_px[idx];
-            return 1;
-        }
-    }
-
-    for (int i = 0; i < count; i++) {
-        if (prepass->zone_ids[i] != zone_id) continue;
-        if (!prepass->valid[i]) continue;
-        *out_left = prepass->left_px[i];
-        *out_right = prepass->right_px[i];
-        return 1;
-    }
-
-    return 0;
-}
-
-static int renderer_find_adj_zone_slot(const RendererAdjZone *adj, int adj_count, int16_t zone_id)
-{
-    for (int i = 0; i < adj_count; i++) {
-        if (adj[i].zone_id == zone_id) return i;
-    }
-    return -1;
 }
 
 static int64_t renderer_orient2d_i64(int32_t ax, int32_t az,
@@ -12464,70 +12366,6 @@ static int renderer_point_within_segment_radius_i32(int32_t px, int32_t pz,
 
     r2 = (int64_t)radius * (int64_t)radius;
     return dist2 <= r2;
-}
-
-/* Spill criterion: use the billboard's world-space lateral segment (sprite plane
- * facing the player) and require that it intersects a boundary line shared with
- * the destination zone. */
-static int renderer_billboard_lateral_hits_adj_lines(const LevelState *level,
-                                                     int32_t px, int32_t pz,
-                                                     int32_t half_span_world,
-                                                     int16_t view_right_x,
-                                                     int16_t view_right_z,
-                                                     int allow_near_fallback,
-                                                     const int16_t *line_ids,
-                                                     int line_count)
-{
-    if (!level || !level->floor_lines || !line_ids || line_count <= 0) return 0;
-    if (half_span_world < 1) half_span_world = 1;
-
-    {
-        int64_t off_x64 = ((int64_t)view_right_x * (int64_t)half_span_world) / 16384;
-        int64_t off_z64 = ((int64_t)view_right_z * (int64_t)half_span_world) / 16384;
-        if (off_x64 == 0 && off_z64 == 0) {
-            if (view_right_x != 0) {
-                off_x64 = (view_right_x > 0) ? 1 : -1;
-            } else if (view_right_z != 0) {
-                off_z64 = (view_right_z > 0) ? 1 : -1;
-            } else {
-                off_x64 = 1;
-            }
-        }
-
-        int32_t sx1 = (int32_t)((int64_t)px - off_x64);
-        int32_t sz1 = (int32_t)((int64_t)pz - off_z64);
-        int32_t sx2 = (int32_t)((int64_t)px + off_x64);
-        int32_t sz2 = (int32_t)((int64_t)pz + off_z64);
-
-        for (int i = 0; i < line_count; i++) {
-            int16_t li = line_ids[i];
-            if (li < 0 || (int32_t)li >= level->num_floor_lines) continue;
-            {
-                const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)li * RENDERER_FLINE_SIZE;
-                int32_t x1 = rd16(fl + RENDERER_FLINE_X_OFF);
-                int32_t z1 = rd16(fl + RENDERER_FLINE_Z_OFF);
-                int32_t x2 = x1 + rd16(fl + RENDERER_FLINE_XLEN_OFF);
-                int32_t z2 = z1 + rd16(fl + RENDERER_FLINE_ZLEN_OFF);
-                if (renderer_segments_intersect_i32(sx1, sz1, sx2, sz2, x1, z1, x2, z2)) {
-                    return 1;
-                }
-                /* Angle-robust fallback: treat the billboard as a capsule around
-                 * its centerline so near-parallel view directions still admit
-                 * valid spill when the sprite is close enough to the shared
-                 * boundary segment. */
-                if (allow_near_fallback) {
-                    if (renderer_point_within_segment_radius_i32(px, pz,
-                                                                x1, z1,
-                                                                x2, z2,
-                                                                half_span_world)) {
-                        return 1;
-                    }
-                }
-            }
-        }
-    }
-
-    return 0;
 }
 
 #define RENDERER_PORTAL_CROSS_LINE_CAP 64
@@ -12680,67 +12518,6 @@ static int renderer_get_shared_portal_lines(const LevelState *level,
     return line_count;
 }
 
-/* Returns 1 if the billboard lateral segment crosses any boundary line shared
- * between from_zone and to_zone (portals in either direction).
- * If allow_ambiguous is non-zero, missing boundary data is treated as allow. */
-static int renderer_billboard_crosses_zone_portal_mode(const LevelState *level,
-                                                       int16_t from_zone,
-                                                       int16_t to_zone,
-                                                       int32_t world_x,
-                                                       int32_t world_z,
-                                                       int32_t half_span_world,
-                                                       int16_t view_right_x,
-                                                       int16_t view_right_z,
-                                                       int allow_ambiguous,
-                                                       int allow_near_fallback)
-{
-    int16_t lines[RENDERER_PORTAL_CROSS_LINE_CAP];
-    int line_count;
-    int zone_slots;
-
-    if (!level || !level->floor_lines) return allow_ambiguous ? 1 : 0;
-    zone_slots = level_zone_slot_count(level);
-    if (from_zone < 0 || from_zone >= zone_slots) return allow_ambiguous ? 1 : 0;
-    if (to_zone   < 0 || to_zone   >= zone_slots) return allow_ambiguous ? 1 : 0;
-
-    line_count = renderer_get_shared_portal_lines(level,
-                                                  from_zone,
-                                                  to_zone,
-                                                  lines,
-                                                  RENDERER_PORTAL_CROSS_LINE_CAP);
-
-    if (line_count == 0) return allow_ambiguous ? 1 : 0;
-
-    return renderer_billboard_lateral_hits_adj_lines(level,
-                                                      world_x, world_z,
-                                                      half_span_world,
-                                                      view_right_x, view_right_z,
-                                                      allow_near_fallback,
-                                                      lines, line_count);
-}
-
-/* Default spill admission path: fail-open on ambiguous boundary data. */
-static int renderer_billboard_crosses_zone_portal(const LevelState *level,
-                                                  int16_t from_zone,
-                                                  int16_t to_zone,
-                                                  int32_t world_x,
-                                                  int32_t world_z,
-                                                  int32_t half_span_world,
-                                                  int16_t view_right_x,
-                                                  int16_t view_right_z)
-{
-    return renderer_billboard_crosses_zone_portal_mode(level,
-                                                       from_zone,
-                                                       to_zone,
-                                                       world_x,
-                                                       world_z,
-                                                       half_span_world,
-                                                       view_right_x,
-                                                       view_right_z,
-                                                       1,
-                                                       1);
-}
-
 static const uint8_t *renderer_zone_exit_list_ptr(const LevelState *level, int16_t zone_id)
 {
     int zone_slots;
@@ -12781,7 +12558,7 @@ static int renderer_point_on_segment_i32(int32_t px, int32_t pz,
     return 1;
 }
 
-static int renderer_zone_contains_point(const LevelState *level, int16_t zone_id, int32_t x, int32_t z)
+static int renderer_zone_contains_point(const LevelState *level, int16_t zone_id, double x, double z)
 {
     if (!level || !level->data || !level->zone_adds || !level->floor_lines)
         return 0;
@@ -12809,10 +12586,10 @@ static int renderer_zone_contains_point(const LevelState *level, int16_t zone_id
 
             {
                 int16_t entry = rd16(list + (size_t)i * 2u);
-                if (entry == -2)
-                    break;
-                if (entry < 0)
-                    continue; /* -1 separates exits and wall list */
+                /* ObjectMove.s checkwalls ends at the first negative word.
+                 * The following checkotherwalls list contains neighboring
+                 * collision edges, not edges of this room's polygon. */
+                if (entry < 0) break;
                 if ((int32_t)entry >= level->num_floor_lines)
                     continue;
 
@@ -12824,13 +12601,15 @@ static int renderer_zone_contains_point(const LevelState *level, int16_t zone_id
                     int32_t z2 = z1 + rd16(fl + RENDERER_FLINE_ZLEN_OFF);
                     edges++;
 
-                    if (renderer_point_on_segment_i32(x, z, x1, z1, x2, z2))
-                        return 1;
+                    double cross = (x - x1) * (z2 - z1) - (z - z1) * (x2 - x1);
+                    if (fabs(cross) <= 1e-7 &&
+                        x >= (x1 < x2 ? x1 : x2) && x <= (x1 > x2 ? x1 : x2) &&
+                        z >= (z1 < z2 ? z1 : z2) && z <= (z1 > z2 ? z1 : z2)) return 1;
 
                     if ((z1 > z) != (z2 > z)) {
-                        int64_t dz = (int64_t)z2 - (int64_t)z1;
-                        int64_t lhs = (int64_t)(x - x1) * dz;
-                        int64_t rhs = (int64_t)(x2 - x1) * (int64_t)(z - z1);
+                        double dz = (double)z2 - z1;
+                        double lhs = (x - x1) * dz;
+                        double rhs = (x2 - x1) * (z - z1);
                         if ((dz > 0 && lhs < rhs) || (dz < 0 && lhs > rhs))
                             inside ^= 1;
                     }
@@ -12907,10 +12686,7 @@ static int renderer_zone_clip_segment_to_dx_ranges(const LevelState *level,
 
         {
             int16_t entry = rd16(list + (size_t)i * 2u);
-            if (entry == -2)
-                break;
-            if (entry < 0)
-                continue;
+            if (entry < 0) break;
             if ((int32_t)entry >= level->num_floor_lines)
                 continue;
 
@@ -12991,16 +12767,18 @@ static int renderer_zone_clip_segment_to_dx_ranges(const LevelState *level,
         double a = t_vals[i];
         double b = t_vals[i + 1];
         double mid;
-        int32_t mx;
-        int32_t mz;
+        double mx;
+        double mz;
         int sx;
         int ex;
 
         if (b - a <= eps) continue;
 
         mid = (a + b) * 0.5;
-        mx = (int32_t)llround((double)seg_x0 + ((double)seg_x1 - (double)seg_x0) * mid);
-        mz = (int32_t)llround((double)seg_z0 + ((double)seg_z1 - (double)seg_z0) * mid);
+        /* Rounding to integer world units can put an outside midpoint on an
+         * edge and admit the entire wrong interval. */
+        mx = (double)seg_x0 + ((double)seg_x1 - (double)seg_x0) * mid;
+        mz = (double)seg_z0 + ((double)seg_z1 - (double)seg_z0) * mid;
         if (!renderer_zone_contains_point(level, zone_id, mx, mz)) continue;
 
         /* Assign columns by pixel-center ownership so adjacent zones do not
@@ -13104,7 +12882,7 @@ static int renderer_collect_connected_zones_fast(const LevelState *level,
 
     if (!level || !out_zones || max_zones <= 0 || !level->floor_lines) return 0;
 
-    cacheable = (max_zones >= RENDERER_SPILL_SEARCH_MAX_NEIGHBORS) ? 1 : 0;
+    cacheable = (max_zones == RENDERER_SPILL_SEARCH_MAX_NEIGHBORS) ? 1 : 0;
     if (cacheable) {
         cache_slot = renderer_connected_zone_cache_slot(level, zone_id);
         cache_entry = &g_renderer_connected_zone_cache[cache_slot];
@@ -13198,195 +12976,62 @@ static int renderer_collect_connected_zones_fast(const LevelState *level,
     return out_count;
 }
 
-static int renderer_compute_billboard_world_segment(int32_t world_x,
-                                                    int32_t world_z,
-                                                    int32_t world_w,
-                                                    int16_t view_right_x,
-                                                    int16_t view_right_z,
-                                                    int32_t *out_x0,
-                                                    int32_t *out_z0,
-                                                    int32_t *out_x1,
-                                                    int32_t *out_z1)
+/* Follow every portal touched by the displayed billboard plane. A destination
+ * need not share a boundary with the object's home zone: a wide billboard may
+ * cross several narrow cells. Never use zone painter order as connectivity. */
+static int renderer_collect_segment_zones(const LevelState *level, int16_t source_zone,
+                                          int32_t x0, int32_t z0, int32_t x1, int32_t z1,
+                                          int16_t *out_zones, int capacity)
 {
-    int32_t half_span_world;
-    int64_t off_x64;
-    int64_t off_z64;
-
-    if (!out_x0 || !out_z0 || !out_x1 || !out_z1) return 0;
-    if (world_w <= 0) return 0;
-
-    half_span_world = world_w / 2;
-    if (half_span_world < 1) half_span_world = 1;
-
-    off_x64 = ((int64_t)view_right_x * (int64_t)half_span_world) / 16384;
-    off_z64 = ((int64_t)view_right_z * (int64_t)half_span_world) / 16384;
-    if (off_x64 == 0 && off_z64 == 0) {
-        if (view_right_x != 0) {
-            off_x64 = (view_right_x > 0) ? 1 : -1;
-        } else if (view_right_z != 0) {
-            off_z64 = (view_right_z > 0) ? 1 : -1;
-        } else {
-            off_x64 = 1;
+    int slots = level_zone_slot_count(level);
+    int16_t queue[RENDERER_MAX_ZONE_ORDER];
+    uint32_t visited[RENDERER_MAX_ZONE_ORDER / 32] = {0};
+    int count = 0, output = 0;
+    if (!out_zones || capacity <= 0 || source_zone < 0 || source_zone >= slots ||
+        source_zone >= RENDERER_MAX_ZONE_ORDER) return 0;
+    queue[count++] = source_zone;
+    visited[(unsigned)source_zone >> 5] |= 1u << (source_zone & 31);
+    for (int head = 0; head < count; head++) {
+        int16_t current = queue[head];
+        int16_t adjacent[RENDERER_MAX_ZONE_ORDER];
+        int neighbors = renderer_collect_connected_zones_fast(level, current, adjacent,
+                                                               RENDERER_SPILL_SEARCH_MAX_NEIGHBORS);
+        /* A full small cache entry may have truncated a high-degree room. */
+        if (neighbors == RENDERER_SPILL_SEARCH_MAX_NEIGHBORS)
+            neighbors = renderer_collect_connected_zones_fast(level, current, adjacent,
+                                                               RENDERER_MAX_ZONE_ORDER);
+        if (output < capacity) out_zones[output++] = current;
+        for (int i = 0; i < neighbors; i++) {
+            unsigned next = (uint16_t)adjacent[i];
+            if (next >= (unsigned)slots || next >= RENDERER_MAX_ZONE_ORDER ||
+                (visited[next >> 5] & (1u << (next & 31)))) continue;
+            int16_t lines[RENDERER_PORTAL_CROSS_LINE_CAP];
+            int line_count = renderer_get_shared_portal_lines(level, current, (int16_t)next,
+                                                                lines, RENDERER_PORTAL_CROSS_LINE_CAP);
+            int crosses = 0;
+            for (int li = 0; li < line_count && !crosses; li++) {
+                const uint8_t *line = level->floor_lines + (size_t)(uint16_t)lines[li] * RENDERER_FLINE_SIZE;
+                int32_t ax = rd16(line), az = rd16(line + 2);
+                crosses = renderer_segments_intersect_i32(x0, z0, x1, z1,
+                                                           ax, az, ax + rd16(line + 4), az + rd16(line + 6));
+            }
+            if (!crosses) continue;
+            visited[next >> 5] |= 1u << (next & 31);
+            queue[count++] = (int16_t)next;
         }
     }
-
-    *out_x0 = (int32_t)((int64_t)world_x - off_x64);
-    *out_z0 = (int32_t)((int64_t)world_z - off_z64);
-    *out_x1 = (int32_t)((int64_t)world_x + off_x64);
-    *out_z1 = (int32_t)((int64_t)world_z + off_z64);
-    return 1;
+    return output;
 }
 
-static int renderer_zone_span_overlaps_sprite(const RenderSliceContext *ctx,
-                                              GameState *state,
-                                              int16_t zone_id,
-                                              int sprite_left,
-                                              int sprite_right,
-                                              int *out_clip_dx_start,
-                                              int *out_clip_dx_end)
+static int renderer_collect_billboard_zones(const LevelState *level, int16_t source_zone,
+                                            int32_t x, int32_t z, int width,
+                                            int16_t right_x, int16_t right_z,
+                                            int16_t *out_zones, int capacity)
 {
-    int16_t zone_left = 0;
-    int16_t zone_right = 0;
-    int have_zone_clip;
-    int l;
-    int r;
-
-    if (!ctx || !state || sprite_right <= sprite_left) return 0;
-
-    have_zone_clip = renderer_lookup_zone_prepass_clip_span(ctx, zone_id, &zone_left, &zone_right);
-    if (!have_zone_clip) {
-        have_zone_clip = renderer_compute_zone_clip_span(state, zone_id, 0u, 0,
-                                                         &zone_left, &zone_right);
-    }
-    if (!have_zone_clip) {
-        /* Fail-open for spill discovery: if we cannot resolve a reliable
-         * destination clip span, fall back to the current worker slice.
-         * Hard rejection here suppresses basic spill across valid neighbors. */
-        zone_left = ctx->left_clip;
-        zone_right = ctx->right_clip;
-    }
-
-    l = sprite_left;
-    r = sprite_right;
-    if (l < ctx->left_clip) l = ctx->left_clip;
-    if (r > ctx->right_clip) r = ctx->right_clip;
-    if (l < zone_left) l = zone_left;
-    if (r > zone_right) r = zone_right;
-    if (r <= l) return 0;
-
-    if (out_clip_dx_start) *out_clip_dx_start = l - sprite_left;
-    if (out_clip_dx_end) *out_clip_dx_end = r - sprite_left;
-    return 1;
-}
-
-static int renderer_collect_spill_zones_recursive(const RenderSliceContext *ctx,
-                                                  GameState *state,
-                                                  int16_t source_zone,
-                                                  int32_t billboard_world_x,
-                                                  int32_t billboard_world_z,
-                                                  int32_t billboard_world_w,
-                                                  int16_t billboard_view_right_x,
-                                                  int16_t billboard_view_right_z,
-                                                  int sprite_left,
-                                                  int sprite_right,
-                                                  int sprite_width,
-                                                  int16_t *out_zones,
-                                                  int max_zones)
-{
-    if (!state || !out_zones || max_zones <= 0 || source_zone < 0) return 0;
-    if (!ctx || sprite_width <= 0 || sprite_right <= sprite_left || billboard_world_w <= 0)
-        return 0;
-
-    {
-        LevelState *level = &state->level;
-        RendererAdjZone adj[RENDERER_MAX_ADJ_ZONES];
-        int16_t adj_lines[RENDERER_MAX_ADJ_LINES];
-        int adj_count = renderer_collect_adjacent_zone_sources(ctx,
-                                                               state,
-                                                               source_zone,
-                                                               adj,
-                                                               RENDERER_MAX_ADJ_ZONES,
-                                                               adj_lines,
-                                                               RENDERER_MAX_ADJ_LINES);
-        int32_t seg_x0;
-        int32_t seg_z0;
-        int32_t seg_x1;
-        int32_t seg_z1;
-        int out_count = 0;
-
-        if (adj_count <= 0) return 0;
-        if (!renderer_compute_billboard_world_segment(billboard_world_x,
-                                                      billboard_world_z,
-                                                      billboard_world_w,
-                                                      billboard_view_right_x,
-                                                      billboard_view_right_z,
-                                                      &seg_x0,
-                                                      &seg_z0,
-                                                      &seg_x1,
-                                                      &seg_z1)) {
-            return 0;
-        }
-
-        for (int ai = 0; ai < adj_count && out_count < max_zones; ai++) {
-            const int16_t spill_zone = adj[ai].zone_id;
-            const int line_start = (int)adj[ai].line_start;
-            const int line_count = (int)adj[ai].line_count;
-            int clip_dx_start = 0;
-            int clip_dx_end = 0;
-            int span_starts[RENDERER_GEOM_CLIP_MAX_SPANS];
-            int span_ends[RENDERER_GEOM_CLIP_MAX_SPANS];
-            int hit_shared_boundary = 0;
-            int geom_spans;
-
-            if (spill_zone < 0 || spill_zone == source_zone) continue;
-            if (!renderer_zone_span_overlaps_sprite(ctx,
-                                                    state,
-                                                    spill_zone,
-                                                    sprite_left,
-                                                    sprite_right,
-                                                    &clip_dx_start,
-                                                    &clip_dx_end)) {
-                continue;
-            }
-
-            if (line_count > 0 && line_start >= 0 && line_start + line_count <= RENDERER_MAX_ADJ_LINES) {
-                hit_shared_boundary = renderer_billboard_lateral_hits_adj_lines(level,
-                                                                                billboard_world_x,
-                                                                                billboard_world_z,
-                                                                                billboard_world_w / 2,
-                                                                                billboard_view_right_x,
-                                                                                billboard_view_right_z,
-                                                                                1,
-                                                                                adj_lines + line_start,
-                                                                                line_count);
-                if (!hit_shared_boundary) {
-                    continue;
-                }
-            }
-
-            geom_spans = renderer_zone_clip_segment_to_dx_ranges(level,
-                                                                 spill_zone,
-                                                                 seg_x0,
-                                                                 seg_z0,
-                                                                 seg_x1,
-                                                                 seg_z1,
-                                                                 sprite_width,
-                                                                 clip_dx_start,
-                                                                 clip_dx_end,
-                                                                 span_starts,
-                                                                 span_ends,
-                                                                 NULL,
-                                                                 NULL,
-                                                                 RENDERER_GEOM_CLIP_MAX_SPANS);
-            if (geom_spans <= 0) {
-                continue;
-            }
-
-            out_zones[out_count++] = spill_zone;
-        }
-
-        return out_count;
-    }
+    int32_t x0, z0, x1, z1;
+    if (!renderer_compute_billboard_world_segment(x, z, width, right_x, right_z,
+                                                   &x0, &z0, &x1, &z1)) return 0;
+    return renderer_collect_segment_zones(level, source_zone, x0, z0, x1, z1, out_zones, capacity);
 }
 
 static int renderer_resolve_zone_section_world_bounds(const LevelState *level,
@@ -13448,160 +13093,6 @@ static int renderer_resolve_zone_section_world_bounds(const LevelState *level,
     *out_top_world = zone_top;
     *out_bot_world = zone_bot;
     return 1;
-}
-
-static void renderer_append_boundary_lines_between_zones(const LevelState *level,
-                                                         const uint8_t *from_exit_list,
-                                                         int zone_slots,
-                                                         int16_t target_zone,
-                                                         int16_t *out_lines,
-                                                         int max_lines,
-                                                         int line_start,
-                                                         int *io_line_count)
-{
-    if (!level || !from_exit_list || !out_lines || !io_line_count || max_lines <= 0) return;
-    if (target_zone < 0 || target_zone >= zone_slots) return;
-
-    for (int i = 0; i < 128; i++) {
-        int16_t entry = rd16(from_exit_list + (size_t)i * 2u);
-        if (entry < 0) break; /* -1 ends exits, -2 ends list */
-        if (entry < 0 || (int32_t)entry >= level->num_floor_lines) continue;
-
-        {
-            const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)entry * RENDERER_FLINE_SIZE;
-            int16_t connect = rd16(fl + RENDERER_FLINE_CONNECT_OFF);
-            int connect_zone = level_connect_to_zone_index(level, connect);
-            if (connect_zone != target_zone) continue;
-        }
-
-        {
-            int exists = 0;
-            for (int j = line_start; j < *io_line_count; j++) {
-                if (out_lines[j] == entry) {
-                    exists = 1;
-                    break;
-                }
-            }
-            if (exists) continue;
-        }
-
-        if (*io_line_count < max_lines) {
-            out_lines[*io_line_count] = entry;
-            (*io_line_count)++;
-        }
-    }
-}
-
-static int renderer_collect_adjacent_zone_sources(const RenderSliceContext *ctx, GameState *state, int16_t zone_id,
-                                                  RendererAdjZone *out_adj, int max_adj,
-                                                  int16_t *out_lines, int max_lines)
-{
-    if (!ctx || !state || !out_adj || max_adj <= 0 || !out_lines || max_lines <= 0) return 0;
-    LevelState *level = &state->level;
-    if (!level->data || !level->zone_adds || !level->floor_lines) return 0;
-
-    int zone_slots = level_zone_slot_count(level);
-    if (zone_slots <= 0 || zone_id < 0 || zone_id >= zone_slots) return 0;
-    if (zone_slots > 256) zone_slots = 256;
-
-    int adj_count = 0;
-    int line_count = 0;
-    int cur_order = renderer_zone_order_index(state, zone_id);
-    const uint8_t *cur_list = renderer_zone_exit_list_ptr(level, zone_id);
-    uint8_t candidate_zones[256];
-
-    if (!cur_list) return 0;
-
-    memset(candidate_zones, 0, sizeof(candidate_zones));
-
-    /* Forward links: current zone exit list points to adjacent source zone.
-     * Do not require the source zone to already be in zone_order: that makes
-     * spill distance-sensitive, because a nearby billboard can legitimately
-     * cross into the current zone before the whole neighboring zone is visible. */
-    for (int i = 0; i < 128; i++) {
-        int16_t entry = rd16(cur_list + (size_t)i * 2u);
-        if (entry < 0) break; /* -1 ends exits, -2 ends list */
-        if (entry < 0 || (int32_t)entry >= level->num_floor_lines) continue;
-
-        const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)entry * RENDERER_FLINE_SIZE;
-        int16_t connect = rd16(fl + RENDERER_FLINE_CONNECT_OFF);
-        int connect_zone = level_connect_to_zone_index(level, connect);
-        if (connect_zone < 0 || connect_zone >= zone_slots || connect_zone == zone_id) continue;
-
-        candidate_zones[(uint8_t)connect_zone] = 1;
-    }
-
-    /* Reverse links: any zone that points to current zone (covers one-way/broken links). */
-    for (int src_zone = 0; src_zone < zone_slots; src_zone++) {
-        if (src_zone < 0 || src_zone >= zone_slots || src_zone == zone_id) continue;
-        const uint8_t *src_list = renderer_zone_exit_list_ptr(level, src_zone);
-        if (!src_list) continue;
-        for (int e = 0; e < 128; e++) {
-            int16_t entry = rd16(src_list + (size_t)e * 2u);
-            if (entry < 0) break;
-            if (entry < 0 || (int32_t)entry >= level->num_floor_lines) continue;
-            {
-                const uint8_t *fl = level->floor_lines + (size_t)(uint16_t)entry * RENDERER_FLINE_SIZE;
-                int16_t connect = rd16(fl + RENDERER_FLINE_CONNECT_OFF);
-                int connect_zone = level_connect_to_zone_index(level, connect);
-                if (connect_zone == zone_id) {
-                    if (src_zone < 256) candidate_zones[(uint8_t)src_zone] = 1;
-                    break;
-                }
-            }
-        }
-    }
-
-    /* Build contiguous per-zone line spans to avoid mixed-zone line lists. */
-    for (int src_zone = 0; src_zone < zone_slots; src_zone++) {
-        int line_start;
-        const uint8_t *src_list;
-        if (src_zone < 0 || src_zone >= zone_slots || src_zone == zone_id) continue;
-        if (src_zone >= 256 || !candidate_zones[(uint8_t)src_zone]) continue;
-        if (adj_count >= max_adj) continue;
-
-        line_start = line_count;
-        src_list = renderer_zone_exit_list_ptr(level, src_zone);
-        renderer_append_boundary_lines_between_zones(level, cur_list, zone_slots, src_zone,
-                                                     out_lines, max_lines, line_start, &line_count);
-        renderer_append_boundary_lines_between_zones(level, src_list, zone_slots, zone_id,
-                                                     out_lines, max_lines, line_start, &line_count);
-        int extracted_lines = line_count - line_start;
-        if (extracted_lines < 0) extracted_lines = 0;
-
-        out_adj[adj_count].zone_id = src_zone;
-        out_adj[adj_count].line_start = (int16_t)line_start;
-        out_adj[adj_count].line_count = (int16_t)extracted_lines;
-        out_adj[adj_count].ambiguous = (uint8_t)(extracted_lines <= 0 ? 1 : 0);
-        adj_count++;
-    }
-
-    for (int i = 0; i < adj_count; i++) {
-        int ambiguous = (out_adj[i].ambiguous != 0) ? 1 : 0;
-        int16_t adj_left = 0, adj_right = 0;
-        int have_adj_clip = renderer_lookup_zone_prepass_clip_span(ctx, out_adj[i].zone_id,
-                                                                   &adj_left, &adj_right);
-        if (!have_adj_clip) {
-            have_adj_clip = renderer_compute_zone_clip_span(state, out_adj[i].zone_id,
-                                                            0u, 0, &adj_left, &adj_right);
-        }
-        if (have_adj_clip) {
-            int l = (adj_left > ctx->left_clip) ? adj_left : ctx->left_clip;
-            int r = (adj_right < ctx->right_clip) ? adj_right : ctx->right_clip;
-            if (l < r) ambiguous = 1;
-        }
-        if (!ambiguous) {
-            int src_order = renderer_zone_order_index(state, out_adj[i].zone_id);
-            if (src_order >= 0 && cur_order >= 0) {
-                int d = src_order - cur_order;
-                if (d < 0) d = -d;
-                if (d <= 2) ambiguous = 1;
-            }
-        }
-        out_adj[i].ambiguous = (uint8_t)(ambiguous ? 1 : 0);
-    }
-
-    return adj_count;
 }
 
 static int renderer_f2_zone_list_add_unique(int16_t *zones,
@@ -13948,6 +13439,110 @@ static void renderer_dos_billboard_project(int slot, const ObjRotatedPoint *poin
 }
 #endif
 
+/* One immutable membership index is shared by all room passes and workers.
+ * Its storage also retains DOS's original stable-slot candidate optimization. */
+static const GameState *g_renderer_object_index_state;
+
+static void renderer_index_billboard_rooms(GameState *state, unsigned slot,
+                                           int16_t source, int32_t x, int32_t z, int width)
+{
+    int16_t rooms[RENDERER_MAX_ZONE_ORDER];
+    int count = renderer_collect_billboard_zones(&state->level, source, x, z, width,
+                                                 (int16_t)(g_renderer.cosval / 2),
+                                                 (int16_t)(-g_renderer.sinval / 2),
+                                                 rooms, RENDERER_MAX_ZONE_ORDER);
+    for (int i = 0; i < count; i++) renderer_objects_add_room(&state->level, rooms[i], slot);
+}
+
+static int renderer_billboard_on_screen(const GameState *state, unsigned slot, int point, int width)
+{
+    const ObjRotatedPoint *rotated = &g_renderer.obj_rotated[point];
+#ifdef AB3D_DOS
+    (void)width;
+    renderer_dos_billboard_project((int)slot, rotated, renderer_sprite_scale_x_fp16_for_state(&g_renderer, state));
+    int pixels = g_dos_billboard_geometry[slot].estimated_width;
+    int center = g_dos_billboard_geometry[slot].screen_x;
+#else
+    (void)slot;
+    int z = ROT_Z_INT(rotated->z);
+    if (z < 1) return 0;
+    int pixels = renderer_project_billboard_size(width,
+                          renderer_sprite_scale_x_fp16_for_state(&g_renderer, state), z);
+    int center = project_x_to_pixels(rotated->x_fine, rotated->z);
+#endif
+    return center + pixels - pixels / 2 > 0 && center - pixels / 2 < g_renderer.width;
+}
+
+static int16_t renderer_billboard_display_zone(const GameState *state, int point,
+                                                int16_t source, int32_t x, int32_t z)
+{
+    const LevelState *level = &state->level;
+    const uint8_t *current = level->object_points + (size_t)point * 8u;
+    int32_t current_x = rd16(current), current_z = rd16(current + 4);
+    if (current_x == x && current_z == z) return source;
+    if (renderer_zone_contains_point(level, source, x, z)) return source;
+    int16_t zones[RENDERER_MAX_ZONE_ORDER];
+    int count = renderer_collect_segment_zones(level, source, current_x, current_z, x, z,
+                                                zones, RENDERER_MAX_ZONE_ORDER);
+    for (int i = 0; i < count; i++)
+        if (renderer_zone_contains_point(level, zones[i], x, z)) return zones[i];
+    return source;
+}
+
+static void renderer_prepare_object_rooms(GameState *state)
+{
+    LevelState *level = &state->level;
+    renderer_objects_prepare(level, g_renderer.obj_rotated, ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z));
+    g_renderer_object_index_state = state;
+    if (!state->cfg_billboard_sprite_rendering_enhancement) return;
+    uint8_t objects[256];
+    unsigned count = renderer_objects_for_room(level, -1, NULL, 0, objects);
+    for (unsigned i = 0; i < count; i++) {
+        unsigned slot = objects[i];
+        const uint8_t *obj = level->object_data + slot * OBJECT_SIZE;
+        if (obj[6] == OBJ_3D_SPRITE) continue;
+        int width, height; int32_t x, z;
+#ifdef AB3D_DOS
+        renderer_dos_billboard_world_size((int)slot, obj, 0, &width, &height);
+#else
+        renderer_resolve_billboard_world_size_for_spill(obj, 0, &width, &height);
+#endif
+        if (!renderer_billboard_on_screen(state, slot, rd16(obj), width)) continue;
+        renderer_object_world_position(state, rd16(obj), &x, &z);
+        int16_t display_zone = renderer_billboard_display_zone(state, rd16(obj), rd16(obj + 12), x, z);
+        renderer_index_billboard_rooms(state, slot, display_zone, x, z, width);
+    }
+    for (unsigned pool = 0; pool < 2; pool++) {
+        const uint8_t *shots = renderer_objects_shots(pool, &count);
+        const uint8_t *data = pool ? level->player_shot_data : level->nasty_shot_data;
+        for (unsigned i = 0; i < count; i++) {
+            const uint8_t *obj = data + (unsigned)shots[i] * OBJECT_SIZE;
+            if (obj[6] == OBJ_3D_SPRITE) continue;
+            unsigned slot = RENDERER_OBJECT_SHOTS + shots[i] + (pool ? NASTY_SHOT_SLOT_COUNT : 0);
+            int width, height; int32_t x, z;
+#ifdef AB3D_DOS
+            int geometry_slot = RENDERER_OBJECT_SHOTS + shots[i] + (pool ? NASTY_SHOT_SLOT_COUNT : 0);
+            renderer_dos_billboard_world_size(geometry_slot, obj, 1, &width, &height);
+#else
+            renderer_resolve_billboard_world_size_for_spill(obj, 1, &width, &height);
+#endif
+            if (!renderer_billboard_on_screen(state, slot, rd16(obj), width)) continue;
+            renderer_object_world_position(state, rd16(obj), &x, &z);
+            int16_t display_zone = renderer_billboard_display_zone(state, rd16(obj), rd16(obj + 12), x, z);
+            renderer_index_billboard_rooms(state, slot, display_zone, x, z, width);
+        }
+    }
+    for (int i = 0; i < state->num_explosions && i < MAX_EXPLOSIONS; i++) {
+        if (state->explosions[i].zone < 0 || state->explosions[i].start_delay > 0 ||
+            state->explosions[i].frame >= 9) continue;
+        int width;
+        renderer_get_explosion_frame_and_world_size(state, i, NULL, &width, NULL);
+        renderer_index_billboard_rooms(state, RENDERER_OBJECT_EXPLOSIONS + i,
+                                        state->explosions[i].zone, state->explosions[i].x,
+                                        state->explosions[i].z, width * EXPLOSION_SIZE_CORRECTION);
+    }
+}
+
 /* level_filter: -1 = draw all (single-level zone), 0 = lower floor only, 1 = upper floor only (multi-floor). */
 static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, int16_t zone_id,
                                   int32_t top_of_room, int32_t bot_of_room,
@@ -13963,12 +13558,6 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
     const int64_t explosion_sprite_scale_x_for_estimate = renderer_sprite_scale_x_fp16_for_state(r, state);
     const int16_t billboard_view_right_x = (int16_t)(r->cosval / 2);
     const int16_t billboard_view_right_z = (int16_t)(-r->sinval / 2);
-#if defined(AB3D_DOS) && EXPLOSION_SIZE_CORRECTION == 1
-    const int fast_spill_admission = g_dos_draw_objects_active &&
-        !g_pick_capture_active && !g_debug_spill_visualize &&
-        !renderer_active_pick_player() && !renderer_get_graphic_pick_target();
-#endif
-
     /* Build one depth-sorted list for objects and particles so painter order is consistent. */
     enum {
         DRAW_SRC_OBJECT = RENDERER_F2_SPRITE_SOURCE_OBJECT,
@@ -13985,9 +13574,6 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
         int32_t zone_top_world;
         int32_t zone_bot_world;
         uint8_t ignore_top_clip;
-#ifdef AB3D_DOS
-        uint8_t spill_admitted; /* Uses the original tail padding. */
-#endif
     } ObjEntry;
 #ifdef AB3D_DOS
     _Static_assert(sizeof(ObjEntry)==32,"DOS object entry scratch layout");
@@ -14016,7 +13602,6 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
     int num_pts = level->num_object_points;
     if (num_pts > MAX_OBJ_POINTS) num_pts = MAX_OBJ_POINTS;
 
-    int16_t adjacent_source_zones[RENDERER_SPILL_SEARCH_MAX_NEIGHBORS];
     uint64_t select_start = ctx->profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
     /* Clip ownership is constant for this room/section pass. Resolve it once
      * before considering any of its objects, shots or explosions. */
@@ -14029,20 +13614,8 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                                                 &room_clip_left, &room_clip_right,
                                                 &room_clip_top, &room_clip_bot,
                                                 &room_ignore_top)) return;
-    int adjacent_source_count = renderer_collect_connected_zones_fast(level,
-                                                                      zone_id,
-                                                                      adjacent_source_zones,
-                                                                      RENDERER_SPILL_SEARCH_MAX_NEIGHBORS);
-#ifdef AB3D_DOS
-    uint32_t adjacent_source_mask[8] = {0};
-    for (int i = 0; i < adjacent_source_count; i++) {
-        unsigned zone = (uint16_t)adjacent_source_zones[i];
-        if (zone < 256) adjacent_source_mask[zone >> 5] |= 1u << (zone & 31);
-    }
-#define DRAW_ADJACENT_CONTAINS(zone) renderer_dos_adjacent_contains(adjacent_source_mask, adjacent_source_zones, adjacent_source_count, zone)
-#else
-#define DRAW_ADJACENT_CONTAINS(zone) renderer_zone_list_contains(adjacent_source_zones, adjacent_source_count, zone)
-#endif
+    const int indexed_objects = (g_renderer_object_index_state == state);
+    const int exact_room_index = indexed_objects && renderer_objects_room_is_exact(level, zone_id);
     /* Object/shot layout keeps the logical upper/lower section flag at byte 63.
      * For sprites in their own zone, prefer that stable gameplay-side section state
      * over a renderer-estimated vertical overlap test; overlap remains useful for
@@ -14051,17 +13624,11 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
 
     /* Iterate by object index; each object has point number at offset 0 (ObjDraw: move.w (a0)+,d0).
      * Use that to look up ObjRotated[pt_num] so keys and other pickups use correct position/z. */
-    int scan_count = RENDERER_OBJECT_SLOT_SCAN_CAP;
-#ifdef AB3D_DOS
     uint8_t room_objects[256];
-    if (g_dos_draw_objects_active)
-        scan_count = dos_objects_for_room(level, zone_id, adjacent_source_zones, adjacent_source_count, room_objects);
-#endif
+    int scan_count = indexed_objects ? (int)renderer_objects_for_room(level, zone_id, NULL, 0, room_objects)
+                                     : RENDERER_OBJECT_SLOT_SCAN_CAP;
     for (int scan = 0; scan < scan_count && obj_count < max_draw_entries; scan++) {
-        int obj_idx = scan;
-#ifdef AB3D_DOS
-        if (g_dos_draw_objects_active) obj_idx = room_objects[scan];
-#endif
+        int obj_idx = indexed_objects ? room_objects[scan] : scan;
         const uint8_t *obj = level->object_data + obj_idx * OBJECT_SIZE;
         int16_t pt_num = rd16(obj);
         if (pt_num < 0) break; /* End of object list */
@@ -14079,16 +13646,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
         if (obj_zone < 0) continue;
         if (!in_this_zone) {
             if (is_poly_object) continue;
-            if (!DRAW_ADJACENT_CONTAINS(obj_zone))
-                continue;
-            if (!renderer_spill_zone_order_allows(state, obj_zone, zone_id))
-                continue;
-            /* Portal crossing check removed: draw-time geometric clip
-             * narrowing (renderer_spill_narrow_clip_to_zone_geometry)
-             * definitively restricts each spill draw to only the screen
-             * columns where the billboard actually overlaps the
-             * destination zone polygon, making the early rejection
-             * redundant and overly conservative for close objects. */
+            if (!state->cfg_billboard_sprite_rendering_enhancement) continue;
         }
 
         if (level_filter >= 0 && in_this_zone) {
@@ -14127,16 +13685,9 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                 if (src_bot < draw_zone_bot) draw_zone_bot = src_bot;
                 if (draw_zone_top >= draw_zone_bot) continue;
             }
-            /* Reject trivial slivers (e.g. pillar step zones): discard if the
-             * overlap after clamping is less than half the sprite height. */
-            if ((draw_zone_bot - draw_zone_top) < ((int32_t)(spill_world_h >> 1) << WORLD_Y_FRAC_BITS))
-                continue;
         }
         /* BitMapObj cull: skip early when a billboard cannot affect this
          * column strip. PolygonObj clips its projected polygons directly. */
-#ifdef AB3D_DOS
-        int spill_admitted = 0;
-#endif
         if (!is_poly_object) {
             int sprite_w_est, scr_x_est;
 #ifdef AB3D_DOS
@@ -14161,30 +13712,12 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             batch_candidates++;
             batch_area += batch_width * (batch_width > DOS_SPRITE_BATCH_HEIGHT ? DOS_SPRITE_BATCH_HEIGHT : batch_width);
 #endif
-#if defined(AB3D_DOS) && EXPLOSION_SIZE_CORRECTION == 1
-            if (!in_this_zone && geometry && fast_spill_admission) {
-                const uint8_t *point = level->object_points + (size_t)(uint16_t)pt_num * 8u;
-                if (!renderer_spill_draw_still_valid(state, obj_zone, zone_id,
-                                                     rd16(point), rd16(point+4),
-                                                     spill_world_w,
-                                                     billboard_view_right_x,
-                                                     billboard_view_right_z,
-                                                     draw_clip_left, draw_clip_right,
-                                                     renderer_sprite_param_i16(scr_x_est),
-                                                     renderer_sprite_param_i16(sprite_w_est)))
-                    continue;
-                spill_admitted = 1;
-            }
-#endif
         }
 #if defined(AB3D_DOS)
         else { batch_candidates++; batch_has_polygon = 1; }
 #endif
 
         objs[obj_count].src = DRAW_SRC_OBJECT;
-#ifdef AB3D_DOS
-        objs[obj_count].spill_admitted = (uint8_t)spill_admitted;
-#endif
         objs[obj_count].idx = obj_idx;
         objs[obj_count].source_zone = obj_zone;
         objs[obj_count].z = ROT_Z_INT(orp->z);
@@ -14198,30 +13731,23 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
 
     /* Add bullets, gibs, and blast particles from both shot pools. Spill into
      * adjacent zones uses the same geometry-clipped path as level billboards. */
-#ifdef AB3D_DOS
     uint8_t room_shots[NASTY_SHOT_SLOT_COUNT + PLAYER_SHOT_SLOT_COUNT];
     unsigned room_shot_count[2];
-    if (g_dos_draw_objects_active)
-        dos_objects_shots_for_room(level, zone_id, adjacent_source_zones, adjacent_source_count,
-                                    room_shot_count, room_shots);
-#endif
+    if (indexed_objects)
+        renderer_objects_shots_for_room(level, zone_id, NULL, 0, room_shot_count, room_shots);
     int shot_pool_slots[2] = { NASTY_SHOT_SLOT_COUNT, PLAYER_SHOT_SLOT_COUNT };
     for (int pool = 0; pool < 2 && obj_count < max_draw_entries; pool++) {
         const uint8_t *shots = (pool == 0) ? level->nasty_shot_data : level->player_shot_data;
         int slots = shot_pool_slots[pool];
         if (!shots) continue;
-#ifdef AB3D_DOS
         const uint8_t *shot_indices = NULL;
-        if (g_dos_draw_objects_active) {
+        if (indexed_objects) {
             shot_indices = room_shots + (pool ? room_shot_count[0] : 0);
             slots = room_shot_count[pool];
         }
-#endif
         for (int scan = 0; scan < slots && obj_count < max_draw_entries; scan++) {
             int slot = scan;
-#ifdef AB3D_DOS
             if (shot_indices) slot = shot_indices[scan];
-#endif
             const uint8_t *obj = shots + slot * OBJECT_SIZE;
             int16_t shot_zone = rd16(obj + 12);
             if (shot_zone < 0) continue; /* OBJ_ZONE */
@@ -14231,10 +13757,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             int in_this_zone = level_same_draw_room(level, shot_zone, zone_id);
             int shot_on_upper = (obj[obj_off_in_top] != 0);
             if (!in_this_zone) {
-                if (!DRAW_ADJACENT_CONTAINS(shot_zone))
-                    continue;
-                if (!renderer_spill_zone_order_allows(state, shot_zone, zone_id))
-                    continue;
+                if (!state->cfg_billboard_sprite_rendering_enhancement) continue;
             }
             if (level_filter >= 0 && in_this_zone) {
                 if ((level_filter == 1 && !shot_on_upper) ||
@@ -14270,13 +13793,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                     if (src_bot < draw_zone_bot) draw_zone_bot = src_bot;
                     if (draw_zone_top >= draw_zone_bot) continue;
                 }
-                /* Reject trivial slivers after clamping. */
-                if ((draw_zone_bot - draw_zone_top) < ((int32_t)(spill_world_h >> 1) << WORLD_Y_FRAC_BITS))
-                    continue;
             }
-#ifdef AB3D_DOS
-            int spill_admitted = 0;
-#endif
             {
                 int sprite_w_est, scr_x_est;
 #ifdef AB3D_DOS
@@ -14302,29 +13819,8 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                 batch_area += batch_width * (batch_width > DOS_SPRITE_BATCH_HEIGHT ? DOS_SPRITE_BATCH_HEIGHT : batch_width);
                 if ((uint8_t)obj[6] == (uint8_t)OBJ_3D_SPRITE) batch_has_polygon = 1;
 #endif
-#if defined(AB3D_DOS) && EXPLOSION_SIZE_CORRECTION == 1
-                if (!in_this_zone && geometry && (uint8_t)obj[6] != (uint8_t)OBJ_3D_SPRITE &&
-                    fast_spill_admission) {
-                    const uint8_t *point = level->object_points + (size_t)(uint16_t)pt_num * 8u;
-                    /* These cached dimensions/X and saturated width are also
-                     * used by the final draw. Reject before sorting and Y work. */
-                    if (!renderer_spill_draw_still_valid(state, shot_zone, zone_id,
-                                                         rd16(point), rd16(point+4),
-                                                         spill_world_w,
-                                                         billboard_view_right_x,
-                                                         billboard_view_right_z,
-                                                         draw_clip_left, draw_clip_right,
-                                                         renderer_sprite_param_i16(scr_x_est),
-                                                         renderer_sprite_param_i16(sprite_w_est)))
-                        continue;
-                    spill_admitted = 1;
-                }
-#endif
             }
             objs[obj_count].src = DRAW_SRC_SHOT;
-#ifdef AB3D_DOS
-            objs[obj_count].spill_admitted = (uint8_t)spill_admitted;
-#endif
             objs[obj_count].idx = slot + ((pool == 0) ? 0 : NASTY_SHOT_SLOT_COUNT);
             objs[obj_count].source_zone = shot_zone;
             objs[obj_count].z = ROT_Z_INT(orp->z);
@@ -14354,10 +13850,9 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             if ((int)state->explosions[ei].frame >= 9) continue;
             renderer_get_explosion_frame_and_world_size(state, ei, NULL, NULL, &expl_h_est);
             if (!in_this_zone) {
-                if (!DRAW_ADJACENT_CONTAINS(expl_zone))
-                    continue;
-                if (!renderer_spill_zone_order_allows(state, expl_zone, zone_id))
-                    continue;
+                if (!state->cfg_billboard_sprite_rendering_enhancement) continue;
+                if (indexed_objects && !renderer_objects_in_room(level, zone_id,
+                                                RENDERER_OBJECT_EXPLOSIONS + (unsigned)ei)) continue;
             }
             if (level_filter >= 0 && in_this_zone) {
                 if ((level_filter == 1 && !expl_on_upper) ||
@@ -14379,9 +13874,6 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
                     if (src_bot < draw_zone_bot) draw_zone_bot = src_bot;
                     if (draw_zone_top >= draw_zone_bot) continue;
                 }
-                /* Reject trivial slivers after clamping. */
-                if ((draw_zone_bot - draw_zone_top) < ((int32_t)(expl_h_est >> 1) << WORLD_Y_FRAC_BITS))
-                    continue;
             }
             int16_t dx = (int16_t)(state->explosions[ei].x - cam_x);
             int16_t dz = (int16_t)(state->explosions[ei].z - cam_z);
@@ -14414,9 +13906,6 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             }
 
             objs[obj_count].src = DRAW_SRC_EXPLOSION;
-#ifdef AB3D_DOS
-            objs[obj_count].spill_admitted = 0;
-#endif
             objs[obj_count].idx = ei;
             objs[obj_count].source_zone = expl_zone;
             objs[obj_count].z = ROT_Z_INT(orp_z);
@@ -14429,7 +13918,6 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
         }
     }
 
-#undef DRAW_ADJACENT_CONTAINS
     /* Insertion sort by integer Z descending (farthest first). ObjDraw's
      * cmp/blt loop inserts equal-depth objects ahead of older entries. */
     for (int i = 1; i < obj_count; i++) {
@@ -14554,14 +14042,14 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             size_t obj_pal_size = r->sprite_pal_size[expl_vect];
             int32_t expl_world_w = expl_w * EXPLOSION_SIZE_CORRECTION;
             const int entry_is_spill = !level_same_draw_room(level, entry->source_zone, zone_id);
-            const LevelState *raster_clip_level = level;
+            const LevelState *raster_clip_level = state->cfg_billboard_sprite_rendering_enhancement ? level : NULL;
             if (expl_world_w < 1) expl_world_w = 1;
             scr_x = renderer_sprite_param_i16(scr_x);
             scr_y = renderer_sprite_param_i16(scr_y);
             sprite_w = renderer_sprite_param_i16(sprite_w);
             sprite_h = renderer_sprite_param_i16(sprite_h);
-            if (entry_is_spill) {
-                if (!renderer_spill_draw_still_valid(state,
+            if (entry_is_spill || state->cfg_billboard_sprite_rendering_enhancement) {
+                if (entry_is_spill && !exact_room_index && !renderer_spill_draw_still_valid(state,
                                                      entry->source_zone,
                                                      zone_id,
                                                      (int32_t)state->explosions[ei].x,
@@ -14751,10 +14239,6 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
         }
         int anchor_h = renderer_project_billboard_wall_y_size(r, world_h, z_for_size) * SPRITE_SIZE_MULTIPLIER;
         int sprite_w;
-#if defined(AB3D_DOS) && EXPLOSION_SIZE_CORRECTION == 1
-        if (geometry) sprite_w = geometry->estimated_width;
-        else
-#endif
         sprite_w = renderer_project_billboard_size(world_w, sprite_scale_x, z_for_size) * SPRITE_SIZE_MULTIPLIER;
         int sprite_h = renderer_project_billboard_size(world_h, sprite_scale_x, z_for_size) * SPRITE_SIZE_MULTIPLIER;
         if (explosion_billboard) {
@@ -14838,7 +14322,7 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             int32_t billboard_world_x = 0;
             int32_t billboard_world_z = 0;
             const int entry_is_spill = !level_same_draw_room(level, entry->source_zone, zone_id);
-            const LevelState *raster_clip_level = level;
+            const LevelState *raster_clip_level = state->cfg_billboard_sprite_rendering_enhancement ? level : NULL;
 
             if (orp_z_int > 32767) orp_z_int = 32767;
             scr_x = renderer_sprite_param_i16(scr_x);
@@ -14847,17 +14331,12 @@ static void draw_zone_objects_impl(RenderSliceContext *ctx, GameState *state, in
             sprite_h = renderer_sprite_param_i16(sprite_h);
 
             if (level->object_points && pt_num >= 0 && pt_num < num_pts) {
-                const uint8_t *pt_ptr = level->object_points + (size_t)(uint16_t)pt_num * 8u;
-                billboard_world_x = (int32_t)rd16(pt_ptr + 0);
-                billboard_world_z = (int32_t)rd16(pt_ptr + 4);
+                renderer_object_world_position(state, pt_num,
+                                                 &billboard_world_x, &billboard_world_z);
             }
 
-            if (entry_is_spill) {
-                if (
-#ifdef AB3D_DOS
-                    !entry->spill_admitted &&
-#endif
-                    !renderer_spill_draw_still_valid(state,
+            if (entry_is_spill || state->cfg_billboard_sprite_rendering_enhancement) {
+                if (entry_is_spill && !exact_room_index && !renderer_spill_draw_still_valid(state,
                                                      entry->source_zone,
                                                      zone_id,
                                                      billboard_world_x,
@@ -15208,6 +14687,9 @@ static void renderer_reset_level_sky_cache_internal(void)
 
 void renderer_reset_level_sky_cache(void)
 {
+    /* Full loads/quickloads may reuse the same allocation addresses. */
+    memset(g_renderer_connected_zone_cache, 0, sizeof(g_renderer_connected_zone_cache));
+    memset(g_renderer_portal_line_cache, 0, sizeof(g_renderer_portal_line_cache));
     renderer_reset_level_sky_cache_internal();
 }
 
@@ -15950,7 +15432,7 @@ static void renderer_build_zone_stream_backdrop_sky_cache(int use_upper,
 
 void renderer_build_level_sky_cache(const LevelState *level)
 {
-    renderer_reset_level_sky_cache_internal();
+    renderer_reset_level_sky_cache();
     if (!level || !level->data || !level->graphics || !level->zone_adds || !level->zone_graph_adds) return;
 
     int zone_slots = level_zone_slot_count(level);
@@ -17984,12 +17466,13 @@ static void renderer_draw_display_impl(GameState *state)
     renderer_rotate_level_pts(state);
     renderer_rotate_object_pts(state);
 #ifdef AB3D_DOS
+    memset(g_dos_billboard_geometry_valid, 0, sizeof(g_dos_billboard_geometry_valid));
+#endif
+    renderer_prepare_object_rooms(state);
+#ifdef AB3D_DOS
     /* ObjDraw's camera/point rejects are shared by every room this frame.
      * Keep original object-slot order for equal-depth insertion ordering. */
-    dos_objects_prepare(&state->level, r->obj_rotated, ROT_Z_FROM_INT(SPRITE_NEAR_CLIP_Z));
-    memset(g_dos_billboard_geometry_valid, 0, sizeof(g_dos_billboard_geometry_valid));
     g_dos_draw_objects_active = 1;
-    renderer_prepare_dos_zone_order(state);
     g_dos_level_projection_active = 1;
 #endif
     RendererWorldZonePrepass world_zone_prepass;
@@ -18059,6 +17542,7 @@ static void renderer_draw_display_impl(GameState *state)
     g_dos_zone_order_state = NULL;
     g_dos_level_projection_active = 0;
 #endif
+    g_renderer_object_index_state = NULL;
     if (prof_on) t_after_world = SDL_GetPerformanceCounter();
 
     int8_t tint_water = fill_screen_water;

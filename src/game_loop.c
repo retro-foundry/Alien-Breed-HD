@@ -30,6 +30,7 @@
 #include "input.h"
 #include "audio.h"
 #include "settings.h"
+#include "dos_screen_size.h"
 #ifdef AB3D_DOS
 #include "platform_dos.h"
 #endif
@@ -76,6 +77,9 @@ enum {
     INGAME_OPTIONS_MENU_FPS_COUNTER,
     INGAME_OPTIONS_MENU_VOLUME,
     INGAME_OPTIONS_MENU_HUD_STYLE,
+#ifdef AB3D_DOS
+    INGAME_OPTIONS_MENU_SCREEN_SIZE,
+#endif
     INGAME_OPTIONS_MENU_BACK,
     INGAME_OPTIONS_MENU_COUNT
 };
@@ -902,9 +906,17 @@ static void game_loop_draw_ingame_menu(GameState *state, const GameLoopCtx *ctx)
                  (!state || state->cfg_hud_bars) ? "BARS" : "NUMBERS");
         display_draw_line_of_text(line, 10);
 
+        int back_line = 11;
+#ifdef AB3D_DOS
+        snprintf(line, sizeof(line), "%c SCREEN SIZE  : %3d%%",
+                 (ctx->ingame_menu_selected == INGAME_OPTIONS_MENU_SCREEN_SIZE) ? '>' : ' ',
+                 state ? (int)state->cfg_dos_screen_size : DOS_SCREEN_SIZE_DEFAULT);
+        display_draw_line_of_text(line, 11);
+        back_line = 12;
+#endif
         display_draw_line_of_text(
             (ctx->ingame_menu_selected == INGAME_OPTIONS_MENU_BACK) ?
-            "> BACK" : "  BACK", 11);
+            "> BACK" : "  BACK", back_line);
         game_loop_present_menu(state, ctx);
         return;
     }
@@ -1079,6 +1091,21 @@ static void game_loop_select_confirm_item(GameState *state, GameLoopCtx *ctx)
     }
 }
 
+#ifdef AB3D_DOS
+__attribute__((cold)) static void game_loop_set_screen_size(GameState *state, GameLoopCtx *ctx, int percent)
+{
+    if (percent == state->cfg_dos_screen_size) return;
+    state->cfg_dos_screen_size=(int16_t)percent;
+    display_dos_set_screen_size(state,percent);
+    /* Preview the new view while paused, without advancing the simulation. */
+    if (!ctx->ingame_menu_frontend && state->level.data)
+        display_draw_display(state);
+    settings_save_menu_options(state);
+    game_loop_pause_timing(state,ctx);
+    game_loop_draw_ingame_menu(state,ctx);
+}
+#endif
+
 static void game_loop_select_options_menu_item(GameState *state, GameLoopCtx *ctx)
 {
     switch (ctx->ingame_menu_selected) {
@@ -1126,6 +1153,12 @@ static void game_loop_select_options_menu_item(GameState *state, GameLoopCtx *ct
         settings_save_menu_options(state);
         break;
 
+#ifdef AB3D_DOS
+    case INGAME_OPTIONS_MENU_SCREEN_SIZE:
+        game_loop_set_screen_size(state,ctx,state->cfg_dos_screen_size>DOS_SCREEN_SIZE_MIN ?
+                                  state->cfg_dos_screen_size-DOS_SCREEN_SIZE_STEP : DOS_SCREEN_SIZE_MAX);
+        return;
+#endif
     case INGAME_OPTIONS_MENU_FPS_COUNTER:
         state->cfg_show_fps = !state->cfg_show_fps;
         settings_save_menu_options(state);
@@ -1345,6 +1378,14 @@ static int game_loop_update_ingame_menu(GameState *state, GameLoopCtx *ctx)
         (menu_left || menu_right)) {
         int delta = 0;
         switch (ctx->ingame_menu_selected) {
+#ifdef AB3D_DOS
+        case INGAME_OPTIONS_MENU_SCREEN_SIZE:
+            delta=(menu_right?1:0)-(menu_left?1:0);
+            if(delta)game_loop_set_screen_size(state,ctx,
+                dos_screen_size_adjust(state->cfg_dos_screen_size,delta));
+            game_loop_clear_queued_actions();
+            return 1;
+#endif
         case INGAME_OPTIONS_MENU_HUD_STYLE:
             game_loop_select_options_menu_item(state, ctx);
             game_loop_clear_queued_actions();

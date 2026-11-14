@@ -864,10 +864,9 @@ void play_game_load_shared_assets(GameState *state)
     /* Re-read ab3d.ini so prefs match the file on disk (exe dir / fallbacks). */
     settings_load(state);
 #ifdef AB3D_DOS
-    /* The INI selects a minimum mode. Keep projection and aiming tied to
-     * the actual full-surface view after re-reading an older 200-line INI. */
-    state->cfg_render_width=(int16_t)renderer_get_width();
-    state->cfg_render_height=(int16_t)renderer_get_height();
+    /* Reserve shared/weapon caches for the largest view before loading a
+     * live level; UI preparation restores the selected screen percentage. */
+    display_dos_set_screen_size(state,100);
 #endif
     settings_log_recap(state);
 

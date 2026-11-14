@@ -87,7 +87,7 @@ def main():
              f'-DAB3D_DOS_PROFILE_DIR={profiles.as_posix()}'], 'configure-' + directory.name)
         run(['cmake', '--build', str(directory), '--parallel', '4'], 'build-' + directory.name)
 
-    def check(level, frames, *, training=False, turn=False, exercise=False,
+    def check(level, frames, *, training=False, turn=False, exercise=False, screen_size=100,
               directory=work, group=''):
         memory = 16 if training else 4
         sound = 'on' if training or exercise else 'off'
@@ -96,6 +96,7 @@ def main():
         case += '-mouse' if training or exercise else ''
         case += '-turn' if turn else ''
         case += '' if exercise and not training else '-fixed'
+        if screen_size!=100:case+=f'-view{screen_size}'
         command = [sys.executable, str(root / 'tools/check_dos.py'), '--dosbox', str(box),
                    '--build-dir', str(directory), '--memory', str(memory), '--height', '240',
                    '--cycles', '40000', '--frames', str(frames), '--level', str(level),
@@ -108,6 +109,7 @@ def main():
             command.append('--exercise')
         if not exercise or training:
             command.append('--fixed-ticks')
+        if screen_size!=100:command+=['--screen-size',str(screen_size)]
         run(command, ('train-' if training else 'check-') + group + case, cwd=root)
         return directory / 'checks' / case
 
@@ -147,13 +149,16 @@ def main():
          str(Path(deps['sdl']) / 'SDL-build/libSDL3.a'), '-lm',
          '-fprofile-generate=PROF', f'-fprofile-prefix-path={work}'], 'instrument-link')
     stack_and_stage(work)
-    training = [(level, False, False) for level in range(1, 17)]
-    training += [(level, True, False) for level in (1, 4, 6, 7, 14, 15)]
-    training.append((4, False, True))
+    training = [(level, False, False, 100) for level in range(1, 17)]
+    training += [(level, True, False, 100) for level in (1, 4, 6, 7, 14, 15)]
+    training.append((4, False, True, 100))
+    training += [(1,False,False,percent) for percent in (80,60,40)]
+    training.append((4,False,False,60))
     counters = {}
-    for level, turn, exercise in training:
+    for level, turn, exercise, screen_size in training:
         suffix = '-exercise' if exercise else ''
         suffix += '-mouse' + ('-turn' if turn else '') + '-fixed'
+        if screen_size!=100:suffix+=f'-view{screen_size}'
         prof = work / 'checks' / f'40000-16m-320x240-l{level}-on{suffix}' / 'PROF'
         prof.mkdir(parents=True, exist_ok=True)
         for i in range(len(commands)):
@@ -163,7 +168,7 @@ def main():
             else:
                 (prof / name).unlink(missing_ok=True)
         case = check(level, 32 if exercise else 128, training=True,
-                     turn=turn, exercise=exercise)
+                     turn=turn, exercise=exercise, screen_size=screen_size)
         boot = (case / 'BOOT.LOG').read_text(errors='replace')
         if 'profiling:' in boot or 'libgcov' in boot:
             raise RuntimeError(f'compiler feedback was not saved cleanly: {case}')
@@ -173,7 +178,7 @@ def main():
                 counters[name] = (prof / name).read_bytes()
         if not counters:
             raise RuntimeError(f'no compiler feedback written: {case}')
-        print(f'PGO: trained level {level}, turn={turn}, exercise={exercise}', flush=True)
+        print(f'PGO: trained level {level}, turn={turn}, exercise={exercise}, view={screen_size}', flush=True)
 
     scene_training = train_raster_scenes(root, work, commands, counters, env, run, check,
                                         Path(deps['sdl']) / 'SDL-build/libSDL3.a')
@@ -216,6 +221,7 @@ def main():
                   ordinary_exe_sha256=hashlib.sha256(base_exe).hexdigest(),
                   training_runs=len(training) + len(scene_training['scenes']),
                   ordinary_training_runs=len(training), scene_training=scene_training,
+                  training_view_sizes=[100,80,60,40],
                   training_memory_mb=16,
                   verified_captures=len(captures), verified_memory_mb=4,
                   realtime_level4_exercise=True, counter_files=len(counters),

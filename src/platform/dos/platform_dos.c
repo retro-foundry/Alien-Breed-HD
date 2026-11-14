@@ -22,6 +22,7 @@
 int dos_benchmark_frames;
 int dos_capture_next_frame;
 int dos_check_enabled;
+int dos_screen_size_check_enabled;
 int dos_frontend_check_enabled;
 int dos_fixed_test_ticks;
 static int stack[16],depth;
@@ -312,6 +313,19 @@ void dos_check_ui_screens(GameState *state)
     check_key(state,&ctx,SDL_SCANCODE_RETURN);
     dos_capture_frame("OPTIONS.BMP");
     for(int i=0;i<9;i++)check_key(state,&ctx,SDL_SCANCODE_DOWN);
+    int old_screen_size=state->cfg_dos_screen_size;
+    check_key(state,&ctx,SDL_SCANCODE_LEFT);
+    int smaller=old_screen_size>40?old_screen_size-20:40;
+    if(state->cfg_dos_screen_size!=smaller) {
+        fprintf(stderr,"DOS screen-size menu left arrow failed\n");exit(1);
+    }
+    check_key(state,&ctx,SDL_SCANCODE_RIGHT);
+    if(old_screen_size==40)check_key(state,&ctx,SDL_SCANCODE_LEFT);
+    if(state->cfg_dos_screen_size!=old_screen_size) {
+        fprintf(stderr,"DOS screen-size menu restoration failed\n");exit(1);
+    }
+    printf("[DOSCHECK] screen-size menu changes apply and persist\n");
+    check_key(state,&ctx,SDL_SCANCODE_DOWN);
     check_key(state,&ctx,SDL_SCANCODE_RETURN);
     check_key(state,&ctx,SDL_SCANCODE_UP);
     check_key(state,&ctx,SDL_SCANCODE_RETURN);
@@ -405,9 +419,10 @@ void dos_platform_init(int argc,char **argv)
         }
         else if(!strcmp(argv[i],"--dos-check"))dos_check_enabled=1;
         else if(!strcmp(argv[i],"--dos-check-frontend"))dos_frontend_check_enabled=1;
+        else if(!strcmp(argv[i],"--dos-check-screen-sizes"))dos_screen_size_check_enabled=1;
         else if(!strcmp(argv[i],"--dos-fixed-ticks"))dos_fixed_test_ticks=1;
     }
-    if(dos_benchmark_frames<0 || dos_benchmark_frames>1024 || ((dos_check_enabled || dos_frontend_check_enabled) && !dos_benchmark_frames)) {
+    if(dos_benchmark_frames<0 || dos_benchmark_frames>1024 || ((dos_check_enabled || dos_frontend_check_enabled || dos_screen_size_check_enabled) && !dos_benchmark_frames)) {
         fprintf(stderr,"Use --dos-bench 1..1024 [--dos-check]\n");exit(1);
     }
     printf("[DOS] 486 DX2/DX4 target; software VESA; i486 instructions and tuning\n");

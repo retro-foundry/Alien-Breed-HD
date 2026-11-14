@@ -24,6 +24,9 @@ The project keeps Amiga data formats and game behavior where possible, while run
 
 No Amiga binary is executed by this port.
 
+See [billboard spill notes](docs/billboard-spill.md) for cross-zone sprite
+visibility fixes and regression coverage.
+
 ---
 
 ## Game data and build pipeline
@@ -97,10 +100,13 @@ From PowerShell, with CMake, Ninja, Git, Python 3 and ffmpeg installed:
 
 ```powershell
 ./tools/setup_dos.ps1
-./tools/build_dos.ps1
+$dosbox = ./tools/setup_dosbox.ps1
+./tools/build_dos.ps1 -ProfileGuided -DosBox $dosbox
 ```
 
 The playable package is `build/dos/ABHD-DOS.zip`; extract it and run `ABHD.BAT`.
+DOS Options includes Screen Size to reduce the 3D view for performance while
+keeping the HUD and menus at their native size.
 See [DOS build and profiling notes](docs/dos-build.md) for reusing GloomAmiga's
 toolchain, hardware requirements, measured emulator results and validation.
 An optional direct 8-bit VGA trial uses source-derived per-level palettes:
@@ -110,7 +116,7 @@ remains the default.
 
 ### Releases
 
-GitHub Actions builds Windows x64 and Linux x64 releases from tags such as `v1.0.0`. Tags with a prerelease suffix, such as `v1.0.0-beta.1` or `v1.0.0-rc.1`, are published as GitHub prereleases. Release downloads include a Windows zip, a Linux `.tar.gz`, SHA256 checksums, and GitHub artifact attestations where supported. See `RELEASING.md` and `VERIFY_RELEASE.md`.
+GitHub Actions builds DOS / 486, Windows x64 and Linux x64 releases from tags such as `v1.0.0`. Tags with a prerelease suffix, such as `v1.0.0-beta.1` or `v1.0.0-rc.1`, are published as GitHub prereleases. Release downloads include `ABHD-DOS.zip`, a Windows zip, a Linux `.tar.gz`, SHA256 checksums and GitHub artifact attestations. See `RELEASING.md` and `VERIFY_RELEASE.md`.
 
 Optional troubleshooting build (disable floor column-fast):
 
