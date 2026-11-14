@@ -19,6 +19,9 @@ Keyboard: arrows move/turn; A/D strafe; Ctrl fire; Space use; 1-6 weapons;
 Esc menu; Enter selects; Tab map; F5/F9 save/load. See the in-game options.
 Weapon keys: 1 pulse rifle, 2 shotgun, 3 plasma, 4 grenade, 5 rocket,
 6 flamethrower. The flamethrower shares the rifle's ammunition.
+New installs show a yellow crosshair. Esc > Options > Crosshair changes its
+color or switches it off. For an existing INI, select YELLOW there or set
+crosshair=3 in AB3D.INI.
 DOS menus use the keyboard. Mouse input is enabled automatically when a DOS
 mouse driver is installed; DOSBox's built-in driver works. Capture starts
 in-game; Esc releases it for menus. Set AB3D_DOS_MOUSE=0 to disable it. Mouse

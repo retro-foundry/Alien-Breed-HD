@@ -207,6 +207,7 @@ all_keys=0
 flamethrower_weapon=1
 marine_hitscan_projectiles=0
 mouse_look=0
+crosshair=3
 render_width=320
 render_height=200
 supersampling=1
