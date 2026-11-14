@@ -37,6 +37,17 @@ jobs:
         shell: pwsh
         run: ./tools/setup_dos.ps1
 
+      - name: Set up pinned DOSBox Staging
+        id: dosbox
+        shell: pwsh
+        run: |
+          $dosbox = ./tools/setup_dosbox.ps1
+          "executable=$dosbox" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Check DOS shooting on 486 and Pentium
+        shell: pwsh
+        run: python tools/check_dos_shooting.py --dosbox '${{ steps.dosbox.outputs.executable }}'
+
       - name: Build DOS package
         shell: pwsh
         run: ./tools/build_dos.ps1

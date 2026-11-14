@@ -85,6 +85,10 @@ jobs:
         shell: pwsh
         run: ./tools/build_dos.ps1 -ProfileGuided -DosBox '${{ steps.dosbox.outputs.executable }}'
 
+      - name: Check DOS shooting on 486 and Pentium
+        shell: pwsh
+        run: python tools/check_dos_shooting.py --dosbox '${{ steps.dosbox.outputs.executable }}'
+
       - name: Preserve failed DOS validation logs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -96,6 +100,9 @@ jobs:
             build/dos/pgo/checks/**/BOOT.LOG
             build/dos/pgo/checks/**/host.err
             build/dos/pgo/checks/**/PASS.TXT
+            build/dos-shooting-tests/**/*.log
+            build/dos-shooting-tests/**/CHECK.LOG
+            build/dos-shooting-tests/**/PASS.TXT
           if-no-files-found: ignore
 
       - name: Validate DOS archive

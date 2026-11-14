@@ -1,5 +1,39 @@
 # Combat feedback changes
 
+## DOS instant-hit shots at cross-zone enemies
+
+Gun 1 and the shotgun use `PlayerShoot.s` instant-hit targeting, so projectile
+travel steps cannot tunnel past enemies at low frame rates. Their original
+distance-dependent hit rolls remain in use.
+
+Mouse-look had a separate visibility error: it tested the reticle's impact
+coordinates against the enemy centre's room. When the near side of a billboard
+extended through an open portal into another room, `CanItBeSeen` could reject
+that visible impact because the ray did not enter the centre's room.
+
+`hitscan_target_has_line_of_sight` now resolves the impact room from the enemy
+centre using `ObjectMove.s`'s `MoveObject`, zero radius and zero step-up
+allowance, without writing wall-touch flags. It then checks the player's sight
+line to that room.
+Solid walls still clip the target's extent. Damage, hit boxes, random accuracy,
+fire delays and ammunition costs are unchanged.
+
+`tests/feedback_shooting.c` replays an enemy straddling an open/solid boundary,
+in both directions, for both players and both instant guns. It checks upper,
+central and lower aim, plus shots above and below the original collision box.
+The same cases run with `TempFrames` 1, 2, 3, 4, 8 and 16: 144 portal hits,
+240 solid-wall rejections and 96 vertical misses. The open-portal case fails
+against v1.0.4 before the correction. These checks isolate shot selection from
+display interpolation; they do not establish that every low-frame-rate aiming
+complaint has the same cause.
+
+The native fixture runs in DOSBox at fixed 20,000/40,000 cycles with 4 MB RAM
+and at 100,000 cycles with the Pentium dynamic core:
+
+```sh
+python tools/check_dos_shooting.py --dosbox <path-to-dosbox.exe>
+```
+
 The six requested changes are implemented in the PC and web paths:
 
 1. `marine_hitscan_projectiles=0` in both the template and engine defaults.

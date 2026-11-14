@@ -497,7 +497,38 @@ static bool hitscan_target_has_line_of_sight(GameState *state, const PlayerState
     if (!to_room) return false;
 
     int16_t target_cid = OBJ_CID(target);
-    if (target_cid < 0) return false;
+    if (!state->level.object_points || target_cid < 0 ||
+        target_cid >= state->level.num_object_points) return false;
+
+    const uint8_t *point = state->level.object_points + (size_t)target_cid * 8u;
+    int16_t center_x = obj_w(point);
+    int16_t center_z = obj_w(point + 4);
+    if (target_x != center_x || target_z != center_z) {
+        /* Mouse-look hits the reticle point on the billboard, which can spill
+         * through a portal out of the object's centre zone. Resolve that point
+         * with ObjectMove.s MoveObject before CanItBeSeen.
+         * A solid wall must still clip the footprint, even if the player can
+         * see the proposed impact point from their own room. */
+        MoveContext impact;
+        move_context_init(&impact);
+        impact.oldx = center_x; impact.oldz = center_z;
+        impact.newx = target_x; impact.newz = target_z;
+        impact.oldy = impact.newy = (int32_t)target_y * 128;
+        impact.objroom = (uint8_t *)to_room;
+        impact.stood_in_top = target->obj.in_top;
+        impact.exitfirst = 1;
+        impact.extlen = 0;
+        impact.awayfromwall = -1;
+        /* This is a visibility query, not a bullet impact: leave wall-touch
+         * flags unchanged while using the same collision geometry. */
+        impact.wall_flags = 0;
+        impact.step_up_val = 0;
+        impact.step_down_val = 0x1000000;
+        move_object_substepped(&impact, &state->level);
+        if (impact.hitwall || impact.newx != target_x || impact.newz != target_z ||
+            !impact.objroom) return false;
+        to_room = impact.objroom;
+    }
     int16_t target_zone_id = player_room_zone_word(to_room);
 
     return can_it_be_seen(&state->level,
