@@ -662,6 +662,9 @@ static uint8_t *g_poly_tex_pal_data;
 static size_t   g_poly_tex_pal_size;
 static uint8_t *g_water_file_data;
 static size_t   g_water_file_size;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+static WaterSourceView g_water_source_view;
+#endif
 static uint8_t *g_water_brighten_data;
 static size_t   g_water_brighten_size;
 static uint8_t *g_floor_tile_data;
@@ -688,6 +691,9 @@ void io_init(void)
     g_poly_tex_pal_size = 0;
     g_water_file_data = NULL;
     g_water_file_size = 0;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    g_water_source_view=(WaterSourceView){0};
+#endif
     g_water_brighten_data = NULL;
     g_water_brighten_size = 0;
     g_floor_tile_data = NULL;
@@ -702,15 +708,21 @@ void io_init(void)
 
 void io_shutdown(void)
 {
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#ifdef AB3D_DOS
     for(unsigned i=0;i<3;i++)dos_raster_prepare_floor(i,NULL,NULL);
 #endif
     /* Free wall texture data */
     for (int i = 0; i < MAX_WALL_TILES; i++) {
+#ifdef AB3D_DOS_INDEXED
+        g_renderer.wall_palettes[i]=NULL;
+#endif
         free(g_wall_data[i]);
         g_wall_data[i] = NULL;
         g_wall_loaded_size[i] = 0;
     }
+#ifdef AB3D_DOS_INDEXED
+    renderer_indexed_wall_palettes_changed();
+#endif
     /* Free vec object data */
     for (int i = 0; i < POLY_OBJECTS_COUNT; i++) {
         free(g_vec_data[i]);
@@ -725,6 +737,9 @@ void io_shutdown(void)
     shared_texture_free(g_water_file_data);
     g_water_file_data = NULL;
     g_water_file_size = 0;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    g_water_source_view=(WaterSourceView){0};
+#endif
     free(g_water_brighten_data);
     g_water_brighten_data = NULL;
     g_water_brighten_size = 0;
@@ -989,6 +1004,9 @@ void io_load_walls(void)
     extern RendererState g_renderer;
 
     for (int i = 0; i < MAX_WALL_TILES; i++) {
+#ifdef AB3D_DOS_INDEXED
+        g_renderer.wall_palettes[i]=NULL;
+#endif
         free(g_wall_data[i]);
         g_wall_data[i] = NULL;
         g_wall_loaded_size[i] = 0;
@@ -1038,11 +1056,14 @@ void io_load_walls(void)
             io_fatal_missing("wall texture", path);
         }
     }
+#ifdef AB3D_DOS_INDEXED
+    renderer_indexed_wall_palettes_changed();
+#endif
 }
 
 void io_load_floor(void)
 {
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#ifdef AB3D_DOS
     for(unsigned i=0;i<3;i++)dos_raster_prepare_floor(i,NULL,NULL);
 #endif
     printf("[IO] Loading floor texture...\n");
@@ -1247,7 +1268,7 @@ void io_load_floor(void)
         }
     }
 
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#ifdef AB3D_DOS
     dos_raster_prepare_floor(0,g_renderer.floor_tile,g_renderer.floor_pal);
     dos_raster_prepare_floor(1,g_renderer.bump_tile,
         g_renderer.bump_pal?g_renderer.bump_pal:g_renderer.floor_pal);
@@ -1260,6 +1281,9 @@ void io_load_floor(void)
     shared_texture_free(g_water_file_data);
     g_water_file_data = NULL;
     g_water_file_size = 0;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    g_water_source_view=(WaterSourceView){0};
+#endif
     free(g_water_brighten_data);
     g_water_brighten_data = NULL;
     g_water_brighten_size = 0;
@@ -1293,6 +1317,9 @@ void io_load_floor(void)
                     shared_texture_free(g_water_file_data);
                     g_water_file_data = NULL;
                     g_water_file_size = 0;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+                    g_water_source_view=(WaterSourceView){0};
+#endif
                 }
             }
             fclose(f);
@@ -1339,8 +1366,13 @@ void io_load_floor(void)
     if (!g_water_file_data)         io_fatal_missing("WaterFile", "");
     if (!g_water_brighten_data)     io_fatal_missing("OldBrightenFile", "");
 
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    water_source_prepare(&g_water_source_view,g_water_file_data,g_water_file_size);
+    renderer_set_prepared_water_assets(&g_water_source_view,g_water_brighten_data,g_water_brighten_size);
+#else
     renderer_set_water_assets(g_water_file_data, g_water_file_size,
                               g_water_brighten_data, g_water_brighten_size);
+#endif
 }
 
 /* Lowercase the filename segment only (MEMFS / Linux are case-sensitive; Amiga dumps use mixed case). */

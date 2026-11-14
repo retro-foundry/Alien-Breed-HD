@@ -692,7 +692,8 @@ static void check_sprite_history(void)
 static void check_sprite_dda_rows(void)
 {
     enum { PIXELS=320*240, DRAWS=4 };
-    static RendererPixel pixels[2][PIXELS+16];
+    _Static_assert(PIXELS+16==ORACLE_SURFACE_PIXELS,"shared oracle must retain all sprite guards");
+    RendererPixel (*pixels)[PIXELS+16]=oracle_surfaces;
     static const unsigned heights[]={1,2,3,7,31,63,127,240};
     static const unsigned widths[]={1,2,31,32,33,64,127,320};
     static const uint32_t steps[]={0,1,255,4095,4096,8191,32768,65535,65536,99991,7*65536};

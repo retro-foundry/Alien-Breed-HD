@@ -27,11 +27,20 @@ static uint32_t next_value(void)
     return random_state;
 }
 
+/* Sequential floor, wall and sprite DDA checks reset every compared byte.
+ * Share their full-surface images; actual and independent expected pixels
+ * always occupy separate arrays, including all 16 sprite guard pixels. */
+enum { ORACLE_SURFACE_PIXELS=320*240+16 };
+static RendererPixel oracle_surfaces[2][ORACLE_SURFACE_PIXELS];
+
 #include "dos_sprite_alpha_cases.h"
 
 static void check_water_transport(void)
 {
-    static uint8_t native[WATER_FILE_BYTES],original[WATER_FILE_BYTES];
+    static struct {uint8_t before,data[WATER_FILE_BYTES],after;} bank;
+    static uint8_t original[WATER_FILE_BYTES];
+    uint8_t *native=bank.data;
+    bank.before=0xa7;bank.after=0x5c;
     uint8_t header[WATER_NATIVE_HEADER_BYTES];
     FILE *file=fopen("WATER.BIN","rb");assert(file);
     assert(fread(header,1,sizeof(header),file)==sizeof(header));
@@ -40,7 +49,7 @@ static void check_water_transport(void)
     assert(!water_native_payload_size(header,7));
     header[3]='2';assert(!water_native_payload_size(header,WATER_FILE_BYTES+WATER_NATIVE_HEADER_BYTES));header[3]='1';
     header[4]=1;assert(!water_native_payload_size(header,WATER_FILE_BYTES+WATER_NATIVE_HEADER_BYTES));header[4]=0;
-    assert(fread(native,1,sizeof(native),file)==sizeof(native) && fgetc(file)==EOF);fclose(file);
+    assert(fread(native,1,WATER_FILE_BYTES,file)==WATER_FILE_BYTES && fgetc(file)==EOF);fclose(file);
     file=fopen("WATERRAW.BIN","rb");assert(file);
     assert(fread(original,1,sizeof(original),file)==sizeof(original) && fgetc(file)==EOF);fclose(file);
     for(unsigned offset=0;offset<WATER_FILE_BYTES;offset++)
@@ -53,6 +62,111 @@ static void check_water_transport(void)
         assert(native[phase*4096+v*64+u]==original[source]);
     }
     puts("PASS: all 65536 transported water bytes, 32768 phase samples and invalid headers");
+#ifdef AB3D_NATIVE_RGB565
+    unsigned hints_checked=0;
+    for(unsigned test=0;test<4;test++) {
+        if(test)for(unsigned i=0;i<32768;i++) {
+            original[i*2]=(uint8_t)((i*29+(i>>8))&63);
+            original[i*2+1]=test==2?(uint8_t)(i*13):37;
+        }
+        if(test==3)original[42]=255;
+        for(unsigned phase=0;phase<8;phase++)for(unsigned v=0;v<64;v++)for(unsigned u=0;u<64;u++)
+            native[phase*4096+v*64+u]=original[(((v<<8)|u)<<2)+offsets[phase]];
+        for(unsigned i=0;i<32768;i++)native[32768+i]=original[i*2+1];
+        WaterSourceView view={0};
+        assert(water_source_prepare(&view,native,WATER_FILE_BYTES)==(test<2));
+        assert(view.data==native && view.bytes==WATER_FILE_BYTES && view.prepared==(test<2));
+        if(view.prepared)assert(water_source_prepare(&view,native,WATER_FILE_BYTES)==1);
+        if(view.prepared)for(unsigned i=0;i<32768;i++) {
+            uint16_t word;memcpy(&word,native+i*2,sizeof(word));
+            assert(!(word&~0xfc30u));
+            unsigned count=((word>>4)&3)+1,phase=i/4096,row=(i%4096)/64,u=i%64;
+            for(unsigned next=0;next<count;next++) {
+                unsigned source=(((row<<8)|((u+next)&63))<<2)+offsets[phase];
+                assert(original[source]==(word>>10));
+            }
+            hints_checked++;
+        }
+        for(unsigned i=0;i<WATER_FILE_BYTES;i++)assert(water_view_byte(&view,i)==original[i]);
+        assert(bank.before==0xa7 && bank.after==0x5c);
+    }
+    WaterSourceView view={0};
+    assert(!water_source_prepare(&view,native,WATER_FILE_BYTES-1));
+    for(unsigned i=0;i<WATER_FILE_BYTES;i++)assert(water_source_byte(native,i)==original[i]);
+    assert(!water_source_prepare(&view,NULL,0) && !view.data && !view.bytes && !view.prepared);
+    puts("PASS: 262144 water view bytes preserve stock/nonzero uniform odds, nonuniform odds, high levels, repeated preparation, bank reuse, short/null views and guards");
+    assert(hints_checked==65536);
+    puts("PASS: 65536 prepared run hints preserve source levels, field bounds and circular row reads");
+#endif
+}
+
+static int water_test_prepared;
+#ifdef AB3D_NATIVE_RGB565
+static struct {
+    uint16_t before[8];
+    DosWaterLookup lookup;
+    uint16_t after[8];
+} water_lookup_storage[2];
+static unsigned water_lookup_preparations;
+static void check_water_lookup_guards(void)
+{
+    for(unsigned slot=0;slot<2;slot++)for(unsigned i=0;i<8;i++) {
+        assert(water_lookup_storage[slot].before[i]==0xa75c);
+        assert(water_lookup_storage[slot].after[i]==0x39e2);
+    }
+}
+static void prepare_water(const uint8_t *brighten)
+{
+    if(!water_lookup_preparations) {
+        for(unsigned slot=0;slot<2;slot++)for(unsigned i=0;i<8;i++) {
+            water_lookup_storage[slot].before[i]=0xa75c;
+            water_lookup_storage[slot].after[i]=0x39e2;
+        }
+    }
+    check_water_lookup_guards();
+    dos_raster_release_water();
+    dos_raster_prepare_water(brighten,&water_lookup_storage[water_lookup_preparations++&1].lookup);
+    check_water_lookup_guards();
+}
+static void check_water_lookup_aliases(const uint8_t *brighten)
+{
+    const DosWaterLookup *lookup=&water_lookup_storage[(water_lookup_preparations-1)&1].lookup;
+    for(unsigned row=0;row<22;row++)for(unsigned sample=0;sample<1024;sample++) {
+        unsigned native=sample*2,index=(((native>>7)&15)<<4)|((native>>1)&15);
+        unsigned at=(row*256+index)*2;
+        assert(lookup->pixels[row][sample]==renderer_pixel_from_c12((uint16_t)((brighten[at]<<8)|brighten[at+1])));
+    }
+    for(unsigned native=0;native<65536;native++)for(unsigned hint=0;hint<4;hint++) {
+        unsigned at=(native&0x079e)+hint*32;
+        assert(at<=2046 && !(at&1));
+        assert(((((at>>7)&15)<<4)|((at>>1)&15))==((((native>>7)&15)<<4)|((native>>1)&15)));
+    }
+    puts("PASS: all 22528 native water lookup slots and 262144 native input/hint aliases preserve all 22 Brighten rows");
+}
+#else
+#define prepare_water dos_raster_prepare_water
+#endif
+__attribute__((noinline))
+static void check_water_raster(RendererPixel *out,unsigned count,
+                        const RendererPixel *background0,const RendererPixel *background1,
+                        const uint8_t *phase,unsigned shade,unsigned offset,unsigned alpha,
+                        uint32_t u,uint32_t v,uint32_t du,uint32_t dv)
+{
+#ifdef AB3D_NATIVE_RGB565
+    if(water_test_prepared) {
+        uint16_t prepared[4096];
+        if(count)for(unsigned i=0;i<4096;i++)prepared[i]=(uint16_t)phase[i]<<10;
+        if(count && water_test_prepared>1)for(unsigned row=0;row<4096;row+=64)for(unsigned u=0;u<64;u++) {
+            unsigned run=1;
+            while(run<4 && phase[row+((u+run)&63)]==phase[row+u])run++;
+            prepared[row+u]|=(uint16_t)((run-1)<<4);
+        }
+        dos_raster_water_prepared(out,count,background0,background1,prepared,
+                                 shade,offset,alpha,u,v,du,dv);
+        return;
+    }
+#endif
+    dos_raster_water(out,count,background0,background1,phase,shade,offset,alpha,u,v,du,dv);
 }
 
 static RendererPixel reference_water_pixel(RendererPixel p0,RendererPixel p1,
@@ -80,7 +194,10 @@ static void check_water(void)
         brighten[(row*256+sample)*2]=(uint8_t)(color>>8);
         brighten[(row*256+sample)*2+1]=(uint8_t)color;
     }
-    dos_raster_prepare_water(brighten);
+    prepare_water(brighten);
+#ifdef AB3D_NATIVE_RGB565
+    if(!water_test_prepared)check_water_lookup_aliases(brighten);
+#endif
     for(unsigned row=0;row<22;row++)for(unsigned sample=0;sample<256;sample++) {
         unsigned at=(row*256+sample)*2;
         assert(dos_raster_water_color(row,sample)==renderer_pixel_from_c12((uint16_t)(((unsigned)brighten[at]<<8)|brighten[at+1])));
@@ -91,7 +208,7 @@ static void check_water(void)
     }
     memset(phase,0,sizeof(phase));
     for(unsigned alpha=0;alpha<256;alpha++) {
-        dos_raster_water(actual+PITCH*2,256,actual,actual+PITCH,phase,0,0,alpha,0,0,0,0);
+        check_water_raster(actual+PITCH*2,256,actual,actual+PITCH,phase,0,0,alpha,0,0,0,0);
         for(unsigned pair=0;pair<256;pair++)
             assert(actual[PITCH*2+pair]==reference_water_pixel(actual[pair],actual[PITCH+pair],brighten,0,alpha));
     }
@@ -99,7 +216,7 @@ static void check_water(void)
      * must retain the original low-byte Amiga green/blue selection. */
     for(unsigned block=0;block<256;block++) {
         for(unsigned x=0;x<256;x++)actual[x]=(RendererPixel)((block<<8)|x);
-        dos_raster_water(actual+PITCH*2,256,actual,NULL,phase,1,0,231,0,0,0,0);
+        check_water_raster(actual+PITCH*2,256,actual,NULL,phase,1,0,231,0,0,0,0);
         for(unsigned x=0;x<256;x++)
             assert(actual[PITCH*2+x]==reference_water_pixel(actual[x],actual[x],brighten,1,0));
     }
@@ -112,7 +229,7 @@ static void check_water(void)
         int single=test>=384;
         unsigned out=PITCH*2+2,src0=(test%5)*PITCH+2,src1=((test+1)%5)*PITCH+2;
         uint32_t u=next_value(),v=next_value(),du=next_value(),dv=next_value(),ru=u,rv=v;
-        dos_raster_water(actual+out,count,actual+src0,single?NULL:actual+src1,phase,shade,offset,alpha,u,v,du,dv);
+        check_water_raster(actual+out,count,actual+src0,single?NULL:actual+src1,phase,shade,offset,alpha,u,v,du,dv);
         for(unsigned x=0;x<count;x++,ru+=du,rv+=dv) {
             uint8_t ub=(uint8_t)(ru>>16),vb=(uint8_t)(rv>>16);
             uint16_t uv=(uint16_t)(((uint16_t)vb<<8)|ub);
@@ -125,13 +242,14 @@ static void check_water(void)
     /* AB3DI texturedwater forms a 16-bit UV word before adding wateroff.
      * Target both U-byte carries and V/word wraps with independent sampling,
      * including the boundaries of the optional horizontal span walk. */
-    static const uint32_t steps[]={0,1,65535,65536,65537,131071,131072,131073,
+    static const uint32_t steps[]={0,1,16383,16384,16385,21845,21846,32767,32768,32769,43690,43691,
+                                  65535,65536,65537,131071,131072,131073,
                                   262143,262144,262145,524288,1048576,0xffffff,0x1000000,UINT32_MAX};
     static const unsigned offsets[]={0,1,63,64,127,128,192,255,256,65535,65536,0x12345};
     static const unsigned vrows[]={0,1,62,63,64,255,256,65535};
     static const unsigned lengths[]={0,1,2,3,7,31,32,63,64,65,159,319,320,321,322};
     uint32_t seed=0xa93c715du;
-    for(unsigned test=0;test<2048;test++) {
+    for(unsigned test=0;test<4096;test++) {
         for(unsigned i=0;i<PITCH*ROWS;i++) {
             seed=seed*1664525u+1013904223u;
             actual[i]=expected[i]=(RendererPixel)(seed>>8);
@@ -140,13 +258,13 @@ static void check_water(void)
         uint32_t starts[]={boundary-1,boundary,boundary+1,0,0xfffffe,0xffffff,0x1000000,UINT32_MAX};
         uint32_t u=(seed&0xff000000u)|(starts[(test/12)%8]&0xffffffu);
         uint32_t v=(vrows[(test/192)%8]<<16)|0x1234u;
-        uint32_t du=steps[(test/3)%16],dv=test%8==0?1:test%8==1?65536u:0;
+        uint32_t du=steps[(test/3)%(sizeof(steps)/sizeof(steps[0]))],dv=test%8==0?1:test%8==1?65536u:0;
         unsigned count=lengths[(test/9)%15],shade=(test/17)%13,alpha=(test*29)&255;
         unsigned out=PITCH*2+2,src0=(test%5)*PITCH+2,src1=((test+1)%5)*PITCH+2;
         if(test%7==0)src0=out-1;
         if(test%7==1)src1=out+1;
         int single=(test/13)%3==0;
-        dos_raster_water(actual+out,count,actual+src0,single?NULL:actual+src1,
+        check_water_raster(actual+out,count,actual+src0,single?NULL:actual+src1,
                          phase,shade,offset,alpha,u,v,du,dv);
         for(unsigned x=0;x<count;x++,u+=du,v+=dv) {
             uint16_t uv=(uint16_t)((((v>>16)&255)<<8)|((u>>16)&255));
@@ -157,9 +275,158 @@ static void check_water(void)
         }
         assert(!memcmp(actual,expected,sizeof(actual)));
     }
+    /* Independently vary all three channel differences at both sides of
+     * their rounding boundaries. This catches packed-lane carry mistakes
+     * that correlated colours in the ordinary palette can conceal. */
+    memset(phase,0,sizeof(phase));
+    unsigned boundary_pairs=0;
+    for(unsigned alpha=9;alpha<128;alpha++) {
+        int neg=120/(int)alpha,pos=134/(int)alpha;
+        int differences[]={-15,-neg-1,-neg,0,pos,pos+1,15};
+        unsigned batch=124+(alpha&3);
+        for(unsigned first=0;first<343;first+=batch) {
+            unsigned count=343-first;
+            if(count>batch)count=batch;
+            for(unsigned i=0;i<count;i++) {
+                unsigned combination=first+i,c0=0,c1=0;
+                for(unsigned shift=0;shift<=8;shift+=4) {
+                    int d=differences[combination%7];combination/=7;
+                    if(d < -15)d=-15;
+                    if(d > 15)d=15;
+                    unsigned a=d<0?-d:0,b=(int)a+d;
+                    c0|=a<<shift;c1|=b<<shift;
+                }
+                brighten[i*4]=(uint8_t)(c0>>8);brighten[i*4+1]=(uint8_t)c0;
+                brighten[i*4+2]=(uint8_t)(c1>>8);brighten[i*4+3]=(uint8_t)c1;
+                actual[i]=renderer_pixel_from_c12((uint16_t)(i*2));
+                actual[PITCH+i]=renderer_pixel_from_c12((uint16_t)(i*2+1));
+                assert(renderer_pixel_gb_index(actual[i])==i*2);
+                assert(renderer_pixel_gb_index(actual[PITCH+i])==i*2+1);
+            }
+            prepare_water(brighten);
+            for(unsigned sampler=0;sampler<2;sampler++)for(unsigned swap=0;swap<2;swap++) {
+                unsigned weight=swap?255-alpha:alpha;
+                memset(actual+PITCH*2,0x91,PITCH*sizeof(*actual));
+                check_water_raster(actual+PITCH*2,count,actual,actual+PITCH,
+                                 phase,0,0,weight,0,0,65536,sampler?65537:0);
+                for(unsigned i=0;i<count;i++)
+                    assert(actual[PITCH*2+i]==reference_water_pixel(
+                        actual[i],actual[PITCH+i],brighten,0,weight));
+                for(unsigned i=count;i<PITCH;i++)assert(actual[PITCH*2+i]==0x9191);
+                boundary_pairs+=count;
+            }
+        }
+    }
+    printf("PASS: %u independent water channel-boundary pairs, both samplers, all group tails and reversed alpha weights\n",boundary_pairs);
+    /* Force every reachable rounded colour through native lane conversion,
+     * independently of the threshold shortcut. All-white necessarily retains
+     * background 0 at normalized alpha <=127 and exercises that shortcut. */
+    for(unsigned first=0;first<4096;first+=128) {
+        for(unsigned i=0;i<128;i++) {
+            unsigned color=first+i,c0=color,c1=color,shift=0;
+            while(shift<12 && ((color>>shift)&15)==15)shift+=4;
+            if(shift<12) {
+                unsigned channel=(color>>shift)&15,mask=15u<<shift;
+                c0=(color&~mask)|((channel+1)<<shift);
+                c1=(color&~mask)|((channel?channel-1:0)<<shift);
+            }
+            brighten[i*4]=(uint8_t)(c0>>8);brighten[i*4+1]=(uint8_t)c0;
+            brighten[i*4+2]=(uint8_t)(c1>>8);brighten[i*4+3]=(uint8_t)c1;
+            actual[i]=renderer_pixel_from_c12((uint16_t)(i*2));
+            actual[PITCH+i]=renderer_pixel_from_c12((uint16_t)(i*2+1));
+        }
+        prepare_water(brighten);
+        for(unsigned sampler=0;sampler<2;sampler++) {
+            memset(actual+PITCH*2,0x91,PITCH*sizeof(*actual));
+            check_water_raster(actual+PITCH*2,128,actual,actual+PITCH,
+                             phase,0,0,127,0,0,65536,sampler?65537:0);
+            for(unsigned i=0;i<128;i++) {
+                RendererPixel color=renderer_pixel_from_c12((uint16_t)(first+i));
+                assert(reference_water_pixel(actual[i],actual[PITCH+i],brighten,0,127)==color);
+                assert(actual[PITCH*2+i]==color);
+            }
+            for(unsigned i=128;i<PITCH;i++)assert(actual[PITCH*2+i]==0x9191);
+        }
+    }
+    puts("PASS: all 4096 rounded water colours in both samplers, repeated asset-table rebuilds and output guards");
     puts("PASS: 2048 water carry spans preserve U-byte/V-row/word wraps, step limits, zero steps, clipping, source overlap, alpha symmetry, single-source rounding and guards");
     printf("Water: 5632 shared colours, 65536 native inputs, 65536 alpha/colour pairs and 768 single/blended wrapping/alias/clip spans passed\n");
 }
+
+#ifdef AB3D_NATIVE_RGB565
+static void check_water_phase_output_alias(void)
+{
+    static uint8_t brighten[22*512];static uint16_t actual[4096],expected[4096];
+    RendererPixel p0[4]={0,0,0,0},p1[4]={1,1,1,1};
+    for(unsigned row=0;row<22;row++)for(unsigned sample=0;sample<256;sample++){
+        unsigned color=(row==1?1:row==4?2:0)<<8;
+        brighten[(row*256+sample)*2]=(uint8_t)(color>>8);brighten[(row*256+sample)*2+1]=(uint8_t)color;
+    }
+    prepare_water(brighten);
+    for(unsigned i=0;i<4096;i++)actual[i]=expected[i]=1024|48;
+    dos_raster_water_prepared(actual,4,p0,p1,actual,0,0,64,0,0,1,0);
+    for(unsigned i=0;i<4;i++)expected[i]=reference_water_pixel(p0[i],p1[i],brighten,expected[0]>>10,64);
+    assert(!memcmp(actual,expected,sizeof(actual)) && actual[0]==4096 && actual[1]==8192);
+    puts("PASS: phase/output alias preserves per-pixel source reads across four-pixel groups");
+    /* General UV walks must reload a phase bank overwritten by earlier output,
+     * including both adjacent-row directions after alpha normalization. */
+    RendererPixel adjacent[320+17]={0};
+    for(unsigned i=0;i<17;i++)adjacent[320+i]=1;
+    for(unsigned alpha=64;alpha<=192;alpha+=128){
+        for(unsigned i=0;i<4096;i++)actual[i]=expected[i]=1024|48;
+        dos_raster_water_prepared(actual,17,adjacent,adjacent+320,actual,0,0,alpha,0,0,1,1);
+        for(unsigned i=0;i<17;i++)expected[i]=reference_water_pixel(adjacent[i],adjacent[320+i],brighten,expected[0]>>10,alpha);
+        assert(!memcmp(actual,expected,sizeof(actual)) && actual[0]==4096 && actual[1]==8192);
+    }
+    puts("PASS: UV phase/output alias preserves both source directions, eight-pixel groups and tails");
+}
+
+static void check_water_packed_uv(unsigned hinted)
+{
+    /* Allocate these only during this check so the unrelated long floor walks
+     * retain their existing memory budget in the 4 MB standalone oracle. */
+    uint8_t *brighten=malloc(22*512),*phase=malloc(4096);uint16_t *prepared=malloc(4096*sizeof(*prepared));
+    RendererPixel *actual=malloc(2048*sizeof(*actual)),*expected=malloc(2048*sizeof(*expected));
+    assert(brighten && phase && prepared && actual && expected);
+    static const uint32_t starts[]={0,1,65534,65535,65536,0x00fffffe,0x00ffffff,0x01000000,0x7fffffff,0x80000000,UINT32_MAX};
+    static const uint32_t steps[]={0,1,32768,65535,65536,65537,131073,0x00ffffff,0x01000000,0x7fffffff,0x80000000,UINT32_MAX-1,UINT32_MAX};
+    static const unsigned lengths[]={0,1,2,3,4,7,8,9,15,16,17,63,128,319,320,321,322,647};
+    static const unsigned offsets[]={0,1,63,255,256,65535,65536,0x12345,UINT32_MAX};
+    for(unsigned row=0;row<22;row++)for(unsigned sample=0;sample<256;sample++){
+        unsigned c=(row*197+sample*37)&4095;brighten[(row*256+sample)*2]=(uint8_t)(c>>8);brighten[(row*256+sample)*2+1]=(uint8_t)c;
+    }
+    for(unsigned i=0;i<4096;i++){phase[i]=(uint8_t)((i/5+(i/64)*3)%10);prepared[i]=(uint16_t)phase[i]<<10;}
+    if(hinted)for(unsigned row=0;row<4096;row+=64)for(unsigned u=0;u<64;u++){
+        unsigned run=1;while(run<4 && phase[row+((u+run)&63)]==phase[row+u])run++;
+        prepared[row+u]|=(uint16_t)((run-1)<<4);
+    }
+    prepare_water(brighten);uint32_t seed=0x619abc13u;
+    for(unsigned test=0;test<2048;test++){
+        for(unsigned i=0;i<2048;i++){seed=seed*1664525u+1013904223u;actual[i]=expected[i]=(RendererPixel)(seed>>8);}
+        unsigned s0=test&1?960:640,s1=test&1?640:960;
+        if(test%17==0)s1=s0+321;
+        if(test%19==0)s1=s0-321;
+        unsigned outputs[]={1,s0,s0+1,s0-1,s1,s1+1,s1-1};unsigned out=outputs[test%7];
+        unsigned count=lengths[(test/3)%(sizeof(lengths)/sizeof(*lengths))];
+        unsigned offset=offsets[(test/5)%(sizeof(offsets)/sizeof(*offsets))],shade=(test/17)%13,alpha=(test*53)&255;
+        uint32_t u=starts[(test/7)%(sizeof(starts)/sizeof(*starts))],v=starts[(test/11)%(sizeof(starts)/sizeof(*starts))];
+        uint32_t du=steps[test%(sizeof(steps)/sizeof(*steps))],dv=steps[(test/3)%(sizeof(steps)/sizeof(*steps))];
+        if(!dv && du && du<=65536 && count<=320)dv=1;
+        dos_raster_water_prepared(actual+out,count,actual+s0,actual+s1,prepared,shade,offset,alpha,u,v,du,dv);
+        /* Keep full-width original accumulators and the original packed word
+         * expression independent of the kernel's rotated representation. */
+        for(unsigned i=0;i<count;i++,u+=du,v+=dv){
+            uint16_t uv=(uint16_t)((((v>>16)&255)<<8)|((u>>16)&255));uv=(uint16_t)(uv+offset);
+            unsigned level=phase[(((uv>>8)&63)*64)+(uv&63)];
+            expected[out+i]=reference_water_pixel(expected[s0+i],expected[s1+i],brighten,shade+level,alpha);
+        }
+        assert(!memcmp(actual,expected,2048*sizeof(*actual)));
+    }
+    printf("PASS: 2048 packed UV spans (%s), both source directions, other strides, alpha swaps, long groups, tails, all offset carries and overlapping backgrounds\n",hinted?"hinted":"legacy");
+    free(brighten);free(phase);free(prepared);free(actual);free(expected);
+}
+
+#endif
 
 __attribute__((noinline)) static int64_t reference_divide(int64_t n, int64_t d) { return n / d; }
 
@@ -551,6 +818,30 @@ static void check_floors(void)
         dos_raster_floor(actual + 1, count, texture, palettes[left], u, v, du, dv);
         assert(!memcmp(actual, expected, sizeof(actual)));
     }
+    /* Long walks exercise the native rotated-V carry gap beyond one byte,
+     * many texture wraps and every 16-pixel group boundary. The oracle keeps
+     * the original full-width accumulators and AB3DI address expression. */
+    enum { LONG_WIDTH=65541 };
+    _Static_assert(LONG_WIDTH+2<=ORACLE_SURFACE_PIXELS,"oracle images must cover the complete long floor span");
+    RendererPixel *long_actual=oracle_surfaces[0],*long_expected=oracle_surfaces[1];
+    static const unsigned long_counts[]={15,16,17,31,32,33,1023,1024,1025,4099,LONG_WIDTH};
+    static const uint32_t long_steps[]={0,1,0x3fff,0x4000,0x10000,0x3fffff,0x400000,
+                                      0x7fffffff,0x80000000,0xffffc000,0xffffffff};
+    unsigned long_cases=0;
+    for(unsigned i=0;i<11;i++)for(unsigned j=0;j<11;j++)for(unsigned k=0;k<11;k++) {
+        unsigned count=long_counts[k];
+        uint32_t u=0xffffffff,v=0xffbfffff,a=u,b=v,du=long_steps[i],dv=long_steps[j];
+        size_t bytes=(LONG_WIDTH+2)*sizeof(*long_actual);
+        memset(long_actual,0x91,bytes);memset(long_expected,0x91,bytes);
+        for(unsigned x=0;x<count;x++,a+=du,b+=dv) {
+            unsigned offset=((((b>>16)&63)*256)+((a>>16)&63))*4;
+            long_expected[x+1]=palettes[7][texture[offset]];
+        }
+        dos_raster_floor(long_actual+1,count,texture,palettes[7],u,v,du,dv);
+        assert(!memcmp(long_actual,long_expected,bytes));long_cases++;
+    }
+
+    printf("PASS: %u long floor spans preserve carries, negative/zero steps, 16-pixel groups, word wraps and all guards\n",long_cases);
     free(texture);
     puts("PASS: 8192 floor spans retain UV wrapping, shade gradients and bounds");
 }
@@ -689,11 +980,12 @@ static void check_walls(void)
     for (unsigned w = 0; w < 65536; w++)
         for (unsigned c = 0; c < 3; c++) assert(texels[c * 65536 + w] == ((w >> (c * 5)) & 31));
     RendererPixel palettes[4][32];
-    static RendererPixel actual[320 * 240], expected[320 * 240];
+    size_t surface_bytes=sizeof(oracle_surfaces[0]);
+    RendererPixel *actual=oracle_surfaces[0],*expected=oracle_surfaces[1];
     for (unsigned l = 0; l < 4; l++)
         for (unsigned t = 0; t < 32; t++) palettes[l][t] = renderer_pixel_from_c12((t * 97 + l * 73) & 4095);
     const RendererPixel *pal = palettes[0];
-    for (unsigned c = 0; c < 96; c++) {
+    for (unsigned c = 0; c < 480; c++) {
         unsigned rows = 1u << (c % 5 + 4), mask = rows - 1;
         uint32_t y = next_value(), dy = c % 2 ? next_value() : 8192;
         if(c%8==0)dy=0;
@@ -702,33 +994,39 @@ static void check_walls(void)
         if(c%8==6)dy=65535;
         if(c%9==0)mask=0;
         if(c%11==0)mask &= 0x55;
-        unsigned width = 1 + c % 33;
-        DosWallColumn columns[33];
-        for (unsigned col = 0; col < 33; col++) {
+        static const unsigned widths[]={0,1,2,7,8,31,32,63,64,65,95,127,128,129,255,256,257,319,320,321};
+        static const unsigned heights[]={0,1,7,8,9,31,149,150};
+        unsigned width=widths[c%20],height=heights[(c/20)%8];
+        DosWallColumn columns[321];
+        for (unsigned col = 0; col < 321; col++) {
             columns[col].texels = dos_wall_column(texels,col,rows);
             columns[col].palette = palettes[c % 3 ? 0 : col % 4];
         }
-        memset(actual, 0x91, sizeof(actual)); memcpy(expected, actual, sizeof(actual));
+        memset(actual, 0x91, surface_bytes); memcpy(expected, actual, surface_bytes);
         uint32_t a = y;
-        for (unsigned row = 0; row < 150; row++) {
+        for (unsigned row = 0; row < height; row++) {
             unsigned r = (a >> 16) & mask;
             for (unsigned col = 0; col < width; col++) {
                 unsigned word = ((col / 3) * rows + r) & 65535;
-                expected[row * 40 + col] = columns[col].palette[(word >> ((col % 3) * 5)) & 31];
+                expected[row * 328 + col] = columns[col].palette[(word >> ((col % 3) * 5)) & 31];
             }
             a += dy;
         }
-        dos_raster_wall_rows(actual, width, 150, 40, columns, NULL, y, dy, mask);
-        assert(!memcmp(actual, expected, sizeof(actual)));
+        dos_raster_wall_rows(actual, width, height, 328, columns, NULL, y, dy, mask);
+        assert(!memcmp(actual, expected, surface_bytes));
         if(c%3) {
             /* The original packed-word oracle above supplies the expected
              * pixels. An explicit palette must avoid every per-column field. */
-            for(unsigned col=0;col<33;col++)columns[col].palette=NULL;
-            memset(actual,0x91,sizeof(actual));
-            dos_raster_wall_rows(actual,width,150,40,columns,palettes[0],y,dy,mask);
-            assert(!memcmp(actual,expected,sizeof(actual)));
+            for(unsigned col=0;col<321;col++)columns[col].palette=NULL;
+            memset(actual,0x91,surface_bytes);
+            dos_raster_wall_rows(actual,width,height,328,columns,palettes[0],y,dy,mask);
+            assert(!memcmp(actual,expected,surface_bytes));
+            memmove(expected+1,expected,surface_bytes-sizeof(*expected));expected[0]=0x9191;
+            memset(actual,0x91,surface_bytes);
+            dos_raster_wall_rows(actual+1,width,height,328,columns,palettes[0],y,dy,mask);
+            assert(!memcmp(actual,expected,surface_bytes));
         }
-        memset(actual, 0x91, sizeof(actual)); memset(expected, 0x91, sizeof(expected));
+        memset(actual, 0x91, surface_bytes); memset(expected, 0x91, surface_bytes);
         a = y;
         unsigned count = c * 23 % 160, stride = c % 3 == 2 ? 40 : 320, base_word=c*17;
         for (unsigned row = 0; row < count; row++) {
@@ -737,10 +1035,10 @@ static void check_walls(void)
             a += dy;
         }
         dos_raster_wall(actual, count, stride, texels+base_word, pal, y, dy, mask);
-        assert(!memcmp(actual, expected, sizeof(actual)));
+        assert(!memcmp(actual, expected, surface_bytes));
         unsigned edge_count = !c ? 0 : c % 13 ? c * 23 % 240 : 240;
         for (unsigned copies = 2; copies <= 3; copies++) {
-            memset(actual, 0x91, sizeof(actual)); memset(expected, 0x91, sizeof(expected));
+            memset(actual, 0x91, surface_bytes); memset(expected, 0x91, surface_bytes);
             a = y;
             for (unsigned row = 0; row < edge_count; row++) {
                 unsigned word = ((a >> 16) & mask) + base_word;
@@ -748,12 +1046,65 @@ static void check_walls(void)
                 a += dy;
             }
             dos_raster_wall_edges(actual + 3, edge_count, stride, texels + base_word, pal, y, dy, mask, copies);
-            assert(!memcmp(actual, expected, sizeof(actual)));
+            assert(!memcmp(actual, expected, surface_bytes));
         }
     }
+    puts("PASS: generated wall rows cover widths 0..321, 64/128-column boundaries, short heights, both palette contracts and full guards");
     free(data);
-    puts("PASS: all packed wall words, 192 row/column rasters and 384 edge rasters preserve samples and bounds");
+    puts("PASS: all packed wall words, 960 row/column rasters and 1920 edge rasters preserve samples and bounds");
 }
+
+
+
+#ifdef AB3D_NATIVE_RGB565
+static struct WallPairTestStorage {
+ uint32_t before[8];DosWallPairLookup lookup;uint32_t after[8];
+} *wall_pair_test_storage[2];
+static void check_wall_pair_workspace_guards(void)
+{
+ for(unsigned slot=0;slot<2;slot++)for(unsigned i=0;i<8;i++){
+  assert(wall_pair_test_storage[slot]->before[i]==0xa75c39e2u);
+  assert(wall_pair_test_storage[slot]->after[i]==0x5ca7e239u);
+ }
+}
+static void check_wall_pair_workspace_init(void)
+{
+ for(unsigned slot=0;slot<2;slot++){
+  wall_pair_test_storage[slot]=malloc(sizeof(*wall_pair_test_storage[slot]));assert(wall_pair_test_storage[slot]);
+  memset(wall_pair_test_storage[slot],0x69,sizeof(*wall_pair_test_storage[slot]));
+  for(unsigned i=0;i<8;i++)wall_pair_test_storage[slot]->before[i]=0xa75c39e2u,wall_pair_test_storage[slot]->after[i]=0x5ca7e239u;
+ }
+ dos_raster_prepare_wall_pairs(&wall_pair_test_storage[0]->lookup);
+}
+
+static void check_wall_pairs(void)
+{
+ uint8_t texture[64][32];DosWallColumn columns[64];RendererPixel palette[32];
+ for(unsigned x=0;x<64;x++){
+  for(unsigned y=0;y<32;y++)texture[x][y]=(uint8_t)(x&1?y:x/2);
+  columns[x].texels=texture[x];columns[x].palette=NULL;
+ }
+ for(unsigned pass=0;pass<6;pass++){
+  if(pass==2)dos_raster_prepare_wall_pairs(&wall_pair_test_storage[1]->lookup);
+  if(pass==4)dos_raster_release_wall_pairs();
+  if(pass==5)dos_raster_prepare_wall_pairs(&wall_pair_test_storage[0]->lookup);
+  for(unsigned i=0;i<32;i++)palette[i]=pass==4?0:(RendererPixel)(i*1973u+pass*10483u);
+  memset(oracle_surfaces,0x91,sizeof(oracle_surfaces));
+  for(unsigned y=0;y<128;y++)for(unsigned x=0;x<64;x++)
+   oracle_surfaces[1][1+y*65+x]=palette[x&1?y&31:x/2];
+  dos_raster_wall_rows(oracle_surfaces[0]+1,64,128,65,columns,palette,0,65536,31);
+  assert(!memcmp(oracle_surfaces[0],oracle_surfaces[1],sizeof(oracle_surfaces[0])));
+  check_wall_pair_workspace_guards();
+ }
+ dos_raster_release_wall_pairs();dos_raster_release_wall_pairs();
+ free(wall_pair_test_storage[0]);free(wall_pair_test_storage[1]);
+ puts("PASS: wall-pair workspace guards, replacement, same-pointer palette refresh, detach/rebind, unbound legacy drawing and repeated release");
+ puts("PASS: all 1024 native wall colour pairs, same-pointer palette replacements, alternating DWORD alignment, row guards and output bounds");
+}
+
+#endif
+
+#include "dos_wall_span_cases.h"
 
 static void put_word(uint8_t *p, int value) { p[0] = (unsigned)value >> 8; p[1] = value; }
 static int get_word(const uint8_t *p) { return (int16_t)((p[0] << 8) | p[1]); }
@@ -930,7 +1281,14 @@ int main(void)
     check_floor_step_rounding();
     check_billboard_projection();
     check_sky_step_cache();
-    check_word_offset_bounds(); check_projection_rounding(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_solid_floor_rows(); check_edges(); check_walls();
+    check_word_offset_bounds(); check_projection_rounding(); check_wall_interpolation(); check_wall_texture_walk(); check_palette(); check_water_projection(); check_sprite_palettes(); check_floors(); check_solid_floor_rows(); check_edges();
+#ifdef AB3D_NATIVE_RGB565
+    check_wall_pair_workspace_init();
+#endif
+    check_walls();
+#ifdef AB3D_NATIVE_RGB565
+    check_wall_pairs();check_wall_spans();
+#endif
     check_sprite_words();check_sprite_rows();
     check_sprite_columns();
     check_sprite_batches();
@@ -944,6 +1302,14 @@ int main(void)
     check_sprite_dda_rows();
     check_sprite_alpha_hints();
     check_water_transport();check_water();
+#ifdef AB3D_NATIVE_RGB565
+    water_test_prepared=1;check_water();
+    water_test_prepared=2;check_water();check_water_phase_output_alias();
+    check_water_packed_uv(0);check_water_packed_uv(1);
+    check_water_lookup_guards();dos_raster_release_water();
+    puts("PASS: caller-owned water lookup workspaces retain guards across replacement, repeated preparation and release");
+    puts("PASS: byte and prepared water phase APIs retain the same independent raster reference, including legacy and hinted words");
+#endif
     check_movement_touch();
     check_movement_paths();
     check_objects();

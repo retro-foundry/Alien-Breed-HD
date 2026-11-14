@@ -239,7 +239,10 @@ static AB3D_THREAD_LOCAL uint8_t g_sprite_col_texel_lut[256];
  * Global renderer state
  * ----------------------------------------------------------------------- */
 RendererState g_renderer;
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#ifdef AB3D_DOS_INDEXED
+static RendererPixel *indexed_wall_palettes[MAX_WALL_TILES];
+#endif
+#ifdef AB3D_DOS
 /* DOS draws synchronously; scratch follows the framebuffer width. */
 static DosWallColumn *g_dos_wall_columns;
 #endif
@@ -2228,6 +2231,12 @@ typedef AB3D_CACHELINE_ALIGN struct {
     const RendererWorldZonePrepass *zone_prepass;
     RendererWorkloadStats workload_stats;
 
+#ifdef AB3D_DOS_INDEXED
+    const uint8_t *indexed_wall_pal_src;
+    unsigned indexed_wall_pal_epoch;
+    const RendererPixel *indexed_wall_pal_selected;
+    RendererPixel indexed_wall_pal[1024];
+#endif
     /* ---- Cold: floor palette span cache (lazily populated) ---- */
     const uint8_t *floor_pal_cache_src;
     uint8_t  floor_pal_cache_all_levels_ready;
@@ -2283,6 +2292,9 @@ static void render_slice_context_init(RenderSliceContext *ctx,
     renderer_workload_stats_reset(&ctx->workload_stats);
     ctx->profile_collect_stats = g_renderer_profile_collect_stats ? 1u : 0u;
     ctx->zone_prepass = NULL;
+#ifdef AB3D_DOS_INDEXED
+    ctx->indexed_wall_pal_src = NULL;
+#endif
     ctx->floor_pal_cache_src = NULL;
     ctx->floor_pal_cache_all_levels_ready = 0u;
     memset(ctx->floor_pal_cache_valid, 0, sizeof(ctx->floor_pal_cache_valid));
@@ -2836,6 +2848,9 @@ static uint32_t g_water_vblank_remainder = 0;
 static uint32_t g_water_ms_remainder = 0;
 static const uint8_t *g_water_file = NULL;
 static size_t g_water_file_size = 0;
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+static WaterSourceView g_water_source;
+#endif
 static uint8_t g_water_file_level_max = 0;
 #ifdef AB3D_DOS
 static const uint8_t (*g_water_level_phase_lut)[WATER_PHASE_BYTES];
@@ -2843,14 +2858,44 @@ static const uint8_t (*g_water_level_phase_lut)[WATER_PHASE_BYTES];
 static uint8_t g_water_level_phase_lut[8][64 * 64];
 #endif
 static int g_water_level_phase_lut_ready = 0;
+static inline const uint8_t *renderer_water_phase_data(unsigned phase)
+{
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    if(g_water_source.prepared)
+        return g_water_source.data+phase*WATER_PHASE_BYTES*sizeof(uint16_t);
+#endif
+    return g_water_level_phase_lut[phase];
+}
+static inline uint8_t renderer_water_phase_level(const uint8_t *phase,unsigned index)
+{
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    if(g_water_source.prepared) {
+        uint16_t value;memcpy(&value,phase+index*sizeof(value),sizeof(value));
+        return (uint8_t)(value>>10);
+    }
+#endif
+    return phase[index];
+}
+static inline uint8_t renderer_water_source_byte(const uint8_t *data,size_t offset)
+{
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    if(g_water_source.prepared)return water_view_byte(&g_water_source,offset);
+#endif
+    return water_source_byte(data,offset);
+}
+
 static const uint8_t *g_water_brighten = NULL;
 static size_t g_water_brighten_size = 0;
-#if !defined(AB3D_DOS) || !defined(AB3D_NATIVE_RGB565)
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+static DosWaterLookup *g_water_native_lookup;
+static DosWallPairLookup *g_wall_pair_lookup;
+#endif
+#ifndef AB3D_DOS
 static RendererPixel g_water_brighten_cw_lut[WATER_BRIGHTEN_ROW_COUNT][256];
 #endif
 static inline RendererPixel renderer_water_color(unsigned row,unsigned sample)
 {
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#ifdef AB3D_DOS
     return dos_raster_water_color(row,sample);
 #else
     return g_water_brighten_cw_lut[row][sample];
@@ -3071,6 +3116,9 @@ static void renderer_build_water_level_phase_lut(const uint8_t *water_file, size
     if (!water_file || water_file_size < 65536u) return;
 
 #ifdef AB3D_DOS
+#ifdef AB3D_NATIVE_RGB565
+    if(g_water_source.prepared) {g_water_level_phase_lut_ready=1;return;}
+#endif
     /* ABW1 already holds these planes in the resident WaterFile bank. */
     g_water_level_phase_lut=(const uint8_t (*)[WATER_PHASE_BYTES])water_file;
 #else
@@ -3094,7 +3142,7 @@ static void renderer_build_water_brighten_cw_lut(const uint8_t *water_brighten, 
     g_water_brighten_cw_lut_ready = 0;
     if (!water_brighten || water_brighten_size < (WATER_BRIGHTEN_ROW_COUNT * WATER_BRIGHTEN_ROW_BYTES)) return;
 
-#if !defined(AB3D_DOS) || !defined(AB3D_NATIVE_RGB565)
+#ifndef AB3D_DOS
     for (size_t row = 0; row < WATER_BRIGHTEN_ROW_COUNT; row++) {
         const uint8_t *src = water_brighten + row * WATER_BRIGHTEN_ROW_BYTES;
         for (int sample = 0; sample < 256; sample++) {
@@ -3104,7 +3152,12 @@ static void renderer_build_water_brighten_cw_lut(const uint8_t *water_brighten, 
     }
 
 #else
+#ifdef AB3D_NATIVE_RGB565
+    if(!g_water_native_lookup)g_water_native_lookup=dos_water_lookup_alloc(sizeof(*g_water_native_lookup));
+    dos_raster_prepare_water(water_brighten,g_water_native_lookup);
+#else
     dos_raster_prepare_water(water_brighten);
+#endif
 #endif
     g_water_brighten_cw_lut_ready = 1;
 }
@@ -4783,9 +4836,16 @@ static void floor_span_prepare_pal_cache_all_levels(RenderSliceContext *ctx,
     ctx->floor_pal_cache_all_levels_ready = 1u;
 }
 
-void renderer_set_water_assets(const uint8_t *water_file, size_t water_file_size,
-                               const uint8_t *water_brighten, size_t water_brighten_size)
+static void renderer_configure_water_assets(const uint8_t *water_file,size_t water_file_size,
+                               const uint8_t *water_brighten,size_t water_brighten_size
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+                               ,const WaterSourceView *source
+#endif
+                               )
 {
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    g_water_source=*source;
+#endif
     g_water_file = water_file;
     g_water_file_size = water_file_size;
     g_water_file_level_max = 0;
@@ -4797,7 +4857,12 @@ void renderer_set_water_assets(const uint8_t *water_file, size_t water_file_size
     if (water_file && water_file_size > 0) {
         uint8_t level_max = 0;
         for (size_t i = 0; i < water_file_size; i++) {
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+            uint8_t value=source->prepared?water_view_byte(source,i):water_file[i];
+            if(value>level_max)level_max=value;
+#else
             if (water_file[i] > level_max) level_max = water_file[i];
+#endif
         }
         g_water_file_level_max = level_max;
         renderer_build_water_level_phase_lut(water_file, water_file_size);
@@ -4816,6 +4881,24 @@ void renderer_set_water_assets(const uint8_t *water_file, size_t water_file_size
     renderer_advance_water_anim();
     g_water_wtan_draw = g_water_wtan;
 }
+
+void renderer_set_water_assets(const uint8_t *water_file,size_t water_file_size,
+                               const uint8_t *water_brighten,size_t water_brighten_size)
+{
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    WaterSourceView source={water_file,water_file_size,0,0};
+    renderer_configure_water_assets(water_file,water_file_size,water_brighten,water_brighten_size,&source);
+#else
+    renderer_configure_water_assets(water_file,water_file_size,water_brighten,water_brighten_size);
+#endif
+}
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+void renderer_set_prepared_water_assets(const WaterSourceView *source,
+                                       const uint8_t *brighten,size_t brighten_bytes)
+{
+    renderer_configure_water_assets(source->data,source->bytes,brighten,brighten_bytes,source);
+}
+#endif
 
 /* Sprite brightness -> palette level mapping (from ObjDraw3.ChipRam.s objscalecols).
  * Raw brightness d6 (0..61+) maps to palette byte offset (64*level).
@@ -4868,6 +4951,8 @@ static void free_buffers(void)
     g_sprite_src_row_lut=NULL;g_dos_sky_offsets=NULL;g_dos_gun_columns=NULL;
     g_floor_row_abs_recip_fp=NULL;g_floor_row_abs_recip_limit=0;
     g_dos_sky_offsets_valid=0;
+#elif defined(AB3D_DOS_INDEXED)
+    free(g_dos_wall_columns);g_dos_wall_columns=NULL;
 #endif
     ab3d_aligned_free(g_pick_graphic_buffer);
     g_pick_graphic_buffer = NULL;
@@ -4960,6 +5045,9 @@ static void allocate_buffers(int w, int h)
     g_floor_row_abs_recip_fp=g_dos_sky_offsets+w;
     g_dos_gun_columns=(uint8_t *)(void *)(g_floor_row_abs_recip_fp+h+1);
     g_floor_row_abs_recip_limit=0;g_dos_sky_offsets_valid=0;
+#elif defined(AB3D_DOS_INDEXED)
+    g_dos_wall_columns=malloc((size_t)w*sizeof(*g_dos_wall_columns));
+    if(!g_dos_wall_columns){fprintf(stderr,"Cannot allocate indexed wall columns\n");exit(1);}
 #endif
 
     size_t buf_size = (size_t)w * h;
@@ -5047,6 +5135,11 @@ void renderer_init(int width, int height)
     automap_door_lookup_release();
     automap_key_mask_cache_reset();
     allocate_buffers(width, height);
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    if(!g_wall_pair_lookup)g_wall_pair_lookup=malloc(sizeof(*g_wall_pair_lookup));
+    if(!g_wall_pair_lookup){fprintf(stderr,"[RENDERER] Cannot allocate native wall-pair workspace\n");exit(1);}
+    dos_raster_prepare_wall_pairs(g_wall_pair_lookup);
+#endif
     g_proj_base_width = renderer_proj_effective_base_width_from_dims(g_renderer.width, g_renderer.height);
     g_renderer.view_center_x = (g_renderer.width * 47) / 96;
     g_automap_mutex = SDL_CreateMutex();
@@ -5072,6 +5165,18 @@ void renderer_resize(int w, int h)
 
 void renderer_shutdown(void)
 {
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+    g_water_brighten_cw_lut_ready=0;
+    dos_raster_release_water();
+    dos_water_lookup_free(g_water_native_lookup);g_water_native_lookup=NULL;
+    dos_raster_release_wall_pairs();
+    free(g_wall_pair_lookup);g_wall_pair_lookup=NULL;
+#endif
+#ifdef AB3D_DOS_INDEXED
+    for(unsigned slot=0;slot<MAX_WALL_TILES;slot++) {
+        free(indexed_wall_palettes[slot]);indexed_wall_palettes[slot]=NULL;
+    }
+#endif
     free(g_renderer_f2_pick_snapshot);g_renderer_f2_pick_snapshot=NULL;
     free(g_debug_spill_sprite_rects);g_debug_spill_sprite_rects=NULL;
 #if defined(AB3D_DOS) && (defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED))
@@ -6369,7 +6474,7 @@ static void renderer_column_clip_add_span(int col, int top, int bot, int32_t z)
     renderer_column_clip_add_span_prechecked(clip, col, top, bot, z);
 }
 
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#ifdef AB3D_DOS
 static inline ColumnClip *renderer_wall_clip_for_span(const RenderSliceContext *ctx, int first, int last)
 {
     ColumnClip *clip = &g_renderer.clip;
@@ -6764,7 +6869,46 @@ void renderer_wall_register_column(const RenderSliceContext *ctx, int x, int ct,
     }
 }
 
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#ifdef AB3D_DOS_INDEXED
+/* IO keeps the original wall palette bytes. Rebuild display indices only
+ * when those assets or the level's display palette change. */
+void renderer_indexed_wall_palettes_changed(void)
+{
+    for(unsigned slot=0;slot<MAX_WALL_TILES;slot++) {
+        const uint8_t *source=g_renderer.wall_palettes[slot];
+        if(!source) {
+            free(indexed_wall_palettes[slot]);indexed_wall_palettes[slot]=NULL;continue;
+        }
+        if(!indexed_wall_palettes[slot]) {
+            indexed_wall_palettes[slot]=malloc(1024*sizeof(RendererPixel));
+            if(!indexed_wall_palettes[slot]){fprintf(stderr,"Cannot allocate indexed wall palette\n");exit(1);}
+        }
+        for(unsigned c=0;c<1024;c++)indexed_wall_palettes[slot][c]=renderer_pixel_from_be(source+c*2);
+    }
+}
+#endif
+
+#ifdef AB3D_DOS_INDEXED
+/* WallRoutine3 SCALE selects one of 32 original 32-colour shade rows.
+ * IO-owned palettes share their prepared bank across frames. Preserve the
+ * per-frame cache for callers supplying other palette bytes. */
+static const RendererPixel *renderer_indexed_wall_palette(RenderSliceContext *ctx,
+                                                           const uint8_t *pal,unsigned offset)
+{
+    if(ctx->indexed_wall_pal_src!=pal || ctx->indexed_wall_pal_epoch!=dos_palette_epoch){
+        ctx->indexed_wall_pal_selected=ctx->indexed_wall_pal;
+        for(unsigned slot=0;slot<MAX_WALL_TILES;slot++)if(g_renderer.wall_palettes[slot]==pal) {
+            ctx->indexed_wall_pal_selected=indexed_wall_palettes[slot];break;
+        }
+        if(ctx->indexed_wall_pal_selected==ctx->indexed_wall_pal)
+            for(unsigned i=0;i<1024;i++)ctx->indexed_wall_pal[i]=renderer_pixel_from_be(pal+i*2);
+        ctx->indexed_wall_pal_src=pal;ctx->indexed_wall_pal_epoch=dos_palette_epoch;
+    }
+    return ctx->indexed_wall_pal_selected+(offset>>1);
+}
+#endif
+
+#ifdef AB3D_DOS
 /* ScreenWallstripdraw at constant inverse Z: identical samples and painter
  * order, gathered into rows for the unrotated DOS framebuffer. */
 static void renderer_wall_flat_rows(RenderSliceContext *ctx, int first, int last, int32_t inv_z,
@@ -6814,13 +6958,21 @@ static void renderer_wall_flat_rows(RenderSliceContext *ctx, int first, int last
         int d6 = (z >> 7) + (int32_t)(bright_acc >> 32) * 2;
         if (d6 < 0) d6 = 0;
         if (d6 > d6_max) d6 = d6_max;
+#ifdef AB3D_DOS_INDEXED
+        shared_palette = renderer_indexed_wall_palette(ctx,pal,wall_scale_table[d6]);
+#else
         shared_palette = (const RendererPixel *)(const void *)(pal + wall_scale_table[d6]);
+#endif
     } else {
         for (int i = 0; i < count; i++) {
             int d6 = (z >> 7) + (int32_t)(bright_acc >> 32) * 2;
             if (d6 < 0) d6 = 0;
             if (d6 > d6_max) d6 = d6_max;
+#ifdef AB3D_DOS_INDEXED
+            columns[i].palette = renderer_indexed_wall_palette(ctx,pal,wall_scale_table[d6]);
+#else
             columns[i].palette = (const RendererPixel *)(const void *)(pal + wall_scale_table[d6]);
+#endif
             bright_acc += bright_step_acc;
         }
     }
@@ -6875,7 +7027,7 @@ static AB3D_ATTR_UNUSED int wall_proj_y_screen_invz(int16_t world_y, int64_t inv
     return (int)q + height / 2;
 }
 
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#ifdef AB3D_DOS
 typedef struct {
     int64_t inv_z, texture, brightness;
     int64_t inv_z_step, texture_step, brightness_step;
@@ -6884,6 +7036,60 @@ typedef struct {
 /* ScreenWallstripdraw for native pixels. The caller proves the projection
  * factors and inverse-Z fit signed 32 bits before selecting this loop.
  * Products stay 64-bit; full subpixel interpolants and painter order remain. */
+#ifdef AB3D_NATIVE_RGB565
+/* Pixel output stays separate from projection and column-clip registration. */
+__attribute__((always_inline)) static inline
+void renderer_dos_wall_column_draw(RenderSliceContext *ctx,RendererPixel *out,const DosWallSpan *span,
+                                   const RendererPixel *palette,unsigned mask,int left,int right)
+{
+    unsigned width=g_renderer.width,count=(unsigned)(span->bottom-span->top+1);
+    uint64_t start=ctx->profile_collect_stats?SDL_GetPerformanceCounter():0;
+    if(left || right)dos_raster_wall_edges(out-left,count,width,span->texels,palette,span->y,span->dy,mask,1+left+right);
+    else dos_raster_wall(out,count,width,span->texels,palette,span->y,span->dy,mask);
+    if(span->caps&DOS_WALL_CAP_TOP)out[-(int)width]=out[0];
+    if(span->caps&DOS_WALL_CAP_BOTTOM)out[count*width]=out[(count-1)*width];
+    if(ctx->profile_collect_stats)ctx->workload_stats.ticks_wall_kernel+=SDL_GetPerformanceCounter()-start;
+}
+/* A bounded frame-local list owns no texture/palette memory. Projection
+ * and column-clip registration still advance in their original order. */
+typedef struct {
+    DosWallSpan spans[320];
+    RenderSliceContext *ctx;
+    const RendererPixel *palette;
+    unsigned count,mask;
+    int first,enabled;
+} RendererDosWallBatch;
+
+static void renderer_dos_wall_batch_flush(RendererDosWallBatch *batch)
+{
+    if(!batch->count)return;
+    uint64_t start=batch->ctx->profile_collect_stats?SDL_GetPerformanceCounter():0;
+    dos_raster_wall_spans(renderer_active_cw()+batch->first,g_renderer.width,
+                          batch->spans,batch->count,batch->palette,batch->mask);
+    if(batch->ctx->profile_collect_stats)
+        batch->ctx->workload_stats.ticks_wall_kernel+=SDL_GetPerformanceCounter()-start;
+    batch->count=0;
+}
+
+__attribute__((always_inline)) static inline
+void renderer_dos_wall_column_submit(RendererDosWallBatch *batch,int x,RendererPixel *out,
+                                     const DosWallSpan *span,const RendererPixel *palette,
+                                     unsigned mask,int left,int right)
+{
+    int queue=batch->enabled && !left && !right && span->bottom-span->top+1>=8 &&
+              (mask==15 || mask==31 || mask==63 || mask==127 || mask==255);
+    if(queue){
+        if(batch->count && (batch->palette!=palette || batch->mask!=mask ||
+           batch->first+(int)batch->count!=x || batch->count==320))renderer_dos_wall_batch_flush(batch);
+        if(!batch->count){batch->first=x;batch->palette=palette;batch->mask=mask;}
+        batch->spans[batch->count++]=*span;
+    }else{
+        renderer_dos_wall_batch_flush(batch);
+        renderer_dos_wall_column_draw(batch->ctx,out,span,palette,mask,left,right);
+    }
+}
+#endif
+
 __attribute__((noinline))
 static void renderer_wall_native_columns(RenderSliceContext *ctx, int first, int last,
                                           const DosWallInterpolants *walk,
@@ -6897,6 +7103,11 @@ static void renderer_wall_native_columns(RenderSliceContext *ctx, int first, int
     RendererPixel *pixels = renderer_active_cw();
     int clip_top = ctx->wall_top_clip >= 0 ? ctx->wall_top_clip : ctx->top_clip;
     int clip_bot = ctx->wall_bot_clip >= 0 ? ctx->wall_bot_clip : ctx->bot_clip;
+#ifdef AB3D_NATIVE_RGB565
+    RendererDosWallBatch batch;batch.count=0;batch.ctx=ctx;
+    /* A small screen-space bound cannot amortize a new pair palette. */
+    batch.enabled=width==320 && (last-first+1)*(clip_bot-clip_top+1)>=8192;
+#endif
     int64_t inv_acc = walk->inv_z, tex_acc = walk->texture, bright_acc = walk->brightness;
     /* Rejected columns still advance every interpolant. Defer texture/depth
      * divisions and shade selection until projection/clipping accepts a span. */
@@ -6923,7 +7134,11 @@ static void renderer_wall_native_columns(RenderSliceContext *ctx, int first, int
         if (shade < 0) shade = 0;
         if (shade > d6_max) shade = d6_max;
         int col = (renderer_wall_tex_column(tex_acc >> 16, inv_z) & horand) + fromtile;
+#ifdef AB3D_DOS_INDEXED
+        const RendererPixel *palette = renderer_indexed_wall_palette(ctx,pal,wall_scale_table[shade]);
+#else
         const RendererPixel *palette = (const void *)(pal + wall_scale_table[shade]);
+#endif
         static const uint8_t zero_texel;
         const uint8_t *column = col < 0 ? &zero_texel : dos_wall_column(texture,col,rows);
         unsigned row_mask = col < 0 ? 0 : mask;
@@ -6932,6 +7147,11 @@ static void renderer_wall_native_columns(RenderSliceContext *ctx, int first, int
         int left = x == first && x > ctx->slice_left;
         int right = x == last && x + 1 < ctx->slice_right;
         RendererPixel *out = pixels + ct * width + x;
+#ifdef AB3D_NATIVE_RGB565
+        DosWallSpan sample={column,y,dy,(int16_t)ct,(int16_t)cb,
+            (ct>ctx->top_clip?DOS_WALL_CAP_TOP:0)|(!floor_occluded && cb+1<=ctx->bot_clip?DOS_WALL_CAP_BOTTOM:0)};
+        renderer_dos_wall_column_submit(&batch,x,out,&sample,palette,row_mask,left,right);
+#else
         uint64_t start = ctx->profile_collect_stats ? SDL_GetPerformanceCounter() : 0;
         if (left || right)
             dos_raster_wall_edges(out - left, cb - ct + 1, width, column, palette,
@@ -6940,9 +7160,12 @@ static void renderer_wall_native_columns(RenderSliceContext *ctx, int first, int
         if (ct > ctx->top_clip) out[-width] = out[0];
         if (!floor_occluded && cb + 1 <= ctx->bot_clip)
             pixels[(cb + 1) * width + x] = pixels[cb * width + x];
+#endif
         if (ctx->profile_collect_stats) {
             uint64_t count = cb - ct + 1;
+#ifndef AB3D_NATIVE_RGB565
             ctx->workload_stats.ticks_wall_kernel += SDL_GetPerformanceCounter() - start;
+#endif
             ctx->workload_stats.wall_columns++;
             ctx->workload_stats.wall_pixels_core += count;
             ctx->workload_stats.wall_pixels_side_ext += count * (left + right);
@@ -6952,6 +7175,10 @@ static void renderer_wall_native_columns(RenderSliceContext *ctx, int first, int
         if (ctx->update_column_clip)
             renderer_wall_register_column(ctx, x, ct, cb, z, left, right, prechecked_clip);
     }
+#ifdef AB3D_NATIVE_RGB565
+    renderer_dos_wall_batch_flush(&batch);
+#endif
+
 }
 #endif
 
@@ -7052,7 +7279,7 @@ static void draw_wall_rasterize_segment(
             bright_step_acc = renderer_divide_i64_i32((bright_end_fp - bright_start_fp) << INTERP_SUB_BITS, (int32_t)draw_cols);
     }
 
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#ifdef AB3D_DOS
     if (!ctx->transparent_wall && !inv_z_step_acc && has_tex_pal && !foreground_floor_occlude_top && !pick_capture_active) {
         renderer_wall_flat_rows(ctx, draw_start, draw_end, (int32_t)inv_z_start,
                                  tex_z_acc, tex_z_step_acc, bright_acc, bright_step_acc,
@@ -7890,18 +8117,27 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
 
     renderer_pick_mark_row_span(ctx, y, xl, xr, renderer_pick_zone_encode(ctx->pick_zone_id));
 
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#ifdef AB3D_DOS
     /* pastfloorbright/GOURSEL with the already-native palette: keep water
      * state and desktop palette-cache scaffolding out of the 486 span. */
     const uint8_t *dos_pal = floor_pal ? floor_pal : rs->floor_pal;
+#ifdef AB3D_DOS_INDEXED
+    const RendererPixel (*indexed_floor_palettes)[256]=dos_raster_indexed_floor_palettes(dos_pal);
+    if (!is_water && texture && dos_pal && indexed_floor_palettes && !g_debug_floor_gouraud_only && !g_renderer_rgb_raster_expand) {
+#else
     if (!is_water && texture && dos_pal && !g_debug_floor_gouraud_only && !g_renderer_rgb_raster_expand) {
+#endif
         renderer_floor_prepare_row_math(&row_math, rs, floor_common,
             renderer_floor_row_dist_from_screen_y(y, renderer_view_center_y()));
         unsigned count = xr - xl + 1;
         uint32_t u = row_math.u_base + (uint32_t)xl * (uint32_t)row_math.u_step;
         uint32_t v = row_math.v_base + (uint32_t)xl * (uint32_t)row_math.v_step;
         RendererPixel *out = cwbuf + y * rs->width + xl;
+#ifdef AB3D_DOS_INDEXED
+        const RendererPixel (*palettes)[256] = indexed_floor_palettes;
+#else
         const RendererPixel (*palettes)[256] = (const void *)dos_pal;
+#endif
         if (ctx->profile_collect_stats) {
             ctx->workload_stats.floor_spans++;
             ctx->workload_stats.floor_pixels += count;
@@ -8296,17 +8532,27 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
         const int water_has_brighten = (g_water_brighten && g_water_brighten_size >= 512u);
         const int water_has_brighten_cw_lut = (g_water_brighten_cw_lut_ready && g_water_file_level_max <= 9u);
         const uint8_t *water_phase_lut = g_water_level_phase_lut_ready
-            ? g_water_level_phase_lut[g_water_src_phase & 7u]
+            ? renderer_water_phase_data(g_water_src_phase & 7u)
             : NULL;
-#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#ifdef AB3D_DOS
         if (!expand && water_has_file && water_has_brighten_cw_lut && water_phase_lut &&
             !water_trace_stats) {
             unsigned shade = ((uint32_t)dist & 0xFF00u) >> 8;
             if (shade > 12) shade = 12;
-            dos_raster_water(row16, span_len, cwbuf + bg_cw_i0,
-                water_has_next_refr ? cwbuf + bg_cw_i1 : NULL,
-                water_phase_lut, shade, g_water_off, water_refr_frac,
-                u_fp, v_fp, (uint32_t)u_step, (uint32_t)v_step);
+#ifdef AB3D_NATIVE_RGB565
+            if(g_water_source.prepared) {
+                dos_raster_water_prepared(row16, span_len, cwbuf + bg_cw_i0,
+                    water_has_next_refr ? cwbuf + bg_cw_i1 : NULL,
+                    (const uint16_t *)water_phase_lut, shade, g_water_off, water_refr_frac,
+                    u_fp, v_fp, (uint32_t)u_step, (uint32_t)v_step);
+            } else
+#endif
+            {
+                dos_raster_water(row16, span_len, cwbuf + bg_cw_i0,
+                    water_has_next_refr ? cwbuf + bg_cw_i1 : NULL,
+                    water_phase_lut, shade, g_water_off, water_refr_frac,
+                    u_fp, v_fp, (uint32_t)u_step, (uint32_t)v_step);
+            }
             return;
         }
 #endif
@@ -8346,7 +8592,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 uint16_t water_d5 = (uint16_t)(d5_word + (uint16_t)g_water_off);
                                 water_d5 &= 0x3F3Fu;
                                 uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
-                                uint8_t water_level = water_phase_lut[water_idx];
+                                uint8_t water_level = renderer_water_phase_level(water_phase_lut,water_idx);
                                 uint16_t out_cw = renderer_water_color(water_brighten_row_base+water_level,renderer_pixel_gb_index(cwbuf[bg_cw_i0]));
 
                                 RENDER_TAG_STORE(*p8++, 4);
@@ -8365,8 +8611,8 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 water_d5 &= 0x3F3Fu;
                                 uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
                                 uint8_t water_level = water_phase_lut
-                                    ? water_phase_lut[water_idx]
-                                    : water_source_byte(water_file,((size_t)water_d5 << 2)+(size_t)g_water_src_off);
+                                    ? renderer_water_phase_level(water_phase_lut,water_idx)
+                                    : renderer_water_source_byte(water_file,((size_t)water_d5 << 2)+(size_t)g_water_src_off);
 
                                 uint16_t bg_cw0 = cwbuf[bg_cw_i0];
                                 uint16_t out_cw;
@@ -8394,8 +8640,8 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                             water_d5 &= 0x3F3Fu;
                             uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
                             uint8_t water_level = water_phase_lut
-                                ? water_phase_lut[water_idx]
-                                : water_source_byte(water_file,((size_t)water_d5 << 2)+(size_t)g_water_src_off);
+                                ? renderer_water_phase_level(water_phase_lut,water_idx)
+                                : renderer_water_source_byte(water_file,((size_t)water_d5 << 2)+(size_t)g_water_src_off);
 
                             uint16_t bg_cw0 = cwbuf[bg_cw_i0];
                             int sample0_back_buffer = 0;
@@ -8427,7 +8673,7 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 uint16_t water_d5 = (uint16_t)(d5_word + (uint16_t)g_water_off);
                                 water_d5 &= 0x3F3Fu;
                                 uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
-                                uint8_t water_level = water_phase_lut[water_idx];
+                                uint8_t water_level = renderer_water_phase_level(water_phase_lut,water_idx);
                                 const unsigned brighten_row=water_brighten_row_base+water_level;
                                 uint16_t out_cw0 = renderer_water_color(brighten_row,renderer_pixel_gb_index(cwbuf[bg_cw_i0]));
                                 uint16_t out_cw1 = renderer_water_color(brighten_row,renderer_pixel_gb_index(cwbuf[bg_cw_i1]));
@@ -8451,8 +8697,8 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                                 water_d5 &= 0x3F3Fu;
                                 uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
                                 uint8_t water_level = water_phase_lut
-                                    ? water_phase_lut[water_idx]
-                                    : water_source_byte(water_file,((size_t)water_d5 << 2)+(size_t)g_water_src_off);
+                                    ? renderer_water_phase_level(water_phase_lut,water_idx)
+                                    : renderer_water_source_byte(water_file,((size_t)water_d5 << 2)+(size_t)g_water_src_off);
 
                                 uint16_t bg_cw0 = cwbuf[bg_cw_i0];
                                 uint16_t bg_cw1 = cwbuf[bg_cw_i1];
@@ -8493,8 +8739,8 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
                             water_d5 &= 0x3F3Fu;
                             uint16_t water_idx = (uint16_t)((((water_d5 >> 8) & 0x3Fu) << 6) | (water_d5 & 0x3Fu));
                             uint8_t water_level = water_phase_lut
-                                ? water_phase_lut[water_idx]
-                                : water_source_byte(water_file,((size_t)water_d5 << 2)+(size_t)g_water_src_off);
+                                ? renderer_water_phase_level(water_phase_lut,water_idx)
+                                : renderer_water_source_byte(water_file,((size_t)water_d5 << 2)+(size_t)g_water_src_off);
 
                             uint16_t bg_cw0 = cwbuf[bg_cw_i0];
                             int sample0_back_buffer = 0;
@@ -8553,11 +8799,11 @@ static void renderer_draw_floor_span_ctx(RenderSliceContext *ctx,
 
             if (water_has_file) {
                 if (water_phase_lut) {
-                    water_level = water_phase_lut[water_idx];
+                    water_level = renderer_water_phase_level(water_phase_lut,water_idx);
                 } else {
                     size_t wi = ((size_t)water_d5 << 2) + (size_t)g_water_src_off;
                     if (wi < g_water_file_size) {
-                        water_level = water_source_byte(g_water_file,wi);
+                        water_level = renderer_water_source_byte(g_water_file,wi);
                     }
                 }
             } else if (texture) {
@@ -17960,6 +18206,8 @@ void renderer_draw_display(GameState *state) {
 #ifdef AB3D_DOS_INDEXED
 void renderer_palette_changed(void)
 {
+    renderer_indexed_wall_palettes_changed();
+    dos_raster_indexed_floor_palette_changed();
     renderer_dos_clear_gun_surfaces();
     s_clear_rows_inited=0;
     renderer_build_water_brighten_cw_lut(g_water_brighten,g_water_brighten_size);
@@ -17977,6 +18225,18 @@ void renderer_dos_check_indexed_pixels(GameState *state)
     if(memcmp(original_palette,dos_index_to_c12,sizeof(original_palette))) {
         fprintf(stderr,"DOS palette roundtrip mismatch\n");exit(1);
     }
+    for(unsigned slot=0;slot<MAX_WALL_TILES;slot++) {
+        const uint8_t *source=g_renderer.wall_palettes[slot];
+        if(!source) {
+            if(indexed_wall_palettes[slot]){fprintf(stderr,"DOS stale wall palette owner\n");exit(1);}
+            continue;
+        }
+        if(!indexed_wall_palettes[slot]){fprintf(stderr,"DOS indexed wall palette missing\n");exit(1);}
+        for(unsigned c=0;c<1024;c++)if(indexed_wall_palettes[slot][c]!=renderer_pixel_from_be(source+c*2)) {
+            fprintf(stderr,"DOS stale indexed wall palette\n");exit(1);
+        }
+    }
+    printf("[DOSCHECK] all indexed wall shades survive level/UI palette changes\n");
     if(!g_water_brighten_cw_lut_ready) {
         fprintf(stderr,"DOS indexed water table missing\n");exit(1);
     }

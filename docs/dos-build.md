@@ -5186,3 +5186,1354 @@ These packages are staged under `build/dos` and `build/dos-indexed`. Evidence is
 in `build/dos/hit-flash-validation.json`, `build/dos/hit-flash-staging.json`,
 `build/dos-hit-flash-trace/` and
 `build/dos-hit-flash-source/build/dos/pgo/report.json`.
+
+### Convert rounded water channels directly to native pixels
+
+`dos_raster_water` retains the AB3DI.s `texturedwater`/Brighten samples and
+the port's exact rounded refraction blend. It now adds the signed channel
+deltas at their existing five-bit lane weights, then selects the native
+RGB565 result directly. Every rounded channel remains in 0..15, leaving
+the two intermediate guard bits clear. A 16,384-word conversion table replaces
+the separate red/green and blue tables. Sampling, water animation, resolution,
+colours and gameplay timing are unchanged; no approximate rendering is added.
+
+Compared with the preceding full-view hit-flash package, the freshly trained
+release gives these mean / p95 / maximum frame times in milliseconds. Both
+use DOSBox Staging 0.82.2, normal/486_slow, fixed 40,000 cycles, 4 MB,
+320x240 RGB565, SB16/mouse and muted host audio. Pool runs use the existing
+authored level-1 pool view, fixed simulation updates, 64 frames and timing
+samples 8..63; image writes are outside the timed updates.
+
+| Pool yaw | Previous release | Updated release |
+| --- | --- | --- |
+| 0 | 54.027 / 55.553 / 55.806 | 51.983 / 53.198 / 53.214 |
+| +1024 | 50.240 / 50.786 / 50.911 | 49.094 / 49.575 / 49.692 |
+| -1024 | 51.401 / 51.907 / 52.087 | 50.191 / 50.700 / 50.779 |
+
+Mean pool frame time falls 3.78%, 2.28% and 2.35%; all three tails improve.
+The unmodified real-time 128-frame starting-room check changes from 26.91
+to 26.88 FPS, mean 37.16 to 37.20 ms, p95 37.93 to 37.98 ms and maximum
+77.40 to 77.27 ms. The existing 25.8 FPS gate passes.
+
+Live barrel scenes retain view-dependent pacing:
+
+| Scene | Previous mean / p95 / maximum | Updated mean / p95 / maximum |
+| --- | --- | --- |
+| Level 1 | 39.044 / 55.269 / 61.748 | 38.926 / 54.501 / 59.374 |
+| Level 1, turning | 34.904 / 62.072 / 72.396 | 34.948 / 62.084 / 72.431 |
+| Level 6 | 42.344 / 51.914 / 53.537 | 43.081 / 51.324 / 53.554 |
+| Level 6, turning | 51.098 / 63.471 / 64.569 | 51.093 / 63.480 / 64.571 |
+
+The level-6 stationary mean increases 0.737 ms despite its lower p95.
+This is a water improvement, not a general frame-rate multiplier. Duke3D
+performance parity and physical 486 performance remain unverified.
+
+Fresh compiler feedback completes all 27 training scenarios, all 22 ordinary
+4 MB image checks and the real-time level-4 SB16/mouse exercise. Those 22
+images also match the preceding release. All 192 pool images and simulation
+hashes match at the three yaws. Both barrel scenes retain 128 complete images
+and simulation hashes at 4 versus 16 MB with 32 KiB extra residency.
+The actual optimized-object raster oracle passes, including the existing
+65,536 alpha/colour pairs, 65,536 native inputs and 2,048 water carry/alias
+spans. Additional level-1/15 memory exercises use fixed updates and 200,000
+cycles, not performance measurements. Saves, menus, briefings and sound checks
+pass; every sound-enabled check reports zero audio underruns.
+
+Native text/data/BSS are 1,206,296/22,016/291,840 bytes: unchanged text/data
+and 31 KiB more aligned BSS. The level-4 real-time exercise reports 96 KiB
+free after shared assets and 36 KiB after loading. This trades memory headroom
+for water speed while retaining the tested 4 MB limit. The indexed raster
+preprocesses byte-identically; its package is unchanged.
+
+The native archive retains 231 assets and 238 entries; only `ABHD.EXE`
+changes. Staging preserves every other native game file, including settings
+and saves. Native EXE SHA-256:
+`9319bd4747e8cf4afccaffad73b7206a461dbf63993d894634e89c19f0b16ae3`.
+Native ZIP SHA-256:
+`cad9160f309e36bdbad6de72d4f27cc54351c34c13cc49bcbf7d571c07b2ff2c`.
+Evidence is under `build/dos-water39-trace/`, including `performance.json`,
+`validation.json`, `source-freeze.json`, `optimized-raster.log` and the
+pool frame captures. The frozen build is under `build/dos-water39-source/`.
+
+### Keep native water samplers in 486 registers
+
+`dos_raster_water` now keeps both background pointers and one wrapping UV
+accumulator in registers during blended spans. Horizontal spans retain the
+resolved phase row; angled spans form the original packed U/V word directly.
+The shared assembly pixel operation preserves AB3DI.s `texturedwater` samples,
+Brighten colours, signed blend deltas and native conversion. Both source reads
+precede each destination write, including when the buffers overlap.
+Single-source spans retain their existing sampler. No persistent table,
+framebuffer, allocation, resolution or timing change is added.
+
+Against the preceding source39 release, the fully retrained release gives these
+mean / p95 / maximum frame times in milliseconds. Settings and the 64-frame
+pool harness are unchanged from the previous section: normal/486_slow, fixed
+40,000 cycles, 4 MB, 320x240 RGB565, SB16/mouse, samples 8..63.
+
+| Pool yaw | Source39 release | Direct-sampling release |
+| --- | --- | --- |
+| 0 | 51.983 / 53.198 / 53.214 | 50.752 / 51.765 / 51.897 |
+| +1024 | 49.094 / 49.575 / 49.692 | 48.699 / 49.260 / 49.289 |
+| -1024 | 50.191 / 50.700 / 50.779 | 49.765 / 50.249 / 50.327 |
+
+Mean times improve another 2.37%, 0.80% and 0.85%; every p95 and maximum
+also improves. All four live barrel mean/p95/maximum measurements retain
+the preceding release's values to the reported precision.
+The 128-frame real-time start remains 26.88 FPS, 37.20 ms mean, 37.98 ms
+p95 and 77.27 ms maximum, passing the 25.8 FPS gate.
+
+A prepared-sample variant was rejected after a complete source40 feedback
+build: it improved the straight pool to 50.739 ms but slowed the angled means
+to 49.848/50.966 ms. The retained direct U/V loop removes that regression.
+A wider delta table was also slower in the ordinary-kernel comparison.
+Neither experiment is staged. Colour-pair cache probes found only 43..51%
+hits among differing samples with 128..512 slots, excluding equal-colour
+pixels; these instrumented timings are not performance results.
+
+Fresh feedback completes all 27 scenarios, 22 exact ordinary/optimized 4 MB
+captures and the real-time level-4 SB16/mouse exercise. All 22 captures also
+match source39. The three pool angles retain 192 complete images and game-state
+hashes. Both barrel scenes retain 128 image/hash pairs at 4 versus 16 MB with
+32 KiB extra residency. The actual optimized-object raster oracle passes,
+including 65,536 native inputs, 65,536 alpha/colour pairs and 2,048 water
+wrapping/alias spans.
+The level-1/15 fixed-update memory exercises also pass. Sound-enabled checks
+report zero underruns. Indexed raster preprocessing remains byte-identical.
+
+Native text/data/BSS remain 1,206,296/22,016/291,840 bytes. The level-4
+exercise retains 96 KiB free after shared assets and 36 KiB after loading.
+The archive retains 231 assets and 238 entries; only `ABHD.EXE` changes.
+Staging preserves every other native game file and the indexed package.
+
+Native EXE SHA-256:
+`a41dfba0462d24dbe480a05d8103617241c04cc68fab3d077bf4caf194b2071d`.
+Native ZIP SHA-256:
+`35d6a1db1ac391ccf3ac1402c895879db5208cb051cab1a98e925dc5e2e8c1dc`.
+Evidence is in `build/dos-water41-trace/`, including `performance.json`,
+`validation.json`, `source-freeze.json`, `optimized-raster.log` and pool
+captures, plus `build/dos-water41-source/`. The rejected prepared-sample
+release and its measurements remain under `build/dos-water40-source/`
+and `build/dos-water40-trace/`.
+
+### Original Duke3D reference readings
+
+`tools/profile_duke_dos.py` runs the unmodified Duke Nukem 3D 1.3d shareware
+executable and reads its original DNRATE counter. It verifies the EXE, GRP,
+CON and RTS file hashes, copies them into an isolated build directory and
+uses DOSBox's internal AUTOTYPE command. The installed source directory is
+preserved. No Duke files enter the Alien Breed package.
+
+The small resident `tests/dos_duke_sampler.s` reads the top-left 32x8 VGA
+pixels every 18 BIOS timer ticks. It writes the records after Duke exits;
+the interrupt handler performs no disk I/O. The Python tool decodes exact
+glyphs using the game's original TABLES.DAT small font, skips startup and
+takes eight early counter samples before the scripted quit menu. The original
+Build routines are [loadtables and printext256](https://github.com/videogamepreservation/dukenukem3d/blob/ef609159bd352985a0c63734a11241d86c873fe5/SRC/ENGINE.C).
+
+The source archive is the `3dduke13.zip` shareware listed in the preserved
+[3D Realms download catalogue](https://ftp.idtech.space/3drealms/downloads/Downloads.html).
+Supply its installed game directory when reproducing the reference:
+
+```powershell
+python tools/profile_duke_dos.py --dosbox path/to/dosbox.exe --game-dir path/to/duke-shareware --level 1 --sound on
+python tools/profile_duke_dos.py --dosbox path/to/dosbox.exe --game-dir path/to/duke-shareware --level 2 --sound on
+```
+
+With normal/486_slow, fixed 40,000 cycles, 8 MB, 320x200 VGA, full detail,
+SB16 stereo 16-bit 8000 Hz and music disabled, the stationary counter samples
+are:
+
+| Duke view | Median integer FPS | Sample range |
+| --- | --- | --- |
+| E1L1 rooftop | 32 | 30..32 |
+| E1L2 start | 48 | 48..48 |
+
+The sound-disabled rooftop settles at 32 FPS as well. At the same 8 MB and
+CPU settings, Alien Breed's 128-frame start gives 26.88 FPS with sound and
+27.17 without sound, using its 320x240 RGB565 full view. Duke uses fewer
+pixels, a different view/status-bar layout and different geometry. Its integer
+counter supplies no p95 or worst-frame measurement. These readings establish
+a reference range; they do not establish matched gameplay or water performance.
+The requested Duke3D performance target remains open.
+
+The original Duke loader fails at 4 MB with DOS/4GW error 1307, including
+without the resident sampler. Both games therefore use 8 MB for these starting
+view comparisons; Alien Breed retains its separate 4 MB validation. The
+reference tool reports that startup failure promptly. Physical 486 performance
+and moving/combat Duke comparisons remain unmeasured.
+
+Reproducible tool results are in `build/duke-profile/40000-8m-l1-on/report.json`
+and `build/duke-profile/40000-8m-l2-on/report.json`. Initial captures, decoded
+glyphs, source archive, loader diagnosis and original source evidence remain
+under `build/dos-duke-benchmark/`.
+
+### Indexed VGA floor, wall and water kernels
+
+The optional `-Indexed` build now uses the same DOS floor/wall span setup and
+fractional floor walks as RGB565. IO-owned floor palettes have a small prepared
+byte cache, refreshed after palette changes and cleared before asset replacement.
+Wall shade rows are converted once per source palette within a frame, rather
+than per pixel. Shared-palette wall rows also avoid unused descriptor fields.
+
+The VGA water kernel shares the horizontal carry segmentation and direct UV
+assembly sampler. It preserves the previous indexed operation order: Brighten,
+palette quantization, representative 0RGB channels, rounded interpolation, then
+palette quantization again. Single-source water keeps its original single
+conversion. Equal colours and tiny alpha values must still retain the second
+conversion when blending; the byte oracle includes non-idempotent test palettes
+to check that distinction. Water animation and all original source samples remain
+unchanged.
+
+Clean ordinary release builds, normal/486_slow, fixed 40,000 cycles, 4 MB,
+320x200 indexed VGA and SB16 enabled:
+
+| Measurement | Previous VGA release | Updated VGA release |
+| --- | ---: | ---: |
+| Real-time start, 128 frames | 15.37 FPS | 18.74 FPS |
+| Real-time start mean / p95 / max | 65.04 / 65.50 / 120.24 ms | 53.36 / 53.65 / 108.86 ms |
+| Pool straight mean / p95 / max | 99.782 / 101.689 / 101.798 ms | 57.168 / 57.798 / 57.851 ms |
+| Pool +1024 mean / p95 / max | 73.702 / 75.236 / 75.509 ms | 56.094 / 56.584 / 56.597 ms |
+| Pool -1024 mean / p95 / max | 74.732 / 75.881 / 76.444 ms | 57.099 / 57.576 / 57.811 ms |
+
+Pool timings use the same fixed-tick scene and samples 8..63 of 64 frames;
+captures happen after the frame timer. They are frame-cost comparisons, not
+real-time gameplay FPS. Straight pool mean frame time falls 42.7%; angled views
+fall about 24%. The real-time start gains 21.9% FPS. These VGA improvements do
+not establish the requested Duke3D performance target.
+
+Verification of the actual clean release includes all 22 still/turning level
+captures, 192 pool frames and state hashes across all three directions, and 128
+barrel/explosion frames and state hashes across levels 1 and 6. All match the
+previous VGA release exactly. The independent byte oracle also checks 8,192 floor
+spans, 4,608 classified floor/cache spans, 768 wall rasters, and water wrapping,
+overlap, clipping, all alpha values and palette refreshes. The real-time 4 MB
+level 4 sound/mouse/UI/save/reload exercise passes with zero audio underruns;
+244 KiB remains free after shared assets and 108 KiB after loading that level.
+
+An extra level 15 exercise completes its in-game diagnostics, but the host
+checker's strict green-channel-decrease assertion fails in both old and new VGA
+builds. All five hit-flash captures are byte-identical between releases. That
+palette/checker limitation is unchanged and is not counted as a passing host
+exercise.
+
+The updated indexed executable has 1,223,192 text / 22,016 data / 305,152 BSS
+bytes, versus 1,205,784 / 22,016 / 247,808 previously. The source snapshot is
+`build/dos-index42-source`; verification and before/after measurements are under
+`build/dos-index42-trace`. Native preprocessing of renderer, IO and raster code
+is token-identical to the previous RGB565 release after concatenating adjacent
+C string literals. The default RGB565 executable and archive retain their
+previous hashes; this change updates only the optional indexed package.
+
+Water-kernel release indexed executable SHA-256 (superseded below):
+`5e95166bf526d52946bc1d55580b25e8ea681daef9e789741eca1d4d442bb270`.
+Indexed archive SHA-256:
+`5770ef647db2d9ee01ec00d754be38f734d47858cff0880634d3c2ca7b4b426d`.
+The archive's only changed entry is `ABHD.EXE`; existing game files, settings,
+saves and source assets are preserved during staging.
+
+### VESA Duke reference at the native resolution
+
+`tools/profile_duke_dos.py --height 240` now requests original Duke3D's 320x240
+VESA mode. It rejects saved CFG fallback settings and checks DOSBox's actual
+graphics-mode log. The confirmed mode is 151h, 320x240, 256 colours. The resident
+sampler permits that BIOS mode without calling the BIOS from its timer hook;
+the original 320x200 sampler remains byte-identical and still reports the
+previous 32 FPS median (30..32) in the control run.
+
+```powershell
+python tools/profile_duke_dos.py --dosbox path/to/dosbox.exe --game-dir path/to/duke-shareware --height 240 --level 1 --sound on
+```
+
+At normal/486_slow, fixed 40,000 cycles, 8 MB, full detail and the same SB16
+settings, the E1L1 rooftop reads **29 FPS**, range 29..29 across the eight
+selected counter samples. The native Alien Breed start remains 26.88 FPS at
+320x240 RGB565. Both now have the same canvas dimensions; colour depth,
+geometry, view layout and game logic still differ. This is a stationary
+reference and does not prove moving/combat or water parity. The full performance
+goal remains open. Results, original-file hashes, selected counter records,
+saved settings and confirmed video mode are in
+`build/duke-profile/40000-8m-l1-on-320x240/report.json`.
+
+Native water trials under `build/dos-water43-trace` did not earn a replacement
+release: early duplicate-background tests and WaterFile run segmentation made
+whole frames slower. Preparing channel-weighted deltas gained less than 1% for
+another 16 KiB. Renderer compiler-option trials also provided no verified
+improvement. The native executable and archive remain unchanged.
+
+### Persistent indexed wall shades
+
+The indexed renderer now keeps one 1,024-byte shade bank per loaded wall
+palette. Previously switching wall textures rebuilt all 1,024 colours during
+the frame, even when their source and display palette had not changed. IO asset
+replacement and level/UI palette changes now refresh the banks; shutdown frees
+them. Other palette sources retain the existing frame-local conversion cache.
+Stock assets load 14 banks, occupying 14 KiB plus allocator metadata. A fixed
+40 KiB bank failed 4 MB startup and was rejected.
+
+Clean ordinary VGA releases, normal/486_slow, fixed 40,000 cycles, 4 MB,
+320x200, SB16 and mouse, 128 real-time frames:
+
+| Starting view | Previous VGA release | Updated VGA release |
+| --- | ---: | ---: |
+| FPS | 18.74 | 21.41 |
+| Mean frame time | 53.36 ms | 46.71 ms |
+| p95 / maximum | 53.65 / 108.86 ms | 46.91 / 101.77 ms |
+
+That is another 14.2% FPS gain in the starting view. The pool is nearly
+unchanged (57.168 to 56.944 ms straight ahead); the earlier water-kernel gain
+is retained. All 22 still/turning captures, 192 pool frames and state hashes,
+and 128 barrel/explosion frames and state hashes match the previous release.
+The real-time 4 MB level 4 sound/mouse/UI/save/reload exercise passes, including
+explicit checks of every cached wall shade after level/UI palette changes.
+Audio underruns remain zero. Free XMS is 232 KiB after shared assets and 92 KiB
+after loading level 4. The executable uses 1,223,704 text / 22,016 data / 305,152
+BSS bytes. Native renderer/IO preprocessing remains token-identical.
+
+Source and verification are in `build/dos-index44-source` and
+`build/dos-index44-trace`. The indexed executable SHA-256 is
+`b3dfad90646ce64c96f18c1ffb7a2ebb5b74e05a8d099168c4bf35240ff071a2`;
+the archive SHA-256 is
+`9492faa5f513bd131eca7bf1e855d204b480435b276d02e254df87bc77de4d06`.
+Only `ABHD.EXE` changes in the archive and staged game tree; 238 other game
+files, including settings and saves, are preserved. Default RGB565 rendering
+and its package retain their previous hashes.
+
+### Native wall rows and unchanged water blends
+
+The standard RGB565 release now prepares a bounded 128-column x86 wall-row
+routine for shared-palette spans. It embeds the immutable texel pointers,
+pairs independent source reads and retains the exact repeated-row copies.
+Short spans and varying palettes continue through the existing kernels.
+The completed routine occupies at most 2,305 bytes of aligned BSS and executes
+in DJGPP's flat DOS address space; rendering is synchronous.
+
+Native water can also skip interpolation when all three channels round back
+to the first brightened colour. For a channel difference `d` and half-alpha
+`a`, the original result is unchanged exactly when `-120 <= d*a <= 134`.
+Precomputed conservative intervals test the three packed lanes together;
+misses retain the original signed delta lookups. Independent channel tests
+cover both rounding boundaries and reversed alpha weights. Indexed water
+keeps its existing palette conversion semantics; its preprocessed tokens are
+identical and its staged package is unchanged.
+
+Fresh compiler-feedback releases, normal/486_slow, fixed 40,000 cycles,
+320x240 RGB565, SB16 and mouse, 128 real-time starting-view frames:
+
+| Measurement | Previous RGB565 | Updated RGB565 |
+| --- | ---: | ---: |
+| FPS, at both 4 and 8 MB | 26.88 | 27.70 |
+| Mean frame time | 37.20 ms | 36.11 ms |
+| p95 / maximum, 4 MB | 37.98 / 77.27 ms | 36.85 / 76.16 ms |
+
+That is a 3.1% FPS gain. The confirmed original Duke3D 320x240 reference above
+remains 29 FPS; matching its stationary start and broader moving/water
+performance are still open goals. Neither game changes resolution or detail
+for these measurements.
+
+Fixed-tick pool fixtures, 64 frames each, measuring frames 8..63 without
+renderer profiling or continuous image capture:
+
+| Pool direction | Previous mean | Updated mean | Updated p95 / maximum |
+| --- | ---: | ---: | ---: |
+| Straight | 50.752 ms | 47.621 ms | 48.583 / 48.691 ms |
+| Yaw +1024 | 48.699 ms | 48.066 ms | 48.562 / 48.641 ms |
+| Yaw -1024 | 49.765 ms | 49.111 ms | 49.615 / 49.678 ms |
+
+The straight view saves 6.2% of frame time; the angled views save about 1.3%.
+These fixed-tick figures describe the controlled water workload, not real-time
+gameplay FPS. Real-time barrel workloads improve from 38.926 to 37.686 ms in
+level 1 and 43.081 to 41.431 ms in level 6; turning variants are almost unchanged.
+
+Verification uses the actual optimized release objects: the independent
+native raster/arithmetic oracle passes, including 81,634 independent water
+channel-boundary pairs and wall widths 0..321, zero/short heights and 64/128
+column boundaries. A host proof checks all 3,545,129 active half-alpha/channel
+difference combinations without a false no-change acceptance. All 22 previous
+release captures, 192 pool images/state hashes and 128 barrel/explosion
+images/state hashes match exactly. Barrel scenes also match at 4 and 16 MB.
+The real-time 4 MB level 4 sound/mouse/UI/save/reload exercise passes with zero
+audio underruns and 16 complete quickloads. Free XMS is 92 KiB after shared
+assets and 28 KiB after loading level 4.
+
+The executable uses 1,207,832 text / 22,016 data / 295,936 BSS bytes. Frozen
+source and evidence are in `build/dos-native45-source` and
+`build/dos-floor45-trace`. The native executable SHA-256 is
+`32c2a9d82952fa2bea720aff871ff8690a0366cd05efc0249e35bf7ca826b96d`;
+the archive SHA-256 is
+`96a011065db3e9a1a6fceee122af6a44ed632a60f48fd2c1bf541796b104e8a2`.
+Only `ABHD.EXE` changes in the archive. Staging preserves 241 other native game
+files and all 239 indexed game files, including settings and saves.
+
+### Four-pixel native water kernels
+
+The native water row and general UV samplers now process four pixels per loop.
+Each pixel retains its original sampling, blend rounding and forward read/write
+order, including overlapping inputs. Source-pointer advances and the loop test
+are shared across the group; scalar tails retain lengths 0..3. The general UV
+sampler also omits an intermediate mask already supplied by its two final field
+masks. Shared sampler/blend macros keep the scalar and grouped operations equal.
+Indexed preprocessing remains token-identical to the preceding release.
+
+Fresh native compiler-feedback releases, normal/486_slow, fixed 40,000 cycles,
+320x240 RGB565, SB16 and mouse; fixed-tick pool frames 8..63:
+
+| Pool direction | Previous mean | Updated mean | Updated p95 / maximum |
+| --- | ---: | ---: | ---: |
+| Straight | 47.621 ms | 46.565 ms | 47.440 / 47.574 ms |
+| Yaw +1024 | 48.066 ms | 47.344 ms | 47.823 / 47.864 ms |
+| Yaw -1024 | 49.111 ms | 48.324 ms | 48.794 / 48.852 ms |
+
+This saves another 2.2% of frame time straight ahead and 1.5..1.6% in the angled
+views. The real-time 128-frame start reads 27.71 FPS at both 4 and 8 MB, versus
+27.70 previously: mean 36.08 ms, p95 36.82 ms, maximum 76.15 ms. Four real-time
+barrel workloads remain within 0.03 ms of their previous mean frame times.
+These measurements do not establish broader Duke3D or water parity.
+
+The actual optimized raster oracle passes 163,268 independent water channel
+boundary comparisons across both samplers, all group tails and reversed alpha
+weights, plus the existing wrapping/overlap/guard cases. All 22 scene captures,
+192 pool frames/state hashes and 128 barrel/explosion frames/state hashes match
+the preceding release exactly; barrel scenes also match at 4 and 16 MB.
+The real-time 4 MB sound/mouse/UI/save/reload exercise passes with zero audio
+underruns and 16 full quickloads. Free XMS is 92 KiB after shared assets and
+20 KiB after loading level 4. Text/data/BSS are 1,209,368 / 22,016 / 295,936 bytes.
+
+Frozen source and evidence are in `build/dos-native46-source` and
+`build/dos-project46-trace`. Native executable SHA-256:
+`8ffd0a02caa0656f42ac6335dc3b651e8b94a153803064a05db7eabfa9e51d52`.
+Archive SHA-256:
+`b27a1bff7163bbddb8806a0ff0c44f44b2a08b66fdd6d76bb9c06637b918480d`.
+Only the executable changes in the archive. Staging preserves all other native
+and indexed game files, settings and saves.
+
+### Duke viewport and banked counter readback
+
+The profiler now accepts `--screen-size 4` for Duke's full world view with its
+mini HUD (`8` remains the default status bar; `0` selects no HUD). It verifies
+the saved setting as well as the actual video mode. Original `PREMAP.C:vscrn`
+gives a 320x199 world viewport for size 8 at 320x240; size 4 uses all 320x240.
+Alien Breed's default world view also uses all 320x240, with HUD overlays.
+
+The VESA sampler now temporarily selects S3 bank zero, then restores both
+the interrupted bank and CRTC index. Each record includes before/after values,
+which the reader requires to match. This uses the emulator's
+[versioned CR6A implementation](https://github.com/dosbox-staging/dosbox-staging/blob/v0.82.2/src/hardware/vga_s3.cpp);
+there are no BIOS calls inside the timer handler. It is specific to the
+profiler's configured `svga_s3` machine. The original VGA sampler is
+byte-identical. VESA records use an eight-sample warmup because correct bank
+selection observes DNRATE earlier during startup; VGA keeps its existing
+three-sample window. Decoder replays also reject a corrupted restoration field.
+
+Normal/486_slow, fixed 40,000 cycles, 8 MB, 320x240 and SB16. Duke uses full
+detail with music off and 8-bit colour; Alien Breed retains RGB565:
+
+| Reference | World viewport | FPS |
+| --- | ---: | ---: |
+| Original Duke, status bar | 320x199 | 29 |
+| Original Duke, mini HUD | 320x240 | 25 |
+| Alien Breed native release 46 | 320x240 | 27.71 |
+
+Duke figures are eight integer counter samples, all equal in each selected
+stationary window; Alien Breed uses its 128-frame real-time mean. This full
+viewport comparison does not establish moving or water parity. The status-bar
+control reproduces the prior 29 FPS reference with the corrected sampler.
+
+The original shareware recordings also provide a moving reference: eight
+samples between two F12 captures read 36, 41, 36, 28, 23, 20, 20 and 26 FPS
+(median 27). The captures show movement and combat from a street into a shop.
+The isolated demo fixture includes the three original loose `DEMO*.DMO` files,
+in addition to the usual hashed game files. Captures are outside the selected
+window, with a six-DOS-second warmup after the first. Timestamp matching follows
+[DOSBox's BIOS-tick conversion](https://github.com/dosbox-staging/dosbox-staging/blob/v0.82.2/src/dos/dos.cpp).
+This is a short sample of recorded gameplay, not a timedemo or a frame-time
+distribution, and does not identify comparable water scenes in both games.
+
+Results are in `build/duke-profile46`, `build/duke-s3probe46` and
+`build/dos-project46-trace/duke-validation.json`. The public CLI run's raw samples
+were replayed after extending the VESA reader warmup. The native runtime and
+its frozen build remain exact; only the separately validated Duke profiler and
+sampler changed after that build. The performance goal remains open.
+
+### Native exact water-rounding threshold
+
+Native release 47 replaces the packed interval checks with a 32 KiB table of
+maximum normalized blend weights. For each three-channel difference, every
+channel rounds back to its first Brighten colour exactly when
+`-120 <= difference*alpha <= 134`. Taking the tightest channel bound makes one
+lookup sufficient, including mixed-sign differences. This retains the original
+`AB3DI.s:texturedwater` Brighten and rounded interpolation results.
+
+Splitting native RGB565 conversion into red/green and blue tables, and removing
+the old interval metadata, recovers the threshold table's storage. The fixed
+native tables initialize once; asset-dependent Brighten colours still rebuild
+on every preparation. Indexed preprocessing is identical to release 46.
+
+Normal/486_slow, fixed 40,000 cycles, 4 MB, SB16 and mouse; full 320x240 RGB565.
+Pool means use frames 8..63 of the same 64-frame fixed-tick scene:
+
+| Pool view | Release 46 | Release 47 | New p95 / maximum |
+| --- | ---: | ---: | ---: |
+| Straight | 46.565 ms | 45.832 ms | 46.487 / 46.616 ms |
+| Yaw +1024 | 47.344 ms | 46.968 ms | 47.414 / 47.461 ms |
+| Yaw -1024 | 48.324 ms | 47.959 ms | 48.374 / 48.583 ms |
+
+This saves 1.6% of straight pool frame time and about 0.8% in either angled
+view. Real-time barrel means remain within 0.014 ms of release 46. The 8 MB
+128-frame start reads 27.72 FPS versus 27.71. At 4 MB it reproducibly reads
+27.52 versus 27.71; a separate 512-frame comparison reads 27.29 versus 27.33.
+Both durations add approximately 31 ms to the whole run, with p95 unchanged at
+36.82 ms. That pattern suggests a difference in initial real-time workload
+phase; it does not establish its cause. The original 128-frame result and all
+repeat runs are retained in the evidence.
+
+The actual optimized-object oracle passes the existing 163,268 independent
+channel-boundary pairs and a new 8,192 known-colour comparison set covering all
+4,096 rounded colours through both samplers, repeated asset-table rebuilds and
+output guards. An independent floor-formula check verifies all 4,194,304
+difference/weight combinations. The enlarged optimized test harness disables
+inlining of functions called once: GCC otherwise inlines a seven-register
+sprite sampler into its specially aligned `main` and cannot allocate its
+operands. The game and its original optimized raster object are unchanged by
+this test-only compiler setting.
+
+All 22 release captures, 192 pool frames/state hashes and 128 barrel/explosion
+frames/state hashes match release 46. Barrel scenes also match at 4 and 16 MB.
+The real-time 4 MB SB16/mouse/UI/save/reload exercise passes with zero audio
+underruns and 16 full quickloads. Free XMS remains 92 KiB after shared assets
+and 20 KiB after loading level 4. Padded text/data/BSS remain
+1,209,368 / 22,016 / 295,936 bytes.
+
+Frozen source and evidence are in `build/dos-native47-source`,
+`build/dos-project47-trace` and `build/dos-perf47-trace`. Executable SHA-256:
+`91cebd3dfd900996ef4a067189594b484035f57b7f8cbca48e89bcf2856546bd`.
+Archive SHA-256:
+`9433187d3553018210b0212f89115438758a76756a8784e6c97e93ba1af801da`.
+Only the executable changes in the archive; staging preserves all other native
+and indexed files, settings and saves. Broader moving and water parity with
+Duke3D remains unproven.
+
+An additional original Duke E1L4 full-view start at 8 MB, 40,000 cycles and
+SB16 reads 35, 36, 37, 38, 40, 40, 40 and 40 FPS (median 39). Its 320x240 PCX
+shows a compact interior rather than a matching surface-pool view; no water
+parity conclusion follows. The pinned S3 sampler verifies bank/index restoration
+and the saved full-view video settings. Report and capture are in
+`build/duke-water47/40000-8m-l4-on-320x240-s3full`.
+
+### Native packed water UV sampling
+
+Native release 48 builds the `AB3DI.s:texturedwater` integer UV word with an
+upper-word U load followed by a V-byte load into AH. It retains both full
+32-bit accumulators in memory and keeps the phase pointer in the freed
+register. Offset addition, byte/word carries, sampling, blending and forward
+read/write order remain exact. Indexed preprocessing matches release 47.
+
+Fresh PGO, normal/486_slow at 40,000 cycles, 4 MB, SB16/mouse and 320x240 RGB565:
+
+| Pool view | Release 47 | Release 48 | New p95 / maximum |
+| --- | ---: | ---: | ---: |
+| Straight | 45.832 ms | 45.790 ms | 46.444 / 46.573 ms |
+| Yaw +1024 | 46.968 ms | 46.067 ms | 46.553 / 46.565 ms |
+| Yaw -1024 | 47.959 ms | 46.998 ms | 47.443 / 47.704 ms |
+
+The angled views save 1.9..2.0% of total frame time. The four real-time barrel
+means equal release 47. Start results remain 27.52 FPS at 4 MB and 27.72 at
+8 MB, including the previously documented 4 MB caveat. Padded text/data/BSS
+and free memory after shared assets/level 4 remain unchanged.
+
+The actual optimized-object oracle, all 22 release captures, 192 pool
+frames/state hashes, 128 combat frames/state hashes and the 4/16 MB capacity
+comparison pass. The real-time 4 MB SB16/mouse/UI/save/reload exercise passes
+with zero audio underruns and 16 full quickloads. The native preprocessed
+kernel also matches the measured trial exactly. No asset or indexed package
+changes accompany this release.
+
+Frozen source/evidence: `build/dos-native48-source` and
+`build/dos-project48-trace`. Executable SHA-256:
+`c73f9c736c05bfcd6941c83a714d544ecb11d29f90147a18a24bd4b79f312866`.
+Archive SHA-256:
+`5a263d5923d7a5e30490e952216450c87ddbd64f371add6d7a8b55570e2156ad`.
+Staging and final hash/archive checks pass, preserving settings and saves.
+Broader Duke3D moving/water parity remains open.
+
+### Native floor coordinate packing
+
+Native release 49 retains the `AB3DI.s:sideloop` sample address while reducing
+general UV extraction to a move, SHRD and mask. U holds its sampled integer
+bits at the top; V rotates its 22 useful bits, with ADC returning fractional
+carry around bit 31. The unused ten-bit gap receives at most 16 integer wraps
+before each group clears it. Tails are at most 15 pixels. Axis kernels,
+textures, palettes and gameplay timing retain their preceding behavior.
+Indexed preprocessing is identical to release 48; native preprocessing matches
+the measured trial exactly.
+
+Fresh PGO, normal/486_slow, 40,000 cycles, 4 MB, SB16/mouse, 320x240 RGB565:
+
+| Pool view | Release 48 | Release 49 | New p95 / maximum |
+| --- | ---: | ---: | ---: |
+| Straight | 45.790 ms | 45.835 ms | 46.489 / 46.622 ms |
+| Yaw +1024 | 46.067 ms | 44.869 ms | 45.364 / 45.366 ms |
+| Yaw -1024 | 46.998 ms | 45.822 ms | 46.364 / 46.537 ms |
+
+Angled pool frames improve 2.5..2.6%. Real-time turning combat improves from
+34.901 to 33.639 ms in level 1 and 51.103 to 49.557 ms in level 6 (3.6% and
+3.0%). Straight combat means differ by at most 0.008 ms. The start reads
+27.67 FPS at both 4 and 8 MB, versus 27.52/27.72 previously; p95 is 36.88 ms
+versus 36.82. The straight pool and 8 MB start have small regressions, so the
+improvement is specific to workloads using general floor UV sampling.
+
+The actual optimized-object oracle passes 1,331 additional long floor spans
+through 65,541 pixels, including negative/zero steps, group boundaries, wrapping
+and guards, plus the existing 8,192 floor spans and complete raster suite.
+The independent address proof covers 1,419,730 samples. All 22 captures,
+192 pool frames/state hashes, 128 combat frames/state hashes and the 4/16 MB
+capacity comparison match release 48. The real-time 4 MB SB16/mouse/UI/save
+exercise passes with zero underruns and 16 full quickloads.
+
+Text/data/BSS are 1,209,880 / 22,016 / 295,936 bytes: text grows by 512 bytes.
+Physical RAM remains 3008 KiB. Free XMS is 88 KiB after shared assets and
+20 KiB after level 4. Frozen source/evidence: `build/dos-native49-source` and
+`build/dos-project49-trace`. Executable SHA-256:
+`1df1e7e9ff7aa469b3f6d954577ad82b6e2b6578f7983cb01f75090753e93f47`.
+Archive SHA-256:
+`bb6f949b9dfcc0f3ba116e692373d4cb04f1bfde3078c6ca4f8e43b3bd85eb10`.
+Only the executable changes in the archive; staging preserves all other files,
+settings and saves. Duke3D performance parity remains unproven.
+
+### Native cached floor fraction and index
+
+Native release 50 keeps the cached axis floor fraction in CX and the current
+texture offset in EAX. A fractional carry or borrow advances AL by four for U,
+or AX by 1024 for V, preserving the original 64-texel wrap and all interleaved
+texture variants. This shortens a colour refresh from six instructions to
+three. It needs no extra allocation or texture preparation. Indexed
+preprocessing remains identical to release 49; native preprocessing matches
+the measured candidate.
+
+Fresh PGO, normal/486_slow, 40,000 cycles, 4 MB, SB16/mouse, 320x240 RGB565:
+
+| Workload | Release 49 | Release 50 |
+| --- | ---: | ---: |
+| Straight pool | 45.835 ms | 45.620 ms |
+| Pool yaw +1024 | 44.869 ms | 44.871 ms |
+| Pool yaw -1024 | 45.822 ms | 45.821 ms |
+| Level 1 straight combat | 37.698 ms | 37.346 ms |
+| Level 6 straight combat | 41.438 ms | 40.945 ms |
+| Level 1 turning combat | 33.639 ms | 33.670 ms |
+| Level 6 turning combat | 49.557 ms | 49.556 ms |
+
+Straight pool frames improve 0.5%, with p95/max of 46.279/46.469 ms. Straight
+combat improves 0.9..1.2%; the turning and angled results are essentially
+unchanged. The 4 MB start rises from 27.67 to 27.85 FPS, with p95 improving
+from 36.88 to 36.38 ms. At 8 MB the start reads 28.05 FPS. These are small
+workload-specific gains, not evidence of overall Duke3D performance parity.
+
+The actual optimized-object oracle passes, including 1,331 long floor spans
+through 65,541 pixels and the existing full raster suite. All 22 release
+captures, 192 pool frames/state hashes, 128 combat frames/state hashes and
+the 4/16 MB capacity comparison match release 49. The real-time 4 MB
+SB16/mouse/UI/save exercise passes with zero underruns and 16 full quickloads.
+Text/data/BSS are 1,209,368 / 22,016 / 295,936 bytes, reducing text by 512
+bytes. Free memory is 92 KiB after shared assets and 20 KiB after level 4.
+
+Conservative diagnostic backward paint liveness retains about 95% of pool-view
+wall pixels when accounting for refraction reads. A four-row background-conversion
+cache model reuses only 49.5..50.1% of its inputs, leaving too little saving
+to cover conversion and bookkeeping. Neither diagnostic changes drawing in
+the playable package; their timings are not release measurements.
+
+Three isolated water trials retain their tested captures but earn no promotion:
+fraction/phase-level caching makes the straight pool 0.219 ms slower; copying
+a phase row for direct indexed reads changes pool means by -0.012/+0.018 ms;
+sharing identical green/blue Brighten inputs changes them by +0.021/0.000 ms.
+The latter two are mixed or negligible, and none changes the staged source.
+
+Frozen source/evidence: `build/dos-native50-source` and
+`build/dos-project50-trace`. Executable SHA-256:
+`bb17a699235c24e75858fad2d7a782bfd2eddd83a8b10e3415c777cc181c22b4`.
+Archive SHA-256:
+`43b1b92e89e3cdddd4ae043250b3f1a5f10c9818a3c675ebbc646b3bc6759f13`.
+Only the executable changes in the archive. Final source/package checks pass;
+241 other native files and all 239 indexed files, settings and saves remain
+intact. Broader moving and water parity remains open.
+
+### Waterside reference and prepared-phase investigation
+
+The original shareware Duke 1.3d executable now has a visually confirmed
+waterside reference in Toxic Dump (E1L4, water sector 80). An isolated GRP copy
+changes only the map's 16 camera-start bytes. All geometry, sprites and other
+assets remain byte exact. The coordinate-overlay capture reads X=11592,
+Y=21041, Z=-48640, A=527, matching the fixture. A second capture without that
+overlay shows the same living camera and visible water surface. The original
+invulnerability cheat holds the camera alive; AI and SB16 remain enabled.
+
+At normal/486_slow, 40,000 cycles, 8 MB, full 320x240 world and mini HUD, the
+plain capture's eight original DNRATE readings are 34, 33, 33, 34, 35, 36, 35
+and 34 FPS (median 34). The S3 sampler hash remains
+`5922a1efd80fcea10c785dbc0b6ee07ff797073952326c4cc876f7c7681b3be9`;
+every saved bank/index is restored. These are counter samples, not a timedemo
+or frame-time distribution, and the scenes/effects differ from AB3D.
+
+Release 50's pool, with real-time updates and SB16/mouse, measures the following
+over frames 8..63. The fixture uses the actual release's engine objects.
+
+| Memory | Mean frame | Reciprocal mean FPS | p95 / maximum |
+| --- | ---: | ---: | ---: |
+| 4 MB | 45.908 ms | 21.78 | 46.616 / 46.891 ms |
+| 8 MB | 46.123 ms | 21.68 | 47.823 / 48.155 ms |
+
+This comparison leaves a substantial performance gap. Instrumented profiling
+reports about 17 ms in floor/water drawing and 11.5 ms in walls; profiling
+itself adds overhead, so these component figures are diagnostic. An independent
+pixel probe finds only 40..45% equal raw background pairs and 8..20% equal
+four-pixel groups. This explains why extra equality checks lose time.
+
+The original WaterFile contains 32,768 zero odd bytes. A private prototype
+reuses that space for 16-bit phase values scaled by 1024, removing the level
+shift from the water kernel. Against a matching ordinary-renderer baseline,
+straight/+1024/-1024 pool means change from 46.572/45.767/46.698 ms to
+46.131/45.576/46.497 ms. All 192 pool frames/state hashes match, audio reports
+zero underruns, and the existing full raster oracle passes through a test-only
+byte-to-prepared-phase adapter. These are prototype results, not a new release.
+
+At the end of this investigation, the playable package remained release 50. Before promotion, the prepared path
+needs an explicit resource/API contract that preserves every source byte,
+including nonuniform odd data and scalar/debug/IO reads. DOS shared assets use
+fixed 64 KiB conventional-memory banks; compression recovers space inside the
+bank, rather than freeing XMS. A word phase bank fills all 65,536 bytes, so
+format metadata must remain outside it. The generic byte-phase raster and
+indexed build must retain their existing behavior. Fresh PGO, actual optimized
+object tests, all release captures and 4 MB UI/save/capacity checks remain
+required for any promoted implementation.
+
+Evidence: `build/duke-water51/reference-validation.json` and
+`build/dos-project51-trace`. Register pinning and four-pixel equality trials
+failed to improve performance. A 12 KiB scaled-delta trial saves only
+0.02..0.03 ms and was also rejected. No runtime source or package changes
+from these investigations were staged at that point.
+
+### Native release 53: lossless prepared water phases
+
+Release 53 prepares the native water bank once at load time. Uniform odd bytes
+are recorded outside the bank, and even-byte phase levels expand backwards
+into that same 64 KiB allocation as 16-bit values scaled by 1024. The assembly
+sampler can then omit a shift for each phase read. Logical source reads still
+recover every original byte, including the recorded odd value. Nonuniform odd
+bytes or out-of-range levels retain the original byte representation. Generic
+byte-phase and prepared samplers share one template; the indexed preprocessor
+output remains identical to release 50.
+
+The first integrated build exposed a heap-reservation boundary before startup
+in the unchanged 32 KiB capacity fixture. A ten-case DJGPP allocator probe
+showed that its 48-byte overhead made the old 1,280 KiB request reserve an
+extra 64 KiB zone. Subtracting that overhead keeps the intended arena size.
+Release 53 was built fresh from this source fix; the diagnostic patched binary
+was not packaged. The original capacity fixture passes at both 4 and 16 MB.
+
+Fresh PGO, normal/486_slow, 40,000 cycles, 4 MB, SB16/mouse, 320x240 RGB565:
+
+| Workload | Release 50 | Release 53 |
+| --- | ---: | ---: |
+| Straight pool, fixed updates | 45.620 ms | 45.326 ms |
+| Pool yaw +1024, fixed updates | 44.871 ms | 44.699 ms |
+| Pool yaw -1024, fixed updates | 45.821 ms | 45.647 ms |
+| Pool, real-time updates | 45.908 ms | 45.819 ms |
+| Level 1 straight combat | 37.346 ms | 37.309 ms |
+| Level 1 turning combat | 33.670 ms | 33.670 ms |
+| Level 6 straight combat | 40.945 ms | 40.903 ms |
+| Level 6 turning combat | 49.556 ms | 49.568 ms |
+
+Fixed pool means improve 0.4..0.6%. Real-time pool throughput moves from
+21.78 to 21.83 FPS at 4 MB and from 21.68 to 21.83 FPS at 8 MB. Its 4 MB
+p95/max change from 46.616/46.891 to 46.821/47.443 ms, so this small mean
+gain does not establish better tail latency. Combat is essentially unchanged.
+The 4 MB start reads 28.04 FPS versus 27.85 before; the 8 MB start remains
+28.04 FPS. Duke's waterside counter remains ahead; overall parity is open.
+
+The actual optimized-object oracle passes, including 262,144 source-byte
+checks, 326,536 water boundary pairs and 16,384 rounded-colour checks. All
+22 release captures, 192 pool frames, 128 explosion frames, and 192 additional
+byte/scalar-path frames match release 50, with exact simulation hashes.
+The 4 MB SB16/mouse/UI/save exercise completes 16 full quickloads with zero
+audio underruns. Desktop Release also builds. Text/data/BSS are
+1,213,464 / 22,016 / 295,936 bytes. Free memory is 88 KiB after shared assets
+and 16 KiB after level 4; no water allocation was added.
+
+Frozen source and evidence: `build/dos-native53-source` and
+`build/dos-project53-trace`. Executable SHA-256:
+`916fbad674ee38d924ecb4d09ac7460bfdca5ed68ff446e7132db823d23f07a7`.
+Archive SHA-256:
+`57af0e133d9a98c8c0b75b77825a226707cbb81bcd5166f18d61f5fa1db33956`.
+The staged `build/dos/ABHD-DOS.zip` changes only `ABHD.EXE`. Final source and
+package checks pass; all 241 other native files and all 239 indexed files,
+settings and saves are preserved.
+
+### Further water trials after release 53
+
+An isolated pixel probe finds that the straight pool uses brightness offsets
+1 and 2, and only 4.38% of all water pixels require a changed interpolated
+colour. Equal shaded samples account for 36.52%, the exact zero-delta gate
+for another 38.25%, and single-sample paths for 20.85%. These counts include
+the initial frames; instrumented timings are not release measurements.
+
+A universal input-pair zero-delta bound accepts only 69.48% of blended samples
+in the straight pool and 72.89% at yaw +1024. That is too little to cover its
+extra operations. Its 64 KiB conventional allocation also fails after startup;
+an 8 MB diagnostic using heap storage reports 55,408 free conventional bytes.
+The bound has no false acceptances in either capture, but is not promoted.
+A separate probe finds consecutive input-pair/phase repetition of only
+30.95% and 25.58%, discouraging a complete-result cache.
+
+Two smaller prototypes have matching captures against the same ordinary
+raster baseline linked to release 53's other optimized engine objects:
+
+| Workload | Baseline | Immediate brightness | Dense native lookup |
+| --- | ---: | ---: | ---: |
+| Straight pool | 45.178 ms | 45.074 ms | 44.611 ms |
+| Pool yaw +1024 | 44.624 ms | 44.322 ms | 44.407 ms |
+| Pool yaw -1024 | 45.602 ms | 45.283 ms | 45.352 ms |
+| Start view | 36.332 ms | 36.309 ms | 36.305 ms |
+
+The immediate version removes one addition for the two common brightness
+offsets, but adds 7,680 bytes of text. The dense version instead returns native
+RGB565 words directly, omitting two input-index lookups per blended pixel.
+It moves 44 KiB of lookup data into conventional RAM, removes the old packed
+Brighten table and expands the exact zero-delta table to 64 KiB. Its text/BSS
+increase by 512/10,240 bytes against this fixture's baseline.
+
+The dense arithmetic proof checks all 16,777,216 native colour pairs and
+4,194,304 threshold cases. Its ordinary byte/prepared raster oracle passes,
+as do 192 pool frames and 256 explosion frames at 4/16 MB, with exact state
+hashes and zero audio underruns. The 32 KiB residency fixture is unchanged.
+These remain prototype results: platform allocation must move out of the
+raster code into an explicit owned workspace, the regular C11 oracle must
+remain usable, and fresh PGO plus the complete 4 MB UI/save/capture checks
+were still required before promotion. At that point the playable package
+remained release 53.
+
+Evidence and scripts: `build/dos-project54-trace`,
+`build/native54_water_immediate_trial.py`, `build/native54_water_dense_trial.py`,
+`build/native54_dense_proof.py` and `build/native54_dense_validate.py`.
+
+### Native release 55: direct water colours with a compact difference gate
+
+Release 55 stores the native Brighten colours in a caller-owned 44 KiB lookup.
+The renderer owns that buffer for its lifetime; the DOS platform allocates it
+in conventional RAM and releases it after the raster view is detached.
+Palette refreshes reuse the allocation. The raster itself performs no platform
+allocation, and the ordinary C11 oracle supplies guarded buffers in regular RAM.
+The shared colour representation now lives in `raster_water_color.inc`, while
+the byte/prepared phase traversal remains in `raster_water_span.inc`.
+
+RGB565 green/blue bits address the ready native words directly, eliminating
+two intermediate index lookups per blended pixel. The first integrated version
+used a 64 KiB zero-delta table and crossed the ordinary build's 4 MB startup
+boundary. Rotating the native difference's zero gap bit to bit 15 packs its
+three five-bit channel differences into 32 KiB instead. This preserves the
+exact interpolation while retaining the existing heap reservation and stress
+fixtures. The failed version was not packaged. All source WaterFile and
+Brighten bytes, animation timing, refraction, filtering and drawing order remain
+unchanged. Indexed preprocessing remains identical.
+
+Fresh PGO, normal/486_slow, 40,000 cycles, 4 MB, SB16/mouse, 320x240 RGB565:
+
+| Workload | Release 53 | Release 55 |
+| --- | ---: | ---: |
+| Straight pool, fixed updates | 45.326 ms | 45.092 ms |
+| Pool yaw +1024, fixed updates | 44.699 ms | 44.607 ms |
+| Pool yaw -1024, fixed updates | 45.647 ms | 45.541 ms |
+| Pool, real-time updates | 45.819 ms | 45.450 ms |
+| Level 1 straight combat | 37.309 ms | 37.306 ms |
+| Level 1 turning combat | 33.670 ms | 33.698 ms |
+| Level 6 straight combat | 40.903 ms | 40.914 ms |
+| Level 6 turning combat | 49.568 ms | 49.572 ms |
+
+Fixed pool means improve 0.2..0.5%. Real-time pool throughput rises from
+21.83 to 22.00 FPS at 4 MB, with p95/max improving from 46.821/47.443 to
+46.069/46.749 ms. At 8 MB it rises from 21.83 to 21.91 FPS, with p95/max
+47.363/47.717 to 46.623/47.347 ms. Combat is essentially unchanged. The
+start reads 28.01 FPS at 4 MB and 27.82 at 8 MB, versus 28.04 before;
+its p95 is 36.43 ms. These small start regressions remain visible in the
+report; the water gain does not establish overall Duke3D parity.
+
+The rotated arithmetic proof covers all 16,777,216 native colour pairs and
+4,194,304 threshold cases. Both the ordinary C11 and actual optimized-object
+raster suites pass, including lookup replacement/release guards. All 22 release
+captures, 192 pool frames, 128 explosion frames and 192 byte/scalar frames
+match release 53 with exact simulation hashes. The unchanged capacity oracle
+passes at 4/16 MB; the real-time 4 MB SB16/mouse/UI/save exercise completes
+16 full quickloads with zero underruns. Desktop Release builds. Text/data/BSS
+are 1,212,440 / 22,016 / 271,360 bytes. Free memory is 112 KiB after shared
+assets and 32 KiB after level 4, versus 88/16 KiB before. The lookup consumes
+44 KiB of conventional RAM within the documented lean-boot configuration.
+
+Frozen source and evidence: `build/dos-native55-source` and
+`build/dos-project55-trace`. Executable SHA-256:
+`67c6981ad49705140597faf6eeb80c4281ce9703be3c79829c8fb6676d465947`.
+Archive SHA-256:
+`d48a3626c205f73261affca67fcaff85b1a52d07dfd868431ecb929ef44d3d3c`.
+The staged `build/dos/ABHD-DOS.zip` changes only `ABHD.EXE`. Final source and
+package checks pass; all 241 other native files and all 239 indexed files,
+settings and saves are preserved.
+
+A subsequent isolated trial shares phase selection when four pixels have the
+same integer U coordinate. Its four captures match, but the straight pool
+slows from 44.774 to 44.907 ms; angled views change by only -0.018/-0.023 ms,
+and the start slows by 0.026 ms. Those are ordinary-raster fixture timings,
+not release measurements. The trial is rejected and does not alter release 55.
+Evidence: `build/native56_phase_quad_trial.py` and `build/dos-project56-trace`.
+
+The direct native lookup has four equivalent slots for each input colour:
+adding 0/32/64/96 to its masked byte offset changes only the ignored low green
+bits. An exhaustive 262,144-input proof verifies this for all RGB565 words.
+A private resource-owner trial uses phase-word bits 4..5 to record a same-level
+distance of one to four texels. Logical source reads still discard those bits,
+and ordinary UV sampling selects an equivalent colour slot without an extra
+mask. No extra resident array or on-disk format is introduced.
+
+A C loop around these hints is too expensive: the straight pool rises from
+44.794 to 48.067 ms. An assembly trial keeps the original four-pixel loop,
+sharing a level only when the hint covers even the worst fractional U start.
+It changes that mean to 44.407 ms; +1024/-1024 angles read 44.494/45.443 ms
+versus 44.497/45.431 before, and the start is essentially unchanged. These
+remain ordinary-raster/IO fixture timings linked to release 55's other PGO
+objects, not promoted release performance.
+
+The assembly trial passes the expanded C11 oracle, including all source bytes,
+the additional step/class boundaries and a phase/output overlap case. All
+192 pool frames and simulation hashes match release 55, with zero underruns.
+Integration must retain all duplicate lookup slots, encode hints only in the
+mutable resource owner, document the prepared-word field, and preserve legacy
+zero hints and the byte/indexed APIs. Fresh PGO and the full 4 MB checks remain
+required. At that point the playable package remained release 55. Evidence:
+`build/dos-project57-trace`, `build/native57_water_run_asm_trial.py` and
+`build/native57_run_validate.py`.
+
+### Native release 58: prepared phase runs
+
+Release 58 integrates that assembly trial into the shared pixel kernel.
+The mutable water-resource owner records a conservative circular run of one
+to four equal levels in prepared phase-word bits 4..5; the original level
+remains in bits 10..15. Logical source views still reproduce every original
+WaterFile byte, including odd bytes and nonuniform source records. The disk
+format, allocation size and animation timing are unchanged. Legacy prepared
+words with zero hints remain valid, as do the byte and indexed APIs.
+
+Four row pixels share phase selection only when the run covers the largest
+possible fractional U start. An overlapping output/phase bank disables that
+sharing to preserve per-pixel source reads. Both background samples are read
+before each forward store. All 1,024 native lookup slots per brightness row
+remain populated: their duplicate entries absorb the hint bits without extra
+masking in the general UV kernel. This implements the existing
+`amiga/AB3DI.s:texturedwater` sampling and Brighten arithmetic without a new
+resident table or a change to filtering, refraction or drawing order.
+
+Fresh PGO, normal/486_slow, 40,000 cycles, 4 MB, SB16/mouse, 320x240 RGB565:
+
+| Workload | Release 55 | Release 58 |
+| --- | ---: | ---: |
+| Straight pool, fixed updates | 45.092 ms | 44.635 ms |
+| Pool yaw +1024, fixed updates | 44.607 ms | 44.602 ms |
+| Pool yaw -1024, fixed updates | 45.541 ms | 45.535 ms |
+| Pool, real-time updates | 45.450 ms | 44.930 ms |
+| Level 1 straight combat | 37.306 ms | 37.354 ms |
+| Level 1 turning combat | 33.698 ms | 33.679 ms |
+| Level 6 straight combat | 40.914 ms | 40.971 ms |
+| Level 6 turning combat | 49.572 ms | 49.567 ms |
+
+The straight fixed pool improves 1.01%; its p95/max improve from
+45.969/46.009 to 45.524/45.563 ms. Angled pool means are essentially unchanged;
+the -1024 p95/max move from 45.970/46.263 to 46.089/46.278 ms. Real-time pool
+throughput rises from 22.00 to 22.26 FPS at 4 MB, with p95/max improving from
+46.069/46.749 to 45.632/46.430 ms. At 8 MB it rises from 21.91 to 22.26 FPS,
+with p95/max 46.623/47.347 to 45.631/46.431 ms. Combat remains essentially
+unchanged. The start reads 27.85 FPS at both memory sizes, versus 28.01/27.82
+before; p95/max are 36.39/75.14 ms. The small 4 MB start regression is retained
+in the report. These gains do not establish Duke3D parity: its separately
+validated waterside counter has a median of 34 FPS, with different geometry,
+effects and measurement semantics.
+
+Both the ordinary strict C11 and actual optimized-object raster suites pass.
+They check 262,144 source bytes, 65,536 prepared hints, all 22,528 lookup slots
+and 262,144 native input/hint aliases. Byte, legacy prepared and hinted prepared
+paths each run 163,268 independent channel-boundary pairs and 8,192 rounded
+colour checks. Additional U-step boundaries, long carry/wrap walks and an
+explicit phase/output alias case pass. The existing exhaustive native-colour,
+zero-delta threshold, workspace replacement and release proofs remain valid.
+Indexed preprocessing matches release 55 exactly.
+
+All 22 release captures, 192 pool frames, 128 explosion frames and 192 additional
+byte/scalar frames match release 55, with exact simulation hashes. The unchanged
+32 KiB residency fixture passes at 4/16 MB. The 4 MB real-time SB16/mouse/UI/save
+exercise completes 16 full quickloads with zero audio underruns; desktop Release
+also builds. Text/data/BSS are 1,213,464 / 22,016 / 271,360 bytes: 1,024 extra
+text bytes, no additional resident array. Shared-assets/level-4 free memory
+remains 112/32 KiB, with the existing heap reservation retained.
+
+Frozen source and evidence: `build/dos-native58-source` and
+`build/dos-project58-trace`. Executable SHA-256:
+`c56dd8dbe4104058bbd7878d43a67d544b77a8076235315fb0f9cd20fe8235e1`.
+Archive SHA-256:
+`7a350dd3205f073126cd05fc7d56a2852d979cd655278559cda8cd15b8f5c612`.
+The staged `build/dos/ABHD-DOS.zip` changes only `ABHD.EXE`. Final source and
+package checks pass; all 241 other native files and all 239 indexed files,
+settings and saves are preserved. Reproduction scripts are
+`build/native58_fresh.py`, `build/native58_validate.py` and
+`build/native58_final_check.py`; the staging audit must use its saved release-55
+baseline after release 58 has been installed.
+
+### Wall probes after release 58
+
+Two private diagnostics examine the remaining vertical wall calls in the pool,
+start and level-6 explosion views. No eligible columns have at least eight
+pixels and a positive step of at most half a texel; the small-step work is
+already handled by the row path. No called 32-entry wall palette is entirely
+one colour, and no texture mask is zero. Neither proposed cache/fill has a
+measured workload to accelerate, so neither is implemented. Instrumented
+captures match their baselines, with zero underruns; their timings are not
+release performance. Evidence: `build/dos-project59-trace`,
+`build/native59_wall_probe.py` and `build/native59_wall_solid_probe.py`.
+
+A private UV trial keeps both coordinates in registers for the native prepared
+path when the refracted background rows are 640 bytes apart. U retains its
+fraction and integer byte at the top; V rotates its fraction above its integer
+byte. SHRD forms the exact original packed UV word. ADD/ADC and a gap-bit mask
+every eight pixels retain all fractional, byte and offset carries. The V register
+is borrowed for a blend pointer only when the shaded colour actually changes.
+
+| Ordinary-raster fixture | Baseline | Four pixels | Eight pixels |
+| --- | ---: | ---: | ---: |
+| Straight pool | 44.380 ms | 44.371 ms | 44.429 ms |
+| Pool yaw +1024 | 44.493 ms | 44.355 ms | 44.255 ms |
+| Pool yaw -1024 | 45.445 ms | 45.268 ms | 45.189 ms |
+| Start | 36.283 ms | 36.309 ms | 36.309 ms |
+
+The eight-pixel trial passes the complete C11 oracle plus 4,096 additional
+legacy/hinted UV spans covering both source directions, other strides, alpha
+swaps, long walks, tails and overlapping backgrounds. All 192 pool frames and
+simulation hashes match release 58, with zero underruns. An independent host
+proof checks 21,156 starting-coordinate/step cases and 888,552 samples. The
+additional test buffers are allocated only while their check runs, retaining
+the unrelated long floor test's existing 4 MB memory budget. These timings
+are linked to release 58's other PGO objects; fresh integrated PGO and the full
+4 MB verification are still required before promotion. Evidence:
+`build/dos-project60-trace`, `build/native60_uv_proof.py`,
+`build/native60_water_uv_trial.py`, `build/native60_water_uv8_trial.py` and
+`build/native60_validate.py`.
+
+### Native release 61: register-based angled water
+
+Release 61 integrates the eight-pixel UV traversal. A pure extraction first
+parameterizes the existing native difference and blend operations; native and
+indexed preprocessing remain identical at that step. The new
+`raster_water_uv.inc` instantiates one traversal for each adjacent-row direction,
+sharing those colour operations with the existing samplers. Prepared UV spans
+with other source distances retain the general kernel. Legacy phase words,
+run hints, byte/indexed APIs, source/output aliases and forward drawing order
+keep their existing contracts. No resident lookup, resource allocation, disk
+format, resolution, filtering or animation change is introduced.
+
+Fresh PGO, normal/486_slow, 40,000 cycles, 4 MB, SB16/mouse, 320x240 RGB565:
+
+| Workload | Release 58 | Release 61 |
+| --- | ---: | ---: |
+| Straight pool, fixed updates | 44.635 ms | 44.644 ms |
+| Pool yaw +1024, fixed updates | 44.602 ms | 44.324 ms |
+| Pool yaw -1024, fixed updates | 45.535 ms | 45.220 ms |
+| Pool, real-time updates | 44.930 ms | 44.927 ms |
+| Level 1 straight combat | 37.354 ms | 37.363 ms |
+| Level 1 turning combat | 33.679 ms | 33.636 ms |
+| Level 6 straight combat | 40.971 ms | 40.957 ms |
+| Level 6 turning combat | 49.567 ms | 49.555 ms |
+
+Angled pool means improve 0.62/0.69%; their p95/max move from
+45.129/45.137 to 44.860/44.878 ms and from 46.089/46.278 to 45.727/45.972 ms.
+Straight water and combat are essentially unchanged. Straight fixed-pool
+p95/max move from 45.524/45.563 to 45.535/45.571 ms. Real-time pool performance
+remains 22.26 FPS at both 4 and 8 MB, with 4 MB p95/max 45.629/46.431 ms.
+The start remains 27.85 FPS at both memory sizes, with p95/max 36.38/75.13 ms.
+Across releases 58 and 61, real-time pool throughput improves from release 55's
+22.00 to 22.26 FPS; this still falls short of the separate Duke3D waterside
+reference and does not establish broader moving-gameplay parity.
+
+Both the ordinary strict C11 and actual PGO-object oracles pass in 4 MB,
+including all existing tests and the 4,096 new UV spans. Two explicit
+17-pixel phase/output alias walks cover both normalized source directions,
+eight-pixel groups and tails. The sequential floor, wall and sprite DDA checks
+now share one pair of full-surface test images, retaining all original pixels,
+cases and guards, including all 1,331 long floor walks and the 16 sprite guard
+pixels. This removes duplicate test residency without reducing the game's heap
+or its unchanged 32 KiB residency fixture. These test-only edits are recorded
+separately in `test-shared-workspace.json`; the tested PGO executable and its
+runtime source remain unchanged by that harness correction.
+
+All 22 release captures, 192 pool frames, 128 explosion frames and 192 retained
+byte/scalar frames match release 58 with exact simulation hashes. The capacity
+oracle passes at 4/16 MB. The real-time 4 MB SB16/mouse/UI/save exercise completes
+16 full quickloads with zero audio underruns. Indexed preprocessing remains
+identical. Text/data/BSS are 1,217,560 / 22,016 / 271,360 bytes, adding 4,096 text
+bytes to release 58. The UI exercise reports 108 KiB free after shared assets
+and 44 KiB at its post-load snapshot, versus 112/32 KiB in release 58; the
+changed post-load allocator snapshot is not a claim of reduced asset storage.
+
+Frozen source and evidence: `build/dos-native61-source` and
+`build/dos-project61-trace`. Executable SHA-256:
+`e9e69a673618b7091b825a9d19c97408358d964e2f216cbd911779486fb0896b`.
+Archive SHA-256:
+`950479244031da183b76d197fdbf0a4c5bbdf7534064fc2643b89481addd04b3`.
+The staged `build/dos/ABHD-DOS.zip` changes only `ABHD.EXE`. Final source/package
+checks pass; all 241 other native files and all 239 indexed files, settings and
+saves are preserved. Reproduction scripts are `build/native61_fresh.py`,
+`build/native61_finish_checks.py`, `build/native61_validate.py` and
+`build/native61_final_check.py`. After staging, use the final check rather than
+rerunning the audit against the now-replaced release-58 archive.
+
+### Wall profiling after release 61
+
+A sampled-column probe finds no source-index-uniform columns in the pool,
+start or level-6 explosion views. The pool has no columns whose complete
+palette-mapped texture or actual sampled walk is one colour. The start has
+only 3,706 full-column and 10,873 sampled-walk row pixels out of 1,618,676;
+no complete wall-row call qualifies. Those counts do not justify a fill cache.
+All three captures match release 61, with zero underruns. Evidence:
+`build/native62_wall_column_probe.py` and `build/dos-project62-trace`.
+
+A separate diagnostic renderer, linked to the actual release-61 raster and
+other PGO objects, measures 11.520 ms in walls and 14.271 ms in water in the
+straight pool. Generated wall rows account for 4.921 ms. At yaw +1024 walls
+take 19.874 ms and water 9.240 ms, with no row-kernel work. The start has
+16.216 ms of wall work, including 3.591 ms in rows; the explosion view has
+10.703/3.110 ms. These instrumented ordinary-renderer figures identify costs,
+not release performance. All four captures match; zero underruns. Evidence:
+`build/native62_world_profile.py` and `world-profile.json` in that trace.
+
+### Native wall-pair prototype
+
+A private row program packs two original five-bit indices into DL/DH and uses
+one sparse DWORD palette lookup/store for two native pixels. Its 32 KiB heap
+workspace has 1,024 populated entries, indexed by `(right<<8)|left`; palette
+contents are compared before reuse, including changes at the same address.
+Rebuilding that table for every palette loses time on small walls:
+
+| Ordinary-raster fixture | Baseline | Every row call | 4,096-pixel gate | 8,192-pixel gate |
+| --- | ---: | ---: | ---: | ---: |
+| Straight pool | 44.425 ms | 43.105 ms | 43.080 ms | 43.121 ms |
+| Start | 36.304 ms | 38.992 ms | 36.670 ms | 36.328 ms |
+| Level 6 explosion | 43.380 ms | 43.483 ms | 43.309 ms | 42.808 ms |
+
+The 8,192-pixel version leaves smaller spans on their existing program unless
+the palette is already cached. It passes the complete C11 oracle, all 1,024
+colour pairs, palette replacements and alternating DWORD alignment. Its 192
+pool frames/state hashes match release 61. The unchanged 32 KiB residency
+fixture passes at 4/16 MB for both explosion scenes, with all 128 images/state
+hashes matching across memory sizes. All 22 ordinary game starts/turning
+captures match release 61 at 4 MB. Underruns remain zero. These are prototype
+results; caller-owned integration, fresh PGO and the full 4 MB UI/save checks
+were still required at that point. Evidence: `build/dos-project63-trace`,
+`build/native63_wall_pair_trial.py`, `build/native63_wall_pair_gate.py`,
+`build/native63_validate.py` and `build/native63_start_checks.py`.
+
+### Native release 64: paired native wall-row output
+
+Release 64 integrates the 8,192-pixel gate with explicit renderer ownership.
+The renderer allocates one 32 KiB `DosWallPairLookup` at initialization, binds
+it to the raster, and detaches it before freeing it at shutdown. The raster
+performs no allocation. Its palette snapshot owns all 32 source colours;
+content comparison handles in-place palette edits without retaining an asset
+pointer. A pure extraction first moves the row program and traversal into
+`raster_wall_rows.inc`, with complete native/indexed preprocessing unchanged.
+Single/pair programs then share that template, including clipping, coordinate
+wrap, repeated-row copies, chunk boundaries and odd tails. This preserves
+`WallRoutine3.ChipMem.s` five-bit source sampling and every native palette word.
+
+Fresh PGO, normal/486_slow, 40,000 cycles, 4 MB, SB16/mouse, 320x240 RGB565:
+
+| Workload | Release 61 | Release 64 |
+| --- | ---: | ---: |
+| Straight pool, fixed updates | 44.644 ms | 43.353 ms |
+| Pool yaw +1024, fixed updates | 44.324 ms | 44.304 ms |
+| Pool yaw -1024, fixed updates | 45.220 ms | 45.199 ms |
+| Pool, real-time updates | 44.927 ms | 43.586 ms |
+| Level 1 straight combat | 37.363 ms | 37.199 ms |
+| Level 1 turning combat | 33.636 ms | 33.686 ms |
+| Level 6 straight combat | 40.957 ms | 40.372 ms |
+| Level 6 turning combat | 49.555 ms | 49.544 ms |
+
+Real-time pool throughput rises from 22.26 to 22.94 FPS at both 4 and 8 MB,
+about 3.1%. At 4 MB p95/max improve from 45.629/46.431 to 44.210/44.475 ms.
+The fixed pool improves 2.9%, with p95/max 45.535/45.571 to 44.123/44.275 ms.
+Angled views are essentially unchanged, as their walls do not use the row
+path. Level 6 straight combat improves 1.4%; its p95/max move from
+49.864/52.351 to 48.883/51.627 ms. Level 1 turning combat is slightly slower
+in mean. The start reads 27.80 FPS at both memory sizes versus 27.85 before,
+with p95/max 36.45/75.15 ms versus 36.38/75.13 ms. These small regressions
+remain in the report. Duke3D parity is still open.
+
+The ordinary C11 and actual PGO-object suites pass, including all 1,024 colour
+pairs across six palette/lifecycle passes, guarded workspace replacement,
+same-address palette changes, detach/rebind, repeated release and original
+unbound drawing. Alternating DWORD alignment, nonstandard pitch, odd tails
+and complete wall guards match the independent reference. All existing water,
+sprite, movement, rounding and source-byte checks remain. All 22 release
+captures, 192 pool frames, 128 explosion frames and 192 retained-byte/scalar
+frames match release 61 with exact state hashes. The unchanged 32 KiB residency
+fixture passes at 4/16 MB; the real-time 4 MB SB16/mouse/UI/save exercise
+completes 16 full quickloads with zero underruns. Desktop Release builds.
+Indexed preprocessing and its staged package remain unchanged.
+
+Text/data/BSS are 1,220,632 / 22,016 / 271,360 bytes, adding 3,072 text bytes.
+The new lookup consumes 32 KiB of the renderer's heap. The existing heap
+reservation is retained. The UI run reports 100 KiB free after shared assets
+and 44 KiB at its post-load snapshot; these allocator snapshots do not replace
+the residency test or imply that the lookup has no memory cost.
+
+Frozen source and evidence: `build/dos-native64-source` and
+`build/dos-project64-trace`. Executable SHA-256:
+`0e62357341b8c7b13167c788232d636afd308739eb9774c837fa4d952e424b93`.
+Archive SHA-256:
+`be613d60de6a8cd00aa1643aa75441ff7773d2d60e7e3748e4576ffcad45f068`.
+The staged `build/dos/ABHD-DOS.zip` changes only `ABHD.EXE`. Source/package
+checks pass; all 241 other native files and all 239 indexed files, settings
+and saves are preserved. Reproduction scripts are `build/native64_fresh.py`,
+`build/native64_validate.py` and `build/native64_final_check.py`; after staging,
+use the final check rather than the audit against the replaced release-61 ZIP.
+
+Two subsequent private diagnostics retain release 64 as the playable build.
+The first measures conservative phase-run coverage for groups of 4/8/16 using
+the current prepared words. In the straight pool, 572,724 of 965,868 tested
+four-pixel positions qualify (59.3%), versus 157,888 of 935,536 for eight
+(16.9%) and zero of 873,328 for sixteen. Scanning the underlying levels beyond
+the current four-texel hint limit raises eight/sixteen coverage only to
+330,616/125,664 pixels (35.3/14.4%). Both angled views use prepared UV spans
+and never enter the horizontal row sampler. All three captures match and
+underruns remain zero. These counts do not justify blindly extending the
+phase format or duplicating a sixteen-pixel shader. Evidence:
+`build/native65_water_hint_probe.py` and `build/dos-project65-trace`.
+
+The second times calls to the actual release-64 water raster from an ordinary
+diagnostic renderer. Straight water takes 15.686 ms, with 12.130 ms inside
+168 raster calls per measured frame; yaw +1024 takes 9.930 ms, including
+8.200 ms in 82 raster calls. These nested timings include instrumentation
+overhead and are not release frame times. The renderer-only profile without
+these extra timestamp pairs measured 14.271/9.240 ms of water earlier.
+The start and explosion controls make no water calls. All four captures match,
+with zero underruns. The remaining water cost is primarily in the shader,
+while angled walls remain a separate substantial cost. Evidence:
+`build/native66_water_cost_probe.py` and `build/dos-project66-trace`.
+
+### Varying-coordinate column pairs
+
+A per-wall probe groups consecutive interior columns only while their native
+palette and mask match. At pool yaw +1024, 3,141,400 of 4,118,190 core pixels
+belong to groups with at least 8,192 overlapping pixels; yaw -1024 has
+2,961,358 of 4,152,839. Those large groups retain more than 99% of their pixels
+in adjacent columns' common vertical intervals. The start also has one large
+group per draw; the straight pool and explosion view have none. All five
+diagnostic captures match release 64, with zero underruns. Evidence:
+`build/native67_wall_group_probe.py` and `build/dos-project67-trace`.
+
+A private two-column program keeps both original coordinates and steps. It
+draws the common rows together and retains independent draws above/below them.
+Its independent-coordinate loop saves only 0.13..0.21 ms in angled views.
+Specializing equal normalized steps and equal normalized starts/steps shares
+coordinate work as well as native palette lookup/output:
+
+| Ordinary-renderer/raster fixture | Baseline | Independent walks | Shared-coordinate cases |
+| --- | ---: | ---: | ---: |
+| Straight pool | 44.154 ms | 44.255 ms | 44.243 ms |
+| Pool yaw +1024 | 45.178 ms | 44.972 ms | 43.574 ms |
+| Pool yaw -1024 | 46.011 ms | 45.883 ms | 44.621 ms |
+| Start | 37.834 ms | 37.816 ms | 37.851 ms |
+| Level 6 explosion | 44.166 ms | 44.336 ms | 44.367 ms |
+
+A tighter projected-area gate improves the private start to 37.774 ms but
+adds projection work and only slightly changes the other controls. The
+integration keeps the simpler screen-space gate. An explicit early-clobber
+offset operand fixes the generated program's EBP role even if input values
+coincide. The selected private sampler passes the complete C11 suite plus
+1,256 independent span cases and 320 focused cases covering every eight-row
+tail length, all five native masks, four sampling modes and both alignments.
+It retains 192 exact pool frames/state hashes, the unchanged 32 KiB residency
+fixture at 4/16 MB with 128 explosion images/state hashes, and all 22 ordinary
+4 MB game captures. No new heap or persistent table is required: the programs
+reuse the existing bounded code workspace and native pair lookup. These are
+prototype measurements; fresh integrated PGO and full 4 MB checks were still
+required at that point. Evidence: `build/dos-project68-trace` through
+`build/dos-project70-trace` and the corresponding `build/native68_*`,
+`build/native69_*` and `build/native70_*` scripts.
+
+### Release 71: integrated column pairs
+
+The varying-coordinate column sampler is now integrated, built with fresh PGO
+and staged in `build/dos/game/ABHD.EXE`, `build/dos/ABHD.exe` and
+`build/dos/ABHD-DOS.zip`. The native wall batch groups adjacent interior
+columns sharing a palette and mask. Independent, common-step and equal-walk
+programs reuse release 64's 32 KiB colour-pair lookup and 2,305-byte code
+workspace. Original upper/lower pieces, caps, edge copies, projection and
+clip registration preserve `WallRoutine3.ChipMem.s:ScreenWallstripdraw` /
+`walldraw` samples and ordering. The scalar helper was extracted and checked
+before integration. Indexed renderer and raster preprocessing remain exact.
+
+Fresh PGO, normal/486_slow, 40,000 cycles, 4 MB, SB16/mouse, 320x240 RGB565:
+
+| Workload | Release 64 mean | Release 71 mean | Release 64 p95/max | Release 71 p95/max |
+| --- | ---: | ---: | ---: | ---: |
+| Straight pool, fixed updates | 43.353 ms | 43.464 ms | 44.123/44.275 ms | 44.353/44.400 ms |
+| Pool yaw +1024, fixed updates | 44.304 ms | 42.742 ms | 44.839/44.857 ms | 43.279/43.303 ms |
+| Pool yaw -1024, fixed updates | 45.199 ms | 43.861 ms | 45.707/45.951 ms | 44.336/44.593 ms |
+| Pool, real-time updates | 43.586 ms | 43.751 ms | 44.210/44.475 ms | 44.417/44.604 ms |
+| Level 1 straight combat | 37.199 ms | 37.384 ms | 51.513/56.867 ms | 51.633/57.103 ms |
+| Level 1 turning combat | 33.686 ms | 33.710 ms | 59.403/70.078 ms | 58.512/70.708 ms |
+| Level 6 straight combat | 40.372 ms | 40.559 ms | 48.883/51.627 ms | 49.094/51.998 ms |
+| Level 6 turning combat | 49.544 ms | 48.672 ms | 59.055/62.933 ms | 59.946/64.057 ms |
+
+Angled pool frame times improve 3.53% and 2.96%. Straight real-time pool
+throughput regresses slightly, 22.94 to 22.86 FPS at 4 MB and 22.94 to
+22.80 FPS at 8 MB. The 8 MB pool p95/max change from 44.208/44.474 to
+44.742/45.065 ms. At both memory sizes the start changes from 27.80 to
+27.76 FPS, with p95/max 36.45/75.15 to 36.51/75.66 ms. Level 6 turning
+combat improves in mean but has worse tail times. These regressions remain
+part of the release assessment. Duke3D water/moving parity is still open.
+
+The ordinary C11 and actual PGO-object raster suites pass, including 1,576
+independent column-span cases: 1,256 mixed cases and 320 focused cases covering
+all eight tail lengths, five masks, four sampling modes and both alignments.
+Full output guards, unsigned coordinate wrap, caps, clipping, palette/workspace
+replacement and the existing unbound path match the independent reference.
+All 22 game captures, 192 pool frames, 128 explosion frames and 192 retained
+byte/scalar frames match release 64, including simulation hashes. The original
+32 KiB residency fixture passes at 4/16 MB. The full 4 MB SB16/mouse/UI run
+completes 16 quickloads with zero audio underruns. Desktop Release builds.
+
+Text/data/BSS are 1,224,216 / 22,016 / 272,384 bytes: +3,584 text and +1,024
+BSS bytes versus release 64. No new heap allocation or persistent lookup is
+introduced. The frame-local descriptor array uses about 6,400 bytes of the
+existing 128 KiB stack. The heap reservation remains 1,280 KiB minus 48 bytes.
+The 4 MB UI run reports 96 KiB free after shared assets and 40 KiB at its
+post-load snapshot, versus 100/44 KiB before; the residency fixture remains
+unchanged.
+
+Frozen source and evidence: `build/dos-native71-source` and
+`build/dos-project71-trace`. Executable SHA-256:
+`e4037599d3c1fbb6a3ac2959786d4442ce66fedb619b8ad7918f9859944778d2`.
+Archive SHA-256:
+`ef60bfb5069b426bab45388a09f39776fb8421a727f26747e674ac70faeabef1`.
+The ZIP changes only `ABHD.EXE`; all 241 other native files/settings/saves and
+239 indexed files are preserved. The previous package is retained under
+`build/dos-project71-trace/previous-package`. Reproduction scripts are
+`build/native71_fresh.py`, `build/native71_validate.py` and
+`build/native71_final_check.py`. Use the final check after staging; the earlier
+audit compares against the replaced release-64 archive.
+
+A subsequent private trial tested minimum batch widths of 64 and 96 columns.
+Matched builds use the actual release-71 PGO raster/other engine objects and
+ordinary renderer objects for all three variants. The 64-column gate saves
+0.059 ms in the straight pool but costs 0.072 ms at the start and slightly
+slows both angled views. The 96-column gate costs about 0.23 ms in each angled
+view despite a 0.155 ms explosion-view gain. Both are rejected; release 71
+retains the simple screen-space gate. All five captures per variant match,
+with zero underruns. An initial comparison accidentally mixed raster object
+types; its results are preserved as `rejected-mixed-object-*` and excluded.
+Corrected evidence: `build/native72_width_gate_trial.py` and
+`build/dos-project72-trace/width-trials.json`. No further runtime experiment
+is in progress.

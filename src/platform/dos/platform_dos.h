@@ -22,6 +22,10 @@ void *dos_shared_asset_alloc(size_t size);
 void dos_shared_asset_free(void *ptr);
 void *dos_scene_asset_alloc(unsigned slot,size_t size);
 void dos_scene_asset_free(void *ptr);
+#ifdef AB3D_NATIVE_RGB565
+void *dos_water_lookup_alloc(size_t bytes);
+void dos_water_lookup_free(void *ptr);
+#endif
 void dos_check_frontend(GameState *state);
 void dos_check_saves(GameState *state);
 void dos_check_zone_index(const LevelState *level);

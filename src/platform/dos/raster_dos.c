@@ -15,134 +15,172 @@ static void fill_words(int16_t *out, unsigned count, uint16_t value)
     if (count & 1) *out = (int16_t)value;
 }
 
+#if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
 #ifdef AB3D_NATIVE_RGB565
-/* Low word: ready-to-write RGB565. High word: the original 4-bit channels
- * in five-bit lanes, leaving one guard bit for each signed blend delta. */
-static uint32_t water_brighten[22][256];
-static int8_t water_blend_delta[128][32];
-static RendererPixel water_rg[256],water_blue[16];
-/* Brighten uses only the low eleven RGB565 green/blue bits. */
-static uint8_t water_gb_index[2048];
-
-void dos_raster_prepare_water(const uint8_t *brighten)
+/* Non-owning view of the renderer's derived RGB565 colours. Native green/
+ * blue bits address these words directly, without an intermediate GB map. */
+static RendererPixel (*water_brighten)[1024];
+static inline uint32_t water_color_lanes(RendererPixel pixel)
 {
+    return ((pixel>>2)&0x3de0u)|((pixel>>1)&15u);
+}
+#else
+/* Indexed colours retain both the ready pixel and representative channels. */
+static uint32_t water_brighten[22][256];
+#endif
+#ifdef AB3D_DOS_INDEXED
+static RendererPixel water_unblended[22][256];
+#endif
+#ifdef AB3D_NATIVE_RGB565
+/* Keep the delta table first: assembly reads alpha at byte offset 32. */
+typedef struct {
+    int8_t delta[32];
+    uint32_t alpha;
+} WaterBlend;
+static WaterBlend water_blend_delta[128];
+_Static_assert(offsetof(WaterBlend,alpha)==32,"native blend alpha offset");
+#else
+static int8_t water_blend_delta[128][32];
+#endif
+/* Rotating the native difference's zero bit 5 to bit 15 packs its channels
+ * as G/R/B five-bit lanes. The threshold is the greatest normalized alpha
+ * that leaves all three channels unchanged. */
+#ifdef AB3D_NATIVE_RGB565
+static uint8_t water_zero_threshold[32768];
+static RendererPixel water_rg[512],water_blue[16];
+static int water_native_tables_ready;
+#else
+static RendererPixel water_lanes[16384];
+#endif
+#ifdef AB3D_DOS_INDEXED
+static uint8_t water_gb_index[2048];
+#endif
+
+#ifdef AB3D_NATIVE_RGB565
+void dos_raster_release_water(void) { water_brighten=NULL; }
+void dos_raster_prepare_water(const uint8_t *brighten,DosWaterLookup *lookup)
+#else
+void dos_raster_prepare_water(const uint8_t *brighten)
+#endif
+{
+#ifdef AB3D_NATIVE_RGB565
+    if(!lookup){fprintf(stderr,"Native water colours need an owned lookup workspace\n");abort();}
+    water_brighten=lookup->pixels;
+    for(unsigned row=0;row<22;row++)for(unsigned sample=0;sample<1024;sample++) {
+        unsigned i=(row*256+renderer_pixel_gb_index((uint16_t)(sample*2)))*2;
+#else
     for(unsigned row=0;row<22;row++)for(unsigned sample=0;sample<256;sample++) {
         unsigned i=(row*256+sample)*2;
+#endif
         unsigned color=((unsigned)brighten[i]<<8)|brighten[i+1];
+#ifdef AB3D_DOS_INDEXED
+        /* VGA quantizes each Brighten result before interpolating its
+         * representative 0RGB channels. A blended result passes through the
+         * palette again, even when the two source colors are identical. */
+        unsigned pixel=renderer_pixel_from_c12((uint16_t)color);
+        water_unblended[row][sample]=(RendererPixel)pixel;
+        color=renderer_pixel_to_c12(pixel);
+        pixel=renderer_pixel_from_c12((uint16_t)color);
         water_brighten[row][sample]=((color&0xf00)<<18)|((color&0xf0)<<17)|
-            ((color&15)<<16)|renderer_pixel_from_c12((uint16_t)color);
+            ((color&15)<<16)|pixel;
+#else
+        water_brighten[row][sample]=renderer_pixel_from_c12((uint16_t)color);
+#endif
     }
     for(unsigned alpha=0;alpha<128;alpha++)for(int difference=-15;difference<=15;difference++) {
         /* floor((17*(255*bg + difference*alpha)/255 + 8)/17)
          * = bg + floor((difference*alpha + 120)/255).
          * C division truncates negative values, so adjust to floor. */
         int n=difference*(int)alpha+120;
+#ifdef AB3D_NATIVE_RGB565
+        water_blend_delta[alpha].delta[difference+16]=(int8_t)(n>=0?n/255:-((-n+254)/255));
+#else
         water_blend_delta[alpha][difference+16]=(int8_t)(n>=0?n/255:-((-n+254)/255));
+#endif
     }
+#ifdef AB3D_NATIVE_RGB565
+    /* A channel's delta is zero iff -120 <= difference*alpha <= 134.
+     * The tightest of the three independent bounds gives an exact test;
+     * it also handles mixed-sign differences that separate intervals miss. */
+    if(!water_native_tables_ready) {
+        uint8_t channel_limit[32];
+        for(int difference=-16;difference<=15;difference++) {
+            unsigned bound=difference<0?120/(unsigned)(-difference):
+                difference?134/(unsigned)difference:127;
+            channel_limit[difference+16]=(uint8_t)(bound<127?bound:127);
+        }
+        for(unsigned i=0;i<32768;i++) {
+            unsigned limit=channel_limit[i&31];
+            unsigned green=channel_limit[(i>>5)&31],red=channel_limit[i>>10];
+            if(green<limit)limit=green;
+            if(red<limit)limit=red;
+            water_zero_threshold[i]=(uint8_t)limit;
+        }
+        for(unsigned i=0;i<512;i++)water_rg[i]=renderer_pixel_from_c12(
+            (uint16_t)((((i>>5)&15)<<8)|((i&15)<<4)));
+        for(unsigned i=0;i<16;i++)water_blue[i]=renderer_pixel_from_c12((uint16_t)i);
+        water_native_tables_ready=1;
+    }
+    for(unsigned alpha=0;alpha<128;alpha++)water_blend_delta[alpha].alpha=alpha;
+#endif
+#ifdef AB3D_DOS_INDEXED
     for(unsigned i=0;i<2048;i++)water_gb_index[i]=(uint8_t)renderer_pixel_gb_index((uint16_t)i);
-    for(unsigned rg=0;rg<256;rg++)water_rg[rg]=renderer_pixel_from_c12((uint16_t)(rg<<4));
-    for(unsigned b=0;b<16;b++)water_blue[b]=renderer_pixel_from_c12((uint16_t)b);
+#endif
+#ifndef AB3D_NATIVE_RGB565
+    for(unsigned i=0;i<16384;i++)water_lanes[i]=renderer_pixel_from_c12(
+        (uint16_t)((((i>>10)&15)<<8)|(((i>>5)&15)<<4)|(i&15)));
+#endif
+
 }
 
 RendererPixel dos_raster_water_color(unsigned row,unsigned sample)
 {
-    return (RendererPixel)water_brighten[row][sample];
+#ifdef AB3D_DOS_INDEXED
+    return water_unblended[row][sample];
+#else
+    return water_brighten[row][(renderer_pixel_from_c12((uint16_t)sample)&0x079e)>>1];
+#endif
 }
 
-/* A constant one_row selects an already resolved 64-byte phase row.
- * Both samplers share the original native Brighten/blend operations. */
-__attribute__((always_inline)) static inline
-void water_span(RendererPixel *out,unsigned count,
-                const RendererPixel *background0,const RendererPixel *background1,
-                const uint8_t *phase,const uint32_t (*brighten)[256],const int8_t *blend,
-                unsigned offset,uint32_t u,uint32_t v,uint32_t du,uint32_t dv,int one_row)
-{
-    /* AB3DI.s texturedwater wraps this selected phase row every 64
-     * texels. Keep its six integer bits at the top of the accumulator;
-     * unsigned overflow then supplies the exact modulo-64 wrap. */
-    if(one_row){u=(u+((uint32_t)offset<<16))<<10;du<<=10;}
-    if(!background1) {
-        for(unsigned x=0;x<count;x++,u+=du,v+=dv) {
-            unsigned level;
-            if(one_row)level=phase[u>>26];
-            else {
-                uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
-                uv=(uint16_t)(uv+offset);
-                level=phase[((uv>>2)&0xfc0)|(uv&63)];
-            }
-            out[x]=(RendererPixel)brighten[level][water_gb_index[background0[x]&2047]];
-        }
-        return;
-    }
-    for(unsigned x=0;x<count;x++,u+=du,v+=dv) {
-        unsigned level;
-        if(one_row)level=phase[u>>26];
-        else {
-            uint16_t uv=(uint16_t)(((v>>8)&0xff00)|((u>>16)&255));
-            uv=(uint16_t)(uv+offset);
-            level=phase[((uv>>2)&0xfc0)|(uv&63)];
-        }
-        uint32_t c0=brighten[level][water_gb_index[background0[x]&2047]];
-        uint32_t c1=brighten[level][water_gb_index[background1[x]&2047]];
-        if(c0==c1) {
-            out[x]=(RendererPixel)c0;
-            continue;
-        }
-        /* The three guard bits prevent a negative channel difference from
-         * borrowing into the next lane. Each lookup still uses delta+16. */
-        uint32_t difference=((c1>>16)|0x4210u)-(c0>>16);
-        unsigned r=(c0>>26)+blend[(difference>>10)&31];
-        unsigned g=((c0>>21)&15)+blend[(difference>>5)&31];
-        unsigned b=((c0>>16)&15)+blend[difference&31];
-        out[x]=water_rg[(r<<4)|g]|water_blue[b];
-    }
-}
+/* Keep the byte-phase API and its exact interpolation shared with the
+ * native prepared-phase instantiation below. */
+#define WATER_FUNCTION(NAME) NAME
+#define WATER_PHASE_TYPE uint8_t
+#define WATER_LEVEL(SAMPLE) SAMPLE
+#define WATER_LEVEL_SHIFT "sall $10,%%edx\n\t"
+#define WATER_ROW_FETCH "movzbl (%%ecx,%%eax),%%edx\n\t"
+#define WATER_NATIVE_UV_FETCH "movzbl (%[phase],%%edx),%%edx\n\t"
+#include "raster_water_span.inc"
+#undef WATER_FUNCTION
+#undef WATER_PHASE_TYPE
+#undef WATER_LEVEL
+#undef WATER_LEVEL_SHIFT
+#undef WATER_ROW_FETCH
+#undef WATER_NATIVE_UV_FETCH
 
-/* Keep horizontal sampling state separate from byte-carry segmentation. */
-__attribute__((noinline,optimize("O3,unroll-loops")))
-static void water_span_row(RendererPixel *out,unsigned count,
-                           const RendererPixel *background0,const RendererPixel *background1,
-                           const uint8_t *phase,const uint32_t (*brighten)[256],const int8_t *blend,
-                           unsigned offset,uint32_t u,uint32_t du)
-{
-    water_span(out,count,background0,background1,phase,brighten,blend,offset,u,0,du,0,1);
-}
-
-__attribute__((noinline,optimize("O3,unroll-loops")))
-void dos_raster_water(RendererPixel *out,unsigned count,
-                        const RendererPixel *background0,const RendererPixel *background1,
-                        const uint8_t *phase,unsigned shade,unsigned offset,unsigned alpha,
-                        uint32_t u,uint32_t v,uint32_t du,uint32_t dv)
-{
-    const uint32_t (*brighten)[256]=water_brighten+shade;
-    /* Exact rounded interpolation is symmetric under swapping the samples. */
-    if(background1 && alpha>127) {
-        const RendererPixel *swap=background0;background0=background1;background1=swap;
-        alpha=255-alpha;
-    }
-    /* At half-alpha 0..8 every possible 4-bit channel delta rounds to zero. */
-    if(alpha<=8 || background0==background1)background1=NULL;
-    const int8_t *blend=background1?water_blend_delta[alpha]:NULL;
-    if(!dv && du && du<=65536u && count<=320) {
-        /* AB3DI texturedwater adds wateroff to the packed 16-bit UV word.
-         * With constant V, only the low U-byte carry can change its phase
-         * row. Split at that carry or the U-byte wrap, preserving both. */
-        unsigned bias=offset&255,base=((v>>16)+(offset>>8))&63;
-        while(count) {
-            unsigned low=u&0xffffffu,carry=((low>>16)+bias)>>8;
-            unsigned limit=carry?0x1000000u:((256-bias)<<16);
-            unsigned run=count;
-            /* At most 319 one-texel steps keep this product in 32 bits.
-             * A span ending before the boundary needs no division. */
-            if((count-1)*du>=limit-low)run=(limit-1-low)/du+1;
-            water_span_row(out,run,background0,background1,phase+(((base+carry)&63)*64),
-                           brighten,blend,bias,u,du);
-            out+=run;background0+=run;if(background1)background1+=run;
-            u+=run*du;count-=run;
-        }
-    }
-    else water_span(out,count,background0,background1,phase,brighten,blend,offset,u,v,du,dv,0);
-}
+#ifdef AB3D_NATIVE_RGB565
+/* A prepared resource supplies the same levels already scaled for Brighten.
+ * Its optional run hints select equivalent low-green-bit lookup slots.
+ * Keep generic byte phases available for callers that own ordinary arrays. */
+_Static_assert(WATER_PHASE_LEVEL_SHIFT==10 && WATER_PHASE_RUN_SHIFT==4 && WATER_PHASE_RUN_MAX==4,"native water lookup phase layout");
+#define WATER_FUNCTION(NAME) NAME##_prepared
+#define WATER_PHASE_TYPE uint16_t
+#define WATER_LEVEL(SAMPLE) ((SAMPLE)>>10)
+#define WATER_LEVEL_SHIFT ""
+#define WATER_ROW_FETCH "movzwl (%%ecx,%%eax,2),%%edx\n\t"
+#define WATER_NATIVE_UV_FETCH "movzwl (%[phase],%%edx,2),%%edx\n\t"
+#define WATER_RUN_HINTS
+#define WATER_PACKED_UV
+#include "raster_water_span.inc"
+#undef WATER_PACKED_UV
+#undef WATER_RUN_HINTS
+#undef WATER_FUNCTION
+#undef WATER_PHASE_TYPE
+#undef WATER_LEVEL
+#undef WATER_LEVEL_SHIFT
+#undef WATER_ROW_FETCH
+#undef WATER_NATIVE_UV_FETCH
+#endif
 
 #endif
 
@@ -805,12 +843,17 @@ DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out,unsigned width,
     return sprite_rows(out,width,height,pitch,sprite,0);
 }
 
-#ifdef AB3D_NATIVE_RGB565
+#if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
 /* Two 1024-bit maps classify every interleaved horizontal/vertical tile row
  * at the authored darkest shade. No pre-shaded texture bank is retained. */
 typedef struct {
     const uint8_t *texture;
     const RendererPixel *palette;
+#ifdef AB3D_DOS_INDEXED
+    /* Keep the source bytes owned by io.c for palette-epoch refreshes. */
+    const uint8_t *source_palette;
+    RendererPixel colors[15][256];
+#endif
     int whole_solid;
     uint8_t solid[2][128];
 } DosFloorSolid;
@@ -822,7 +865,14 @@ void dos_raster_prepare_floor(unsigned slot,const uint8_t *texture,const uint8_t
     DosFloorSolid *e=&floor_solid[slot];
     memset(e,0,sizeof(*e));
     if(!texture || !palettes)return;
+#ifdef AB3D_DOS_INDEXED
+    e->texture=texture;e->source_palette=palettes;
+    for(unsigned level=0;level<15;level++)for(unsigned color=0;color<256;color++)
+        e->colors[level][color]=renderer_pixel_from_be(palettes+(level*256+color)*2);
+    e->palette=e->colors[14];
+#else
     e->texture=texture;e->palette=(const RendererPixel *)(const void *)palettes+14*256;
+#endif
     e->whole_solid=1;
     for(unsigned i=1;i<256;i++)if(e->palette[i]!=e->palette[0]){e->whole_solid=0;break;}
     if(e->whole_solid){memset(e->solid,255,sizeof(e->solid));return;}
@@ -842,7 +892,11 @@ int dos_raster_solid_floor(RendererPixel *out,unsigned count,const uint8_t *text
     for(unsigned i=0;i<3;i++) {
         const DosFloorSolid *e=&floor_solid[i];
         if(palette!=e->palette)continue;
+#ifdef AB3D_DOS_INDEXED
+        if(e->whole_solid){memset(out,palette[0],count);return 1;}
+#else
         if(e->whole_solid){fill_words((int16_t *)out,count,palette[0]);return 1;}
+#endif
         if(du && dv)continue;
         unsigned axis=dv!=0;
         const uint8_t *source=texture+(axis?((u>>14)&0xfc):((v>>6)&0xfc00));
@@ -850,11 +904,31 @@ int dos_raster_solid_floor(RendererPixel *out,unsigned count,const uint8_t *text
         if(offset>=65536 || (axis?(offset>>8)>3:(offset&255)>3))continue;
         unsigned key=axis?((offset&255)<<2)+(offset>>8):((offset>>8)<<2)+(offset&3);
         if(e->solid[axis][key>>3]&(1u<<(key&7))) {
+#ifdef AB3D_DOS_INDEXED
+            memset(out,palette[source[0]],count);return 1;
+#else
             fill_words((int16_t *)out,count,palette[source[0]]);return 1;
+#endif
         }
     }
     return 0;
 }
+#ifdef AB3D_DOS_INDEXED
+const RendererPixel (*dos_raster_indexed_floor_palettes(const uint8_t *source))[256]
+{
+    for(unsigned i=0;i<3;i++)if(source && floor_solid[i].source_palette==source)
+        return floor_solid[i].colors;
+    return NULL;
+}
+void dos_raster_indexed_floor_palette_changed(void)
+{
+    for(unsigned i=0;i<3;i++) {
+        const uint8_t *texture=floor_solid[i].texture,*pal=floor_solid[i].source_palette;
+        dos_raster_prepare_floor(i,texture,pal);
+    }
+}
+#endif
+
 #endif
 
 void dos_raster_floor_edges_init(int16_t *left, int16_t *right,
@@ -915,6 +989,62 @@ uint8_t *dos_load_wall(uint8_t *data, size_t bytes, size_t *source_bytes)
     return palette;
 }
 
+#ifdef AB3D_NATIVE_RGB565
+enum { WALL_CODE_COLUMNS=128,WALL_CODE_PIXEL_BYTES=18 };
+static uint8_t wall_row_code[WALL_CODE_COLUMNS*WALL_CODE_PIXEL_BYTES+1] __attribute__((aligned(16)));
+static DosWallPairLookup *wall_pair_lookup;
+static RendererPixel wall_pair_palette[32];
+static int wall_pair_valid;
+
+void dos_raster_prepare_wall_pairs(DosWallPairLookup *lookup)
+{
+    if(!lookup){fprintf(stderr,"Native wall pairs need an owned lookup workspace\n");abort();}
+    wall_pair_lookup=lookup;wall_pair_valid=0;
+}
+void dos_raster_release_wall_pairs(void) { wall_pair_lookup=NULL;wall_pair_valid=0; }
+
+static int wall_pairs_ready(const RendererPixel *palette,unsigned width,unsigned height)
+{
+    if(!wall_pair_lookup)return 0;
+    /* Palette contents can change at the same address after a level/UI refresh.
+     * Compare the complete 32-word source before reusing any derived pair. */
+    if(wall_pair_valid && !memcmp(palette,wall_pair_palette,sizeof(wall_pair_palette)))return 1;
+    /* Filling 1,024 sparse slots must be amortized over a large wall. Small
+     * spans keep their existing code, without displacing a useful palette. */
+    if(width*height<8192u)return 0;
+    for(unsigned right=0;right<32;right++)for(unsigned left=0;left<32;left++)
+        wall_pair_lookup->pixels[(right<<8)|left]=palette[left]|((uint32_t)palette[right]<<16);
+    memcpy(wall_pair_palette,palette,sizeof(wall_pair_palette));wall_pair_valid=1;
+    return 1;
+}
+
+/* DOS is synchronous. Like Build's setpalookupaddress/hlineasm4, prepare
+ * the immutable source operands before calling the completed row routine.
+ * EBX is the sampled row, ESI its palette and EDI the row destination.
+ * This bounded BSS buffer is executable in DJGPP's flat 486 address space.
+ * CALL enters only after every operand and RET have been written, flushing
+ * the 486 prefetch queue. The renderer never calls this concurrently.
+ * Pair independent texel/palette reads; signed-byte destination offsets
+ * cover columns 0..63, with full displacements for columns 64..127. */
+#define WALL_ROW_FUNCTION wall_rows_single
+#include "raster_wall_rows.inc"
+#undef WALL_ROW_FUNCTION
+#define WALL_ROW_FUNCTION wall_rows_pair
+#define WALL_PAIR_RENDER
+#include "raster_wall_rows.inc"
+#undef WALL_PAIR_RENDER
+#undef WALL_ROW_FUNCTION
+
+static void wall_rows_generated(RendererPixel *out,unsigned width,unsigned height,unsigned pitch,
+                               const DosWallColumn *columns,const RendererPixel *palette,
+                               uint32_t y,uint32_t dy,unsigned mask)
+{
+    if(wall_pairs_ready(palette,width,height))wall_rows_pair(out,width,height,pitch,columns,palette,y,dy,mask);
+    else wall_rows_single(out,width,height,pitch,columns,palette,y,dy,mask);
+}
+#include "raster_wall_columns.inc"
+#endif
+
 __attribute__((noinline, optimize("O2")))
 void dos_raster_wall_rows(RendererPixel *restrict out, unsigned width, unsigned height, unsigned pitch,
                            const DosWallColumn *restrict columns, const RendererPixel *shared_palette,
@@ -931,6 +1061,11 @@ void dos_raster_wall_rows(RendererPixel *restrict out, unsigned width, unsigned 
     }
 #else
     (void)shared_palette;
+#endif
+#ifdef AB3D_NATIVE_RGB565
+    if(shared_palette && width>=8 && height>=8) {
+        wall_rows_generated(out,width,height,pitch,columns,shared_palette,y,dy,mask);return;
+    }
 #endif
     unsigned previous_sample = ~0u;
     for (unsigned row = 0; row < height; row++) {
@@ -993,7 +1128,9 @@ void dos_raster_wall_rows(RendererPixel *restrict out, unsigned width, unsigned 
                 }
             }
 #else
-            for (unsigned x = 0; x < width; x++)
+            if(shared_palette)for(unsigned x=0;x<width;x++)
+                out[x]=shared_palette[columns[x].texels[sample]];
+            else for (unsigned x = 0; x < width; x++)
                 out[x] = columns[x].palette[columns[x].texels[sample]];
 #endif
         }
@@ -1154,7 +1291,7 @@ void dos_raster_wall_edges(RendererPixel *restrict out, unsigned count, unsigned
     }
 }
 
-#ifdef AB3D_NATIVE_RGB565
+#if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
 __attribute__((noinline, optimize("O2")))
 void dos_raster_floor_dark(RendererPixel *out,unsigned count,const uint8_t *texture,
                             const RendererPixel *palette,uint32_t u,uint32_t v,uint32_t du,uint32_t dv)
@@ -1166,13 +1303,30 @@ void dos_raster_floor_dark(RendererPixel *out,unsigned count,const uint8_t *text
 
 /* Separate small loops keep the water/projection state out of 486 registers.
  * Unsigned additions retain the renderer's exact 32-bit UV wrapping. */
+#ifdef AB3D_DOS_INDEXED
+#define FLOOR_STORE_DX(OFFSET) "movb %%dl, " #OFFSET "/2(%%edi)\n\t"
+#define FLOOR_STORE_CX(OFFSET) "movb %%cl, " #OFFSET "/2(%%edi)\n\t"
+#define FLOOR_LOAD_DX "movzbl (%[pal],%%edx), %%edx\n\t"
+#define FLOOR_LOAD_CX "movzbl (%[pal],%%ecx), %%ecx\n\t"
+#define FLOOR_NEXT_EIGHT "addl $8, %%edi\n\t"
+#define FLOOR_NEXT_ONE "addl $1, %%edi\n\t"
+#define FLOOR_FILL(COLOR) memset(out,COLOR,count)
+#else
+#define FLOOR_STORE_DX(OFFSET) "movw %%dx, " #OFFSET "(%%edi)\n\t"
+#define FLOOR_STORE_CX(OFFSET) "movw %%cx, " #OFFSET "(%%edi)\n\t"
+#define FLOOR_LOAD_DX "movw (%[pal],%%edx,2), %%dx\n\t"
+#define FLOOR_LOAD_CX "movw (%[pal],%%ecx,2), %%cx\n\t"
+#define FLOOR_NEXT_EIGHT "addl $16, %%edi\n\t"
+#define FLOOR_NEXT_ONE "addl $2, %%edi\n\t"
+#define FLOOR_FILL(COLOR) fill_words((int16_t *)out,count,(uint16_t)COLOR)
+#endif
 __attribute__((noinline, optimize("O2")))
 void dos_raster_floor(RendererPixel *restrict out, unsigned count, const uint8_t *restrict texture,
                        const RendererPixel *restrict palette, uint32_t u, uint32_t v,
                        uint32_t du, uint32_t dv)
 {
     if (!count) return;
-#ifdef AB3D_NATIVE_RGB565
+#if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
     /* The 486 has seven general registers. Keep UV, source, destination and
      * palette in them; only the two steps/end pointer need stack operands. */
     if (!dv || !du) {
@@ -1188,23 +1342,7 @@ void dos_raster_floor(RendererPixel *restrict out, unsigned count, const uint8_t
         if(magnitude<=32768) {
             /* AB3DI sideloop: at most half a texel per pixel. Walk the exact
              * 16-bit fraction and fetch a new color only on carry/borrow. */
-#define FLOOR_CACHED_PIXEL(SHIFT, MASK, OP, OFFSET, LABEL) \
-            "movw %%dx, " #OFFSET "(%%edi)\n\t" \
-            #OP "w %%bx, %%ax\n\t" \
-            "jnc " #LABEL "f\n\t" \
-            #OP "l $65536, %%eax\n\t" \
-            "movl %%eax, %%edx\n\t" \
-            "shrl $" #SHIFT ", %%edx\n\t" \
-            "andl $" #MASK ", %%edx\n\t" \
-            "movzbl (%%esi,%%edx), %%edx\n\t" \
-            "movw (%[pal],%%edx,2), %%dx\n\t" \
-            #LABEL ":\n\t"
-#define FLOOR_CACHED_AXIS(SHIFT, MASK, OP) do { \
-            unsigned color=palette[texture[(coordinate>>SHIFT)&MASK]]; \
-            if(!magnitude){fill_words((int16_t *)out,count,(uint16_t)color);return;} \
-            unsigned groups=count/8; \
-            if(groups)__asm__ volatile( \
-                "1:\n\t" \
+#define FLOOR_CACHED_EIGHT(SHIFT, MASK, OP) \
                 FLOOR_CACHED_PIXEL(SHIFT,MASK,OP,0,2) \
                 FLOOR_CACHED_PIXEL(SHIFT,MASK,OP,2,3) \
                 FLOOR_CACHED_PIXEL(SHIFT,MASK,OP,4,4) \
@@ -1212,8 +1350,64 @@ void dos_raster_floor(RendererPixel *restrict out, unsigned count, const uint8_t
                 FLOOR_CACHED_PIXEL(SHIFT,MASK,OP,8,6) \
                 FLOOR_CACHED_PIXEL(SHIFT,MASK,OP,10,7) \
                 FLOOR_CACHED_PIXEL(SHIFT,MASK,OP,12,8) \
-                FLOOR_CACHED_PIXEL(SHIFT,MASK,OP,14,9) \
-                "addl $16, %%edi\n\t" \
+                FLOOR_CACHED_PIXEL(SHIFT,MASK,OP,14,9)
+#ifdef AB3D_NATIVE_RGB565
+            /* Keep the fraction separate from the sampled offset. Updating
+             * AL by four wraps U at 64 texels; updating AX by 1024 wraps V
+             * at 64 rows, independently of the texture's base alignment. */
+#define FLOOR_CACHED_INDEX_14(OP) #OP "b $4, %%al\n\t"
+#define FLOOR_CACHED_INDEX_6(OP) #OP "w $1024, %%ax\n\t"
+#define FLOOR_CACHED_PIXEL(SHIFT, MASK, OP, OFFSET, LABEL) \
+            FLOOR_STORE_DX(OFFSET) \
+            #OP "w %%bx, %%cx\n\t" \
+            "jnc " #LABEL "f\n\t" \
+            FLOOR_CACHED_INDEX_##SHIFT(OP) \
+            "movzbl (%%esi,%%eax), %%edx\n\t" \
+            FLOOR_LOAD_DX \
+            #LABEL ":\n\t"
+#define FLOOR_CACHED_AXIS(SHIFT, MASK, OP) do { \
+            unsigned index=(coordinate>>SHIFT)&MASK; \
+            unsigned fraction=coordinate&65535,color=palette[texture[index]]; \
+            if(!magnitude){FLOOR_FILL(color);return;} \
+            unsigned full=count&~7u; \
+            if(full){RendererPixel *end=out+full;__asm__ volatile( \
+                "1:\n\t" \
+                FLOOR_CACHED_EIGHT(SHIFT,MASK,OP) \
+                FLOOR_NEXT_EIGHT \
+                "cmpl %[end], %%edi\n\t" \
+                "jne 1b" \
+                : "+&a"(index), "+&D"(out), "+&c"(fraction), "+&d"(color) \
+                : "S"(texture), "b"(magnitude), [pal] "r"(palette),[end] "m"(end) : "cc", "memory");} \
+            count&=7; \
+            if(count){RendererPixel *end=out+count;__asm__ volatile( \
+                "1:\n\t" \
+                FLOOR_CACHED_PIXEL(SHIFT,MASK,OP,0,2) \
+                FLOOR_NEXT_ONE \
+                "cmpl %[end], %%edi\n\t" \
+                "jne 1b" \
+                : "+&a"(index), "+&D"(out), "+&c"(fraction), "+&d"(color) \
+                : "S"(texture), "b"(magnitude), [pal] "r"(palette),[end] "m"(end) : "cc", "memory");} \
+            } while(0)
+#else
+#define FLOOR_CACHED_PIXEL(SHIFT, MASK, OP, OFFSET, LABEL) \
+            FLOOR_STORE_DX(OFFSET) \
+            #OP "w %%bx, %%ax\n\t" \
+            "jnc " #LABEL "f\n\t" \
+            #OP "l $65536, %%eax\n\t" \
+            "movl %%eax, %%edx\n\t" \
+            "shrl $" #SHIFT ", %%edx\n\t" \
+            "andl $" #MASK ", %%edx\n\t" \
+            "movzbl (%%esi,%%edx), %%edx\n\t" \
+            FLOOR_LOAD_DX \
+            #LABEL ":\n\t"
+#define FLOOR_CACHED_AXIS(SHIFT, MASK, OP) do { \
+            unsigned color=palette[texture[(coordinate>>SHIFT)&MASK]]; \
+            if(!magnitude){FLOOR_FILL(color);return;} \
+            unsigned groups=count/8; \
+            if(groups)__asm__ volatile( \
+                "1:\n\t" \
+                FLOOR_CACHED_EIGHT(SHIFT,MASK,OP) \
+                FLOOR_NEXT_EIGHT \
                 "decl %%ecx\n\t" \
                 "jnz 1b" \
                 : "+&a"(coordinate), "+&D"(out), "+&c"(groups), "+&d"(color) \
@@ -1222,12 +1416,13 @@ void dos_raster_floor(RendererPixel *restrict out, unsigned count, const uint8_t
             if(count)__asm__ volatile( \
                 "1:\n\t" \
                 FLOOR_CACHED_PIXEL(SHIFT,MASK,OP,0,2) \
-                "addl $2, %%edi\n\t" \
+                FLOOR_NEXT_ONE \
                 "decl %%ecx\n\t" \
                 "jnz 1b" \
                 : "+&a"(coordinate), "+&D"(out), "+&c"(count), "+&d"(color) \
                 : "S"(texture), "b"(magnitude), [pal] "r"(palette) : "cc", "memory"); \
             } while(0)
+#endif
             if(!dv) {
                 if((int32_t)step<0)FLOOR_CACHED_AXIS(14,0xfc,sub);
                 else FLOOR_CACHED_AXIS(14,0xfc,add);
@@ -1237,6 +1432,9 @@ void dos_raster_floor(RendererPixel *restrict out, unsigned count, const uint8_t
             }
 #undef FLOOR_CACHED_AXIS
 #undef FLOOR_CACHED_PIXEL
+#undef FLOOR_CACHED_EIGHT
+#undef FLOOR_CACHED_INDEX_14
+#undef FLOOR_CACHED_INDEX_6
             return;
         }
 #define FLOOR_AXIS_PIXEL(SHIFT, MASK, OFFSET) \
@@ -1244,8 +1442,8 @@ void dos_raster_floor(RendererPixel *restrict out, unsigned count, const uint8_t
             "shrl $" #SHIFT ", %%edx\n\t" \
             "andl $" #MASK ", %%edx\n\t" \
             "movzbl (%%esi,%%edx), %%edx\n\t" \
-            "movw (%[pal],%%edx,2), %%dx\n\t" \
-            "movw %%dx, " #OFFSET "(%%edi)\n\t" \
+            FLOOR_LOAD_DX \
+            FLOOR_STORE_DX(OFFSET) \
             "addl %%ebx, %%eax\n\t"
 #define FLOOR_AXIS(SHIFT, MASK) do { \
         unsigned groups = count / 8; \
@@ -1259,7 +1457,7 @@ void dos_raster_floor(RendererPixel *restrict out, unsigned count, const uint8_t
             FLOOR_AXIS_PIXEL(SHIFT, MASK, 10) \
             FLOOR_AXIS_PIXEL(SHIFT, MASK, 12) \
             FLOOR_AXIS_PIXEL(SHIFT, MASK, 14) \
-            "addl $16, %%edi\n\t" \
+            FLOOR_NEXT_EIGHT \
             "decl %%ecx\n\t" \
             "jnz 1b" \
             : "+&a"(coordinate), "+&D"(out), "+&c"(groups) \
@@ -1269,7 +1467,7 @@ void dos_raster_floor(RendererPixel *restrict out, unsigned count, const uint8_t
         if (count) __asm__ volatile( \
             "1:\n\t" \
             FLOOR_AXIS_PIXEL(SHIFT, MASK, 0) \
-            "addl $2, %%edi\n\t" \
+            FLOOR_NEXT_ONE \
             "decl %%ecx\n\t" \
             "jnz 1b" \
             : "+&a"(coordinate), "+&D"(out), "+&c"(count) \
@@ -1282,21 +1480,50 @@ void dos_raster_floor(RendererPixel *restrict out, unsigned count, const uint8_t
 #undef FLOOR_AXIS_PIXEL
         return;
     }
-#define FLOOR_UV_PIXEL(OFFSET) \
+#ifdef AB3D_NATIVE_RGB565
+    /* AB3DI sideloop samples ((V&63)*256+(U&63))*4. Put U's sampled
+     * bits at the top and rotate V's 22 useful bits so SHRD joins them.
+     * ADC returns the fractional carry around bit 31. The ten-bit gap
+     * receives at most 16 integer wraps before each group clears it;
+     * it cannot carry into the high fractional bits. The tail is <=15. */
+    u<<=10;du<<=10;
+    v&=0x3fffff;dv&=0x3fffff;
+    v=(v>>14)|(v<<18);dv=(dv>>14)|(dv<<18);
+#define FLOOR_UV_SAMPLE \
+        "movl %%eax, %%ecx\n\t" \
+        "shrdl $24, %%ebx, %%ecx\n\t" \
+        "andl $0xfcfc, %%ecx\n\t"
+#define FLOOR_UV_ADVANCE_V "addl %[dv], %%ebx\n\t" "adcl $0, %%ebx\n\t"
+#define FLOOR_UV_GROUP_WRAP "andl $0xfffc00ff, %%ebx\n\t"
+#define FLOOR_UV_GROUP_PIXELS 16
+#define FLOOR_UV_FULL_MASK ~15u
+#define FLOOR_UV_TAIL_MASK 15
+#define FLOOR_UV_NEXT_GROUP "addl $32, %%edi\n\t"
+#else
+#define FLOOR_UV_SAMPLE \
         "movl %%eax, %%ecx\n\t" \
         "shrl $14, %%ecx\n\t" \
         "andl $0xfc, %%ecx\n\t" \
         "movl %%ebx, %%edx\n\t" \
         "shrl $6, %%edx\n\t" \
         "andl $0xfc00, %%edx\n\t" \
-        "orl %%edx, %%ecx\n\t" \
+        "orl %%edx, %%ecx\n\t"
+#define FLOOR_UV_ADVANCE_V "addl %[dv], %%ebx\n\t"
+#define FLOOR_UV_GROUP_WRAP ""
+#define FLOOR_UV_GROUP_PIXELS 8
+#define FLOOR_UV_FULL_MASK ~7u
+#define FLOOR_UV_TAIL_MASK 7
+#define FLOOR_UV_NEXT_GROUP FLOOR_NEXT_EIGHT
+#endif
+#define FLOOR_UV_PIXEL(OFFSET) \
+        FLOOR_UV_SAMPLE \
         "movzbl (%%esi,%%ecx), %%ecx\n\t" \
-        "movw (%[pal],%%ecx,2), %%cx\n\t" \
-        "movw %%cx, " #OFFSET "(%%edi)\n\t" \
+        FLOOR_LOAD_CX \
+        FLOOR_STORE_CX(OFFSET) \
         "addl %[du], %%eax\n\t" \
-        "addl %[dv], %%ebx\n\t"
-    if (count >= 8) {
-        RendererPixel *groups_end = out + (count & ~7u);
+        FLOOR_UV_ADVANCE_V
+    if (count >= FLOOR_UV_GROUP_PIXELS) {
+        RendererPixel *groups_end = out + (count & FLOOR_UV_FULL_MASK);
         __asm__ volatile(
             "1:\n\t"
             FLOOR_UV_PIXEL(0)
@@ -1307,20 +1534,31 @@ void dos_raster_floor(RendererPixel *restrict out, unsigned count, const uint8_t
             FLOOR_UV_PIXEL(10)
             FLOOR_UV_PIXEL(12)
             FLOOR_UV_PIXEL(14)
-            "addl $16, %%edi\n\t"
+#ifdef AB3D_NATIVE_RGB565
+            FLOOR_UV_PIXEL(16)
+            FLOOR_UV_PIXEL(18)
+            FLOOR_UV_PIXEL(20)
+            FLOOR_UV_PIXEL(22)
+            FLOOR_UV_PIXEL(24)
+            FLOOR_UV_PIXEL(26)
+            FLOOR_UV_PIXEL(28)
+            FLOOR_UV_PIXEL(30)
+#endif
+            FLOOR_UV_GROUP_WRAP
+            FLOOR_UV_NEXT_GROUP
             "cmpl %[end], %%edi\n\t"
             "jne 1b"
             : "+&a"(u), "+&b"(v), "+&D"(out)
             : "S"(texture), [pal] "r"(palette), [du] "m"(du), [dv] "m"(dv), [end] "m"(groups_end)
             : "ecx", "edx", "cc", "memory");
-        count &= 7;
+        count &= FLOOR_UV_TAIL_MASK;
     }
     if (count) {
         RendererPixel *native_end = out + count;
         __asm__ volatile(
             "1:\n\t"
             FLOOR_UV_PIXEL(0)
-            "addl $2, %%edi\n\t"
+            FLOOR_NEXT_ONE
             "cmpl %[end], %%edi\n\t"
             "jne 1b"
             : "+&a"(u), "+&b"(v), "+&D"(out)
@@ -1328,6 +1566,13 @@ void dos_raster_floor(RendererPixel *restrict out, unsigned count, const uint8_t
             : "ecx", "edx", "cc", "memory");
     }
 #undef FLOOR_UV_PIXEL
+#undef FLOOR_UV_SAMPLE
+#undef FLOOR_UV_ADVANCE_V
+#undef FLOOR_UV_GROUP_WRAP
+#undef FLOOR_UV_GROUP_PIXELS
+#undef FLOOR_UV_FULL_MASK
+#undef FLOOR_UV_TAIL_MASK
+#undef FLOOR_UV_NEXT_GROUP
     return;
 #endif
     RendererPixel *end = out + count;
@@ -1353,6 +1598,14 @@ void dos_raster_floor(RendererPixel *restrict out, unsigned count, const uint8_t
         v += dv;
     }
 }
+
+#undef FLOOR_STORE_DX
+#undef FLOOR_STORE_CX
+#undef FLOOR_LOAD_DX
+#undef FLOOR_LOAD_CX
+#undef FLOOR_NEXT_EIGHT
+#undef FLOOR_NEXT_ONE
+#undef FLOOR_FILL
 
 __attribute__((noinline, optimize("O2")))
 void dos_raster_floor_gouraud(RendererPixel *restrict out, unsigned count, const uint8_t *restrict texture,

@@ -115,7 +115,8 @@ echo PASS>PASS.TXT
     flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
     with (run / 'host.log').open('w') as host:
         subprocess.run([str(args.dosbox.resolve()), '-conf', str(config), '--exit'], cwd=run,
-                        stdout=host, stderr=host, creationflags=flags, timeout=60, check=True)
+                        # Both phase APIs now run the complete water oracle.
+                        stdout=host, stderr=host, creationflags=flags, timeout=180, check=True)
     log = (run / 'RASTER.LOG').read_text(errors='replace')
     print(log, end='')
     if (run / 'RASTER.ERR').exists():

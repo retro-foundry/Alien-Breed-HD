@@ -17,6 +17,9 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "renderer_pixel.h"
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+#include "water_format.h"
+#endif
 
 /* -----------------------------------------------------------------------
  * Framebuffer dimensions (from AB3DI.s)
@@ -360,6 +363,10 @@ void renderer_reset_level_sky_cache(void);
  * Pass NULL/0 to disable and use fallback water shading. */
 void renderer_set_water_assets(const uint8_t *water_file, size_t water_file_size,
                                const uint8_t *water_brighten, size_t water_brighten_size);
+#if defined(AB3D_DOS) && defined(AB3D_NATIVE_RGB565)
+void renderer_set_prepared_water_assets(const WaterSourceView *source,
+                                        const uint8_t *brighten,size_t brighten_bytes);
+#endif
 void renderer_step_water_anim(int steps);
 void renderer_step_water_anim_vblanks(int vblanks);
 void renderer_step_water_anim_ms(uint32_t elapsed_ms);
@@ -486,6 +493,8 @@ uint32_t *renderer_get_active_rgb_target(void);
 RendererPixel *renderer_get_active_cw_target(void);
 #ifdef AB3D_DOS_INDEXED
 void renderer_palette_changed(void);
+/* Call after loading/replacing the IO-owned wall palettes. */
+void renderer_indexed_wall_palettes_changed(void);
 void renderer_dos_check_indexed_pixels(GameState *state);
 #endif
 /* When zero (default), raster skips per-pixel ARGB expansion; cw_buffer is authoritative for display. */

@@ -93,6 +93,33 @@ void dos_scene_asset_free(void *ptr)
     }
     fprintf(stderr,"Invalid DOS scene bank free\n");exit(1);
 }
+#ifdef AB3D_NATIVE_RGB565
+/* Derived water colours have a renderer lifetime, separate from the four
+ * immutable texture banks and the scene's sky/gun bank. */
+static void *water_lookup_memory;
+static int water_lookup_selector=-1;
+void *dos_water_lookup_alloc(size_t bytes)
+{
+    if(!bytes || bytes>65536u || water_lookup_memory) {
+        fprintf(stderr,"Invalid DOS water lookup allocation (%lu bytes)\n",(unsigned long)bytes);exit(1);
+    }
+    int segment=__dpmi_allocate_dos_memory((bytes+15u)/16u,&water_lookup_selector);
+    if(segment<0) {
+        fprintf(stderr,"Native water lookup needs %lu bytes free conventional RAM\n",(unsigned long)bytes);exit(1);
+    }
+    water_lookup_memory=(void *)(__djgpp_conventional_base+(unsigned long)segment*16u);
+    return water_lookup_memory;
+}
+void dos_water_lookup_free(void *ptr)
+{
+    if(!ptr)return;
+    if(ptr!=water_lookup_memory) {
+        fprintf(stderr,"Invalid DOS water lookup free\n");exit(1);
+    }
+    __dpmi_free_dos_memory(water_lookup_selector);
+    water_lookup_selector=-1;water_lookup_memory=NULL;
+}
+#endif
 void dos_platform_bootstrap(const char *executable)
 {
     /* SDL_MAIN_HANDLED bypasses SDL_RunApp, whose DOS filesystem backend
@@ -103,7 +130,11 @@ void dos_platform_bootstrap(const char *executable)
      * normal allocator one contiguous game heap first, rather than losing
      * the padding of many small zones while loading differently-sized assets.
      * Leave room for the optimized renderer's larger text at 4 MB. */
-    const size_t heap_size=1280u*1024u;
+    /* The pinned DJGPP nmalloc adds 48 bytes in roundup/extendsbrk to this
+     * first large request. Account for them within the 1280 KiB arena;
+     * requesting the whole arena as payload rounds its DPMI zone up by
+     * another 64 KiB, which can prevent a 4 MB executable from starting. */
+    const size_t heap_size=1280u*1024u-48u;
     volatile unsigned char *heap=malloc(heap_size);
     if(!heap){fprintf(stderr,"Cannot reserve the 1.25 MiB DOS game heap\n");exit(1);}
     heap[0]=0;heap[heap_size-1]=0;

@@ -1,4 +1,4 @@
-/* Byte-pixel versions of the independent BitMapObj raster/coverage oracles. */
+/* Independent byte-pixel world and BitMapObj raster/coverage oracles. */
 #include "raster_dos.h"
 #include "sprite_format.h"
 #include <assert.h>
@@ -15,6 +15,7 @@ static uint32_t next_value(void)
 }
 
 #include "dos_sprite_raster_cases.h"
+#include "dos_indexed_world_cases.h"
 
 static void check_indexed_colours(void)
 {
@@ -64,6 +65,13 @@ int main(void)
     check_sprite_copy_widths();
     check_sprite_dda_rows();
     check_indexed_colours();
+    for(unsigned i=0;i<4096;i++)dos_c12_to_index[i]=(uint8_t)((i*13)^(i>>4));
+    for(unsigned i=0;i<256;i++)dos_index_to_c12[i]=(i*197+13)&4095;
+    check_floors();check_indexed_floor_caches();check_indexed_walls();
+    check_water();
+    for(unsigned i=0;i<4096;i++)dos_c12_to_index[i]^=0x73;
+    for(unsigned i=0;i<256;i++)dos_index_to_c12[i]=(i*137+53)&4095;
+    check_water();
     puts("DOS indexed raster regression passed");
     return 0;
 }

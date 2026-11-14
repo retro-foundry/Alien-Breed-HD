@@ -2,6 +2,9 @@
 #define AB3D_RASTER_DOS_H
 
 #include "renderer_pixel.h"
+#ifdef AB3D_NATIVE_RGB565
+#include "water_format.h"
+#endif
 
 uint8_t *dos_load_wall(uint8_t *data, size_t bytes, size_t *source_bytes);
 enum { DOS_WALL_PALETTE_BYTES=2048, DOS_WALL_HEADER_BYTES=2052 };
@@ -23,14 +26,37 @@ void dos_raster_wall_edges(RendererPixel *out, unsigned count, unsigned stride,
                             uint32_t y, uint32_t dy, unsigned mask, unsigned copies);
 
 typedef struct {
+    /* Original five-bit wall indices; each palette contains 32 entries. */
     const uint8_t *texels;
     const RendererPixel *palette;
 } DosWallColumn;
+#ifdef AB3D_NATIVE_RGB565
+/* Optional caller-owned space for adjacent native output pixels. The sparse
+ * byte-pair index is (right<<8)|left; only original five-bit indices are read.
+ * Binding/replacement resets the cached palette. Detach before freeing. */
+enum { DOS_WALL_CAP_TOP=1,DOS_WALL_CAP_BOTTOM=2 };
+typedef struct {
+    const uint8_t *texels;
+    uint32_t y,dy;
+    int16_t top,bottom;
+    unsigned caps;
+} DosWallSpan;
+/* Consecutive five-bit wall columns sharing one 32-entry native palette.
+ * out addresses row zero of the first column; pitch >= count. Each nonempty
+ * span's y is its original sample at top, and its inclusive rows/caps must
+ * fit the canvas. Empty spans draw nothing. Source and output are disjoint. */
+void dos_raster_wall_spans(RendererPixel *out,unsigned pitch,const DosWallSpan *spans,
+                           unsigned count,const RendererPixel *palette,unsigned mask);
+
+typedef struct { uint32_t pixels[8192]; } DosWallPairLookup;
+void dos_raster_prepare_wall_pairs(DosWallPairLookup *lookup);
+void dos_raster_release_wall_pairs(void);
+#endif
 void dos_raster_floor_edge(int16_t *left, int16_t *right, int16_t *left_bright, int16_t *right_bright,
                             unsigned count, uint32_t x, uint32_t dx, uint32_t bright, uint32_t dbright);
 void dos_raster_floor_edges_init(int16_t *left, int16_t *right,
                                   unsigned count, int16_t empty_left);
-/* Native callers can supply one palette and leave column palette fields unused.
+/* Callers can supply one palette and leave column palette fields unused.
  * NULL retains automatic classification for spans with per-column brightness. */
 void dos_raster_wall_rows(RendererPixel *out, unsigned width, unsigned height, unsigned pitch,
                            const DosWallColumn *columns, const RendererPixel *shared_palette,
@@ -84,24 +110,49 @@ unsigned dos_raster_sprite_texel_column(RendererPixel *out,unsigned count,unsign
 DosSpriteCoverage dos_raster_sprite_rows(RendererPixel *out, unsigned width,
                                         unsigned height, unsigned pitch,
                                         const DosSpriteRows *sprite);
-#ifdef AB3D_NATIVE_RGB565
 void dos_raster_prepare_floor(unsigned slot,const uint8_t *texture,const uint8_t *palettes);
+#ifdef AB3D_DOS_INDEXED
+/* Unknown sources return NULL; registered IO-owned palettes refresh on epochs. */
+const RendererPixel (*dos_raster_indexed_floor_palettes(const uint8_t *source))[256];
+void dos_raster_indexed_floor_palette_changed(void);
+#endif
 /* Stock AB3DI.s texturedwater: original Brighten words, vertical samples and
  * 16-bit wateroff carry. NULL background1 selects background0 alone.
- * Blending retains the port's rounded 4-bit channels. */
+ * Blending retains the port's rounded 4-bit channels and, in indexed mode,
+ * both palette conversions in their original order. */
+#ifdef AB3D_NATIVE_RGB565
+/* Caller-owned derived colours. The renderer supplies conventional RAM;
+ * raster tests can supply ordinary guarded storage. Keep it alive until
+ * release or the next preparation, including palette refreshes. */
+typedef struct { RendererPixel pixels[22][1024]; } DosWaterLookup;
+void dos_raster_prepare_water(const uint8_t *brighten,DosWaterLookup *lookup);
+void dos_raster_release_water(void);
+#else
 void dos_raster_prepare_water(const uint8_t *brighten);
+#endif
 /* Shared prepared Brighten colours: row 0..21, sample 0..255. */
 RendererPixel dos_raster_water_color(unsigned row,unsigned sample);
 void dos_raster_water(RendererPixel *out, unsigned count,
                         const RendererPixel *background0, const RendererPixel *background1,
                         const uint8_t *phase, unsigned shade, unsigned offset, unsigned alpha,
                         uint32_t u, uint32_t v, uint32_t du, uint32_t dv);
+#ifdef AB3D_NATIVE_RGB565
+/* phase contains 4096 native-endian level*1024 words. Bits 4..5 optionally
+ * encode N-1 equal-level forward texels, including the current texel and
+ * wrapping within its 64-texel row (N=1..4). Other low bits are zero.
+ * Legacy zero hints are valid. Sampling, wrapping, interpolation and
+ * overlapping source reads retain the byte-phase API's order. */
+void dos_raster_water_prepared(RendererPixel *out,unsigned count,
+                        const RendererPixel *background0,const RendererPixel *background1,
+                        const uint16_t *phase,unsigned shade,unsigned offset,unsigned alpha,
+                        uint32_t u,uint32_t v,uint32_t du,uint32_t dv);
 #endif
+
 /* AB3DI.s pastfloorbright sampling: V*1024 + U*4, wrapping at 64. */
 void dos_raster_floor(RendererPixel *out, unsigned count, const uint8_t *texture,
                        const RendererPixel *palette, uint32_t u, uint32_t v,
                        uint32_t du, uint32_t dv);
-#ifdef AB3D_NATIVE_RGB565
+#if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
 void dos_raster_floor_dark(RendererPixel *out,unsigned count,const uint8_t *texture,
                             const RendererPixel *palette,uint32_t u,uint32_t v,uint32_t du,uint32_t dv);
 #endif
@@ -109,7 +160,7 @@ static inline void dos_raster_floor_shaded(RendererPixel *out,unsigned count,con
                             const RendererPixel (*palettes)[256],unsigned shade,
                             uint32_t u,uint32_t v,uint32_t du,uint32_t dv)
 {
-#ifdef AB3D_NATIVE_RGB565
+#if defined(AB3D_NATIVE_RGB565) || defined(AB3D_DOS_INDEXED)
     if(shade==14){dos_raster_floor_dark(out,count,texture,palettes[shade],u,v,du,dv);return;}
 #endif
     dos_raster_floor(out,count,texture,palettes[shade],u,v,du,dv);

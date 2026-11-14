@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the actual 486 indexed sprite kernels against independent pixel oracles."""
+"""Run actual 486 indexed world/sprite kernels against independent pixel oracles."""
 import argparse
 import json
 import os
