@@ -401,7 +401,8 @@ uint32_t *renderer_get_graphic_pick_target(void);
 void renderer_log_f2_pick_debug(const GameState *state,
                                 int16_t standing_zone,
                                 int16_t looking_zone);
-/* Automap: change world-units-per-pixel (PgUp = zoom in, PgDn = zoom out). */
+/* Automap: change world units per reference pixel (PgUp in, PgDn out).
+ * Output coordinates scale uniformly with viewport height. */
 void renderer_automap_adjust_scale(int delta_steps);
 /* Stable dedupe key for one seen wall segment (stored as key+1; 0 reserved empty). */
 uint32_t renderer_automap_seen_key_plus1(uint32_t gfx_off,

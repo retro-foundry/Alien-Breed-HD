@@ -6762,3 +6762,21 @@ default and updated controls README. Previous native artifacts and staging
 hashes are under `build/dos-fade-trace`; reproduction/staging uses
 `tools/build_dos.ps1 -BuildDir build/dos-fade -ProfileGuided -DosBox <dosbox.exe>`
 and `build/stage_dos_fade.py`.
+
+## Automap resolution scaling
+
+Automap coordinates now use the renderer's reference height when applying
+the zoom divisor. A 320x200 or 320x240 viewport consequently shows the same
+vertical world coverage as desktop rendering at the same zoom, instead of
+magnifying the map as the framebuffer shrinks. The player arrow scales with
+the viewport too. The established reference-resolution map and PgUp/PgDn
+zoom range remain exact.
+
+`tests/feedback_automap.c` checks eight resolutions, seven zoom settings and
+eight headings. A fresh native compiler-feedback build completes 31 training
+scenarios, all 22 exact capture comparisons and the real-time 4 MB SB16/mouse
+UI/map/save-load exercise. The optimized executable is staged in
+`build/dos/game/ABHD.EXE`, `build/dos/ABHD.exe` and `build/dos/ABHD-DOS.zip`.
+All 241 other installed game files retain their original hashes. Build and
+package verification records are under `build/automap-scale/`, with the
+compiler-feedback report under `build/dos/pgo/report.json`.

@@ -618,3 +618,22 @@ its roof and generated sky.
 enabled and disabled, checks that normal frames leave tags untouched, checks
 that GPU-mode rendering preserves color output without copying ARGB history,
 and verifies that a subsequent diagnostic capture still populates the tags.
+
+### Automap scale at DOS and desktop resolutions
+
+The port-owned automap used a fixed world-units-per-native-pixel divisor.
+At small framebuffers this showed less of the explored level, while the
+player arrow retained its desktop pixel size. Projection now interprets the
+existing zoom divisor at `RENDER_DEFAULT_HEIGHT` and scales both coordinate
+axes uniformly with the map viewport height. The player marker uses the same
+reference-pixel conversion. At the reference resolution the established
+projection is exact; PgUp/PgDn retain their existing zoom range and steps.
+
+`tests/feedback_automap.c` checks explored-map coverage and arrow heading at
+320x200, 320x240, 640x480, 768x640, 1280x720, 1920x1080, 3840x2160 and
+7680x4320, across seven zoom settings and eight headings. The test passes,
+including zoom limits. Windows Release and Debug builds pass.
+The native DOS build completes fresh compiler-feedback training (31 scenarios),
+all 22 optimized capture comparisons and the real-time 4 MB sound/mouse UI,
+map and save/load exercise. The verified executable and DOS ZIP are updated;
+all 241 other installed files, including local settings and saves, are preserved.

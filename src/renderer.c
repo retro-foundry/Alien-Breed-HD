@@ -810,7 +810,9 @@ static int renderer_zone_clip_segment_to_dx_ranges(const LevelState *level,
 #define AUTOMAP_HASH_EMPTY 0u
 
 /* Automap zoom scalar: world units per pixel (bigger = zoom out). */
-static int32_t g_automap_units_per_px = 8; /* was 4: zoomed out 2x */
+/* World units per pixel at the renderer's reference height, not per native
+ * framebuffer pixel: map coverage must survive resolution/view-size changes. */
+static int32_t g_automap_units_per_px = 8;
 #define AUTOMAP_UNITS_PER_PX_MIN 2
 #define AUTOMAP_UNITS_PER_PX_MAX 128
 
@@ -2065,11 +2067,17 @@ void renderer_automap_preallocate_for_level(LevelState *level)
     automap_key_mask_cache_reset();
 }
 
+static int automap_view_offset(int32_t value, int32_t divisor, int height)
+{
+    return (int)renderer_divide_i64_i32((int64_t)value * height,
+                                        divisor * RENDER_DEFAULT_HEIGHT);
+}
+
 int renderer_automap_collect_line_segments(GameState *state,
                                            int *x0, int *y0, int *x1, int *y1,
                                            uint16_t *c12, int max_lines, int w, int h)
 {
-    if (!state || max_lines < 1 || !x0 || !y0 || !x1 || !y1 || !c12) return 0;
+    if (!state || max_lines < 1 || w < 1 || h < 1 || !x0 || !y0 || !x1 || !y1 || !c12) return 0;
     LevelState *level = &state->level;
 
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
@@ -2118,10 +2126,10 @@ int renderer_automap_collect_line_segments(GameState *state,
         int32_t az0 = (int32_t)sw->z1 - (int32_t)pz;
         int32_t ax1 = (int32_t)sw->x2 - (int32_t)px;
         int32_t az1 = (int32_t)sw->z2 - (int32_t)pz;
-        int wx0 = cx + (int)(ax0 / map_scale);
-        int wy0 = cy + (int)(az0 / map_scale);
-        int wx1 = cx + (int)(ax1 / map_scale);
-        int wy1 = cy + (int)(az1 / map_scale);
+        int wx0 = cx + automap_view_offset(ax0, map_scale, h);
+        int wy0 = cy + automap_view_offset(az0, map_scale, h);
+        int wx1 = cx + automap_view_offset(ax1, map_scale, h);
+        int wy1 = cy + automap_view_offset(az1, map_scale, h);
         x0[n] = mx - wx0;
         y0[n] = wy0;
         x1[n] = mx - wx1;
@@ -2146,8 +2154,8 @@ int renderer_automap_collect_line_segments(GameState *state,
         int32_t fx = (int32_t)sin_lookup(ang);
         int32_t fz = (int32_t)cos_lookup(ang);
         int32_t len = 40;
-        int tipx = cx + (int)((fx * len) / 32768);
-        int tipy = cy + (int)((fz * len) / 32768);
+        int tipx = cx + automap_view_offset(fx * len, 32768, h);
+        int tipy = cy + automap_view_offset(fz * len, 32768, h);
         int aL = (ang + (ANGLE_FULL * 3) / 8) & ANGLE_MASK;
         int aR = (ang + (ANGLE_FULL * 5) / 8) & ANGLE_MASK;
         int32_t lx = (int32_t)sin_lookup(aL);
@@ -2155,10 +2163,10 @@ int renderer_automap_collect_line_segments(GameState *state,
         int32_t rx = (int32_t)sin_lookup(aR);
         int32_t rz = (int32_t)cos_lookup(aR);
         int wing = 20;
-        int lox = tipx + (int)((lx * wing) / 32768);
-        int loy = tipy + (int)((lz * wing) / 32768);
-        int rox = tipx + (int)((rx * wing) / 32768);
-        int roy = tipy + (int)((rz * wing) / 32768);
+        int lox = tipx + automap_view_offset(lx * wing, 32768, h);
+        int loy = tipy + automap_view_offset(lz * wing, 32768, h);
+        int rox = tipx + automap_view_offset(rx * wing, 32768, h);
+        int roy = tipy + automap_view_offset(rz * wing, 32768, h);
 
         x0[n] = mx - cx; y0[n] = cy; x1[n] = mx - tipx; y1[n] = tipy; c12[n] = cw; n++;
         x0[n] = mx - tipx; y0[n] = tipy; x1[n] = mx - lox; y1[n] = loy; c12[n] = cw; n++;
