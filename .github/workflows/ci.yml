@@ -52,6 +52,10 @@ jobs:
         shell: pwsh
         run: ./tools/build_dos.ps1
 
+      - name: Check DOS level-end and death fades
+        shell: pwsh
+        run: python tools/check_dos_fades.py --dosbox '${{ steps.dosbox.outputs.executable }}' --cycles 40000
+
       - name: Validate DOS archive
         run: python -m zipfile -t build/dos/ABHD-DOS.zip
 

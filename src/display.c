@@ -4815,7 +4815,7 @@ static void display_hit_flash_overlay(const GameState *state)
     if (hit <= 0) return;
     if (hit > 0xF00) hit = 0xF00;
 #ifdef AB3D_DOS
-    if(!dos_ui_hit_flash(g_sdl_ren,&g_present_dst_rect,(unsigned)(hit*88/0xF00))) {
+    if(!dos_ui_tint(g_sdl_ren,&g_present_dst_rect,255,0,0,(unsigned)(hit*88/0xF00))) {
         fprintf(stderr,"DOS hit flash failed: %s\n",SDL_GetError());exit(1);
     }
 #else
@@ -5353,16 +5353,18 @@ static void display_present_cw_frame(GameState *state)
         display_fps_overlay(state);
     }
     if (g_screen_tint_enabled && g_screen_tint_a > 0) {
+#ifdef AB3D_DOS
+        if(!dos_ui_tint(g_sdl_ren,&g_present_dst_rect,g_screen_tint_r,g_screen_tint_g,
+                       g_screen_tint_b,g_screen_tint_a)) {
+            fprintf(stderr,"DOS screen tint failed: %s\n",SDL_GetError());exit(1);
+        }
+#else
         if (g_gl_unpack_ok && g_gl_hud_ok) {
             SDL_Rect tr = g_present_dst_rect;
             display_gl_solid_rect_fill(&tr, g_screen_tint_r, g_screen_tint_g, g_screen_tint_b,
                                        g_screen_tint_a);
         } else {
-#ifdef AB3D_DOS
-            SDL_SetRenderDrawBlendMode(g_sdl_ren, SDL_BLENDMODE_NONE);
-#else
             SDL_SetRenderDrawBlendMode(g_sdl_ren, SDL_BLENDMODE_BLEND);
-#endif
             SDL_SetRenderDrawColor(g_sdl_ren,
                                    g_screen_tint_r,
                                    g_screen_tint_g,
@@ -5370,6 +5372,7 @@ static void display_present_cw_frame(GameState *state)
                                    g_screen_tint_a);
             SDL_RenderFillRect(g_sdl_ren, &g_present_dst_rect);
         }
+#endif
     }
     display_text_screen_draw(255);
 #ifdef AB3D_DOS
@@ -5591,10 +5594,6 @@ void display_set_screen_tint(int r, int g, int b, int alpha)
     if (g < 0) g = 0; else if (g > 255) g = 255;
     if (b < 0) b = 0; else if (b > 255) b = 255;
     if (alpha < 0) alpha = 0; else if (alpha > 255) alpha = 255;
-#ifdef AB3D_DOS
-    if (alpha) alpha = 255;
-#endif
-
     g_screen_tint_r = (Uint8)r;
     g_screen_tint_g = (Uint8)g;
     g_screen_tint_b = (Uint8)b;

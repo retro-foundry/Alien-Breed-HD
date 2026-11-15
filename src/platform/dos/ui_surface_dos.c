@@ -208,44 +208,45 @@ int dos_ui_outline(DosUiRenderer *r,const SDL_Rect *rect)
     return dos_ui_line(r,a.x,a.y,a.x+a.w-1,a.y) || dos_ui_line(r,a.x,a.y+a.h-1,a.x+a.w-1,a.y+a.h-1) ||
            dos_ui_line(r,a.x,a.y,a.x,a.y+a.h-1) || dos_ui_line(r,a.x+a.w-1,a.y,a.x+a.w-1,a.y+a.h-1)?-1:0;
 }
-/* AB3DI.s hitcol/nofadedownhc supplies the pulse; display.c retains the port's
- * red-overlay opacity. Transform only the displayed pixels, so water history
- * and repeated presentation always start from the untinted renderer image. */
-bool dos_ui_hit_flash(DosUiRenderer *r,const SDL_Rect *rect,unsigned alpha)
+/* Blend hit flashes and the port's control_loop.c outcome fades on the
+ * presentation surface. Water history and repeated presentation must always
+ * start from the untinted renderer image. */
+bool dos_ui_tint(DosUiRenderer *r,const SDL_Rect *rect,Uint8 target_red,Uint8 target_green,Uint8 target_blue,unsigned alpha)
 {
-    if(!r || !rect || alpha>255)return SDL_SetError("Invalid DOS hit flash target/opacity");
+    if(!r || !rect || alpha>255)return SDL_SetError("Invalid DOS tint target/opacity");
     if(!alpha)return true;
 #ifdef AB3D_NATIVE_RGB565
-    if(r->window_pixels)return SDL_SetError("DOS hit flash requires an independent presentation surface");
+    if(r->window_pixels)return SDL_SetError("DOS tint requires an independent presentation surface");
     dos_ui_materialize_canvas(r);
 #endif
     SDL_Surface *surface=r->surface;
     SDL_Rect clip,area;
     if(!SDL_GetSurfaceClipRect(surface,&clip))return false;
     if(!SDL_GetRectIntersection(rect,&clip,&area))return true;
-    static int prepared_alpha=-1;
+    Uint32 rgba=((Uint32)target_red<<24)|((Uint32)target_green<<16)|((Uint32)target_blue<<8)|alpha;
+    static Uint32 prepared_rgba;
 #ifdef AB3D_DOS_INDEXED
     static Uint8 tint[256];
     static unsigned prepared_epoch;
-    if(prepared_alpha!=(int)alpha || prepared_epoch!=dos_palette_epoch) {
+    if(prepared_rgba!=rgba || prepared_epoch!=dos_palette_epoch) {
         for(unsigned i=0;i<256;i++) {
             unsigned c=dos_index_to_c12[i];
-            unsigned red=((((c>>8)&15)*17*(255-alpha)+255*alpha+127)/255)>>4;
-            unsigned green=((((c>>4)&15)*17*(255-alpha)+127)/255)>>4;
-            unsigned blue=(((c&15)*17*(255-alpha)+127)/255)>>4;
+            unsigned red=((((c>>8)&15)*17*(255-alpha)+target_red*alpha+127)/255)>>4;
+            unsigned green=((((c>>4)&15)*17*(255-alpha)+target_green*alpha+127)/255)>>4;
+            unsigned blue=(((c&15)*17*(255-alpha)+target_blue*alpha+127)/255)>>4;
             tint[i]=dos_c12_to_index[(red<<8)|(green<<4)|blue];
         }
-        prepared_epoch=dos_palette_epoch;prepared_alpha=(int)alpha;
+        prepared_epoch=dos_palette_epoch;prepared_rgba=rgba;
     }
 #else
     static Uint16 red[32],green[64],blue[32];
-    if(prepared_alpha!=(int)alpha) {
+    if(prepared_rgba!=rgba) {
         for(unsigned i=0;i<32;i++) {
-            red[i]=(Uint16)(((i*(255-alpha)+31*alpha+127)/255)<<11);
-            blue[i]=(Uint16)((i*(255-alpha)+127)/255);
+            red[i]=(Uint16)(((i*(255-alpha)+(target_red>>3)*alpha+127)/255)<<11);
+            blue[i]=(Uint16)((i*(255-alpha)+(target_blue>>3)*alpha+127)/255);
         }
-        for(unsigned i=0;i<64;i++)green[i]=(Uint16)(((i*(255-alpha)+127)/255)<<5);
-        prepared_alpha=(int)alpha;
+        for(unsigned i=0;i<64;i++)green[i]=(Uint16)(((i*(255-alpha)+(target_green>>2)*alpha+127)/255)<<5);
+        prepared_rgba=rgba;
     }
 #endif
     if(!SDL_LockSurface(surface))return false;

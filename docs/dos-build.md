@@ -6708,3 +6708,57 @@ staging updates the executable and README, retaining 240 other native files
 including existing settings/saves and all 239 indexed files. Previous native
 artifacts are under `build/dos-screen-size-trace/previous-package`; final source
 and package hashes are recorded in `source-freeze.json` and `staging.json`.
+
+### Level-end and death fades
+
+DOS now retains the opacity requested by
+`control_level_complete_fade_tick` and `control_game_over_fade_tick` in
+`src/control_loop.c`. Previously `display_set_screen_tint` forced every
+nonzero opacity to 255, and presentation used an opaque rectangle. The first
+level-end fade tick therefore replaced the image with solid white.
+
+The DOS damage-flash helper is now `dos_ui_tint`, sharing its small native
+component/index lookup tables with the white completion and red death fades.
+It blends only the presentation surface, starts every tick from the retained
+world image and refreshes indexed colors when the level palette changes.
+No additional framebuffer is allocated. The existing PC fade colors, music
+progress and opacity remain unchanged; the original music lifecycle is
+`amiga/AB3DI.s:playWellDone` / `playGameOver`.
+
+The regression harness calls the real outcome callbacks and checks every
+captured pixel at quarter, half and full progress. It also checks repeated
+presentation, switching from red to white, clearing the tint, renderer history,
+next-level loading, death returning to the menu and final-level completion:
+
+```powershell
+python tools/check_dos_fades.py --build-dir build/dos-fade --dosbox <dosbox.exe> --cycles 40000
+python tools/check_dos_fades.py --build-dir build/dos-fade-indexed --dosbox <dosbox.exe> --cycles 40000
+```
+
+Both use normal/486_slow, 4 MB and SB16. The default 200,000 cycles are for
+correctness; `--cycles 40000` selects the existing hardware-like profile.
+
+Both formats pass five scenarios at 40,000 cycles with 4 MB: levels 1 and 16
+at 100% and 60%, plus death on level 1. Every fade capture matches the blend
+equation, repeated frames are identical, clearing restores the source image
+exactly and outcome music reports zero underruns. The native checks use the
+optimized compiler-feedback candidate. All 22 ordinary gameplay captures also
+match that candidate. Desktop Release builds successfully. Reports and captures
+are under `build/dos-fade/pgo/fade-checks` and
+`build/dos-fade-indexed/fade-checks`; earlier correctness reports are retained
+under `build/dos-fade-trace`.
+
+The fresh native build completes 31 compiler-feedback training scenarios,
+all 22 capture comparisons and the real-time 4 MB level-4 SB16/mouse UI,
+save/load and briefing exercise. The verified executable is staged in
+`build/dos/game/ABHD.EXE`, `build/dos/ABHD.exe` and
+`build/dos/ABHD-DOS.zip` (3,437,193 bytes). Executable SHA-256:
+`6ecbadeb746b66e4af933b2bd0d5628d0b381af9188f4de270e27105660e5201`.
+Archive SHA-256:
+`3ccebe81c7a1f919be5e9442e3d106aa61408431b3ac8364b40a0c304b24320a`.
+Staging preserves all 241 other installed files, including local settings and
+saves. The ZIP also picks up the preceding source commit's yellow-crosshair
+default and updated controls README. Previous native artifacts and staging
+hashes are under `build/dos-fade-trace`; reproduction/staging uses
+`tools/build_dos.ps1 -BuildDir build/dos-fade -ProfileGuided -DosBox <dosbox.exe>`
+and `build/stage_dos_fade.py`.
