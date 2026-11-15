@@ -863,6 +863,8 @@ static uint32_t g_automap_stage_caps[RENDERER_AUTOMAP_STAGE_SLOT_COUNT];
 typedef struct {
     int16_t sides;
     int16_t pt_indices[100];
+    int32_t plane_y;
+    uint8_t roofed;
 } RendererSkyCachePoly;
 
 typedef struct {
@@ -14718,13 +14720,16 @@ static int renderer_level_sky_cache_ensure_poly_cap(uint32_t want)
     return 1;
 }
 
-static int renderer_level_sky_cache_push_poly(const int16_t *pt_indices, int sides)
+static int renderer_level_sky_cache_push_poly(const int16_t *pt_indices, int sides,
+                                              int32_t plane_y, int roofed)
 {
     if (!pt_indices) return 0;
     if (sides < 3 || sides > 100) return 0;
     if (!renderer_level_sky_cache_ensure_poly_cap(g_level_sky_cache_poly_count + 1u)) return 0;
 
     RendererSkyCachePoly *dst = &g_level_sky_cache_polys[g_level_sky_cache_poly_count++];
+    dst->plane_y = plane_y;
+    dst->roofed = roofed != 0;
     dst->sides = (int16_t)sides;
     memcpy(dst->pt_indices, pt_indices, (size_t)sides * sizeof(int16_t));
     return 1;
@@ -15370,6 +15375,7 @@ static void renderer_tessellate_sky_ceiling_ctx(RenderSliceContext *ctx,
 static void renderer_build_zone_stream_backdrop_sky_cache(int use_upper,
                                                           const uint8_t *lower_stream_gfx_data,
                                                           const uint8_t *upper_stream_gfx_data,
+                                                          int32_t plane_y,
                                                           RendererSkyBuildDebug *dbg)
 {
     const uint8_t *floor_stream_gfx_data = use_upper ? upper_stream_gfx_data : lower_stream_gfx_data;
@@ -15406,15 +15412,19 @@ static void renderer_build_zone_stream_backdrop_sky_cache(int use_upper,
                 }
                 if (has_matching_roof) {
                     if (dbg) dbg->floor_polys_with_matching_roof++;
-                } else {
-                    if (renderer_level_sky_cache_push_poly(pt_indices, sides)) {
+                }
+                /* A real roof occludes the background at its own height, but
+                 * need not reach the surrounding outdoor sky plane. Keep its
+                 * footprint until the connected sky heights are resolved. */
+                if (renderer_level_sky_cache_push_poly(pt_indices, sides, plane_y, has_matching_roof)) {
+                    if (!has_matching_roof) {
                         if (dbg) {
                             dbg->floor_polys_sky_added++;
                             dbg->sky_added_missing_matching_roof++;
                         }
-                    } else if (dbg) {
-                        dbg->sky_push_failed++;
                     }
+                } else if (dbg) {
+                    dbg->sky_push_failed++;
                 }
             }
         }
@@ -15428,6 +15438,55 @@ static void renderer_build_zone_stream_backdrop_sky_cache(int use_upper,
             scan += skip;
         }
     }
+}
+
+/* Find the nearest connected exterior sky surface above this real roof.
+ * Only unroofed floor footprints are sources; generated extensions must not
+ * spread their heights to unrelated rooms. Portal connectivity and plane
+ * heights both come from the loaded level. */
+static int renderer_connected_sky_plane(const LevelState *level, int start,
+                                         int use_upper, int32_t roof, int32_t *out_plane)
+{
+    int slots = level_zone_slot_count(level);
+    if (slots > RENDERER_MAX_ZONE_ORDER || !level->floor_lines) return 0;
+    uint8_t visited[RENDERER_MAX_ZONE_ORDER] = {0};
+    int16_t queue[RENDERER_MAX_ZONE_ORDER];
+    int head = 0, tail = 1;
+    queue[0] = (int16_t)start;
+    visited[start] = 1;
+    while (head < tail) {
+        int end = tail;
+        int32_t plane = INT32_MAX;
+        while (head < end) {
+            int zone = queue[head++];
+            RendererSkyCacheBucket bucket = g_level_sky_cache_buckets[zone * 2 + use_upper];
+            for (uint32_t i = bucket.start; i < bucket.start + bucket.count; i++) {
+                const RendererSkyCachePoly *poly = &g_level_sky_cache_polys[i];
+                if (!poly->roofed && poly->plane_y < roof && poly->plane_y < plane)
+                    plane = poly->plane_y;
+            }
+            const uint8_t *room = level_get_zone_data_ptr(level, (int16_t)zone);
+            if (!room) continue;
+            int exit_off = rd16(room + ZONE_OFF_EXIT_LIST);
+            if (exit_off == 0) continue;
+            const uint8_t *exits = room + exit_off;
+            for (int i = 0; i < level->num_floor_lines; i++) {
+                if (level->data_byte_count && (size_t)(exits - level->data) + 2 > level->data_byte_count) break;
+                int line = rd16(exits); exits += 2;
+                if (line < 0) break;
+                if (line >= level->num_floor_lines) continue;
+                int next = level_connect_to_zone_index(level, rd16(level->floor_lines + line * 16 + 8));
+                if (next < 0 || next >= slots || visited[next]) continue;
+                const uint8_t *next_room = level_get_zone_data_ptr(level, (int16_t)next);
+                if (!next_room || (rd16(next_room + ZONE_OFF_BACK) == 0 &&
+                    g_level_sky_cache_buckets[next * 2 + use_upper].count == 0)) continue;
+                visited[next] = 1;
+                queue[tail++] = (int16_t)next;
+            }
+        }
+        if (plane != INT32_MAX) { *out_plane = plane; return 1; }
+    }
+    return 0;
 }
 
 void renderer_build_level_sky_cache(const LevelState *level)
@@ -15509,6 +15568,7 @@ void renderer_build_level_sky_cache(const LevelState *level)
                 renderer_build_zone_stream_backdrop_sky_cache(use_upper,
                                                               lower_gfx_data,
                                                               upper_gfx_data,
+                                                              rd32(zone_data + (use_upper ? ZONE_OFF_UPPER_ROOF : ZONE_OFF_ROOF)),
                                                               &dbg);
             }
             uint32_t added = g_level_sky_cache_poly_count - start;
@@ -15517,6 +15577,34 @@ void renderer_build_level_sky_cache(const LevelState *level)
         }
     }
 
+    /* Fill missing background footprints above roofed outdoor rooms. The
+     * real roofs remain in their graphics streams and draw over this sky. */
+    for (int zone = 0; zone < zone_limit; zone++) for (int upper = 0; upper < 2; upper++) {
+        RendererSkyCacheBucket bucket = g_level_sky_cache_buckets[zone * 2 + upper];
+        int32_t plane = INT32_MAX;
+        int resolved = 0;
+        for (uint32_t i = bucket.start; i < bucket.start + bucket.count; i++) {
+            RendererSkyCachePoly *poly = &g_level_sky_cache_polys[i];
+            if (!poly->roofed) continue;
+            if (!resolved) {
+                renderer_connected_sky_plane(level, zone, upper, poly->plane_y, &plane);
+                resolved = 1;
+            }
+            poly->plane_y = plane;
+        }
+    }
+    uint32_t kept = 0;
+    for (int zone = 0; zone < zone_limit; zone++) for (int upper = 0; upper < 2; upper++) {
+        RendererSkyCacheBucket *bucket = &g_level_sky_cache_buckets[zone * 2 + upper];
+        uint32_t start = bucket->start, end = start + bucket->count;
+        bucket->start = kept;
+        for (uint32_t i = start; i < end; i++) {
+            if (g_level_sky_cache_polys[i].plane_y != INT32_MAX)
+                g_level_sky_cache_polys[kept++] = g_level_sky_cache_polys[i];
+        }
+        bucket->count = kept - bucket->start;
+    }
+    g_level_sky_cache_poly_count = kept;
     if (g_level_sky_cache_poly_count > 0) {
         printf("[RENDERER] Sky cache: %u synthesized polygons\n",
                (unsigned)g_level_sky_cache_poly_count);
@@ -15537,7 +15625,8 @@ static void renderer_draw_zone_backdrop_sky_ctx(RenderSliceContext *ctx,
 
     for (uint32_t i = b.start; i < end; i++) {
         const RendererSkyCachePoly *poly = &g_level_sky_cache_polys[i];
-        renderer_tessellate_sky_ceiling_ctx(ctx, poly->pt_indices, poly->sides, zone_roof, y_off);
+        int32_t plane_y = poly->roofed ? poly->plane_y : zone_roof;
+        renderer_tessellate_sky_ceiling_ctx(ctx, poly->pt_indices, poly->sides, plane_y, y_off);
     }
 }
 

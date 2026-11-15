@@ -566,3 +566,27 @@ the reported quicksave at 3840x2160 and 1920x1080 show the roof restored;
 the 4K capture also passes with 24 renderer workers. The quicksave SHA-256
 was unchanged after validation. This is a visibility-data correction, not
 a change to `itsafloordraw` or `pastfloorbright` shading.
+
+### Missing generated sky above the outdoor lift roof
+
+The real roof above the outdoor lift remains part of the original geometry.
+The port's sky cache previously rejected every floor footprint with a matching
+roof. In `level_m`, room 74's roof is at -61440, below the connected outdoor
+sky plane at -65536. Rejecting its footprint left a strip of undrawn sky above
+the roof, which could retain clear color or previous-frame pixels.
+
+The cache now retains roofed exterior footprints while resolving their sky
+planes. A portal traversal finds the nearest connected unroofed sky surface
+above each real roof, using original exit links and plane heights. Valid
+footprints become additional sky polygons at that background height; unused
+candidates are compacted out. The ordinary roof and wall passes still draw
+over the generated sky. Existing unroofed sky footprints continue to follow
+their live room heights. Original assets and saved state remain unchanged.
+
+`tests/feedback_sky.c` loads the original map and `BackFile`. It verifies the
+lift's extra sky polygon, fills 668 previously uncovered background pixels,
+and checks that 2,641 real roof pixels and all rendered wall pixels stay
+identical. Column-sliced sky rendering matches, and the original graphics
+buffer is preserved. The sky, visibility and 3,600-case waterline tests pass;
+Windows Debug and Release builds pass. Native outdoor captures pass at 1080p
+and 4K with 24 workers, and the earlier skylight quicksave view is unchanged.
