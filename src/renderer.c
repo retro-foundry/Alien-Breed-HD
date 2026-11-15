@@ -193,12 +193,19 @@ static inline void renderer_cw_store_xy(RendererPixel *cw, int x, int y, int wid
 #define RENDER_TAG_ADVANCE(ptr, count) ((void)0)
 #define RENDER_TAG_PREFETCH(ptr) ((void)0)
 #else
+/* Direct diagnostic raster calls retain tags; ordinary display frames enable
+ * them only when a tracing/debug consumer needs this separate byte buffer. */
+static int g_render_tags_active = 1;
 #define RENDER_TAGS_ENABLED 1
-#define RENDER_TAG_STORE(dst, value) ((dst) = (value))
-#define RENDER_TAG_FILL(dst, value, count) memset((dst), (value), (count))
+#define RENDER_TAG_STORE(dst, value) \
+    do { if (g_render_tags_active) (dst) = (value); } while (0)
+#define RENDER_TAG_FILL(dst, value, count) \
+    do { if (g_render_tags_active) memset((dst), (value), (count)); } while (0)
 #define RENDER_TAG_OFFSET(base, offset) ((base) + (offset))
-#define RENDER_TAG_ADVANCE(ptr, count) ((ptr) += (count))
-#define RENDER_TAG_PREFETCH(ptr) AB3D_PREFETCH_WRITE(ptr)
+#define RENDER_TAG_ADVANCE(ptr, count) \
+    do { if (g_render_tags_active) (ptr) += (count); } while (0)
+#define RENDER_TAG_PREFETCH(ptr) \
+    do { if (g_render_tags_active) AB3D_PREFETCH_WRITE(ptr); } while (0)
 #endif
 
 /* Sprite row caches for renderer_draw_sprite_ctx hot path (per-thread). */
@@ -5378,7 +5385,9 @@ static void renderer_prefill_current_color_from_previous_frame(void)
                pixel_count * sizeof(RendererPixel));
     }
 #ifndef AB3D_DOS
-    if (g_renderer.rgb_buffer && g_renderer.rgb_back_buffer) {
+    /* GPU unpack presents cw_buffer directly. Its unused ARGB history is
+     * 33 MB at 4K and must not evict the actual raster/texture working set. */
+    if (g_renderer_rgb_raster_expand && g_renderer.rgb_buffer && g_renderer.rgb_back_buffer) {
         memcpy(g_renderer.rgb_buffer,
                g_renderer.rgb_back_buffer,
                pixel_count * sizeof(uint32_t));
@@ -17551,6 +17560,11 @@ static void renderer_draw_display_impl(GameState *state)
         }
     }
 
+#ifndef AB3D_DOS
+    g_render_tags_active = g_pick_capture_active || g_renderer_profile_collect_stats ||
+                           g_debug_floor_gouraud_only || g_debug_spill_visualize;
+#endif
+
     /* 4. Rotate geometry */
     renderer_rotate_level_pts(state);
     renderer_rotate_object_pts(state);
@@ -17764,6 +17778,9 @@ static void renderer_draw_display_impl(GameState *state)
     }
     g_renderer_profile_collect_stats = 0;
     g_renderer_zone_trace_active = 0;
+#ifndef AB3D_DOS
+    g_render_tags_active = 1;
+#endif
 }
 
 void renderer_draw_display(GameState *state) {

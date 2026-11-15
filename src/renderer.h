@@ -489,7 +489,7 @@ int renderer_gun_src_width(void);
 int renderer_gun_src_height(void);
 
 /* Get pointer to the current rendered frame for display */
-const uint8_t *renderer_get_buffer(void); /* Desktop diagnostic tags; NULL on DOS. */
+const uint8_t *renderer_get_buffer(void); /* Diagnostic tags for captured/traced frames; NULL on DOS. */
 const uint32_t *renderer_get_rgb_buffer(void);
 /* Completed native color frame: desktop 0RGB, DOS RGB565 or optional INDEX8. */
 const RendererPixel *renderer_get_cw_buffer(void);

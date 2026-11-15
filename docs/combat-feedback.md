@@ -590,3 +590,31 @@ identical. Column-sliced sky rendering matches, and the original graphics
 buffer is preserved. The sky, visibility and 3,600-case waterline tests pass;
 Windows Debug and Release builds pass. Native outdoor captures pass at 1080p
 and 4K with 24 workers, and the earlier skylight quicksave view is unchanged.
+
+### Desktop auxiliary-buffer overhead
+
+Normal desktop rendering now omits writes and prefetches for the diagnostic
+byte-tag buffer. Picking, renderer profiling and debug visualizations enable
+those tags for the frames that consume them; direct diagnostic raster calls
+continue to populate them. The actual color-word and optional ARGB raster
+outputs remain identical.
+
+When GPU unpack presents the native color-word buffer, frame-history setup
+also skips copying the unused ARGB buffer. At 3840x2160 that avoids a 33 MB
+copy per frame and the resulting cache eviction. Color-word history still
+copies normally for retained pixels and water; ARGB history remains enabled
+when ARGB raster expansion is active.
+
+On the local i9-12900KS/RTX 3090, a fixed level-one starting view at 4K with
+24 renderer workers measured about 8.4 ms before these changes versus
+3.9..4.2 ms afterward for rendering alone. The same hidden-window OpenGL
+presentation path, including uploads and overlays with VSync unchanged,
+improved from 11.85 ms (84 FPS) to 8.36 ms (120 FPS, the 120 Hz display limit).
+These are fixed-view measurements, not a claim about every gameplay scene.
+The presented 4K frame is pixel-identical. The outdoor lift view also retains
+its roof and generated sky.
+
+`tests/feedback_tags.c` compares actual color-word and ARGB frames with tags
+enabled and disabled, checks that normal frames leave tags untouched, checks
+that GPU-mode rendering preserves color output without copying ARGB history,
+and verifies that a subsequent diagnostic capture still populates the tags.
