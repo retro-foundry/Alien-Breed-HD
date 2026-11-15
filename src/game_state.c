@@ -85,7 +85,11 @@ void game_state_init(GameState *state)
     state->infinite_ammo = false;
     state->cfg_all_weapons = true;
     state->cfg_all_keys = false;
+#ifdef AB3D_DOS
+    state->cfg_mouse_look = true;
+#else
     state->cfg_mouse_look = false;
+#endif
     state->cfg_mouse_look_invert_y = false;
     state->cfg_gamepad_look_speed = 200;
     state->cfg_quicksave_load = false;

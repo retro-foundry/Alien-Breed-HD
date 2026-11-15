@@ -21,6 +21,8 @@ def main():
     if not node:
         parser.error("Node is required to execute the WebAssembly regression checks")
     cases = (
+        ("dos_mouse_scale", ["src/game_state.c", "src/game_data.c"],
+         ["-DAB3D_DOS", "-sUSE_SDL=2"]),
         ("save_layout", [], ["-sUSE_SDL=2", "-sNODERAWFS=1"]),
         ("pixels", [], ["-DAB3D_NATIVE_RGB565"]),
         ("movement", ["src/math_tables.c", "src/level.c"], []),

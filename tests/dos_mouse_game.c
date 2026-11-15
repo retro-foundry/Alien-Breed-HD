@@ -65,6 +65,7 @@ int main(int argc,char **argv)
     dos_palette_load(-1);
 #endif
     setup_game(&g_state);play_game_load_shared_assets(&g_state);
+    assert(g_state.cfg_mouse_look);
     GameLoopCtx ctx;game_loop_front_menu_init(&ctx,&g_state);
     front_key(&ctx,SDL_SCANCODE_RETURN);front_key(&ctx,SDL_SCANCODE_UP);
     assert(front_key(&ctx,SDL_SCANCODE_RETURN)==GAME_LOOP_FRONT_MENU_NEW_GAME);

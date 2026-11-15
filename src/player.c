@@ -1303,6 +1303,12 @@ static int player_input_index(const GameState *state, const PlayerState *plr)
 
 static int player_mouse_present_extent(int axis)
 {
+#ifdef AB3D_DOS
+    /* DOS SDL delivers raw INT 33h/0Bh mickeys, like AB3D2 Sys_ReadMouse
+     * hardware counts. They are independent of the VGA view size, so must
+     * not receive the desktop window-pixel-to-reference amplification. */
+    return (axis == MOUSE_AXIS_X) ? RENDER_DEFAULT_WIDTH : RENDER_DEFAULT_HEIGHT;
+#else
     int present = (axis == MOUSE_AXIS_X) ? g_renderer.present_width : g_renderer.present_height;
     if (present <= 0) {
         present = (axis == MOUSE_AXIS_X) ? renderer_get_width() : renderer_get_height();
@@ -1311,6 +1317,7 @@ static int player_mouse_present_extent(int axis)
         present = (axis == MOUSE_AXIS_X) ? RENDER_DEFAULT_WIDTH : RENDER_DEFAULT_HEIGHT;
     }
     return present;
+#endif
 }
 
 static int16_t player_mouse_delta_to_reference(const GameState *state,

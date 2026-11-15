@@ -102,7 +102,7 @@ def main():
             target=case/asset;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(build/'game'/asset,target)
         ini=(build/'generated/default.ini').read_text()
         ini=re.sub(r'^start_level=.*$','start_level=1',ini,flags=re.M)
-        ini=re.sub(r'^mouse_look=.*$','mouse_look=1',ini,flags=re.M)
+        assert re.search(r'^mouse_look=1$',ini,re.M), 'DOS package must default to mouse look'
         (case/'AB3D.INI').write_text(ini,encoding='ascii')
         for path in case.glob('*.BIN'):path.unlink()
         for filename in ['AB3D.LOG','PASS.TXT']:(case/filename).unlink(missing_ok=True)

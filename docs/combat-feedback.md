@@ -669,3 +669,20 @@ rejection pass before a later title-image allocation exhausts memory in the UI
 exercise. This ordinary build does not replace the installed profile-optimized
 4 MB DOS package; a new optimized release still requires fresh compiler training
 and the complete 4 MB validation.
+
+### DOS mouse sensitivity and mouselook defaults
+
+DOS SDL supplies raw INT 33h/0Bh relative counts. Treating them as desktop
+window pixels multiplied motion by 768/320 horizontally and 640/240 vertically
+at the normal DOS resolution. The DOS control path now retains those counts
+in the source units consumed by AB3D2 `Sys_ReadMouse`; its existing turn scale
+is unchanged. Desktop window normalization remains unchanged. Small moves are
+retained without dividing or discarding integer counts.
+
+New DOS packages and DOS startup without an INI enable mouselook. Existing
+INI choices remain respected. `feedback_dos_mouse_scale` verifies both axes,
+both players, small signed movements and five view sizes, plus the DOS default.
+Movement/settings regressions pass. The real DOS New Game/briefing/pause-menu
+capture lifecycle passes with 4 MB in default, explicitly enabled, explicitly
+disabled and missing-driver configurations, using the packaged mouselook
+default rather than a test override.
