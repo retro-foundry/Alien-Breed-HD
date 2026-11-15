@@ -21,6 +21,7 @@ def main():
     if not node:
         parser.error("Node is required to execute the WebAssembly regression checks")
     cases = (
+        ("save_layout", [], ["-sUSE_SDL=2", "-sNODERAWFS=1"]),
         ("pixels", [], ["-DAB3D_NATIVE_RGB565"]),
         ("movement", ["src/math_tables.c", "src/level.c"], []),
         ("wall_touch", [], []),

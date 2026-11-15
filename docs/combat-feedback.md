@@ -637,3 +637,35 @@ The native DOS build completes fresh compiler-feedback training (31 scenarios),
 all 22 optimized capture comparisons and the real-time 4 MB sound/mouse UI,
 map and save/load exercise. The verified executable and DOS ZIP are updated;
 all 241 other installed files, including local settings and saves, are preserved.
+
+### Continue with autosaves from before authored draw rooms
+
+The port-owned title menu already chooses the newest available autosave slot.
+Older full saves could exit immediately instead of continuing: commit `38859d9`
+enlarged the embedded `LevelState` with authored draw groups, shifting subsequent
+`GameState` fields without changing save version 7. Reading an earlier snapshot
+at current offsets restored `running=false` and the wrong level number.
+
+`player_save_read_game_state` now translates that older layout before the full
+save is applied, while retaining the freshly loaded level's allocations. The
+offset adjustment respects 32-bit DOS/web and 64-bit desktop alignment. New saves
+use version 8; existing version 7 saves from both layouts remain readable.
+No gameplay or original Amiga save behavior changes.
+
+`tests/fixtures/save-v7-before-draw-groups.bin` is a synthetic wasm32 snapshot
+generated with `38859d9^:src/game_state.h`, containing only zero initialization
+and the scalar values asserted by `tests/feedback_save_layout.c`. The regression
+checks level progress, running flags, player position, keys, enemy burn state,
+preferences, current v7/v8 snapshots and truncated input. Run it with
+`python tools/check_feedback.py --only save_layout`.
+
+Windows Release and Debug and the single-threaded browser builds pass. All five
+existing desktop autosaves load their expected levels, run logic/render frames
+and shut down cleanly. Browser autosave persistence followed by page reload and
+title-menu Continue also passes without JavaScript errors.
+The isolated ordinary DOS build passes the full menu/save/load exercise with
+8 MB RAM. With 4 MB, eight full loads, all five autosave slots and truncated-save
+rejection pass before a later title-image allocation exhausts memory in the UI
+exercise. This ordinary build does not replace the installed profile-optimized
+4 MB DOS package; a new optimized release still requires fresh compiler training
+and the complete 4 MB validation.

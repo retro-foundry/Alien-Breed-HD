@@ -2090,7 +2090,7 @@ void player2_control(GameState *state)
  * Legacy format (magic "AB3D") remains readable for old position-only saves. */
 #define SAVE_MAGIC_LEGACY "AB3D"
 #define SAVE_MAGIC_FULL   "AB3S"
-#define SAVE_VERSION_FULL 7u
+#define SAVE_VERSION_FULL 8u
 #define SAVE_FILE_SUBPATH "savegame.bin"
 #define AUTOSAVE_FILE_SUBPATH "autosave.bin"
 #define AUTOSAVE_FILE_SUBPATH_1 "autosave1.bin"
@@ -2711,6 +2711,37 @@ static bool player_save_apply_chunk(const char *label, void *dst, size_t dst_siz
     return true;
 }
 
+static bool player_save_read_game_state(FILE *f, const FullSaveHeader *hdr,
+                                       GameState *snapshot)
+{
+    /* 38859d9 inserted authored draw groups inside LevelState. Earlier saves
+     * (v2-v7) have a shorter embedded level, shifting every later GameState
+     * field. The embedded pointers are discarded on load, but the tail must
+     * move to its current offset before restoring flags, timers and progress.
+     * Account for pointer alignment on both 32-bit DOS/web and 64-bit desktop.
+     * v8 marks this layout explicitly; larger v7 saves already use it. */
+    const size_t added = offsetof(LevelState, door_data) -
+                         offsetof(LevelState, draw_group_count);
+    const bool legacy = hdr->version < 8u &&
+                        hdr->game_state_size <= sizeof(GameState) - added;
+    const size_t shift = legacy ? added : 0;
+    const size_t tail = offsetof(GameState, current_level);
+    if (hdr->game_state_size < offsetof(GameState, running) +
+                               sizeof(snapshot->running) - shift ||
+        hdr->game_state_size > sizeof(*snapshot))
+        return false;
+
+    memset(snapshot, 0, sizeof(*snapshot));
+    if (!player_save_read_exact(f, snapshot, hdr->game_state_size)) return false;
+    if (legacy) {
+        unsigned char *bytes = (unsigned char *)snapshot;
+        memmove(bytes + tail, bytes + tail - added,
+                hdr->game_state_size - (tail - added));
+    }
+    memset(&snapshot->level, 0, sizeof(snapshot->level));
+    return true;
+}
+
 static bool player_save_read_full_save(FILE *f, GameState *state, const char *path)
 {
     FullSaveHeader hdr;
@@ -2732,8 +2763,7 @@ static bool player_save_read_full_save(FILE *f, GameState *state, const char *pa
     player_save_clear_pending_full_save();
     g_full_save_pending.header = hdr;
 
-    memset(&g_full_save_pending.game_state, 0, sizeof(g_full_save_pending.game_state));
-    if (!player_save_read_exact(f, &g_full_save_pending.game_state, hdr.game_state_size))
+    if (!player_save_read_game_state(f, &hdr, &g_full_save_pending.game_state))
         goto fail;
 #ifdef AB3D_DOS
     /* Validate every byte before accepting the save, then retain its open file.
