@@ -261,6 +261,7 @@ EM_JS(int, game_loop_web_front_menu_audio_ready, (void), {
 
 static void game_loop_prepare_zone_order(GameState *state)
 {
+    static uint8_t view_graph_rooms[MAX_ORDER_ENTRIES * 8 + 2];
     if (!state) return;
 
     {
@@ -280,6 +281,10 @@ static void game_loop_prepare_zone_order(GameState *state)
                 lgr_ptr = state->level.data + lgr_off;
             }
         }
+
+        lgr_ptr = level_view_graph_rooms(&state->level, state->current_level,
+                                         view_plr->zone, lgr_ptr,
+                                         view_graph_rooms, sizeof(view_graph_rooms));
 
         /* Amiga uses high 16 bits of xoff/zoff for OrderZones side test
          * (move.w xoff,d2 = first word of long). */

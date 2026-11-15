@@ -66,7 +66,7 @@ int level_get_zone_info(const LevelState *level, int16_t zone_id, ZoneInfo *out)
  * invalid. Use this when updating zone data (e.g. door roof) so the address
  * comes from the same lookup as validation.
  */
-uint8_t *level_get_zone_data_ptr(LevelState *level, int16_t zone_id);
+uint8_t *level_get_zone_data_ptr(const LevelState *level, int16_t zone_id);
 
 /*
  * Get current brightness for a zone (lower or upper floor). Reads from level zone data and
@@ -198,5 +198,11 @@ void level_assign_clips(LevelState *level, int16_t num_zones);
 
 /* Reserved load-time compatibility hook. Currently no level buffers are patched. */
 void level_apply_level_specific_fixes(LevelState *level, int16_t level_num);
+
+/* Resolve a view's authored ListOfGraphRooms, repairing known data omissions
+ * into caller-owned storage. The returned list lives until scratch is reused. */
+const uint8_t *level_view_graph_rooms(const LevelState *level, int16_t level_num,
+                                     int16_t viewer_zone, const uint8_t *authored,
+                                     uint8_t *scratch, size_t scratch_size);
 
 #endif /* LEVEL_H */

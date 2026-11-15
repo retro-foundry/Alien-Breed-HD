@@ -539,3 +539,30 @@ full underwater tint, and identical
 output for whole-view and column-sliced rendering. The old renderer fails with
 a missing span at 1/256 unit above water. The complete feedback suite passes;
 Windows and Emscripten Release builds and browser waterline captures also pass.
+
+### Missing ceiling beside the level_m skylight
+
+The saved view in room 124 exposed an omitted room in the original
+`amiga/data/levels/level_m/twolev.bin` ListOfGraphRooms. Room 121 has a real
+four-point floor and roof in `twolev.graph.bin` (points 241..244, roof -57344),
+but room 124's list omits it; surrounding rooms 107..130 include it.
+`OrderZones.s` `settodraw` only admits listed rooms, so the roof never reached
+the polygon renderer. The gap could display clear color or previous-frame
+pixels with frame clearing disabled.
+
+`level_view_graph_rooms` repairs this specific stock-map omission in temporary
+view storage before the ordinary OrderZones pass. It appends room 121's own
+authored entry, retaining its exit-order flags and unrestricted self clip.
+The correction checks the stock roof record and leaves replacement geometry
+alone. Original assets, saved buffers and save layouts remain intact; loading
+an existing quicksave uses the corrected list on the next rendered frame.
+No substitute polygon or sky fill is introduced.
+
+`tests/feedback_visibility.c` loads the original map, reproduces the missing
+entry, checks its inclusion in the final order and verifies source-list
+preservation, repeat calls, unaffected rooms and replacement geometry.
+The test passes. Windows Debug and Release builds pass. Native captures of
+the reported quicksave at 3840x2160 and 1920x1080 show the roof restored;
+the 4K capture also passes with 24 renderer workers. The quicksave SHA-256
+was unchanged after validation. This is a visibility-data correction, not
+a change to `itsafloordraw` or `pastfloorbright` shading.

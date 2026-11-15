@@ -1458,7 +1458,7 @@ int level_get_zone_info(const LevelState *level, int16_t zone_id, ZoneInfo *out)
     return 0;
 }
 
-uint8_t *level_get_zone_data_ptr(LevelState *level, int16_t zone_id)
+uint8_t *level_get_zone_data_ptr(const LevelState *level, int16_t zone_id)
 {
     int zone_slots = level_zone_slot_count(level);
     if (!level->zone_adds || !level->data || zone_slots <= 0)
@@ -1622,6 +1622,48 @@ void level_apply_level_specific_fixes(LevelState *level, int16_t level_num)
 {
     (void)level;
     (void)level_num;
+}
+
+const uint8_t *level_view_graph_rooms(const LevelState *level, int16_t level_num,
+                                     int16_t viewer_zone, const uint8_t *authored,
+                                     uint8_t *scratch, size_t scratch_size)
+{
+    /* Original level_m/twolev.bin: room 124 alone omits room 121 from
+     * ToListOfGraph. Its roof (twolev.graph.bin, points 241..244 at -57344)
+     * is visible beside the skylight when looking up. OrderZones.s settodraw
+     * cannot emit a room absent from this list. Reuse room 121's own authored
+     * entry so the ordinary ordering and polygon renderer handle it.
+     * Keep the repair outside saved level buffers, including old quicksaves. */
+    if (!authored || level_num != 12 || viewer_zone != 124 ||
+        level_zone_slot_count(level) != 137 || !level->zone_graph_adds || !level->graphics)
+        return authored;
+
+    int32_t gfx_off = read_long(level->zone_graph_adds + 121 * 8);
+    static const uint8_t roof[] = {
+        0, 2, 0xfc, 0x80, 0, 3, 0, 241, 0, 242, 0, 243, 0, 244
+    };
+    /* The stock stream starts with a four-point floor, then this roof.
+     * Do not apply stock-map corrections to replacement/editor geometry. */
+    if (gfx_off < 0 || (size_t)gfx_off + 38 > level->graphics_byte_count ||
+        read_word(level->graphics + gfx_off) != 121 ||
+        memcmp(level->graphics + gfx_off + 24, roof, sizeof(roof)) != 0)
+        return authored;
+
+    size_t count = 0;
+    while (count < 256 && read_word(authored + count * 8) >= 0) {
+        if (read_word(authored + count * 8) == 121) return authored;
+        count++;
+    }
+    const uint8_t *room = level_get_zone_data_ptr(level, 121);
+    if (!room || read_word(room + 48) != 121) return authored;
+    if (count >= 256 || !scratch || scratch_size < (count + 1) * 8 + 2) {
+        fprintf(stderr, "[LEVEL] Cannot repair level_m room 124 visibility list: insufficient storage\n");
+        exit(1);
+    }
+    memcpy(scratch, authored, count * 8);
+    memcpy(scratch + count * 8, room + 48, 8);
+    write_word_be(scratch + (count + 1) * 8, -1);
+    return scratch;
 }
 
 static size_t zone_data_guess_len(const LevelState *level, int32_t zoff)
