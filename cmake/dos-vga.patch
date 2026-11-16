@@ -1,0 +1,24 @@
+diff --git a/src/video/dos/SDL_dosmodes.c b/src/video/dos/SDL_dosmodes.c
+--- a/src/video/dos/SDL_dosmodes.c
++++ b/src/video/dos/SDL_dosmodes.c
+@@ -245,14 +245,15 @@ static bool DetectVGA(void)
+ 
+ bool DOSVESA_SupportsVESA(void)
+ {
+-    // We need at least VGA hardware (for mode 13h). EGA and CGA cards
+-    // do not support 256 colors or programmable palettes.
+-    if (!DetectVGA()) {
++    // Alien Breed DOS: a valid VBE BIOS is direct evidence of a graphics
++    // adapter. QEMU's VGA models expose VBE but do not implement DAC mask
++    // readback. Retain the DAC probe for plain VGA cards without VBE.
++    const SDL_VESAInfo *vinfo = GetVESAInfo();
++    if (!vinfo && !DetectVGA()) {
+         return SDL_SetError("No VGA card detected");
+     }
+ 
+-    // Cache VESA info if available (NULL mean we only have VGA).
+-    (void)GetVESAInfo();
++    // GetVESAInfo above also caches the BIOS mode list.
+ 
+     return true;
+ }

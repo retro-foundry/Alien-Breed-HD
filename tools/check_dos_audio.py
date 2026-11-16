@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from dos_math import write_math_tables
 
 
 def main():
@@ -15,6 +16,7 @@ def main():
     root = Path(__file__).resolve().parent.parent
     run = root / 'build/dos-audio-regression'
     run.mkdir(parents=True, exist_ok=True)
+    write_math_tables(run)
     deps = json.loads((root / 'build/dos-deps/toolchain.json').read_text(encoding='utf-8-sig'))
     sdk = Path(deps['djgpp'])
     env = dict(os.environ, PATH=str(sdk / 'bin') + os.pathsep + os.environ['PATH'])
@@ -22,9 +24,9 @@ def main():
                     '-O2', '-flto', '-fwhole-program', '-std=gnu11', '-UNDEBUG', '-fomit-frame-pointer',
                     '-fno-strict-aliasing', '-DAB3D_DOS', '-DAB3D_NATIVE_RGB565', '-DSDL_MAIN_HANDLED',
                     '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',
-                    '-Isrc/platform/dos', '-Isrc', '-I' + str(Path(deps['sdl']) / 'SDL/include'),
+                    '-Isrc/platform/dos', '-Isrc', '-I' + str(run), '-I' + str(Path(deps['sdl']) / 'SDL/include'),
                     '-include', 'src/platform/dos/math_compat.h', 'tests/dos_audio.c',
-                    str(Path(deps['sdl']) / 'SDL-build/libSDL3.a'), '-lm', '-o', str(run / 'AUDIO.EXE')],
+                    str(Path(deps['sdl']) / 'SDL-build/libSDL3.a'), '-lm', '-lemu', '-o', str(run / 'AUDIO.EXE')],
                    cwd=root, env=env, check=True)
     subprocess.run([str(sdk / 'i586-pc-msdosdjgpp/bin/stubedit.exe'), str(run / 'AUDIO.EXE'),
                     'minstack=128K'], env=env, check=True)

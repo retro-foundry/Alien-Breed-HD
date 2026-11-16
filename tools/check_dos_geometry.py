@@ -26,8 +26,8 @@ def main():
                '-DAB3D_CW_COL_MAJOR=0', '-DAB3D_ENABLE_FLOOR_COL_FAST=1', '-DSKY_BILINEAR_FILTER=0',
                '-Isrc', '-Isrc/platform/dos', '-Ithird_party',
                '-I' + str(Path(deps['sdl']) / 'SDL/include'),
-               '-include', 'src/platform/dos/math_compat.h', 'tests/dos_geometry.c',
-               '-lm', '-o', str(work / 'GEOMETRY.EXE')]
+               '-include', 'src/platform/dos/math_compat.h', 'tests/dos_geometry.c', 'src/level.c',
+               '-lm', '-lemu', '-o', str(work / 'GEOMETRY.EXE')]
     subprocess.run(command, cwd=root, env=env, check=True)
     subprocess.run([str(djgpp / 'i586-pc-msdosdjgpp/bin/stubedit.exe'),
                     str(work / 'GEOMETRY.EXE'), 'minstack=128K'], env=env, check=True)

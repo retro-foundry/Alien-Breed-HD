@@ -34,7 +34,12 @@
 #define ANGLE_FULL            ANGLE_FINE_TABLE_SIZE
 
 /* Original and expanded sine tables. */
+#ifdef AB3D_DOS
+extern const int16_t sine_table[ANGLE_TABLE_SIZE];
+extern const uint32_t interpolation_phase[20];
+#else
 extern int16_t sine_table[ANGLE_TABLE_SIZE];
+#endif
 extern int16_t sine_table_fine[ANGLE_FINE_TABLE_SIZE];
 
 /* Initialize the sine table (generates values matching Amiga binary) */

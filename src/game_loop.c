@@ -26,6 +26,7 @@
 #include "game_types.h"
 #include "visibility.h"
 #include "renderer.h"
+#include "math_tables.h"
 #include "display.h"
 #include "input.h"
 #include "audio.h"
@@ -330,7 +331,7 @@ void game_loop_ctx_init(GameLoopCtx *ctx, GameState *state)
                    (size_t)state->level.num_object_points * 8u);
         }
     }
-    state->obj_interp_alpha = 0.0f;
+    state->obj_interp_alpha = 0;
 }
 
 static void game_loop_pause_timing(GameState *state, GameLoopCtx *ctx)
@@ -340,7 +341,7 @@ static void game_loop_pause_timing(GameState *state, GameLoopCtx *ctx)
     ctx->vblank_remainder_ms = 0;
     ctx->fps_sample_start_counter = SDL_GetPerformanceCounter();
     ctx->fps_frames_in_sample = 0;
-    state->obj_interp_alpha = 0.0f;
+    state->obj_interp_alpha = 0;
 }
 
 static void game_loop_clear_queued_actions(void)
@@ -1597,8 +1598,12 @@ void game_loop_tick(GameState *state, GameLoopCtx *ctx)
 
         /* Track how far we are into the current 50Hz tick (0=just ticked, 1=about to tick).
          * Used by the renderer to interpolate enemy positions between logic ticks. */
+#ifdef AB3D_DOS
+        state->obj_interp_alpha = interpolation_phase[ctx->vblank_remainder_ms];
+#else
         state->obj_interp_alpha = (float)ctx->vblank_remainder_ms / 20.0f;
         if (state->obj_interp_alpha > 1.0f) state->obj_interp_alpha = 1.0f;
+#endif
 
         /* ================================================================
          * Game logic: Amiga-style cadence.

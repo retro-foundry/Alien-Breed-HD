@@ -361,29 +361,45 @@ static inline int renderer_clamp_base_width(int w)
     return w;
 }
 
-static inline float renderer_clamp_interp_alpha(float alpha)
+#ifdef AB3D_DOS
+typedef uint32_t RendererInterpAlpha;
+#else
+typedef float RendererInterpAlpha;
+#endif
+
+static inline RendererInterpAlpha renderer_clamp_interp_alpha(RendererInterpAlpha alpha)
 {
+#ifndef AB3D_DOS
     if (alpha < 0.0f) return 0.0f;
     if (alpha > 1.0f) return 1.0f;
+#endif
     return alpha;
 }
 
-static inline int32_t renderer_interp_i32(int32_t from, int32_t to, float alpha)
+static inline int32_t renderer_interp_i32(int32_t from, int32_t to, RendererInterpAlpha alpha)
 {
+#ifdef AB3D_DOS
+    return renderer_interp_fixed_i32(from,to,alpha);
+#else
     double value = (double)from + ((double)to - (double)from) * (double)alpha;
     if (value > (double)INT_MAX) return INT_MAX;
     if (value < (double)INT_MIN) return INT_MIN;
     return (int32_t)value;
+#endif
 }
 
-static inline int16_t renderer_interp_angle(int16_t from, int16_t to, float alpha)
+static inline int16_t renderer_interp_angle(int16_t from, int16_t to, RendererInterpAlpha alpha)
 {
     int32_t a0 = (int32_t)from & ANGLE_MASK;
     int32_t a1 = (int32_t)to & ANGLE_MASK;
     int32_t delta = a1 - a0;
     if (delta > ANGLE_180) delta -= ANGLE_FULL;
     else if (delta < -ANGLE_180) delta += ANGLE_FULL;
+#ifdef AB3D_DOS
+    return (int16_t)((a0+renderer_interp_fixed_delta_i32(delta,alpha))&ANGLE_MASK);
+#else
     return (int16_t)((a0 + (int32_t)((double)delta * (double)alpha)) & ANGLE_MASK);
+#endif
 }
 
 /* Preserve the Amiga large-screen source shape. ScreenSetup.s builds 80 logical
@@ -784,7 +800,11 @@ static int renderer_resolve_lgr_entry_zone_id(const LevelState *level, int16_t e
 
 /* Forward decls used by early helpers (defined later). */
 static uint32_t amiga12_to_argb(uint16_t c12);
+#ifdef AB3D_DOS
+static int renderer_zone_contains_point(const LevelState *level,int16_t zone_id,int32_t x,int32_t z);
+#else
 static int renderer_zone_contains_point(const LevelState *level, int16_t zone_id, double x, double z);
+#endif
 static int renderer_zone_clip_segment_to_dx_ranges(const LevelState *level,
                                                    int16_t zone_id,
                                                    int32_t seg_x0,
@@ -6376,12 +6396,17 @@ static void renderer_object_world_position(const GameState *state, int point,
     const uint8_t *pts = state->level.object_points + (size_t)point * 8u;
     const uint8_t *prev = state->level.prev_object_points;
     int16_t px = rd16(pts), pz = rd16(pts + 4);
-    float alpha = state->obj_interp_alpha;
-    if (prev && alpha > 0.0f) {
+    RendererInterpAlpha alpha = state->obj_interp_alpha;
+    if (prev && alpha > 0) {
         int16_t px0 = rd16(prev + (size_t)point * 8u);
         int16_t pz0 = rd16(prev + (size_t)point * 8u + 4);
+#ifdef AB3D_DOS
+        px = (int16_t)(px0+renderer_interp_fixed_delta_i32(px-px0,alpha));
+        pz = (int16_t)(pz0+renderer_interp_fixed_delta_i32(pz-pz0,alpha));
+#else
         px = (int16_t)(px0 + (int16_t)((float)(px - px0) * alpha));
         pz = (int16_t)(pz0 + (int16_t)((float)(pz - pz0) * alpha));
+#endif
     }
     *x = px; *z = pz;
 }
@@ -12577,6 +12602,9 @@ static int renderer_point_on_segment_i32(int32_t px, int32_t pz,
     return 1;
 }
 
+#ifdef AB3D_DOS
+#include "geometry_dos.inc"
+#else
 static int renderer_zone_contains_point(const LevelState *level, int16_t zone_id, double x, double z)
 {
     if (!level || !level->data || !level->zone_adds || !level->floor_lines)
@@ -12831,6 +12859,8 @@ static int renderer_zone_clip_segment_to_dx_ranges(const LevelState *level,
 
     return out_count;
 }
+
+#endif /* AB3D_DOS integer sprite clipping */
 
 static int renderer_zone_list_contains(const int16_t *zones, int count, int16_t zone_id)
 {
@@ -17477,7 +17507,7 @@ static void renderer_draw_display_impl(GameState *state)
 
     /* 2. Setup view transform (from AB3DI.s DrawDisplay lines 3399-3438) */
     PlayerState *plr = (state->mode == MODE_SLAVE) ? &state->plr2 : &state->plr1;
-    float view_alpha = renderer_clamp_interp_alpha(state->obj_interp_alpha);
+    RendererInterpAlpha view_alpha = renderer_clamp_interp_alpha(state->obj_interp_alpha);
     int32_t view_xoff = renderer_interp_i32(plr->oldxoff, plr->xoff, view_alpha);
     int32_t view_zoff = renderer_interp_i32(plr->oldzoff, plr->zoff, view_alpha);
     int32_t view_yoff = renderer_interp_i32(plr->oldyoff, plr->yoff, view_alpha);

@@ -78,7 +78,7 @@ def main():
                     'src/renderer_objects.c',
                     'src/platform/dos/sprite_alpha_dos.c',
                     'src/sprite_palettes.c',
-                    '-lm', '-o', str(run / 'RASTER.EXE')], cwd=root, env=env, check=True)
+                    '-lm', '-lemu', '-o', str(run / 'RASTER.EXE')], cwd=root, env=env, check=True)
     subprocess.run([str(djgpp / 'i586-pc-msdosdjgpp/bin/stubedit.exe'), str(run / 'RASTER.EXE'),
                     'minstack=128K'], env=env, check=True)
     shutil.copy2(Path(deps['dpmi']) / 'bin/CWSDPMI.EXE', run / 'CWSDPMI.EXE')

@@ -131,13 +131,18 @@ void dos_platform_bootstrap(const char *executable)
      * normal allocator one contiguous game heap first, rather than losing
      * the padding of many small zones while loading differently-sized assets.
      * Leave room for the optimized renderer's larger text at 4 MB. */
-    /* The pinned DJGPP nmalloc adds 48 bytes in roundup/extendsbrk to this
-     * first large request. Account for them within the 1280 KiB arena;
-     * requesting the whole arena as payload rounds its DPMI zone up by
-     * another 64 KiB, which can prevent a 4 MB executable from starting. */
-    const size_t heap_size=1280u*1024u-48u;
-    volatile unsigned char *heap=malloc(heap_size);
-    if(!heap){fprintf(stderr,"Cannot reserve the 1.25 MiB DOS game heap\n");exit(1);}
+    /* Use the available contiguous block, capped at the existing game heap
+     * budget. A separate final 64 KiB zone can strand space between assets.
+     * Leave one page for nmalloc's alignment/extension bookkeeping. */
+    __dpmi_free_mem_info info;
+    size_t heap_zone=1280u*1024u;
+    if(__dpmi_get_free_memory_information(&info)==0) {
+        size_t available=info.largest_available_free_block_in_bytes & ~65535u;
+        heap_zone=available<1344u*1024u ? available : 1344u*1024u;
+    }
+    const size_t heap_size=heap_zone>4096u ? heap_zone-4096u : 0;
+    volatile unsigned char *heap=heap_size ? malloc(heap_size) : NULL;
+    if(!heap){dos_memory_report("bootstrap allocation failed");fprintf(stderr,"Cannot reserve the 1.25 MiB DOS game heap\n");exit(1);}
     heap[0]=0;heap[heap_size-1]=0;
     free((void *)heap);
 
@@ -370,7 +375,7 @@ void dos_memory_report(const char *phase)
         printf("[DOSMEM] %s physical=%luKB free=%luKB largest-block=%luKB\n",phase,
             info.total_number_of_physical_pages*4,info.total_number_of_free_pages*4,
             info.largest_available_free_block_in_bytes/1024);
-    if(strstr(phase,"failed")) {
+    if(strstr(phase,"failed") || !strcmp(phase,"startup")) {
         for(int i=0;i<256;i++)if(__djgpp_memory_handle_size[i])
             printf("[DOSHEAP] zone %d reserved=%uKB offset=%08x\n",i,
                 __djgpp_memory_handle_size[i]/1024,__djgpp_memory_handle_list[i].address);
@@ -401,6 +406,8 @@ const char *dos_asset_alias(const char *path)
 }
 void dos_platform_init(int argc,char **argv)
 {
+    extern int _8087; /* DJGPP startup's hardware-coprocessor detection. */
+    printf("[DOS FPU] %s\n",_8087 ? "hardware x87" : "software emulation");
     SDL_SetHint("SDL_DOS_SKIP_EVENT_YIELD","1");
     const char *mouse=getenv("AB3D_DOS_MOUSE");
     SDL_SetHint("SDL_DOS_SKIP_MOUSE_PUMP",mouse && !strcmp(mouse,"0")?"1":"0");
@@ -425,7 +432,7 @@ void dos_platform_init(int argc,char **argv)
     if(dos_benchmark_frames<0 || dos_benchmark_frames>1024 || ((dos_check_enabled || dos_frontend_check_enabled || dos_screen_size_check_enabled) && !dos_benchmark_frames)) {
         fprintf(stderr,"Use --dos-bench 1..1024 [--dos-check]\n");exit(1);
     }
-    printf("[DOS] 486 DX2/DX4 target; software VESA; i486 instructions and tuning\n");
+    printf("[DOS] 486 target; optional x87; software VESA; i486 instructions and tuning\n");
     printf("[DOS MOUSE] %s\n",mouse && !strcmp(mouse,"0")?
         "disabled by AB3D_DOS_MOUSE=0":"driver polling enabled; DOS mouse driver required");
     if(dos_fixed_test_ticks)printf("[DOS] Fixed diagnostic ticks; FPS is not a real-game benchmark\n");
@@ -454,23 +461,43 @@ void dos_profile_end(void)
 void dos_profile_frame(void)
 {
     if(!dos_benchmark_frames)return;
+    extern int _8087;
+    if(!_8087) {
+        unsigned short control;
+        __asm__ volatile("smsw %0" : "=r"(control));
+        if(!(control & 12u)) {
+            fprintf(stderr,"Software FPU trap disabled during benchmark\n");exit(1);
+        }
+        if(!frames || frames+1==(unsigned)dos_benchmark_frames)
+            printf("[DOS FPU CHECK] frame=%u traps active control=%04x\n",frames+1,control);
+    }
     Uint64 elapsed=SDL_GetPerformanceCounter()-frame_start;
     frame_times[frames++]=elapsed;frame_total+=elapsed;
     if((frames%16)==0 || frames==(unsigned)dos_benchmark_frames) {
-        double unit=1000.0/SDL_GetPerformanceFrequency()/frames;
-        double ms=frame_total*unit;
+        Uint64 frequency=SDL_GetPerformanceFrequency(),denominator=frequency*frames;
+        Uint64 fps=(denominator*100+frame_total/2)/frame_total;
+        Uint64 frame=(frame_total*100000+denominator/2)/denominator;
+        Uint64 update=(cost[DOS_UPDATE]*100000+denominator/2)/denominator;
+        Uint64 input=(cost[DOS_INPUT]*100000+denominator/2)/denominator;
+        Uint64 render=(cost[DOS_RENDER]*100000+denominator/2)/denominator;
+        Uint64 present=(cost[DOS_PRESENT]*100000+denominator/2)/denominator;
+        Uint64 audio=(cost[DOS_AUDIO]*100000+denominator/2)/denominator;
         Uint64 sorted[1024];memcpy(sorted,frame_times,frames*sizeof(Uint64));
         for(unsigned i=1;i<frames;i++) {
             Uint64 v=sorted[i];unsigned j=i;
             while(j && sorted[j-1]>v) { sorted[j]=sorted[j-1];j--; }
             sorted[j]=v;
         }
-        printf("[DOSPROFILE] n=%u fps=%.2f frame=%.2f update=%.2f input=%.2f render=%.2f present=%.2f audio=%.2f ms\n",
-            frames,1000.0/ms,ms,cost[DOS_UPDATE]*unit,cost[DOS_INPUT]*unit,
-            cost[DOS_RENDER]*unit,cost[DOS_PRESENT]*unit,cost[DOS_AUDIO]*unit);
-        double tick_ms=1000.0/SDL_GetPerformanceFrequency();
-        printf("[DOSPACING] min=%.2f p95=%.2f max=%.2f ms\n",sorted[0]*tick_ms,
-            sorted[(frames*95+99)/100-1]*tick_ms,sorted[frames-1]*tick_ms);
+#define DOS_FIXED_PARTS(v) (unsigned long)((v)/100),(unsigned long)((v)%100)
+        printf("[DOSPROFILE] n=%u fps=%lu.%02lu frame=%lu.%02lu update=%lu.%02lu input=%lu.%02lu render=%lu.%02lu present=%lu.%02lu audio=%lu.%02lu ms\n",
+            frames,DOS_FIXED_PARTS(fps),DOS_FIXED_PARTS(frame),DOS_FIXED_PARTS(update),
+            DOS_FIXED_PARTS(input),DOS_FIXED_PARTS(render),DOS_FIXED_PARTS(present),DOS_FIXED_PARTS(audio));
+        Uint64 minimum=(sorted[0]*100000+frequency/2)/frequency;
+        Uint64 p95=(sorted[(frames*95+99)/100-1]*100000+frequency/2)/frequency;
+        Uint64 maximum=(sorted[frames-1]*100000+frequency/2)/frequency;
+        printf("[DOSPACING] min=%lu.%02lu p95=%lu.%02lu max=%lu.%02lu ms\n",
+            DOS_FIXED_PARTS(minimum),DOS_FIXED_PARTS(p95),DOS_FIXED_PARTS(maximum));
+#undef DOS_FIXED_PARTS
         fflush(stdout);
     }
 }

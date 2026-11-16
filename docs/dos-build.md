@@ -1,6 +1,6 @@
 # DOS / 486 build
 
-Target: 486 DX2/DX4 with x87 FPU, 4 MB RAM, DOS 5+, VESA RGB565 video and
+Target: 486 (DX2/DX4 recommended), optional x87 FPU, 4 MB RAM, DOS 5+, VESA RGB565 video and
 Sound Blaster audio. A VBE 2 BIOS or UNIVBE is recommended. The build was
 validated in DOSBox Staging 0.82.2 with `core=normal`, `cputype=486_slow`,
 `machine=svga_s3`, 4 MB RAM and fixed CPU cycles. Real hardware remains untested.
@@ -39,6 +39,73 @@ and a private native RGB565 version for DOS, compiles `ABHD.EXE`, sets a 128 KB 
 SDL's license, game data, music, `AB3D.INI`, `README.TXT` and `ABHD.BAT`.
 Only the distribution manifest is archived, excluding local saves, logs and tests.
 
+### Optional hardware FPU
+
+The DOS executable includes DJGPP `libemu`, activated automatically when no
+coprocessor is detected. A 486SX needs no separate emulator file. Shared
+collision/AI and library floating-point operations retain their existing
+formulae and execute in software. Desktop arithmetic is unchanged.
+
+The frequent DOS rendering paths use integers: interpolation, sprite-zone
+clipping and vector-object triangle sampling. Sine tables and audio filter
+coefficients are generated offline; distance attenuation evaluates the same
+curve with integer inequalities. Binary32 interpolation phases and existing
+PC sine sampling are preserved rather than substituting the differently
+scaled original Amiga table. Pixel loops retain their normal optimization;
+cold/control code is compiled for size to keep the 4 MB memory target.
+
+```powershell
+python tools/check_dos_math.py --dosbox <dosbox-staging.exe>
+python tools/check_dos_geometry.py --dosbox <dosbox-staging.exe>
+python tools/check_dos_nofpu.py --build-dir build/dos --dosbox <dosbox-x.exe>
+python tools/check_dos.py --build-dir build/dos --dosbox <dosbox-x.exe> `
+  --no-fpu --memory 4 --height 200 --cycles 40000 --frames 32 --level 4 --sound on --mouse --exercise
+```
+
+The no-FPU matrix compares all sixteen starting scenes and six turning scenes
+at 320x200 with SB16, mouse and 4 MB. An optional `--reference-build-dir`
+compares against an unchanged source build. Fixed ticks and 200,000 cycles
+are correctness checks, not performance claims.
+
+Use DOSBox-X for no-FPU verification. Staging 0.82.2 ignores both `fpu=false`
+and CR0.EM, so even a successful arithmetic probe with the trap flag set is
+insufficient. The test requires a negative control without `libemu` to fail,
+then verifies exact software multiply/divide/square-root results and active
+CPU trapping through the game. DOSBox-X 2026.10.01 also needs CR0.EM set
+explicitly because its task switches omit the TS bit CWSDPMI normally uses.
+The harness supplies this and `387=N`; ordinary PCs use normal detection.
+Its DOSBox-X profile loads kernel/private tables into UMBs to provide the
+documented lean conventional-memory budget. Both native and indexed builds
+include the emulator. Real hardware remains untested.
+
+The SDL VGA patch accepts valid VBE BIOS detection on adapters whose DAC mask
+does not support readback, while retaining the existing plain-VGA probe.
+
+The verified candidate is in `build/dos-no-fpu`; its compiler-feedback report
+is `pgo/report.json`. All 22 native 320x240 captures at 4 MB match the unchanged
+source build, as do 128 barrel/debris framebuffers and simulation hashes.
+The DOSBox-X no-FPU matrix (`pgo/no-fpu-check/report.json`) also matches all
+22 source scenes at 320x200. Native and indexed real-time 4 MB no-FPU
+SB16/mouse/UI/save/load checks pass with zero audio underruns. Arithmetic
+oracles cover 2,679,681 distance gains, 257,252 covered triangle samples and
+126,000 independent clipping intersections. Desktop Release and the movement,
+shooting, audio, teleport, water, sky, tag and automap regressions pass.
+
+At 40,000 fixed cycles in DOSBox-X, 4 MB, 320x200, SB16 and mouse, 128 real-time
+frames measure 24.85 FPS for the unchanged ordinary source build with an FPU,
+23.66 for the updated feedback build with an FPU and 22.21 without one.
+The emulator overhead relative to the updated hardware-FPU build is about
+6%; these are emulator comparisons, not measured 486 hardware speeds.
+The optimized text/data/BSS total is 1,487,896 bytes. Both outcome fades and
+all sixteen text briefings retain their exact tested pixels.
+
+The verified executable and ZIP are staged in `build/dos`, with the runnable
+directory at `build/dos/game`. Updating the executable/README preserved all
+240 other installed files, including settings and saves. Previous artifacts
+are backed up under `build/dos-no-fpu/previous-installed`; hashes and staging
+checks are recorded in `build/dos-no-fpu/staging.json`. The 3,424,991-byte ZIP
+has SHA-256 `5423a0783a7fcb1f561201d83734f56d24a6d88ea2ec3e7c110e8d8c352d853b`.
+
 ### Compiler feedback build
 
 The recommended 4 MB release build uses compiler feedback. The setup command
@@ -55,9 +122,9 @@ six turning runs, a save/load exercise and four dense barrel replays. The
 barrel replays contribute only to the native billboard raster and source-row
 lookup profiles; ordinary
 gameplay, audio and production main profiles are retained. Instrumented
-training uses 16 MB;
+training uses 16 MB and 200,000 cycles;
 those timings are not performance measurements. Before packaging, the
-uninstrumented image must reproduce all 22 ordinary 4 MB captures exactly
+uninstrumented image must reproduce all 22 ordinary-build captures exactly at 4 MB
 and pass the real-time 4 MB level-4 SB16/mouse exercise. Host audio is muted.
 Training takes several minutes and stays under the selected build directory.
 No compiler counters or additional texture/shade banks enter the package.

@@ -46,7 +46,7 @@ def train_raster_scenes(root, work, commands, counters, env, run, check, sdl_lib
     objects = [f'S{i:03d}.o' for i in range(len(commands)) if i != main_index]
     run([str(compiler), '-march=i486', '-mtune=i486', '-O3', '-flto',
          '-fwhole-program', '-Wl,--gc-sections', '-o', 'SCENE.EXE', 'SCENE.o',
-         *objects, str(sdl_library), '-lm',
+         *objects, str(sdl_library), '-lm', '-lemu',
          '-fprofile-generate=PROF', f'-fprofile-prefix-path={work}'], 'scene-link')
     run([str(compiler.parent.parent / 'i586-pc-msdosdjgpp/bin/stubedit.exe'),
          str(work / 'SCENE.EXE'), 'minstack=128K'], 'scene-stack')
@@ -71,7 +71,7 @@ def train_raster_scenes(root, work, commands, counters, env, run, check, sdl_lib
     # the real game loop. Its authored level-1/6 views exercise BitMapObj.
     for level, turn in ((1, False), (1, True), (6, False), (6, True)):
         suffix = '-turn' if turn else ''
-        case = scene / 'checks' / f'40000-16m-320x240-l{level}-on-mouse{suffix}-fixed'
+        case = scene / 'checks' / f'200000-16m-320x240-l{level}-on-mouse{suffix}-fixed'
         prof = case / 'PROF'
         prof.mkdir(parents=True, exist_ok=True)
         for i in range(len(commands)):

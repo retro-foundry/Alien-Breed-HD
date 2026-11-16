@@ -1,8 +1,10 @@
 ALIEN BREED HD - DOS / 486 BUILD
 
-Requires a 486 DX2/DX4 with x87 FPU, 4 MB RAM, DOS 5+ and VESA RGB565
+Requires a 486, 4 MB RAM, DOS 5+ and VESA RGB565
 video (a mode of at least 320x200). A VBE 2 BIOS or UNIVBE is recommended.
 The smallest available RGB565 mode is selected; many cards use 320x240.
+An FPU is optional. A DX2/DX4 is recommended for speed; 486SX systems use
+the included software coprocessor emulator automatically. No extra file is needed.
 
 Unzip the entire package into a writable directory, then run ABHD.BAT.
 When updating, keep ABHD.EXE and DATA from the same package.

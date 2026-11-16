@@ -23,12 +23,20 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+#ifdef AB3D_DOS
+#include "math_tables_dos.h"
+const int16_t sine_table[ANGLE_TABLE_SIZE] = AB3D_DOS_SINE_VALUES;
+const uint32_t interpolation_phase[20] = AB3D_DOS_INTERPOLATION_VALUES;
+#else
 int16_t sine_table[ANGLE_TABLE_SIZE];
+#endif
 int16_t sine_table_fine[ANGLE_FINE_TABLE_SIZE];
 
 void math_tables_init(void)
 {
-    /* Build original 4096-entry table. */
+#ifndef AB3D_DOS
+    /* Build the PC port's 4096-entry table. DOS prepares these same values
+     * offline, keeping startup and the lookup path integer-only. */
     for (int i = 0; i < ANGLE_TABLE_SIZE; i++) {
         double angle = (double)i * 2.0 * M_PI / (double)ANGLE_TABLE_SIZE;
         double val = sin(angle) * 16384.0;
@@ -39,6 +47,7 @@ void math_tables_init(void)
             sine_table[i] = (int16_t)(val - 0.5);
     }
 
+#endif
     /* Expand to 8192 by inserting midpoint samples between legacy entries.
      * Even slots are exact legacy values, odd slots are rounded averages. */
     for (int i = 0; i < ANGLE_TABLE_SIZE; i++) {

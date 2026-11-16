@@ -104,7 +104,7 @@ def main():
         '-DAB3D_DOS', '-DAB3D_NATIVE_RGB565', '-DAB3D_NO_THREADS', '-DSDL_MAIN_HANDLED',
         '-Isrc/platform/dos', '-Isrc', '-I' + str(sdl / 'SDL/include'), '-I' + str(build),
         'tests/dos_mouse.c', 'src/logging.c', str(sdl / 'SDL-build/libSDL3.a'),
-        '-lm', '-o', str(executable),
+        '-lm', '-lemu', '-o', str(executable),
     ], cwd=root, env=env, check=True)
     subprocess.run([str(Path(deps['djgpp']) / 'i586-pc-msdosdjgpp/bin/stubedit.exe'),
                     str(executable), 'minstack=128K'], env=env, check=True)

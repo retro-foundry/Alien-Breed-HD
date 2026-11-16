@@ -75,9 +75,89 @@ static void check_case(const int32_t *p)
     checked++;
 }
 
+static void clip_word(uint8_t *p,int value)
+{ p[0]=(uint8_t)((unsigned)value>>8);p[1]=(uint8_t)value; }
+
+static void check_clip_columns(void)
+{
+    enum { CELLS=7,ROOM_BYTES=64 };
+    uint8_t data[CELLS*ROOM_BYTES]={0},adds[CELLS*4]={0},lines[(CELLS*4+1)*16]={0};
+    LevelState level={0};level.data=data;level.data_byte_count=sizeof(data);
+    level.zone_adds=adds;level.floor_lines=lines;level.num_floor_lines=CELLS*4+1;
+    level.num_zones=level.num_zone_slots=CELLS;
+    for(int zone=0;zone<CELLS;zone++) {
+        unsigned offset=zone*ROOM_BYTES;
+        adds[zone*4+2]=(uint8_t)(offset>>8);adds[zone*4+3]=(uint8_t)offset;
+        uint8_t *room=data+offset;clip_word(room,zone);clip_word(room+32,40);
+        const int corners[4][2]={{zone*16,-16},{(zone+1)*16,-16},{(zone+1)*16,16},{zone*16,16}};
+        for(int edge=0;edge<4;edge++) {
+            int index=zone*4+edge;uint8_t *line=lines+index*16;
+            clip_word(line,corners[edge][0]);clip_word(line+2,corners[edge][1]);
+            clip_word(line+4,corners[(edge+1)%4][0]-corners[edge][0]);
+            clip_word(line+6,corners[(edge+1)%4][1]-corners[edge][1]);
+            clip_word(room+40+edge*2,index);
+        }
+        clip_word(room+48,-1);clip_word(room+50,CELLS*4);clip_word(room+52,-2);
+    }
+    /* A neighbor-collision line behind -1 must not enter the primary outline. */
+    clip_word(lines+CELLS*4*16,30);clip_word(lines+CELLS*4*16+2,-16);
+    clip_word(lines+CELLS*4*16+6,32);
+    assert(renderer_zone_contains_point(&level,0,8,0));
+    assert(!renderer_zone_contains_point(&level,0,20,0));
+    const int widths[]={4,11,127,224,320,768};
+    unsigned columns=0;
+    for(unsigned w=0;w<sizeof(widths)/sizeof(*widths);w++) {
+        int width=widths[w],owners[768]={0};
+        for(int zone=0;zone<CELLS;zone++) {
+            int starts[2],ends[2];
+            int count=renderer_zone_clip_segment_to_dx_ranges(&level,(int16_t)zone,
+                0,0,112,0,width,0,width,starts,ends,NULL,NULL,2);
+            for(int i=0;i<count;i++)for(int x=starts[i];x<ends[i];x++) {
+                assert(((2*x+1)*112)/(2*width)/16==zone);owners[x]++;columns++;
+            }
+        }
+        for(int x=0;x<width;x++)assert(owners[x]==1);
+    }
+    uint32_t seed=0x76c3a1ef;unsigned intervals=0;
+    for(unsigned n=0;n<3000;n++) {
+        int point[4];
+        for(int i=0;i<4;i++) { seed=seed*1664525u+1013904223u;point[i]=(int)(seed%513)-256; }
+        for(unsigned w=0;w<sizeof(widths)/sizeof(*widths);w++)for(int zone=0;zone<CELLS;zone++) {
+            int width=widths[w],clip_start=width/7,clip_end=width-width/11;
+            /* Independent slab intersection with this rectangular cell. */
+            double first=0,last=1;int valid=1;
+            for(int axis=0;axis<2;axis++) {
+                int lower=axis?-16:zone*16,upper=axis?16:(zone+1)*16;
+                int delta=point[axis+2]-point[axis];
+                if(!delta) { if(point[axis]<lower || point[axis]>upper)valid=0; }
+                else {
+                    double a=(double)(lower-point[axis])/delta,b=(double)(upper-point[axis])/delta;
+                    if(a>b) { double swap=a;a=b;b=swap; }
+                    if(a>first)first=a;if(b<last)last=b;
+                }
+            }
+            int expected_start=(int)ceil(first*width-0.5),expected_end=(int)ceil(last*width-0.5);
+            if(expected_start<clip_start)expected_start=clip_start;
+            if(expected_end>clip_end)expected_end=clip_end;
+            int expected=valid && last-first>1e-9 && expected_end>expected_start;
+            int starts[2],ends[2];int count=renderer_zone_clip_segment_to_dx_ranges(&level,(int16_t)zone,
+                point[0],point[1],point[2],point[3],width,clip_start,clip_end,starts,ends,NULL,NULL,2);
+            assert(count==expected);
+            if(count) { assert(starts[0]==expected_start);assert(ends[0]==expected_end); }
+            intervals++;
+        }
+    }
+    DosGeometryFraction a={0,1},b={1,1000000000},c={1,999999999};
+    assert(dos_geometry_fraction_near(a,b));assert(!dos_geometry_fraction_near(a,c));
+    DosGeometryFraction wide={(UINT64_C(1)<<47)-1,(UINT64_C(1)<<48)-1},half={1,2};
+    assert(dos_geometry_fraction_compare(wide,half)<0);assert(dos_geometry_fraction_near(wide,half));
+    printf("PASS: %u pixel-centre owners and %u independent slab intersections retain sprite clipping\n",columns,intervals);
+}
+
 int main(void)
 {
     setvbuf(stdout,NULL,_IOLBF,0);
+    check_clip_columns();
     int32_t p[8];
     for(unsigned n=0;n<6561;n++) {
         unsigned v=n;

@@ -14,6 +14,7 @@ from dos_wall import prepare_wall
 from dos_sprite import prepare_sprite
 from dos_sprite_alpha import write_sprite_alpha
 from dos_water import prepare_water
+from dos_math import write_math_tables
 
 
 def main():
@@ -29,6 +30,7 @@ def main():
     generated = build / 'generated'
     data.mkdir(parents=True, exist_ok=True)
     generated.mkdir(parents=True, exist_ok=True)
+    write_math_tables(generated)
     sources = {}
     for source, logical in (
         ('amiga/vectorobjects', 'data/vectorobjects'),
@@ -236,7 +238,8 @@ This build uses 320x200 indexed VGA output with a palette chosen per level
 from the original assets. Some colors/shades are merged. It draws palette
 indices directly; there is no per-frame RGB565-to-indexed conversion.
 UI and weapon surfaces also use indexed SDL blits. Cutouts reserve index 255.
-Requires a 486 with x87 FPU, 4 MB RAM, DOS 5+ and VGA. VESA RGB565 is not
+Requires a 486, 4 MB RAM, DOS 5+ and VGA. An FPU is optional; software
+coprocessor emulation is built in. VESA RGB565 is not
 required by this build. Both the 8-bit and RGB565 builds retain 1:1 pixels.
 The remaining controls and audio instructions below apply to this trial.
 

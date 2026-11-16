@@ -87,11 +87,15 @@ def main():
              f'-DAB3D_DOS_PROFILE_DIR={profiles.as_posix()}'], 'configure-' + directory.name)
         run(['cmake', '--build', str(directory), '--parallel', '4'], 'build-' + directory.name)
 
-    def check(level, frames, *, training=False, turn=False, exercise=False, screen_size=100,
+    def check(level, frames, *, training=False, turn=False, exercise=False, screen_size=100, memory=None,
               directory=work, group=''):
-        memory = 16 if training else 4
+        if memory is None:
+            memory = 16 if training else 4
+        # Instrumented code is for branch counters, not hardware pacing.
+        # Give its extra bookkeeping headroom; release gates retain 40,000.
+        cycles = 200000 if training else 40000
         sound = 'on' if training or exercise else 'off'
-        case = f'40000-{memory}m-320x240-l{level}-{sound}'
+        case = f'{cycles}-{memory}m-320x240-l{level}-{sound}'
         case += '-exercise' if exercise else ''
         case += '-mouse' if training or exercise else ''
         case += '-turn' if turn else ''
@@ -99,7 +103,7 @@ def main():
         if screen_size!=100:case+=f'-view{screen_size}'
         command = [sys.executable, str(root / 'tools/check_dos.py'), '--dosbox', str(box),
                    '--build-dir', str(directory), '--memory', str(memory), '--height', '240',
-                   '--cycles', '40000', '--frames', str(frames), '--level', str(level),
+                   '--cycles', str(cycles), '--frames', str(frames), '--level', str(level),
                    '--sound', sound]
         if training or exercise:
             command.append('--mouse')
@@ -124,10 +128,13 @@ def main():
     captures += [(level, 48, True) for level in (1, 2, 4, 6, 15, 16)]
     expected = {}
     for level, frames, turn in captures:
-        case = check(level, frames, turn=turn)
+        # The unoptimized source oracle may exceed the release's 4 MB code
+        # budget. Final feedback images and the UI exercise must still run
+        # at 4 MB and reproduce these pixels exactly.
+        case = check(level, frames, turn=turn, memory=16)
         expected[level, turn] = (case / 'FRAME.BMP').read_bytes()
         (oracles / f'l{level}{"-turn" if turn else ""}.bmp').write_bytes(expected[level, turn])
-    print('PGO: preserved all 22 ordinary 4 MB captures', flush=True)
+    print('PGO: preserved all 22 ordinary source captures (16 MB)', flush=True)
 
     # Short object names produce unique DOS 8.3 counter files (S000.GCD).
     # Normalize the source spelling to Ninja's forward slashes: GCC includes
@@ -146,7 +153,7 @@ def main():
     objects = [f'S{i:03d}.o' for i in range(len(commands))]
     run([commands[0][0], '-march=i486', '-mtune=i486', '-O3', '-flto',
          '-fwhole-program', '-Wl,--gc-sections', '-o', 'ABHD.exe', *objects,
-         str(Path(deps['sdl']) / 'SDL-build/libSDL3.a'), '-lm',
+         str(Path(deps['sdl']) / 'SDL-build/libSDL3.a'), '-lm', '-lemu',
          '-fprofile-generate=PROF', f'-fprofile-prefix-path={work}'], 'instrument-link')
     stack_and_stage(work)
     training = [(level, False, False, 100) for level in range(1, 17)]
@@ -159,7 +166,7 @@ def main():
         suffix = '-exercise' if exercise else ''
         suffix += '-mouse' + ('-turn' if turn else '') + '-fixed'
         if screen_size!=100:suffix+=f'-view{screen_size}'
-        prof = work / 'checks' / f'40000-16m-320x240-l{level}-on{suffix}' / 'PROF'
+        prof = work / 'checks' / f'200000-16m-320x240-l{level}-on{suffix}' / 'PROF'
         prof.mkdir(parents=True, exist_ok=True)
         for i in range(len(commands)):
             name = f'S{i:03d}.GCD'
@@ -223,7 +230,8 @@ def main():
                   ordinary_training_runs=len(training), scene_training=scene_training,
                   training_view_sizes=[100,80,60,40],
                   training_memory_mb=16,
-                  verified_captures=len(captures), verified_memory_mb=4,
+                  training_cycles=200000,
+                  verified_captures=len(captures), verified_memory_mb=4, ordinary_capture_memory_mb=16,
                   realtime_level4_exercise=True, counter_files=len(counters),
                   capture_sha256={f'l{level}{"-turn" if turn else ""}':
                                   hashlib.sha256(data).hexdigest()

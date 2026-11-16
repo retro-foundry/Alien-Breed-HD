@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from dos_math import write_math_tables
 
 
 def main():
@@ -16,6 +17,7 @@ def main():
     root = Path(__file__).resolve().parent.parent
     work = args.build_dir.resolve()
     work.mkdir(parents=True, exist_ok=True)
+    write_math_tables(work)
     deps = json.loads((root / 'build/dos-deps/toolchain.json').read_text(encoding='utf-8-sig'))
     djgpp = Path(deps['djgpp'])
     env = dict(os.environ, PATH=str(djgpp / 'bin') + os.pathsep + os.environ['PATH'])
@@ -23,12 +25,12 @@ def main():
                '-march=i486', '-mtune=i486', '-O3', '-flto', '-fno-strict-aliasing',
                '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',
                '-DSDL_MAIN_HANDLED', '-DAB3D_DOS', '-DAB3D_NATIVE_RGB565',
-               '-Isrc', '-Ithird_party', '-Isrc/platform/dos',
+               '-Isrc', '-Ithird_party', '-Isrc/platform/dos', '-I' + str(work),
                '-I' + str(Path(deps['sdl']) / 'SDL/include'),
                '-include', 'src/platform/dos/math_compat.h',
                'tests/feedback_shooting.c', 'src/math_tables.c', 'src/game_data.c',
                'src/objects.c', 'src/level.c', 'src/movement.c', 'src/visibility.c',
-               'src/logging.c', '-lm', '-o', str(work / 'SHOOT.EXE')]
+               'src/logging.c', '-lm', '-lemu', '-o', str(work / 'SHOOT.EXE')]
     build_log = work / 'build.log'
     with build_log.open('w') as log:
         result = subprocess.run(command, cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)

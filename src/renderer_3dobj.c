@@ -19,6 +19,9 @@
 #include "renderer_3dobj.h"
 #include "renderer.h"
 #include "renderer_fixed.h"
+#ifdef AB3D_DOS
+#include "triangle_dos.h"
+#endif
 #include "renderer_alloc.h"
 #include "math_tables.h"
 #include "game_types.h"
@@ -821,6 +824,12 @@ static void draw_textured_triangle(const int *sx, const int *sy,
     if (max_y > clip_bot) max_y = clip_bot;
     if (min_x > max_x || min_y > max_y) return;
 
+#ifdef AB3D_DOS
+    DosTriangle triangle;
+    if(!dos_triangle_init(&triangle,sx,sy))return;
+    int32_t vertex_shades[3]={0,0,0};
+    if(shade_values)for(int i=0;i<3;i++)vertex_shades[i]=shade_values[i];
+#else
     double x0 = (double)sx[0], y0 = (double)sy[0];
     double x1 = (double)sx[1], y1 = (double)sy[1];
     double x2 = (double)sx[2], y2 = (double)sy[2];
@@ -828,13 +837,21 @@ static void draw_textured_triangle(const int *sx, const int *sy,
     if (area == 0.0) return;
 
     double inv_area = 1.0 / area;
+#endif
     int W = g_renderer.width;
     int H = g_renderer.height;
 
     for (int y = min_y; y <= max_y; y++) {
         uint32_t *row = rgb ? rgb + (size_t)y * W : NULL;
+#ifndef AB3D_DOS
         double py = (double)y + 0.5;
+#endif
         for (int x = min_x; x <= max_x; x++) {
+#ifdef AB3D_DOS
+            int64_t weights[3];
+            if(!dos_triangle_weights(&triangle,x,y,weights))continue;
+            int32_t zf=dos_triangle_attribute(&triangle,weights,sz,0);
+#else
             double px = (double)x + 0.5;
             double w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * inv_area;
             double w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * inv_area;
@@ -842,18 +859,28 @@ static void draw_textured_triangle(const int *sx, const int *sy,
             if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue;
 
             int32_t zf = (int32_t)(w0 * (double)sz[0] + w1 * (double)sz[1] + w2 * (double)sz[2]);
+#endif
             if (poly_pixel_behind_wall(x, y, zf)) continue;
             /* Amiga doapoly is painter/stream ordered only: no per-pixel object z-buffer. */
+#ifdef AB3D_DOS
+            int32_t uf=dos_triangle_attribute(&triangle,weights,u,0);
+            int32_t vf=dos_triangle_attribute(&triangle,weights,v,0);
+#else
             int32_t uf = (int32_t)(w0 * (double)u[0] + w1 * (double)u[1] + w2 * (double)u[2]);
             int32_t vf = (int32_t)(w0 * (double)v[0] + w1 * (double)v[1] + w2 * (double)v[2]);
+#endif
             uint8_t pal_idx = sample_poly_texel_index(tex_map_word, uf, vf);
             if (use_holes && pal_idx == 0) continue;
             int pixel_shade = shade_level;
             if (use_gouraud && shade_values) {
+#ifdef AB3D_DOS
+                pixel_shade=dos_triangle_attribute(&triangle,weights,vertex_shades,1);
+#else
                 double shade_f = w0 * (double)shade_values[0] +
                                  w1 * (double)shade_values[1] +
                                  w2 * (double)shade_values[2];
                 pixel_shade = (int)(shade_f + 0.5);
+#endif
                 if (pixel_shade < 0) pixel_shade = 0;
                 if (pixel_shade > 14) pixel_shade = 14;
             }

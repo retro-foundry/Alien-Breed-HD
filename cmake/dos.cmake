@@ -20,7 +20,17 @@ else()
   target_sources(ab3d1 PRIVATE src/platform/dos/sprite_alpha_dos.c)
 endif()
 target_compile_options(ab3d1 PRIVATE -march=i486 -mtune=i486 -O3 -flto -ffunction-sections -fdata-sections -fomit-frame-pointer -fno-strict-aliasing)
-set_source_files_properties(src/renderer.c PROPERTIES COMPILE_OPTIONS "-O3")
+# Keep the orchestration/clipping unit compact enough for 4 MB. Pixel loops
+# live in raster_dos.c and retain -O3; -O2 avoids duplicating large setup paths.
+set_source_files_properties(src/renderer.c PROPERTIES COMPILE_OPTIONS "-O2")
+# Make room for the coprocessor emulator within the existing 4 MB budget.
+# Keep startup, loading, control/UI and gameplay dispatch compact. World
+# drawing, movement and mixing retain their normal optimization level.
+set_source_files_properties(src/main.c src/display.c src/input.c src/settings.c
+  src/renderer_3dobj.c src/ai.c src/objects.c src/player.c
+  src/level_setup.c src/game_data.c src/io.c
+  src/control_loop.c src/platform/dos/platform_dos.c src/platform/dos/text_dos.c
+  PROPERTIES COMPILE_OPTIONS "-Os")
 target_link_options(ab3d1 PRIVATE -O3 -flto -fwhole-program -Wl,--gc-sections)
 
 set(AB3D_DOS_PROFILE_DIR "" CACHE PATH "Compiler feedback prepared by tools/profile_dos.py")
@@ -46,5 +56,8 @@ if(AB3D_DOS_PROFILE_DIR)
   endif()
 endif()
 target_compile_options(ab3d1 PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/dos/math_compat.h")
-target_link_libraries(ab3d1 PRIVATE "${DOS_SDL_ROOT}/SDL-build/libSDL3.a" m)
+# SDL and DJGPP's C runtime retain floating-point entry points. Link DJGPP's
+# emulator so those calls also work on a 486SX. Native raster and audio mixing
+# use integer arithmetic; libemu installs only when startup detects no x87.
+target_link_libraries(ab3d1 PRIVATE "${DOS_SDL_ROOT}/SDL-build/libSDL3.a" m emu)
 set_target_properties(ab3d1 PROPERTIES OUTPUT_NAME ABHD)

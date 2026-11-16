@@ -86,7 +86,7 @@ def main():
                        cwd=main_entry['directory'],env=env,stdout=output,stderr=subprocess.STDOUT,check=True)
         objects=[str(Path(value['directory'])/value['output']) for value in entries if value is not main_entry]
         subprocess.run([command[0],'-march=i486','-mtune=i486','-O3','-flto','-fwhole-program','-Wl,--gc-sections',
-                        str(obj),*objects,str(Path(deps['sdl'])/'SDL-build/libSDL3.a'),'-lm','-o',str(exe)],
+                        str(obj),*objects,str(Path(deps['sdl'])/'SDL-build/libSDL3.a'),'-lm','-lemu','-o',str(exe)],
                        env=env,stdout=output,stderr=subprocess.STDOUT,check=True)
     subprocess.run([str(Path(deps['djgpp'])/'i586-pc-msdosdjgpp/bin/stubedit.exe'),str(exe),'minstack=128K'],
                    env=env,stdout=subprocess.DEVNULL,check=True)

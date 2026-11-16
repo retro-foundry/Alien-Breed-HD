@@ -14,7 +14,11 @@
 #include "audio_samples.h"
 #include "io.h"
 #include "logging.h"
+#include "math_tables_dos.h"
 #define RATE 8007
+#if RATE != AB3D_DOS_FILTER_RATE
+#error Regenerate the DOS filter coefficients for this sample rate
+#endif
 #define VOICES 24
 #define SAMPLES 64
 extern int SDL_DOSSoundBlasterGetQueuedAudioSize(SDL_AudioDeviceID);
@@ -193,10 +197,9 @@ void audio_init(void)
         if(!samples[id].data || fread(samples[id].data,1,n,f)!=n)fatal("Load sample",path);
         fclose(f);
     }
-    double k=tan(3.141592653589793*2200.0/RATE);
-    double norm=1.0/(1.0+1.41421356237*k+k*k);
-    b0=(int32_t)(k*k*norm*16384);b1=2*b0;b2=b0;
-    a1=(int32_t)(2*(k*k-1)*norm*16384);a2=(int32_t)((1-1.41421356237*k+k*k)*norm*16384);
+    /* Same 8007 Hz coefficients as before, prepared by tools/dos_math.py. */
+    b0=AB3D_DOS_FILTER_B0;b1=2*b0;b2=b0;
+    a1=AB3D_DOS_FILTER_A1;a2=AB3D_DOS_FILTER_A2;
     SDL_ResumeAudioStreamDevice(stream);
     printf("[DOS AUDIO] rate=%d channels=%d chunk=%d target=%d; integer mixing, manual IRQ ring\n",spec.freq,spec.channels,chunk_bytes,target_bytes);
 }

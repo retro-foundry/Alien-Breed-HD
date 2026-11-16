@@ -280,7 +280,11 @@ typedef struct {
     /* Frame timing */
     int16_t         frames_to_draw;     /* FramesToDraw */
     int16_t         temp_frames;        /* TempFrames */
+#ifdef AB3D_DOS
+    uint32_t        obj_interp_alpha;   /* unsigned 0.32; same binary32 tick phases as desktop */
+#else
     float           obj_interp_alpha;   /* 0..1: how far into the current 50Hz tick we are (for render interpolation) */
+#endif
 
     /* Game flags */
     bool            do_anything;        /* doAnything */

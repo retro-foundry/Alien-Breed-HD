@@ -27,6 +27,7 @@ def main():
     parser.add_argument('--screen-sizes', action='store_true', help='Check all view sizes, border copies and framebuffer reuse')
     parser.add_argument('--level', type=int, default=1)
     parser.add_argument('--sound', choices=['on', 'off'], default='on')
+    parser.add_argument('--no-fpu', action='store_true', help='Block x87 in CR0 and verify the software emulator before/after the game')
     parser.add_argument('--frontend', action='store_true', help='Enter the map through the real title keyboard path')
     parser.add_argument('--exercise', action='store_true', help='Check title keyboard/music, then mix shotgun/flame samples')
     parser.add_argument('--sb', choices=['sb16', 'sbpro2'], default='sb16')
@@ -40,6 +41,7 @@ def main():
     if args.min_fps is not None and (args.fixed_ticks or not math.isfinite(args.min_fps) or args.min_fps <= 0):
         parser.error('--min-fps requires a positive target and real-time ticks')
     build = args.build_dir.resolve()
+    dosbox_x = 'dosbox-x' in args.dosbox.name.lower()
     if args.height is None:
         packaged_ini = (build / 'generated/default.ini').read_text()
         args.height = int(re.search(r'^render_height=(\d+)$', packaged_ini, re.MULTILINE)[1])
@@ -62,6 +64,8 @@ def main():
         case += f'-view{args.screen_size}'
     if args.screen_sizes:
         case += '-views'
+    if args.no_fpu:
+        case += '-no-fpu'
     run = build / 'checks' / case
     run.mkdir(parents=True, exist_ok=True)
     mapping = json.loads((build / 'generated/assets.json').read_text())
@@ -82,12 +86,33 @@ def main():
                  'OPTIONS.BMP', 'INTRO0.BMP', 'INTRO1.BMP', 'INTRO2.BMP', 'PASS.TXT', 'SAVEGAME.BIN',
                  'HUD200.BMP', 'HUD240.BMP', 'BAR200.BMP', 'BAR240.BMP',
                  'AUTOS.BMP', 'LOAD.BMP', 'NEWGAME.BMP', 'PAUSE.BMP', 'BOOT.LOG',
-                 'AUTOSAVE.BIN', 'AUTO1.BIN', 'AUTO2.BIN', 'AUTO3.BIN', 'AUTO4.BIN']:
+                 'AUTOSAVE.BIN', 'AUTO1.BIN', 'AUTO2.BIN', 'AUTO3.BIN', 'AUTO4.BIN',
+                 'FPU0.LOG', 'FPU1.LOG', 'FPUHW.LOG', 'FPUTRAP.OK']:
         (run / name).unlink(missing_ok=True)
     for capture in run.glob('BLURB??.BIN'):
         capture.unlink()
     for name in ['HIT0.BMP','HITMAX.BMP','HITREP.BMP','HITMID.BMP','HITOFF.BMP']:
         (run / name).unlink(missing_ok=True)
+    before_game=after_game=''
+    if args.no_fpu:
+        root=Path(__file__).resolve().parent.parent
+        deps=json.loads((root/'build/dos-deps/toolchain.json').read_text(encoding='utf-8-sig'))
+        djgpp=Path(deps['djgpp'])
+        env=dict(os.environ,PATH=str(djgpp/'bin')+os.pathsep+os.environ['PATH'])
+        subprocess.run([str(djgpp/'bin/i586-pc-msdosdjgpp-gcc.exe'),'-O2','-march=i486','-mtune=i486',
+                        str(root/'tests/dos_fpu_probe.c'),'-lemu','-lm','-o',str(run/'FPUCHK.EXE')],
+                       cwd=root,env=env,check=True)
+        subprocess.run([str(djgpp/'bin/i586-pc-msdosdjgpp-gcc.exe'),'-O2','-march=i486','-mtune=i486',
+                        str(root/'tests/dos_fpu_probe.c'),'-lm','-o',str(run/'FPUHW.EXE')],
+                       cwd=root,env=env,check=True)
+        # SMSW AX; OR AX,4; LMSW AX; DOS exit. BIOS-style initialization of
+        # CR0.EM works around DOSBox-X's missing TS bit on task switches.
+        # Staging ignores both fpu=false and CR0.EM. The negative control
+        # must fail without libemu; flags and successful arithmetic alone
+        # would incorrectly accept Staging as software-FPU evidence.
+        (run/'FORCEEMU.COM').write_bytes(bytes.fromhex('0f01e083c8040f01f0b8004ccd21'))
+        before_game='set 387=N\nFORCEEMU.COM\nCWSDPMI.EXE -s-\nFPUHW.EXE >FPUHW.LOG\nif not errorlevel 1 goto failed\necho TRAP>FPUTRAP.OK\nFORCEEMU.COM\nCWSDPMI.EXE -s-\nFPUCHK.EXE >FPU0.LOG\nif errorlevel 1 goto failed\nFORCEEMU.COM\n'
+        after_game='FORCEEMU.COM\nCWSDPMI.EXE -s-\nFPUCHK.EXE >FPU1.LOG\nif errorlevel 1 goto failed\n'
     config = run / 'profile.conf'
     config.write_text(f'''[sdl]
 fullscreen=false
@@ -104,8 +129,8 @@ machine=svga_s3
 memsize={args.memory}
 [cpu]
 core=normal
-cputype=486_slow
-cycles=fixed {args.cycles}
+cputype={'486' if dosbox_x else '486_slow'}
+{('fpu=false' + chr(10)) if args.no_fpu else ''}cycles=fixed {args.cycles}
 [sblaster]
 sbtype={args.sb}
 sbbase=220
@@ -115,7 +140,8 @@ hdma=5
 [dos]
 xms=true
 ems=false
-umb=false
+umb={'true' if dosbox_x else 'false'}
+{('kernel allocation in umb=true' + chr(10) + 'private area in umb=true') if dosbox_x else ''}
 [autoexec]
 mount c "{run}"
 c:
@@ -125,10 +151,10 @@ set AB3D_DOS_MOUSE={1 if args.mouse else 0}
 set AB3D_DOS_BENCH_TURN={1 if args.turn else 0}
 set AB3D_PROFILE_RENDER={1 if args.render_profile else 0}
 set AB3D_PROFILE_RENDER_EVERY_MS=1000
-CWSDPMI.EXE -s-
+{before_game}CWSDPMI.EXE -s-
 ABHD.EXE --dos-bench {args.frames} {'--dos-check' if args.exercise else '--dos-check-frontend' if args.frontend else ''} {'--dos-fixed-ticks' if args.fixed_ticks else ''} {'--dos-check-screen-sizes' if args.screen_sizes else ''} >BOOT.LOG
 if errorlevel 1 goto failed
-echo PASS>PASS.TXT
+{after_game}echo PASS>PASS.TXT
 :failed
 exit
 ''', encoding='ascii')
@@ -180,7 +206,22 @@ exit
             if process.poll() is None:
                 process.kill()
                 process.wait()
+    if not (run/'ab3d.log').exists():
+        if args.no_fpu and not (run/'FPUTRAP.OK').exists():
+            raise SystemExit(f'Emulator did not trap x87 without libemu; use DOSBox-X with fpu=false; see {run}')
+        raise SystemExit(f'DOS failed before creating its log; see {run}/BOOT.LOG')
     log = (run / 'ab3d.log').read_text()
+    if args.no_fpu:
+        if not (run/'FPUTRAP.OK').exists():
+            raise SystemExit(f'Emulator failed the no-libemu negative control; see {run}')
+        for name in ['FPU0.LOG','FPU1.LOG']:
+            probe=run/name
+            if not probe.exists() or 'Software FPU traps active:' not in probe.read_text():
+                raise SystemExit(f'Software FPU verification failed; see {probe}')
+        if '[DOS FPU] software emulation' not in log:
+            raise SystemExit(f'The game did not select software floating point; see {run}')
+        if f'[DOS FPU CHECK] frame={args.frames} traps active' not in log:
+            raise SystemExit(f'CPU trapping was not verified during the game; see {run}')
     if args.turn and '[DOSCHECK] benchmark camera turned from ' not in log:
         raise SystemExit(f'DOS camera-turn diagnostic did not run; see {run}')
     if not (run / 'PASS.TXT').exists() or '=== Exit (code 0) ===' not in log:
@@ -260,7 +301,7 @@ exit
     if len(set(image[54:])) < 16:
         raise SystemExit(f'DOS capture is blank; see {run}')
     for line in log.splitlines():
-        if any(tag in line for tag in ['[DOSMEM]', '[DOSPROFILE]', '[DOSPACING]', '[DOSBENCH]', '[DOS AUDIO]', '[DOSCHECK]', '[RPROF]']):
+        if any(tag in line for tag in ['[DOSMEM]', '[DOSPROFILE]', '[DOSPACING]', '[DOSBENCH]', '[DOS AUDIO]', '[DOSCHECK]', '[DOS FPU]', '[DOS FPU CHECK]', '[RPROF]']):
             print(line)
     if args.min_fps is not None:
         measurements = re.findall(r'\[DOSPROFILE\] n=(\d+) fps=([\d.]+)', log)

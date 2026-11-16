@@ -2,6 +2,29 @@
 #define AB3D_RENDERER_FIXED_H
 #include <stdint.h>
 
+/* Interpolation by an unsigned 0.32 phase. Keep the existing distinction:
+ * camera coordinates truncate the final sum; object positions/angles truncate
+ * the delta before adding the previous integer position. */
+static inline int32_t renderer_interp_fixed_delta_i32(int32_t delta,uint32_t alpha)
+{
+    uint64_t magnitude=delta<0?(uint64_t)-(int64_t)delta:(uint64_t)delta;
+    int64_t result=(int64_t)((magnitude*alpha)>>32);
+    return (int32_t)(delta<0?-result:result);
+}
+
+static inline int32_t renderer_interp_fixed_i32(int32_t from,int32_t to,uint32_t alpha)
+{
+    int64_t delta=(int64_t)to-from;
+    uint64_t magnitude=delta<0?(uint64_t)-delta:(uint64_t)delta;
+    uint64_t product=magnitude*alpha;
+    int64_t whole=(int64_t)from+(delta<0?-(int64_t)(product>>32):(int64_t)(product>>32));
+    if((uint32_t)product) {
+        if(delta>0 && whole<0)whole++;
+        else if(delta<0 && whole>0)whole--;
+    }
+    return (int32_t)whole;
+}
+
 /* Nearest integer from signed 8.24 projection, ties away from zero.
  * WallRoutine3 projection stays in range of the original bias addition. */
 static inline int32_t renderer_project_round_24(int64_t numerator)

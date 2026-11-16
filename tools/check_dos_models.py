@@ -59,7 +59,7 @@ def main():
         raise RuntimeError('Build the complete DOS target before running its model oracle')
     exe = work / 'game/ABHD.EXE'
     run([command[0], '-O3', '-flto', '-fwhole-program', '-Wl,--gc-sections', str(obj),
-         *objects, str(Path(deps['sdl']) / 'SDL-build/libSDL3.a'), '-lm', '-o', str(exe)], 'link')
+         *objects, str(Path(deps['sdl']) / 'SDL-build/libSDL3.a'), '-lm', '-lemu', '-o', str(exe)], 'link')
     run([str(djgpp / 'i586-pc-msdosdjgpp/bin/stubedit.exe'), str(exe), 'minstack=128K'], 'stack')
     shutil.copyfile(exe, work / 'ABHD.exe')
     mapping = json.loads((build / 'generated/assets.json').read_text())
