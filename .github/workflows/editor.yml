@@ -123,10 +123,27 @@ jobs:
         run: npm run build:web
       - name: Install browser engines
         run: npx playwright install --with-deps chromium firefox
+      - name: Install Linux virtual display and software GL
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y xvfb xauth libgl1-mesa-dri libglx-mesa0
       - name: Check graphics startup and recovery
-        run: npx playwright test tests/e2e/engine-startup.spec.ts
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # Firefox's native GL backend needs an X display on GPU-less Linux.
+            # https://playwright.dev/docs/ci#running-headed
+            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a --server-args="-screen 0 1920x1080x24" npx playwright test tests/e2e/engine-startup.spec.ts --headed
+          else
+            npx playwright test tests/e2e/engine-startup.spec.ts
+          fi
       - name: Exercise editor in real browsers
-        run: npm run test:e2e
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a --server-args="-screen 0 1920x1080x24" npm run test:e2e -- --headed
+          else
+            npm run test:e2e
+          fi
       - name: Upload static editor
         uses: actions/upload-artifact@v4
         with:

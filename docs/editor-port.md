@@ -3824,3 +3824,15 @@ retaining all assertions. Vitest caps compiler workers at two to avoid CPU-count
 oversubscription. The default npm test command passes all 103 files / 1,251
 cases in 132.43 seconds locally. Test deadlines and renderer/game rules are
 unchanged; the matching source CI is rerun after these test-only fixes.
+
+Both source-CI editor jobs passed all 1,251 model tests and static builds on
+2e8b61e. Linux Firefox's startup-recovery check then exposed a runner graphics
+issue: its trace reports FEATURE_FAILURE_WEBGL_EXHAUSTED_DRIVERS in headless
+mode. The same failure was reproduced with Firefox 157 on Ubuntu 22.04 and the
+actual packaged native engine. With Mesa software GL and a 1920x1080 Xvfb
+display, headed Firefox recovers from the deliberately denied context, renders
+2,066,084 non-black pixels and starts/stops the real playtest. Linux CI now uses
+that verified environment for startup and the full browser suite. Both browser
+projects, native pixel assertions and negative startup checks remain enabled;
+no application renderer or gameplay behavior changes. The approach follows
+https://playwright.dev/docs/ci#running-headed.
