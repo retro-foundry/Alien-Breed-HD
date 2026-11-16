@@ -2,6 +2,7 @@
  * runs. Alpha is only an on/off cutout mask; disabled items use cached grey. */
 #include <SDL3/SDL.h>
 #include "ui_dos.h"
+#include "video_dos.h"
 #include "platform_dos.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -312,11 +313,11 @@ int dos_ui_blit(DosUiRenderer *renderer, DosUiImage *image,
     SDL_Rect area = src ? *src : (SDL_Rect){0, 0, pixels->w, pixels->h};
     if (!dst || dst->w != area.w || dst->h != area.h) ui_fail("UI must be 1:1");
     SDL_Surface *screen = renderer?renderer->surface:NULL;
-    if (!screen || screen->format !=
+    if (!screen ||
 #ifdef AB3D_DOS_INDEXED
-        SDL_PIXELFORMAT_INDEX8
+        screen->format!=SDL_PIXELFORMAT_INDEX8
 #else
-        SDL_PIXELFORMAT_RGB565
+        dos_video_color_rank(screen->format)<0
 #endif
         ) ui_fail("native DOS target");
     SDL_Rect target = *dst;

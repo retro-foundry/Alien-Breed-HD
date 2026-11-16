@@ -209,8 +209,8 @@ static unsigned char *g_dos_map_scratch;
 static int g_dos_map_capacity;
 static void display_dos_clear_view_border(const SDL_Rect *view);
 
-/* Renderer output already matches SDL and VESA: native RGB565, row-major.
- * Fallback surface descriptors borrow the engine image. No conversion or scaling. */
+/* The engine retains its RGB565 image. Surface descriptors borrow that image;
+ * SDL converts to RGB555/RGB444 only on hardware requiring those layouts. */
 static SDL_Surface *display_dos_frame_surface(const RendererPixel *src,int w,int h)
 {
     int slot;
@@ -234,8 +234,12 @@ static SDL_Surface *display_dos_frame_surface(const RendererPixel *src,int w,int
 static void display_dos_copy_cw(const RendererPixel *src,int w,int h,const SDL_Rect *rect)
 {
     SDL_Surface *surface=SDL_GetWindowSurface(g_window);
-    if(!surface || surface->format!=DOS_PIXEL_FORMAT) {
-        fprintf(stderr,"DOS RGB565 framebuffer unavailable: %s\n",SDL_GetError());exit(1);
+    if(!surface || (surface->format!=DOS_PIXEL_FORMAT
+#ifdef AB3D_NATIVE_RGB565
+        && dos_video_color_rank(surface->format)<0
+#endif
+        )) {
+        fprintf(stderr,"DOS framebuffer unavailable: %s\n",SDL_GetError());exit(1);
     }
     if(rect->w!=w || rect->h!=h || w>surface->w || h>surface->h) {
         fprintf(stderr,"DOS requires a 1:1 framebuffer fitting the VESA mode\n");exit(1);
@@ -244,7 +248,7 @@ static void display_dos_copy_cw(const RendererPixel *src,int w,int h,const SDL_R
     /* SDL_BlitCopy copies one row at a time. The complete native view is
      * contiguous in both buffers, so copy it as one block when unclipped. */
     SDL_Rect clip;
-    if (!rect->x && !rect->y && w == surface->w && h == surface->h &&
+    if (surface->format==DOS_PIXEL_FORMAT && !rect->x && !rect->y && w == surface->w && h == surface->h &&
         surface->pitch == w * DOS_PIXEL_BYTES && SDL_GetSurfaceClipRect(surface, &clip) &&
         !clip.x && !clip.y && clip.w == w && clip.h == h) {
         if (!SDL_LockSurface(surface)) {
@@ -269,7 +273,9 @@ static void display_dos_copy_cw(const RendererPixel *src,int w,int h,const SDL_R
         for(int y=0;y<h;y++) {
             Uint8 *row=pixels+(size_t)(rect->y+y)*surface->pitch;
             memset(row,0,(size_t)rect->x*DOS_PIXEL_BYTES);
-            memcpy(row+(size_t)rect->x*DOS_PIXEL_BYTES,src+(size_t)y*w,(size_t)w*DOS_PIXEL_BYTES);
+            if(surface->format==DOS_PIXEL_FORMAT)
+                memcpy(row+(size_t)rect->x*DOS_PIXEL_BYTES,src+(size_t)y*w,(size_t)w*DOS_PIXEL_BYTES);
+            else dos_video_convert_row(row+(size_t)rect->x*DOS_PIXEL_BYTES,src+(size_t)y*w,w,surface->format);
             memset(row+(size_t)(rect->x+w)*DOS_PIXEL_BYTES,0,
                    (size_t)(surface->w-rect->x-w)*DOS_PIXEL_BYTES);
         }
@@ -3504,7 +3510,9 @@ void display_init(GameState *state)
     if (!g_window) {
         printf("[DISPLAY] SDL_CreateWindow failed: %s\n", SDL_GetError());
 #ifdef AB3D_DOS
-        exit(1);
+        int status=ab3d_dos_video_status;
+        SDL_Quit();
+        exit(status);
 #endif
         return;
     }
@@ -5212,7 +5220,11 @@ void display_dos_check_gun_frames(GameState *state)
     /* The display's independent native pixels are diagnostic scratch after
      * capture. No second world canvas is needed just to compare weapons. */
     SDL_Surface *surface=SDL_GetWindowSurface(g_window);
-    if(!surface || surface->format!=DOS_PIXEL_FORMAT ||
+    if(!surface || (surface->format!=DOS_PIXEL_FORMAT
+#ifdef AB3D_NATIVE_RGB565
+        && dos_video_color_rank(surface->format)<0
+#endif
+        ) ||
        surface->w<renderer_get_width() || surface->h<renderer_get_height() ||
        !SDL_LockSurface(surface)) {
         fprintf(stderr,"DOS weapon comparison surface unavailable: %s\n",SDL_GetError());exit(1);

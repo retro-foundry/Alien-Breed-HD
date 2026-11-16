@@ -6,7 +6,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/game_sources.cmake")
 list(REMOVE_ITEM SOURCES src/audio.c)
 add_executable(ab3d1 ${SOURCES} src/platform/dos/audio_dos.c src/platform/dos/platform_dos.c
   src/platform/dos/ui_dos.c src/platform/dos/ui_surface_dos.c src/platform/dos/raster_dos.c
-  src/platform/dos/text_dos.c)
+  src/platform/dos/text_dos.c src/platform/dos/video_dos.c)
 target_include_directories(ab3d1 BEFORE PRIVATE src/platform/dos)
 target_include_directories(ab3d1 PRIVATE src third_party "${DOS_SDL_ROOT}/SDL/include" "${CMAKE_BINARY_DIR}/generated")
 option(AB3D_DOS_INDEXED "Direct 8-bit DOS rendering with source-derived per-level palettes" OFF)

@@ -10,7 +10,9 @@
 #include <SDL3/SDL_main.h>
 #include <sys/nearptr.h>
 #include <dpmi.h>
+#include <stdio.h>
 #include "ui_dos.h"
+#include "video_dos.h"
 #define SDL_Renderer DosUiRenderer
 #define SDL_Texture DosUiImage
 
@@ -62,6 +64,7 @@ extern int __djgpp_nearptr_enable(void);
 #define SDL_GameControllerButton SDL_GamepadButton
 
 static SDL_Window *ab3d_dos_window = NULL;
+static int ab3d_dos_video_status = 1;
 
 static inline int Ab3dDos_Init(SDL_InitFlags flags) {
   SDL_SetMainReady();
@@ -170,37 +173,37 @@ static inline SDL_Renderer *Ab3dDos_CreateRendererPtr(SDL_Window *window, int in
 static inline SDL_Window *Ab3dDos_CreateWindow(const char *title, int x, int y, int w, int h, Uint32 flags) {
   (void)x;
   (void)y;
-  ab3d_dos_window = SDL_CreateWindow(title, w, h, flags);
-  if (ab3d_dos_window) {
-    int count = 0;
-    SDL_DisplayMode **modes = SDL_GetFullscreenDisplayModes(SDL_GetPrimaryDisplay(), &count);
-    const SDL_DisplayMode *best = NULL;
-    for (int i = 0; modes && i < count; i++) {
-      const SDL_DisplayMode *m = modes[i];
-      if (m->format ==
+  ab3d_dos_video_status=1;
+  int count=0;
+  SDL_DisplayMode **modes=SDL_GetFullscreenDisplayModes(SDL_GetPrimaryDisplay(),&count);
 #ifdef AB3D_DOS_INDEXED
-          SDL_PIXELFORMAT_INDEX8
+  const int indexed=1;
 #else
-          SDL_PIXELFORMAT_RGB565
+  const int indexed=0;
 #endif
-          && m->w >= w && m->h >= h &&
-          (!best || m->w * m->h < best->w * best->h)) best = m;
-    }
+  const SDL_DisplayMode *best=dos_video_choose_mode(modes,count,w,h,indexed);
+  if(indexed && dos_force_vga)best=dos_video_choose_mode(modes,count,320,200,indexed);
+  /* An INI saved by the high-color build can request 240 lines. Standard
+   * VGA guarantees mode 13h at 320x200; use it when that request cannot fit. */
+  if(!best && indexed)best=dos_video_choose_mode(modes,count,320,200,indexed);
+  if(!best) {
+    SDL_free(modes);
+    ab3d_dos_video_status=indexed?1:DOS_VIDEO_UNAVAILABLE;
+    SDL_SetError("No usable %s video mode",indexed?"VGA":"RGB565/RGB555/RGB444");
+    return NULL;
+  }
+  ab3d_dos_window = SDL_CreateWindow(title, best->w, best->h, flags);
+  if (ab3d_dos_window) {
     bool ok = best && SDL_SetWindowFullscreenMode(ab3d_dos_window, best) &&
                       SDL_SetWindowFullscreen(ab3d_dos_window, true);
-    SDL_free(modes);
     if (!ok) {
       SDL_DestroyWindow(ab3d_dos_window);
       ab3d_dos_window = NULL;
-      SDL_SetError("DOS requires a native %s mode of at least 320x200",
-#ifdef AB3D_DOS_INDEXED
-                   "INDEX8"
-#else
-                   "RGB565"
-#endif
-                   );
+    } else {
+      printf("[DOS VIDEO] hardware %s %dx%d\n",SDL_GetPixelFormatName(best->format),best->w,best->h);
     }
   }
+  SDL_free(modes);
 #ifdef AB3D_DOS_INDEXED
   if(ab3d_dos_window)dos_palette_install(ab3d_dos_window);
 #endif

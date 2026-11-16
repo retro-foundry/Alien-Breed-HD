@@ -25,6 +25,7 @@ int dos_check_enabled;
 int dos_screen_size_check_enabled;
 int dos_frontend_check_enabled;
 int dos_fixed_test_ticks;
+int dos_force_vga;
 static int stack[16],depth;
 static Uint64 last,cost[DOS_BUCKETS];
 static unsigned frames;
@@ -428,6 +429,7 @@ void dos_platform_init(int argc,char **argv)
         else if(!strcmp(argv[i],"--dos-check-frontend"))dos_frontend_check_enabled=1;
         else if(!strcmp(argv[i],"--dos-check-screen-sizes"))dos_screen_size_check_enabled=1;
         else if(!strcmp(argv[i],"--dos-fixed-ticks"))dos_fixed_test_ticks=1;
+        else if(!strcmp(argv[i],"--dos-vga"))dos_force_vga=1;
     }
     if(dos_benchmark_frames<0 || dos_benchmark_frames>1024 || ((dos_check_enabled || dos_frontend_check_enabled || dos_screen_size_check_enabled) && !dos_benchmark_frames)) {
         fprintf(stderr,"Use --dos-bench 1..1024 [--dos-check]\n");exit(1);

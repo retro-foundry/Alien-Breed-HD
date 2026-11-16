@@ -1,6 +1,7 @@
 /* Synchronous DOS UI primitives: SDL fills/blits on the native VESA surface. */
 #include <SDL3/SDL.h>
 #include "ui_dos.h"
+#include "video_dos.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -129,11 +130,11 @@ void dos_ui_restore_canvas(DosUiRenderer *r)
 DosUiRenderer *dos_ui_create_renderer(SDL_Window *window)
 {
     SDL_Surface *s=SDL_GetWindowSurface(window);
-    if(!s || s->format!=
+    if(!s ||
 #ifdef AB3D_DOS_INDEXED
-       SDL_PIXELFORMAT_INDEX8
+       s->format!=SDL_PIXELFORMAT_INDEX8
 #else
-       SDL_PIXELFORMAT_RGB565
+       dos_video_color_rank(s->format)<0
 #endif
        ){SDL_SetError("DOS UI requires native pixel format");return NULL;}
     DosUiRenderer *r=calloc(1,sizeof(*r));if(!r){SDL_OutOfMemory();return NULL;}
@@ -161,7 +162,7 @@ int dos_ui_color(DosUiRenderer *r,Uint8 red,Uint8 green,Uint8 blue,Uint8 alpha)
 #ifdef AB3D_DOS_INDEXED
  r->color=dos_c12_to_index[((red>>4)<<8)|((green>>4)<<4)|(blue>>4)];
 #else
- r->color=(Uint16)(((red>>3)<<11)|((green>>2)<<5)|(blue>>3));
+ r->color=dos_video_color(r->surface->format,red,green,blue);
 #endif
  return 0;}
 int dos_ui_fill(DosUiRenderer *r,const SDL_Rect *rect)
@@ -240,13 +241,20 @@ bool dos_ui_tint(DosUiRenderer *r,const SDL_Rect *rect,Uint8 target_red,Uint8 ta
     }
 #else
     static Uint16 red[32],green[64],blue[32];
-    if(prepared_rgba!=rgba) {
-        for(unsigned i=0;i<32;i++) {
-            red[i]=(Uint16)(((i*(255-alpha)+(target_red>>3)*alpha+127)/255)<<11);
-            blue[i]=(Uint16)((i*(255-alpha)+(target_blue>>3)*alpha+127)/255);
+    static SDL_PixelFormat prepared_format;
+    unsigned rshift=11,gshift=5,rmask=31,gmask=63,bmask=31;
+    unsigned rloss=3,gloss=2,bloss=3;
+    if(surface->format==SDL_PIXELFORMAT_XRGB1555){rshift=10;gmask=31;gloss=3;}
+    else if(surface->format==SDL_PIXELFORMAT_XRGB4444) {
+        rshift=8;gshift=4;rmask=gmask=bmask=15;rloss=gloss=bloss=4;
+    }
+    if(prepared_rgba!=rgba || prepared_format!=surface->format) {
+        for(unsigned i=0;i<=rmask;i++) {
+            red[i]=(Uint16)(((i*(255-alpha)+(target_red>>rloss)*alpha+127)/255)<<rshift);
+            blue[i]=(Uint16)((i*(255-alpha)+(target_blue>>bloss)*alpha+127)/255);
         }
-        for(unsigned i=0;i<64;i++)green[i]=(Uint16)(((i*(255-alpha)+(target_green>>2)*alpha+127)/255)<<5);
-        prepared_rgba=rgba;
+        for(unsigned i=0;i<=gmask;i++)green[i]=(Uint16)(((i*(255-alpha)+(target_green>>gloss)*alpha+127)/255)<<gshift);
+        prepared_rgba=rgba;prepared_format=surface->format;
     }
 #endif
     if(!SDL_LockSurface(surface))return false;
@@ -256,8 +264,10 @@ bool dos_ui_tint(DosUiRenderer *r,const SDL_Rect *rect,Uint8 target_red,Uint8 ta
         for(int x=0;x<area.w;x++)pixels[x]=tint[pixels[x]];
 #else
         Uint16 *pixels=(Uint16 *)((Uint8 *)surface->pixels+y*surface->pitch)+area.x;
-        for(int x=0;x<area.w;x++) {
+        if(surface->format==SDL_PIXELFORMAT_RGB565)for(int x=0;x<area.w;x++) {
             unsigned c=pixels[x];pixels[x]=red[c>>11]|green[(c>>5)&63]|blue[c&31];
+        } else for(int x=0;x<area.w;x++) {
+            unsigned c=pixels[x];pixels[x]=red[(c>>rshift)&rmask]|green[(c>>gshift)&gmask]|blue[c&bmask];
         }
 #endif
     }
