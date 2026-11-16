@@ -1,0 +1,15 @@
+diff --git a/src/video/dos/SDL_dosvideo.c b/src/video/dos/SDL_dosvideo.c
+--- a/src/video/dos/SDL_dosvideo.c
++++ b/src/video/dos/SDL_dosvideo.c
+@@ -166,7 +166,10 @@ static bool DOSVESA_VideoInit(SDL_VideoDevice *device)
+     // that want something else should call SDL_SetWindowFullscreenMode.
+     {
+         SDL_DisplayMode closest;
+-        if (SDL_GetClosestFullscreenDisplayMode(display_id, 640, 480, 0.0f, false, &closest)) {
++        // Alien Breed DOS: plain VGA may expose only mode 13h. Retain a
++        // real desktop mode; its internal data is required on window exit.
++        if (SDL_GetClosestFullscreenDisplayMode(display_id, 640, 480, 0.0f, false, &closest) ||
++            SDL_GetClosestFullscreenDisplayMode(display_id, 320, 200, 0.0f, false, &closest)) {
+             // Deep-copy the mode into desktop_mode. We need our own
+             // internal allocation because SDL frees desktop_mode.internal
+             // and fullscreen_modes[].internal independently.
