@@ -179,3 +179,30 @@ test('one-click play builds current edits and does not restart when returning to
   await expect(preview.getByRole('button', { name: 'Build & play', exact: true })).toBeEnabled();
   await expect(preview.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
 });
+
+for (const modifier of ['Control', 'Meta']) test(`${modifier} action search and playtest work from the paused engine viewport`, async ({ page }) => {
+  await page.goto('/?view=top');
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
+  const preview = page.getByRole('region', { name: '3D game engine preview' });
+  await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
+  const canvas = page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas');
+  await canvas.focus();
+  await canvas.press(`${modifier}+k`);
+  const actions = page.getByRole('dialog', { name: 'Find an editor action' });
+  await expect(actions).toBeVisible();
+  await expect(actions.getByRole('textbox', { name: 'Search editor actions' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(actions).toHaveCount(0);
+  await expect(canvas).toBeFocused();
+  await canvas.press('?');
+  const help = page.getByRole('dialog', { name: 'Editor help' });
+  await expect(help).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(help).toHaveCount(0);
+  await expect(canvas).toBeFocused();
+  await canvas.press(`${modifier}+Enter`);
+  await expect(preview.getByRole('status')).toHaveText('Playtest running');
+  await expect(preview).toHaveAttribute('data-rendered-pixels', /[1-9]/);
+  await preview.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+});

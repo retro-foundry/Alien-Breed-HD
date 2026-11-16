@@ -35,6 +35,7 @@ import { EnginePreview } from './components/EnginePreview';
 import { ControlTooltips } from './components/ControlTooltips';
 import { ControlsHelp } from './components/ControlsHelp';
 import { ActionSearch, type EditorAction } from './components/ActionSearch';
+import { captureFocus, restoreFocus } from './focus';
 import { preparePlayableLevel } from './model/playableBuild';
 import type { InspectionShortcut } from '../runtime/inspection-shortcuts.mjs';
 
@@ -171,7 +172,7 @@ export function App() {
   }, [document?.roomSource, selectedRoomId, roomDraft]);
   useEffect(() => {
     if (!help && !showRecents && choices.length === 0) return;
-    const previous = window.document.activeElement;
+    const previous = captureFocus();
     const dialog = window.document.querySelector<HTMLElement>('[role="dialog"]');
     dialog?.querySelector<HTMLButtonElement>('button')?.focus();
     const trap = (event: KeyboardEvent) => {
@@ -182,7 +183,7 @@ export function App() {
       else if (!event.shiftKey && window.document.activeElement === last) { event.preventDefault(); first?.focus(); }
     };
     window.document.addEventListener('keydown', trap);
-    return () => { window.document.removeEventListener('keydown', trap); if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
+    return () => { window.document.removeEventListener('keydown', trap); restoreFocus(previous); };
   }, [help, showRecents, choices.length]);
   const dirty = useMemo(() => !!workspace && workspaceDirty(workspace), [workspace]);
 
@@ -420,7 +421,7 @@ export function App() {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
       if (stairsOpen || objectOpen || pasteOpen || roomPlacement || window.document.querySelector('dialog[open]')) { if ((event.ctrlKey || event.metaKey) && ['o', 'd'].includes(event.key.toLowerCase())) event.preventDefault(); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setActionSearchOpen(true); return; }
-      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); startPlaytest(); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); if (!event.repeat) startPlaytest(); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); fileInput.current?.click(); return; }
       if (editing) return;
       if ((event.ctrlKey || event.metaKey) && ['c', 'v'].includes(event.key.toLowerCase())) {

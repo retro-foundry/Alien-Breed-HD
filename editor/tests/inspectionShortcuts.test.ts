@@ -3,7 +3,7 @@ import { inspectionShortcut, inspectionShortcutScope } from '../runtime/inspecti
 
 const key = { key: 'z', ctrlKey: true, metaKey: false, shiftKey: false, altKey: false, repeat: false };
 it('shares conventional primary and plain inspection shortcuts while retaining modifiers and repeat', () => {
-  for (const letter of ['s', 'o', 'z', 'y', 'd', 'c', 'v', 'a']) for (const meta of [false, true]) {
+  for (const letter of ['s', 'o', 'z', 'y', 'd', 'c', 'v', 'a', 'k', 'Enter']) for (const meta of [false, true]) {
     const input = { ...key, key: letter.toUpperCase(), ctrlKey: !meta, metaKey: meta, shiftKey: true, repeat: true };
     expect(inspectionShortcut(input)).toEqual(input);
   }
@@ -22,7 +22,7 @@ it('forwards only scalar key intent, discarding event targets and caller-supplie
   expect(inspectionShortcut(input)).toEqual(key);
 });
 it('keeps workspace history/save/navigation available during rebuilds while selection commands require the current frame', () => {
-  for (const value of ['z', 'y', 's', 'o']) expect(inspectionShortcutScope({ ...key, key: value })).toBe('workspace');
+  for (const value of ['z', 'y', 's', 'o', 'k', 'Enter']) expect(inspectionShortcutScope({ ...key, key: value })).toBe('workspace');
   for (const value of ['c', 'v', 'd', 'a']) expect(inspectionShortcutScope({ ...key, key: value })).toBe('frame');
   expect(inspectionShortcutScope({ ...key, key: 'Delete', ctrlKey: false })).toBe('frame');
   for (const value of ['Escape', '/', '?', 'f', 'b', 'v', 'h']) expect(inspectionShortcutScope({ ...key, key: value, ctrlKey: false })).toBe('workspace');

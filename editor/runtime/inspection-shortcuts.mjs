@@ -1,6 +1,6 @@
 // Shared by the native iframe and React. Forward scalar key intent, never a
 // synthesized DOM event or a caller-provided editing command.
-const primaryKeys = new Set(['s', 'o', 'z', 'y', 'd', 'c', 'v', 'a']);
+const primaryKeys = new Set(['s', 'o', 'z', 'y', 'd', 'c', 'v', 'a', 'k', 'enter']);
 const plainKeys = new Set(['delete', 'escape', '/', '?', 'f', 'v', 'h', 'b']);
 
 export function inspectionShortcut(input) {

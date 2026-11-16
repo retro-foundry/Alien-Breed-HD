@@ -590,7 +590,10 @@ an explicit Wall repair appearance, just as redrawn boundaries do.
   still. Object edits use the same Undo as map/list edits. Player avatars remain
   controlled through Starts. Individual surface edits remain in progress.
   Inspection also supports the editor's Ctrl/Command shortcuts for copy/paste,
-  duplicate, Undo/Redo, save and open, plus Delete, help and search. Ctrl/Command+A
+  duplicate, Undo/Redo, save and open, plus Delete, help and search.
+  Ctrl/Command+K opens Find action and Ctrl/Command+Enter starts a playtest from
+  the focused inspection viewport too. Plain Enter still picks at the crosshair.
+  Ctrl/Command+A
   selects objects on the current editing floor, even if map markers are hidden.
   History and saving stay available while the native preview rebuilds. Playtests
   keep their game controls; editor shortcuts apply to paused inspection.

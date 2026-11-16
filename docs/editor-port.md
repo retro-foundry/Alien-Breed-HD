@@ -3836,3 +3836,28 @@ that verified environment for startup and the full browser suite. Both browser
 projects, native pixel assertions and negative startup checks remain enabled;
 no application renderer or gameplay behavior changes. The approach follows
 https://playwright.dev/docs/ci#running-headed.
+
+
+### Engine viewport shortcut and focus consistency
+
+The completion pass found Ctrl/Command+K and Ctrl/Command+Enter were only wired
+to the parent editor. Real viewport keyboard tests reproduced both missing
+commands. The scalar inspection bridge now forwards them as workspace actions;
+plain Enter remains native picking and gameplay retains its own keys. Repeated
+Enter keydowns do not restart a playtest repeatedly. Inspection help lists both
+new shortcuts.
+
+The same scenarios exposed focus restoration differences: Chromium needed the
+actual canvas restored after action search, and Firefox needed the containing
+iframe focused before that canvas after closing help. Shared capture/restore
+functions now retain the deepest same-origin focused control and restore its
+frame chain without scrolling. Tests exercise both Ctrl and Meta, open/close
+both panels, verify canvas focus, start the actual playtest, and confirm source
+history stays unchanged.
+
+Validation: all 103 model files / 1,251 tests pass. The keyboard, modal and
+usability group passes 32 checks across Windows Chromium/Firefox. The packaged
+usability, editable-3D and renderer-recovery group passes 32 checks across
+Ubuntu 22.04 Chromium/Firefox with real Mesa rendering under Xvfb. The rebuilt
+runtime differs only in inspection-shortcuts.mjs; native engine/data hashes are
+unchanged. Its packaged revision is 8aceda15d56311c1c3f9b2adecdf33d911ed2dcfca80fb197b5abb63516bb66a.

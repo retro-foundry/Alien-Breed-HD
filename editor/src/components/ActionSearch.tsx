@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from './Icon';
+import { captureFocus, restoreFocus } from '../focus';
 
 export interface EditorAction {
   id: string;
@@ -19,9 +20,9 @@ export function ActionSearch({ actions, onChoose, onClose }: {
   const words = query.toLocaleLowerCase().trim().split(/\s+/);
   const matches = actions.filter(action => words.every(word => `${action.label} ${action.description} ${action.keywords ?? ''}`.toLocaleLowerCase().includes(word)));
   useEffect(() => {
-    const previous = document.activeElement, element = dialog.current!;
+    const previous = captureFocus(), element = dialog.current!;
     element.showModal(); search.current!.focus();
-    return () => { element.close(); if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
+    return () => { element.close(); restoreFocus(previous); };
   }, []);
   function moveFocus(direction: number) {
     const buttons = [...dialog.current!.querySelectorAll<HTMLButtonElement>('.action-results button:not(:disabled)')];
