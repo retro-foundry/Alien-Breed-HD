@@ -25,19 +25,35 @@ test('redrawing an imported room cancels safely, commits one stable outline, and
   const canvas = page.locator('canvas[aria-label="Level map"]'), box = (await canvas.boundingBox())!;
   await expect(canvas).toHaveAttribute('data-world-x', String(fixture.center.x));
   const scale = Number(await canvas.getAttribute('data-world-scale'));
+  const outline = fixture.room.vertices;
+  const width = Math.max(...outline.map(p => p.x)) - Math.min(...outline.map(p => p.x));
+  const depth = Math.max(...outline.map(p => p.z)) - Math.min(...outline.map(p => p.z));
+  // Fit the complete drawing into clear canvas space beside the map guide.
+  // A fixed 3x zoom put a corner outside a 1280px browser window.
+  const drawingScale = Math.min(3, (box.width - 400) / width, (box.height - 80) / depth);
   await page.mouse.move(Math.round(box.x + box.width / 2), Math.round(box.y + box.height / 2));
-  await page.mouse.wheel(0, -Math.log(3 / scale) / 0.0015);
-  await expect.poll(async () => Number(await canvas.getAttribute('data-world-scale'))).toBeGreaterThan(2);
+  await page.mouse.wheel(0, -Math.log(drawingScale / scale) / 0.0015);
+  await expect.poll(async () => Number(await canvas.getAttribute('data-world-scale'))).toBeCloseTo(drawingScale, 3);
+  const clearGuide = async () => {
+    await page.mouse.move(Math.round(box.x + box.width / 2), Math.round(box.y + box.height / 2));
+    await page.mouse.down({ button: 'middle' });
+    await page.mouse.move(Math.round(box.x + box.width / 2) - 160, Math.round(box.y + box.height / 2), { steps: 4 });
+    await page.mouse.up({ button: 'middle' });
+  };
+  await clearGuide();
   await page.getByRole('button', { name: 'Redraw outline', exact: true }).click();
   for (const p of fixture.vertices.slice(0, 2)) await clickPoint(page, p);
   expect((await save(page, testInfo.outputPath('unfinished.ab3d'))).roomSource).toEqual(fixture.baseline.roomSource);
-  await page.keyboard.press('Escape'); await selectRoom();
+  await page.keyboard.press('Escape'); await selectRoom(); await clearGuide();
   await page.getByRole('button', { name: 'Redraw outline', exact: true }).click();
   for (const p of fixture.vertices.slice(0, 2)) await clickPoint(page, p);
   await page.getByRole('button', { name: 'Pan tool', exact: true }).click();
   expect((await save(page, testInfo.outputPath('cancelled.ab3d'))).roomSource).toEqual(fixture.baseline.roomSource);
   await page.getByRole('button', { name: 'Redraw outline', exact: true }).click();
-  for (const p of fixture.vertices.toReversed()) await clickPoint(page, p);
+  for (const [index, p] of fixture.vertices.toReversed().entries()) {
+    await clickPoint(page, p);
+    await expect(page.locator('.selection-description')).toContainText(`${index + 1} ${index ? 'corners' : 'corner'}`);
+  }
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'Finish room', exact: true })).toHaveCount(0);
   const drawn = await save(page, testInfo.outputPath('redrawn.ab3d'));

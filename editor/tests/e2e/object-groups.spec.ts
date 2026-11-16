@@ -29,6 +29,12 @@ test('multi-object selection moves, aligns, rejects partial changes and deletes 
   const map = page.locator('canvas[aria-label="Level map"]'), box = (await map.boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.wheel(0, -3000);
   await expect.poll(async () => Number(await map.getAttribute('data-world-scale'))).toBeGreaterThan(1);
+  // Keep both markers clear of the floating map guide while exercising the
+  // ordinary map gesture, rather than clicking through that control.
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down({ button: 'middle' });
+  await page.mouse.move(box.x + box.width / 4, box.y + box.height / 2, { steps: 4 });
+  await page.mouse.up({ button: 'middle' });
   const view = await map.evaluate(node => ({ x: Number((node as HTMLElement).dataset.worldX), z: Number((node as HTMLElement).dataset.worldZ), scale: Number((node as HTMLElement).dataset.worldScale) }));
   await map.click({ position: { x: box.width / 2 + (20240 - view.x) * view.scale, y: box.height / 2 - (20192 - view.z) * view.scale }, modifiers: ['Shift'] });
   await expect(inspector).toBeVisible();
