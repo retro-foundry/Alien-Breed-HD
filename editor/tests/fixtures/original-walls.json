@@ -1,6 +1,6 @@
 {
   "authority": "src/io.c native io_dump_textures at palette level 16; src/sb_decompress.c via unpacker",
-  "nativeSourceSha256": "b7bb7c82b7aaf1b5d7d711e88d31a8d53412d9f313970ff869791b3122f2b16c",
+  "nativeSourceSha256": "581b25afcd34fedaa71ef79b831900a0d97c079f9b253939072a0a5d3a0e4d38",
   "nativePixelSourceSha256": "da10053aee94026fc35fa74acb913f97a8512a7ffaa20a821d0787fbbb4a0313",
   "walls": [
     {

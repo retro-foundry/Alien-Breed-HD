@@ -11,28 +11,28 @@ import { originalFiles } from './helpers';
 import { resolveAnimationRoom } from '../src/model/animationRooms';
 
 for (const kind of ['door', 'lift'] as const) {
-  it(`copies ${kind} settings across original, copied and authored targets while preserving their own attachments and state`, () => {
+  for (const sourceType of ['native', 'copy', 'authored'] as const) for (const targetType of ['native', 'copy', 'authored'] as const)
+  it(`copies ${kind} settings from ${sourceType} to ${targetType} while preserving target attachments and state`, () => {
     const { document } = mechanismTransferFixture(kind), owners = mechanismSettingsOwners(document, kind);
     expect(owners.map(item => item.owner.type)).toEqual(['native', 'copy', 'authored']);
-    for (const source of owners) for (const target of owners) {
-      const before = captureMechanismSettings(document, target.owner), captured = captureMechanismSettings(document, source.owner);
-      const command = transferMechanismSettings(document, target.owner, { ...captured, conditions: 1 }, { range: false, rules: true, requirements: true });
-      const history = execute({ document, past: [], future: [] }, command), result = history.document;
-      expect(captureMechanismSettings(result, target.owner)).toEqual({ ...before, conditions: 1, openRule: captured.openRule, closeRule: captured.closeRule });
-      for (const unchanged of owners.filter(item => mechanismOwnerKey(item.owner) !== mechanismOwnerKey(target.owner)))
-        expect(captureMechanismSettings(result, unchanged.owner)).toEqual(captureMechanismSettings(document, unchanged.owner));
-      if (target.owner.type === 'native') {
-        const native = document.mechanisms[0]!, after = result.mechanisms[0]!;
-        expect(after).toMatchObject({ zone: native.zone, current: native.current, direction: native.direction, walls: native.walls });
-        expect(result.files.graphics.slice(native.offset + 4, native.offset + 14)).toEqual(document.files.graphics.slice(native.offset + 4, native.offset + 14));
-      } else if (target.owner.type === 'copy') {
-        expect(result.roomSource.controllerCopies![0]).toMatchObject({ room: document.roomSource.controllerCopies![0]!.room, graphicsRooms: document.roomSource.controllerCopies![0]!.graphicsRooms, collisionRooms: document.roomSource.controllerCopies![0]!.collisionRooms });
-      }
-      expect(() => buildPlayableLevel(result, -1)).not.toThrow();
-      expect(decodeProject(encodeProject(result)).roomSource).toEqual(result.roomSource);
-      expect(undo(history).document.roomSource).toBe(document.roomSource);
-      expect(redo(undo(history)).document.files).toEqual(result.files);
+    const source = owners.find(item => item.owner.type === sourceType)!, target = owners.find(item => item.owner.type === targetType)!;
+    const before = captureMechanismSettings(document, target.owner), captured = captureMechanismSettings(document, source.owner);
+    const command = transferMechanismSettings(document, target.owner, { ...captured, conditions: 1 }, { range: false, rules: true, requirements: true });
+    const history = execute({ document, past: [], future: [] }, command), result = history.document;
+    expect(captureMechanismSettings(result, target.owner)).toEqual({ ...before, conditions: 1, openRule: captured.openRule, closeRule: captured.closeRule });
+    for (const unchanged of owners.filter(item => mechanismOwnerKey(item.owner) !== mechanismOwnerKey(target.owner)))
+      expect(captureMechanismSettings(result, unchanged.owner)).toEqual(captureMechanismSettings(document, unchanged.owner));
+    if (target.owner.type === 'native') {
+      const native = document.mechanisms[0]!, after = result.mechanisms[0]!;
+      expect(after).toMatchObject({ zone: native.zone, current: native.current, direction: native.direction, walls: native.walls });
+      expect(result.files.graphics.slice(native.offset + 4, native.offset + 14)).toEqual(document.files.graphics.slice(native.offset + 4, native.offset + 14));
+    } else if (target.owner.type === 'copy') {
+      expect(result.roomSource.controllerCopies![0]).toMatchObject({ room: document.roomSource.controllerCopies![0]!.room, graphicsRooms: document.roomSource.controllerCopies![0]!.graphicsRooms, collisionRooms: document.roomSource.controllerCopies![0]!.collisionRooms });
     }
+    expect(() => buildPlayableLevel(result, -1)).not.toThrow();
+    expect(decodeProject(encodeProject(result)).roomSource).toEqual(result.roomSource);
+    expect(undo(history).document.roomSource).toBe(document.roomSource);
+    expect(redo(undo(history)).document.files).toEqual(result.files);
   });
 
   it(`copies ${kind} destinations only when its initial position and native triggers remain valid`, () => {
