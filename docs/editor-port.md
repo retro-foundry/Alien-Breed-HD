@@ -3861,3 +3861,15 @@ usability, editable-3D and renderer-recovery group passes 32 checks across
 Ubuntu 22.04 Chromium/Firefox with real Mesa rendering under Xvfb. The rebuilt
 runtime differs only in inspection-shortcuts.mjs; native engine/data hashes are
 unchanged. Its packaged revision is 8aceda15d56311c1c3f9b2adecdf33d911ed2dcfca80fb197b5abb63516bb66a.
+
+### Stable selection viewport
+
+Selecting a native surface exposed a 20.4-pixel toolbar height change: a general
+small-button margin leaked into contextual controls. Toolbar buttons now reset
+that margin and the selection row reserves its populated height, keeping the
+viewport and native pick coordinates fixed as selection changes. Boundary paint
+checks assert the exact iframe bounds before and after selection and painting.
+They also compare the actual click's native surface with the queried surface,
+using whole CSS pixels to avoid browser rounding on one-pixel seams. All three
+boundary cases pass in Linux Firefox with the original native pixel, portable
+source and Undo/Redo assertions intact.

@@ -9,7 +9,7 @@
 }
 .map-toolbar .tool-group { display: flex; flex-wrap: wrap; gap: 4px; }
 .map-toolbar .tool-group + .tool-group { border-left: 1px solid #3b444e; padding-left: 10px; }
-.map-toolbar button { font-size: 11px; min-height: 32px; padding: 6px 9px; }
+.map-toolbar button { font-size: 11px; min-height: 32px; padding: 6px 9px; margin: 0; }
 .map-toolbar button.active { background: #b2de7a1a; color: #c6ec99; border-color: #738d57; }
 .map-toolbar .history-tools { margin-left: auto; }
 .editing-options {
@@ -32,13 +32,15 @@
   align-items: center;
   flex-wrap: wrap;
   flex-shrink: 0;
+  /* Reserve the same row before and after a room is selected. */
+  min-height: 41px;
   gap: 4px 8px;
   padding: 6px 12px;
   border-bottom: 1px solid #343c46;
   background: #222c32;
 }
 .selection-description { font-size: 11px; color: #b5c5ce; margin-right: auto; line-height: 1.6; }
-.selection-toolbar .small-button { min-height: 28px; font-size: 11px; padding: 4px 7px; }
+.selection-toolbar .small-button { min-height: 28px; font-size: 11px; padding: 4px 7px; margin: 0; }
 .selection-toolbar.drawing { background: #2b3527; border-color: #6f8953; }
 .selection-toolbar.drawing .selection-description { color: #d2eab7; }
 .drawing-hint { color: #a7bc96; font-size: 10px; line-height: 1.5; }
@@ -122,4 +124,5 @@
   .map-main { min-height: 260px; }
   .editing-options .grid-select select { max-width: 100px; }
   .selection-description { flex-basis: 100%; }
+  .selection-toolbar { min-height: 61px; }
 }

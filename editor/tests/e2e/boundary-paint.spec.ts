@@ -23,7 +23,13 @@ for (const mode of ['authored lower', 'authored upper', 'repaired doorway'] as c
   const preview = page.getByRole('region', { name: '3D game engine preview' });
   await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
   if (upper) await page.getByRole('button', { name: 'Upper storey', exact: true }).click();
-  const points = Array.from({ length: 361 }, (_, index) => ({ x: (index % 19 + 1) / 20, y: (Math.floor(index / 19) + 1) / 20 }));
+  const canvas = page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas'), rect = (await canvas.boundingBox())!;
+  // Query the same whole CSS-pixel coordinates the browser can click. A
+  // fractional point on a one-pixel seam can round onto the adjoining face.
+  const points = Array.from({ length: 361 }, (_, index) => ({
+    x: Math.floor((index % 19 + 1) / 20 * rect.width) / rect.width,
+    y: Math.floor((Math.floor(index / 19) + 1) / 20 * rect.height) / rect.height,
+  }));
   let beforeHash = 0, before: Awaited<ReturnType<typeof enginePickDetails>> = [], pickedIndex = -1;
   // A repaired doorway can face any cardinal direction. Inspect actual native
   // coverage rather than choosing a fabricated graphics record or screen spot.
@@ -37,11 +43,18 @@ for (const mode of ['authored lower', 'authored upper', 'repaired doorway'] as c
   }
   expect(pickedIndex).toBeGreaterThanOrEqual(0);
   const picked = before[pickedIndex]!, target = surfaceMaterialTarget(built, picked.zone, picked.surface!)!;
+  const viewportBefore = await preview.locator('iframe').boundingBox();
   const record = (upper ? built.document.zones[picked.zone]!.upper : built.document.zones[picked.zone]!.lower).find(item => item.offset === picked.surface!.offset)!;
   const style = wallMaterialChoices(document).find(item => item.texture !== record.texture)!;
-  const canvas = page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas'), rect = (await canvas.boundingBox())!, point = points[pickedIndex]!;
+  const point = points[pickedIndex]!;
   const position = await enginePlayerState(page);
+  const nativeClick = page.evaluate(() => new Promise(resolve => {
+    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!;
+    const receive = (event: MessageEvent) => { if (event.source === frame.contentWindow && event.origin === location.origin && event.data?.source === 'ab3d-engine' && event.data.type === 'pick') { window.removeEventListener('message', receive); resolve(event.data); } };
+    window.addEventListener('message', receive);
+  }));
   await canvas.click({ position: { x: point.x * rect.width, y: point.y * rect.height } });
+  expect(await nativeClick).toMatchObject({ zone: picked.zone, surface: picked.surface });
   await page.getByRole('button', { name: 'Paint this wall', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Paint wall material' });
   await expect(dialog).toContainText('authored boundary');
@@ -51,6 +64,7 @@ for (const mode of ['authored lower', 'authored upper', 'repaired doorway'] as c
   await expect(dialog).toHaveCount(0); await expect(preview).not.toHaveAttribute('data-revision', revision);
   await expect(preview.getByRole('status')).toContainText('zones loaded');
   const paintedHash = await captureEngine(page, camera); expect(paintedHash).not.toBe(beforeHash);
+  expect(await preview.locator('iframe').boundingBox()).toEqual(viewportBefore);
   const after = await enginePickDetails(page, points);
   const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
   const file = testInfo.outputPath('painted-boundary.ab3d'); await (await download).saveAs(file);
