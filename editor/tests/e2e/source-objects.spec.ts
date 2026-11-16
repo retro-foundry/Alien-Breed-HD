@@ -37,6 +37,8 @@ test('objects move into authored rooms, drag, delete, undo and recover through t
   await row.click();
   const canvas = page.locator('canvas[aria-label="Level map"]');
   await expect(canvas).toHaveAttribute('data-world-x', '20128');
+  await page.getByRole('button', { name: 'Frame selection', exact: true }).click();
+  await expect.poll(async () => Number(await canvas.getAttribute('data-world-scale'))).toBeGreaterThan(0.5);
   const box = (await canvas.boundingBox())!;
   // Integer wheel coordinates exercise the rounding used by Linux browsers.
   // At overview zoom, a fractional-pixel anchor can move the world centre.

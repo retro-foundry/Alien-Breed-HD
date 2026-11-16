@@ -73,7 +73,9 @@ test('unsafe corner removal is rejected with the player and history intact', asy
 
 test('double-clicking an edge inserts at the pointer rather than forcing its midpoint', async ({ page }) => {
   const fixture = roomHeightFixture(); await open(page, fixture.document); await framePlacementRoom(page, fixture.from.id);
-  const p = await pixel(page, 20000, 20064); await page.mouse.dblclick(p.x, p.y);
+  // Use a whole CSS pixel just inside the edge. Firefox can round fractional
+  // pointer coordinates outside the room before dispatching the double-click.
+  const p = await pixel(page, 20000, 20064); await page.mouse.dblclick(Math.ceil(p.x), Math.round(p.y));
   await expect(page.locator('.inspector')).toContainText('5 corners');
   await page.getByText('Edit room corners', { exact: true }).click();
   await expect(page.getByRole('spinbutton', { name: 'Corner 2 X', exact: true })).toHaveValue('20000');

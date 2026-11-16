@@ -3906,3 +3906,24 @@ The respective before/after native hashes are 354907538/2002506307,
 2384666308/2915394930 and 354907538/2002506307, identical to this branch.
 These remain port parity issues; no native renderer/gameplay code changed in
 the usability work. The complete browser run retains all of these assertions.
+
+Final usability audit: the full 490-case Windows Chromium/Firefox run executed
+every case. It initially reported 479 passes and 11 failures. Five cases then
+passed focused reruns: Firefox redraw now uses the fixture's 16-unit grid;
+edge insertion uses whole CSS pixels just inside the boundary; object movement
+frames the selection before deep zoom; and two failed asset/navigation loads
+passed fresh runs. Exact source geometry, moving-wall attachments, portable
+files, history and native rendering/movement assertions remain intact. Across
+the full and focused runs, all 484 cases outside the six reproduced baseline
+compiler comparisons pass. No browser cases were skipped or deadlines relaxed.
+
+Both CI editor jobs for UI commit 5b37599 passed all model validation, static
+builds and renderer startup/recovery; the separate Linux/Windows/DOS build run
+43932530999 succeeded. Full CI browser jobs remain subject to the documented
+baseline compiler failures. Website commit 77140fc, Pages run 43932610090,
+publishes the tested package. All 80 public files match its exact bytes. Live
+Chromium and Firefox confirm four reachable height controls, stable viewport
+bounds, Ctrl/Command action search and playtest, restored canvas focus, native
+brightness 19 after a focused edit and 2,066,084 rendered pixels, without page
+errors. Older versioned assets and all five pre-existing untracked website
+files remain in place. The complete AMOS port requirements above stay open.

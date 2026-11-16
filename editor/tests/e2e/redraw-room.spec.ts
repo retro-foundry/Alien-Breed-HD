@@ -21,7 +21,9 @@ test('redrawing an imported room cancels safely, commits one stable outline, and
   await page.locator('input[type=file]').setInputFiles({ name: 'redraw.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.baseline)) });
   await expect(page.locator('.project-picker strong')).toHaveText(fixture.baseline.name);
   const selectRoom = () => page.getByRole('button', { name: new RegExp(`^Zone ${String(zone).padStart(3, '0')}(?:\\s|$)`) }).click();
-  await selectRoom(); await page.getByRole('combobox', { name: 'Grid spacing' }).selectOption('0');
+  // The fixture lies on a 16-unit grid. Preserve those exact shared edges
+  // across browsers that round fractional CSS-pixel clicks differently.
+  await selectRoom(); await page.getByRole('combobox', { name: 'Grid spacing' }).selectOption('16');
   const canvas = page.locator('canvas[aria-label="Level map"]'), box = (await canvas.boundingBox())!;
   await expect(canvas).toHaveAttribute('data-world-x', String(fixture.center.x));
   const scale = Number(await canvas.getAttribute('data-world-scale'));
