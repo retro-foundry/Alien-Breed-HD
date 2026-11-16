@@ -210,11 +210,7 @@ int16_t viewpoint_to_draw(int16_t viewer_x, int16_t viewer_z,
                           int16_t obj_facing)
 {
     /* Calculate angle from object to viewer */
-    double dx = (double)(viewer_x - obj_x);
-    double dz = (double)(viewer_z - obj_z);
-    double angle = atan2(-dx, -dz);
-    int16_t view_angle = (int16_t)(angle * (4096.0 / (2.0 * 3.14159265)));
-    view_angle = (view_angle * 2) & ANGLE_MASK;
+    int16_t view_angle = math_angle_to_target(viewer_x-obj_x,viewer_z-obj_z);
 
     /* Relative angle = view_angle - facing */
     int16_t rel = (view_angle - obj_facing) & ANGLE_MASK;
@@ -229,11 +225,7 @@ int16_t viewpoint_to_draw_16(int16_t viewer_x, int16_t viewer_z,
                              int16_t obj_x, int16_t obj_z,
                              int16_t obj_facing)
 {
-    double dx = (double)(viewer_x - obj_x);
-    double dz = (double)(viewer_z - obj_z);
-    double angle = atan2(-dx, -dz);
-    int16_t view_angle = (int16_t)(angle * (4096.0 / (2.0 * 3.14159265)));
-    view_angle = (view_angle * 2) & ANGLE_MASK;
+    int16_t view_angle = math_angle_to_target(viewer_x-obj_x,viewer_z-obj_z);
     int16_t rel = (view_angle - obj_facing) & ANGLE_MASK;
     /* 0-15: each frame = 256 units */
     int16_t frame = (int16_t)((rel * 16) >> 12);

@@ -282,8 +282,7 @@ static int32_t enemy_motion_apply_axis_fp(int slot, int axis, int64_t delta_fp)
 
 static int32_t enemy_motion_distance(int32_t dx, int32_t dz)
 {
-    double dist_sq = (double)dx * (double)dx + (double)dz * (double)dz;
-    return (int32_t)sqrt(dist_sq);
+    return math_distance_floor(dx,dz);
 }
 
 static void enemy_motion_turn_towards_target(int16_t *facing,
@@ -295,7 +294,6 @@ static void enemy_motion_turn_towards_target(int16_t *facing,
 {
     int32_t dx;
     int32_t dz;
-    double angle_rad;
     int16_t target_angle;
     int16_t current;
     int16_t diff;
@@ -308,9 +306,7 @@ static void enemy_motion_turn_towards_target(int16_t *facing,
     if ((dx == 0 && dz == 0) || turn_speed <= 0)
         return;
 
-    angle_rad = atan2((double)-dx, (double)-dz);
-    target_angle = (int16_t)(angle_rad * (4096.0 / (2.0 * 3.14159265)));
-    target_angle = (target_angle * 2) & ANGLE_MASK;
+    target_angle = math_angle_to_target(dx,dz);
 
     current = *facing;
     diff = target_angle - current;
@@ -3336,15 +3332,13 @@ static int16_t enemy_exact_facing_to_point(int16_t current_facing,
 {
     int32_t dx = target_x - origin_x;
     int32_t dz = target_z - origin_z;
-    double angle_rad;
     int16_t target_angle;
 
     if (dx == 0 && dz == 0)
         return current_facing;
 
-    angle_rad = atan2((double)-dx, (double)-dz);
-    target_angle = (int16_t)(angle_rad * (4096.0 / (2.0 * 3.14159265)));
-    return (int16_t)((target_angle * 2) & ANGLE_MASK);
+    target_angle = math_angle_to_target(dx,dz);
+    return target_angle;
 }
 
 static void enemy_motion_step_towards_point_range(const GameObject *obj,

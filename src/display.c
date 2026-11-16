@@ -3369,6 +3369,13 @@ void display_init(GameState *state)
 
     {
         /* Keep aspect ratio if a requested supersampled target exceeds renderer max size. */
+#ifdef AB3D_DOS
+        int largest=base_rw>base_rh?base_rw:base_rh;
+        if(largest>RENDER_INTERNAL_MAX_DIM) {
+            rw=(int)(((int64_t)base_rw*RENDER_INTERNAL_MAX_DIM+largest/2)/largest);
+            rh=(int)(((int64_t)base_rh*RENDER_INTERNAL_MAX_DIM+largest/2)/largest);
+        } else {rw=base_rw;rh=base_rh;}
+#else
         const double req_w = (double)base_rw * (double)supersampling;
         const double req_h = (double)base_rh * (double)supersampling;
         double fit = 1.0;
@@ -3380,6 +3387,7 @@ void display_init(GameState *state)
         }
         rw = (int)(req_w * fit + 0.5);
         rh = (int)(req_h * fit + 0.5);
+#endif
         if (rw < 96) rw = 96;
         if (rh < 80) rh = 80;
         if (rw > RENDER_INTERNAL_MAX_DIM) rw = RENDER_INTERNAL_MAX_DIM;

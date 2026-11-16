@@ -1852,9 +1852,14 @@ void game_loop_tick(GameState *state, GameLoopCtx *ctx)
             Uint64 fps_update_dt = fps_freq / 4u; /* 250ms updates with high-res timing. */
             if (fps_update_dt == 0) fps_update_dt = 1;
             if (fps_freq > 0 && fps_dt >= fps_update_dt) {
+#ifdef AB3D_DOS
+                Uint64 numerator=(Uint64)ctx->fps_frames_in_sample*fps_freq;
+                int rounded=(int)((numerator+fps_dt/2)/fps_dt);
+#else
                 double sec = (double)fps_dt / (double)fps_freq;
                 double fps = (double)ctx->fps_frames_in_sample / sec;
                 int rounded = (int)(fps + 0.5);
+#endif
                 if (rounded < 0) rounded = 0;
                 if (rounded > 9999) rounded = 9999;
                 state->fps_display = (uint16_t)rounded;

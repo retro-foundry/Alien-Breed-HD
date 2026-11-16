@@ -14,8 +14,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <math.h>
-#include <float.h>
 
  /* -----------------------------------------------------------------------
   * Constants from the original code
@@ -627,184 +625,6 @@ int movement_integer_wall_clear(const MoveContext *ctx,const uint8_t *line)
 #endif
 
 /* -----------------------------------------------------------------------
- * Geometry helpers (robust, radius-aware wall collision)
- * ----------------------------------------------------------------------- */
-static double clamp01d(double t)
-{
-    if (t < 0.0) return 0.0;
-    if (t > 1.0) return 1.0;
-    return t;
-}
-
-static double orient2d(double ax, double az, double bx, double bz, double cx, double cz)
-{
-    return (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
-}
-
-static bool on_segment(double px, double pz, double qx, double qz, double rx, double rz, double eps)
-{
-    return (qx >= fmin(px, rx) - eps && qx <= fmax(px, rx) + eps &&
-        qz >= fmin(pz, rz) - eps && qz <= fmax(pz, rz) + eps);
-}
-
-static bool segments_intersect(double ax, double az, double bx, double bz,
-    double cx, double cz, double dx, double dz)
-{
-    /* Standard 2D segment intersection including colinear touching. */
-    const double eps = 1e-9;
-
-    double o1 = orient2d(ax, az, bx, bz, cx, cz);
-    double o2 = orient2d(ax, az, bx, bz, dx, dz);
-    double o3 = orient2d(cx, cz, dx, dz, ax, az);
-    double o4 = orient2d(cx, cz, dx, dz, bx, bz);
-
-    if (((o1 > eps && o2 < -eps) || (o1 < -eps && o2 > eps)) &&
-        ((o3 > eps && o4 < -eps) || (o3 < -eps && o4 > eps))) {
-        return true;
-    }
-
-    if (fabs(o1) <= eps && on_segment(ax, az, cx, cz, bx, bz, eps)) return true;
-    if (fabs(o2) <= eps && on_segment(ax, az, dx, dz, bx, bz, eps)) return true;
-    if (fabs(o3) <= eps && on_segment(cx, cz, ax, az, dx, dz, eps)) return true;
-    if (fabs(o4) <= eps && on_segment(cx, cz, bx, bz, dx, dz, eps)) return true;
-
-    return false;
-}
-
-static double point_segment_distance_and_normal(double px, double pz,
-    double ax, double az,
-    double bx, double bz,
-    double* out_nx, double* out_nz)
-{
-    double dx = bx - ax;
-    double dz = bz - az;
-    double len2 = dx * dx + dz * dz;
-
-    double t = 0.0;
-    if (len2 > 0.0) {
-        t = ((px - ax) * dx + (pz - az) * dz) / len2;
-        t = clamp01d(t);
-    }
-
-    double cx = ax + t * dx;
-    double cz = az + t * dz;
-
-    double nx = px - cx;
-    double nz = pz - cz;
-    double d2 = nx * nx + nz * nz;
-
-    if (d2 <= 0.0) {
-        /* Exact on segment: choose a stable perpendicular normal. */
-        double nnx = dz;
-        double nnz = -dx;
-        double nlen2 = nnx * nnx + nnz * nnz;
-        if (nlen2 > 0.0) {
-            double inv = 1.0 / sqrt(nlen2);
-            nnx *= inv;
-            nnz *= inv;
-        }
-        else {
-            nnx = 1.0;
-            nnz = 0.0;
-        }
-        if (out_nx) *out_nx = nnx;
-        if (out_nz) *out_nz = nnz;
-        return 0.0;
-    }
-
-    {
-        double d = sqrt(d2);
-        if (out_nx) *out_nx = nx / d;
-        if (out_nz) *out_nz = nz / d;
-        return d;
-    }
-}
-
-static double segment_segment_distance(double ax, double az, double bx, double bz,
-    double cx, double cz, double dx, double dz)
-{
-    if (segments_intersect(ax, az, bx, bz, cx, cz, dx, dz)) return 0.0;
-
-    {
-        double best = DBL_MAX;
-        double tmp;
-
-        tmp = point_segment_distance_and_normal(ax, az, cx, cz, dx, dz, NULL, NULL);
-        if (tmp < best) best = tmp;
-
-        tmp = point_segment_distance_and_normal(bx, bz, cx, cz, dx, dz, NULL, NULL);
-        if (tmp < best) best = tmp;
-
-        tmp = point_segment_distance_and_normal(cx, cz, ax, az, bx, bz, NULL, NULL);
-        if (tmp < best) best = tmp;
-
-        tmp = point_segment_distance_and_normal(dx, dz, ax, az, bx, bz, NULL, NULL);
-        if (tmp < best) best = tmp;
-
-        return best;
-    }
-}
-
-static bool do_wall_slide_radius(MoveContext* ctx,
-    double ax, double az,
-    double bx, double bz,
-    double radius_scaled)
-{
-    if (ctx->wallbounce) {
-        ctx->newx = ctx->oldx;
-        ctx->newz = ctx->oldz;
-        return true;
-    }
-
-    {
-        double px = (double)ctx->newx;
-        double pz = (double)ctx->newz;
-
-        double nx = 0.0, nz = 0.0;
-        double dist = point_segment_distance_and_normal(px, pz, ax, az, bx, bz, &nx, &nz);
-
-        if (dist >= radius_scaled) return false;
-
-        /* Push out by penetration depth + small epsilon to avoid re-hitting due to rounding. */
-        {
-            const double eps = 1.0;
-            double penetration = radius_scaled - dist;
-            px += nx * (penetration + eps);
-            pz += nz * (penetration + eps);
-        }
-
-        /* Slide: remove inward component along the collision normal. */
-        {
-            double vx = px - (double)ctx->oldx;
-            double vz = pz - (double)ctx->oldz;
-            double vn = vx * nx + vz * nz;
-
-            if (vn < 0.0) {
-                vx -= vn * nx;
-                vz -= vn * nz;
-                px = (double)ctx->oldx + vx;
-                pz = (double)ctx->oldz + vz;
-            }
-        }
-
-        /* Final safety: ensure outside after slide too. */
-        {
-            const double eps = 1.0;
-            dist = point_segment_distance_and_normal(px, pz, ax, az, bx, bz, &nx, &nz);
-            if (dist < radius_scaled) {
-                double penetration = radius_scaled - dist;
-                px += nx * (penetration + eps);
-                pz += nz * (penetration + eps);
-            }
-        }
-
-        ctx->newx = (int32_t)llround(px);
-        ctx->newz = (int32_t)llround(pz);
-        return true;
-    }
-}
-
-/* -----------------------------------------------------------------------
  * True iff path (oldx,oldz)->(newx,newz) intersects the wall SEGMENT
  * (lx,lz) to (lx+wx, lz+wz) where all coordinates are in the same
  * (shifted) coordinate space. Returns false for the infinite line extension.
@@ -1000,8 +820,6 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
     int32_t line_len = (int32_t)(int16_t)read_be16(fline + FLINE_LENGTH);
     int32_t a4 = 0;
     int32_t a6 = 0;
-    int32_t orig_newx = ctx->newx;
-    int32_t orig_newz = ctx->newz;
 
     int32_t wx = (int32_t)lxlen << ps;
     int32_t wz = (int32_t)lzlen << ps;
@@ -1027,7 +845,6 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
     int connect_index;
     const uint8_t *target_zone = movement_target_zone(level, zone_data, connect, &connect_index);
     uint8_t *target_room = (uint8_t *)target_zone;
-    int has_target_zone = target_zone != NULL;
     /* ---- Exit line handling. ---- */
     if (target_zone) {
         int dbg_type = -1;
@@ -1085,137 +902,42 @@ static int check_wall_line(MoveContext* ctx, LevelState* level,
         return check_wall_line_otherpass_asm(ctx, fline, lx, lz, lxlen, lzlen, a4, a6, xdiff, zdiff);
     }
 
-    /* ---- Wall collision with extents ----
-     * Treat mover as a circle of radius (ctx->extlen / 2) so small gaps are passable.
-     * If extlen == 0, fall back to old point-crossing behavior.
-     */
+    /* ObjectMove.s checkwalls/brute and nonzero-extent checkotherwalls
+     * already returned. Only the zero-extent point crossing remains; the
+     * old floating-point radius/slide branch could never run in any pass. */
+    int64_t new_cross = (int64_t)(ctx->newx - lx) * lzlen -
+        (int64_t)(ctx->newz - lz) * lxlen;
+    int64_t old_cross = (int64_t)(ctx->oldx - lx) * lzlen -
+        (int64_t)(ctx->oldz - lz) * lxlen;
+
+    if ((new_cross ^ old_cross) >= 0) return 0;
+    if (old_cross == 0 || new_cross == 0) return 0;
+
+    if (!path_hits_segment(ctx->oldx, ctx->oldz, ctx->newx, ctx->newz, lx, lz, wx, wz)) {
+        return 0;
+    }
+
     {
-        int32_t ext = ctx->extlen;
-        if (ext < 0) ext = 0;
-        ext = ext / 2;  /* use half extlen for wall radius */
-
-        if (ext == 0) {
-            /* Point-crossing fallback (your previous behavior). */
-            int64_t new_cross = (int64_t)(ctx->newx - lx) * lzlen -
-                (int64_t)(ctx->newz - lz) * lxlen;
-            int64_t old_cross = (int64_t)(ctx->oldx - lx) * lzlen -
-                (int64_t)(ctx->oldz - lz) * lxlen;
-
-            if ((new_cross ^ old_cross) >= 0) return 0;
-            if (old_cross == 0 || new_cross == 0) return 0;
-
-            if (!path_hits_segment(ctx->oldx, ctx->oldz, ctx->newx, ctx->newz, lx, lz, wx, wz)) {
-                return 0;
-            }
-
-            {
-                int64_t den = old_cross - new_cross;
-                if (den != 0) {
-                    int64_t dx = (int64_t)ctx->newx - (int64_t)ctx->oldx;
-                    int64_t dz = (int64_t)ctx->newz - (int64_t)ctx->oldz;
-                    int64_t dy = (int64_t)ctx->newy - (int64_t)ctx->oldy;
-                    int64_t hit_x = (int64_t)ctx->oldx + (dx * old_cross) / den;
-                    int64_t hit_z = (int64_t)ctx->oldz + (dz * old_cross) / den;
-                    int64_t hit_y = (int64_t)ctx->oldy + (dy * old_cross) / den;
-                    ctx->newx = (int32_t)hit_x;
-                    ctx->newz = (int32_t)hit_z;
-                    ctx->wall_hit_y = (int32_t)hit_y;
-                } else {
-                    ctx->newx = ctx->oldx;
-                    ctx->newz = ctx->oldz;
-                    ctx->wall_hit_y = ctx->newy;
-                }
-            }
-            mark_floorline_touch_flag(ctx, fline);
-            ctx->hitwall = 1;
-            if (pass_is_walls && has_target_zone &&
-                pass1_exit_is_nonblocking(ctx, level, connect_index, target_zone,
-                    lx, lz, lxlen, lzlen, a4, a6,
-                    orig_newx, orig_newz, line_len)) {
-                ctx->newx = orig_newx;
-                ctx->newz = orig_newz;
-                ctx->hitwall = 0;
-                ctx->wall_hit_y = ctx->newy;
-                return 0;
-            }
-            return 3;
-        }
-
-        {
-            double radius = (double)((int64_t)ext << ps);
-            int64_t old_cross = (int64_t)(ctx->oldx - lx) * lzlen -
-                                (int64_t)(ctx->oldz - lz) * lxlen;
-            int64_t new_cross = (int64_t)(ctx->newx - lx) * lzlen -
-                                (int64_t)(ctx->newz - lz) * lxlen;
-            int crossed_blocked_side = (old_cross >= 0 && new_cross < 0);
-
-            double ax = (double)lx;
-            double az = (double)lz;
-            double bx = (double)(lx + wx);
-            double bz = (double)(lz + wz);
-
-            double p0x = (double)ctx->oldx;
-            double p0z = (double)ctx->oldz;
-            double p1x = (double)ctx->newx;
-            double p1z = (double)ctx->newz;
-
-            /* Quick reject: if movement segment stays farther than radius, no hit. */
-            double d_path = segment_segment_distance(p0x, p0z, p1x, p1z, ax, az, bx, bz);
-            if (d_path >= radius) return 0;
-
-            /* Optional "moving away" reject (helps avoid sticky edges if already close). */
-            {
-                double d_old = point_segment_distance_and_normal(p0x, p0z, ax, az, bx, bz, NULL, NULL);
-                double d_new = point_segment_distance_and_normal(p1x, p1z, ax, az, bx, bz, NULL, NULL);
-                if (!crossed_blocked_side && d_old < radius && d_new > d_old) return 0;
-            }
-
-            if (do_wall_slide_radius(ctx, ax, az, bx, bz, radius)) {
-                int64_t slide_cross = (int64_t)(ctx->newx - lx) * lzlen -
-                                      (int64_t)(ctx->newz - lz) * lxlen;
-                mark_floorline_touch_flag(ctx, fline);
-                ctx->hitwall = 1;
-                ctx->wall_hit_y = ctx->newy;
-                if (pass_is_walls && has_target_zone &&
-                    pass1_exit_is_nonblocking(ctx, level, connect_index, target_zone,
-                        lx, lz, lxlen, lzlen, a4, a6,
-                        orig_newx, orig_newz, line_len)) {
-                    ctx->newx = orig_newx;
-                    ctx->newz = orig_newz;
-                    ctx->hitwall = 0;
-                    ctx->wall_hit_y = ctx->newy;
-                    return 0;
-                }
-                if (crossed_blocked_side && slide_cross < 0) {
-                    /* Keep solid/blocked lines one-sided: never accept a result
-                     * that leaves us on the far side of this segment. */
-                    ctx->newx = ctx->oldx;
-                    ctx->newz = ctx->oldz;
-                    return 3;
-                }
-                *xdiff = ctx->newx - ctx->oldx;
-                *zdiff = ctx->newz - ctx->oldz;
-                return 2;
-            }
-
-            mark_floorline_touch_flag(ctx, fline);
+        int64_t den = old_cross - new_cross;
+        if (den != 0) {
+            int64_t dx = (int64_t)ctx->newx - (int64_t)ctx->oldx;
+            int64_t dz = (int64_t)ctx->newz - (int64_t)ctx->oldz;
+            int64_t dy = (int64_t)ctx->newy - (int64_t)ctx->oldy;
+            int64_t hit_x = (int64_t)ctx->oldx + (dx * old_cross) / den;
+            int64_t hit_z = (int64_t)ctx->oldz + (dz * old_cross) / den;
+            int64_t hit_y = (int64_t)ctx->oldy + (dy * old_cross) / den;
+            ctx->newx = (int32_t)hit_x;
+            ctx->newz = (int32_t)hit_z;
+            ctx->wall_hit_y = (int32_t)hit_y;
+        } else {
             ctx->newx = ctx->oldx;
             ctx->newz = ctx->oldz;
-            ctx->hitwall = 1;
             ctx->wall_hit_y = ctx->newy;
-            if (pass_is_walls && has_target_zone &&
-                pass1_exit_is_nonblocking(ctx, level, connect_index, target_zone,
-                    lx, lz, lxlen, lzlen, a4, a6,
-                    orig_newx, orig_newz, line_len)) {
-                ctx->newx = orig_newx;
-                ctx->newz = orig_newz;
-                ctx->hitwall = 0;
-                ctx->wall_hit_y = ctx->newy;
-                return 0;
-            }
-            return 3;
         }
     }
+    mark_floorline_touch_flag(ctx, fline);
+    ctx->hitwall = 1;
+    return 3;
 }
 
 /* -----------------------------------------------------------------------
@@ -1771,9 +1493,7 @@ void head_towards_angle(MoveContext* ctx, int16_t* facing,
     if (move_dist > dist) move_dist = dist;
 
     {
-        double angle_rad = atan2((double)-dx, (double)-dz);
-        int16_t target_angle = (int16_t)(angle_rad * (4096.0 / (2.0 * 3.14159265)));
-        target_angle = (target_angle * 2) & ANGLE_MASK;
+        int16_t target_angle = math_angle_to_target(dx,dz);
 
         int16_t current = *facing;
         int16_t diff = target_angle - current;

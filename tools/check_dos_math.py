@@ -56,7 +56,7 @@ exit
             subprocess.run([str(args.dosbox.resolve()),'-exit','-conf',str(config)],cwd=work,
                            stdout=output,stderr=subprocess.STDOUT,startupinfo=startup,
                            creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0,
-                           timeout=60,check=True)
+                           timeout=180,check=True)
         result=log.read_text(errors='replace') if log.exists() else ''
         if marker not in result or 'passed' not in result or 'failure' in result or 'failed' in result:
             raise RuntimeError(f'{name} oracle failed; see {work}\n{result[-1500:]}')

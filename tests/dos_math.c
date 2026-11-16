@@ -18,6 +18,20 @@
     fflush(stdout);exit(1); } } while(0)
 
 static unsigned checked, exact_boundary_differences;
+static unsigned angle_cases,distance_cases;
+
+static void check_direction(int32_t dx,int32_t dz)
+{
+    double radians=atan2(-(double)dx,-(double)dz);
+    int16_t raw=(int16_t)(radians*(4096.0/(2.0*3.14159265)));
+    int16_t expected=(int16_t)((raw*2)&ANGLE_MASK);
+    int16_t actual=math_angle_to_target(dx,dz);
+    if(actual!=expected)printf("angle %ld,%ld expected=%d actual=%d\n",(long)dx,(long)dz,expected,actual);
+    assert(actual==expected);angle_cases++;
+    double distance=sqrt((double)dx*dx+(double)dz*dz);
+    int32_t length=math_distance_floor(dx,dz);
+    assert(length==(int32_t)distance);distance_cases++;
+}
 
 static void check_volume(int volume, int dx, int dz)
 {
@@ -82,6 +96,24 @@ int main(void)
     for(unsigned x=0;x<sizeof(limits)/sizeof(*limits);x++)
         for(unsigned z=0;z<sizeof(limits)/sizeof(*limits);z++)
             check_volume(INT_MAX,limits[x],limits[z]);
+    for(unsigned x=0;x<sizeof(limits)/sizeof(*limits);x++)
+        for(unsigned z=0;z<sizeof(limits)/sizeof(*limits);z++)check_direction(limits[x],limits[z]);
+    for(int x=-128;x<=128;x++)for(int z=-128;z<=128;z++)check_direction(x,z);
+    for(unsigned i=0;i<100000;i++) {
+        seed=seed*1664525u+1013904223u;int32_t x=(int)(seed%131071)-65535;
+        seed=seed*1664525u+1013904223u;int32_t z=(int)(seed%131071)-65535;
+        check_direction(x,z);
+    }
+    /* Challenge each truncation threshold from both sides at real word
+     * coordinate scales, rather than comparing only arbitrary angles. */
+    const int radii[]={17,257,32767,65535};
+    for(int angle=-2048;angle<=2048;angle++)for(unsigned r=0;r<4;r++) {
+        double radians=angle*(2.0*3.14159265)/4096.0;
+        int32_t x=(int32_t)(-sin(radians)*radii[r]);
+        int32_t z=(int32_t)(-cos(radians)*radii[r]);
+        for(int delta=-1;delta<=1;delta++){check_direction(x+delta,z);check_direction(x,z+delta);}
+    }
+    printf("DOS integer directions: %u angle and %u distance cases passed\n",angle_cases,distance_cases);
     printf("DOS maths: 4096 sine values, 8192 lookups, filter coefficients, %u distance gains passed (%u exact integer boundaries)\n",
            checked,exact_boundary_differences);
     return 0;

@@ -45,6 +45,12 @@ extern int16_t sine_table_fine[ANGLE_FINE_TABLE_SIZE];
 /* Initialize the sine table (generates values matching Amiga binary) */
 void math_tables_init(void);
 
+/* Existing PC HeadTowards/ViewpointToDraw angle, in even byte-angle units.
+ * DOS evaluates it with integer vector rotation; desktop retains atan2. */
+int16_t math_angle_to_target(int32_t dx, int32_t dz);
+/* Truncated Euclidean length used by the PC enemy movement path. */
+int32_t math_distance_floor(int32_t dx, int32_t dz);
+
 /*
  * Lookup sin/cos by 0..8191 angle index.
  * angle is masked internally.

@@ -106,6 +106,21 @@ Previous artifacts and detailed hashes are under
 
 ### Optional hardware FPU
 
+The next integer-math pass replaces the remaining PC enemy `atan2` and
+Euclidean-distance calculations in DOS. `math_angle_to_target` retains the
+existing even-angle truncation and the original port's `3.14159265` scale;
+integer vector rotation uses generated constants rather than substituting
+rounded sine samples. Desktop callers share the API and retain the original
+floating-point expression. DJGPP arithmetic oracles pass 264,441 directions
+and distances, including every angle threshold at several word-coordinate
+scales. DOS FPS calculation and render-size fitting also use integer ratios.
+
+The former floating-point radius/slide branch in `movement.c` was unreachable:
+all three valid passes already return through `ObjectMove.s`'s integer
+`checkwalls`/`checkotherwalls`, leaving only the zero-extent point crossing.
+Removing that branch changes no collision rule. The frozen movement oracle
+passes 8,384 complete scans and sixteen scan-boundary cases byte for byte.
+
 The DOS executable includes DJGPP `libemu`, activated automatically when no
 coprocessor is detected. A 486SX needs no separate emulator file. Shared
 collision/AI and library floating-point operations retain their existing

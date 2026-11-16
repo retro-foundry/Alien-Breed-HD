@@ -32,6 +32,54 @@ int16_t sine_table[ANGLE_TABLE_SIZE];
 #endif
 int16_t sine_table_fine[ANGLE_FINE_TABLE_SIZE];
 
+int16_t math_angle_to_target(int32_t dx, int32_t dz)
+{
+#ifdef AB3D_DOS
+    /* Preserve the existing atan2(-dx,-dz) * (4096/(2*3.14159265))
+     * truncation, including its slightly short PI constant. Replacing it
+     * with the rounded sine table moves exact direction boundaries. */
+    static const int64_t steps[] = AB3D_DOS_ATAN_VALUES;
+    int64_t x=-(int64_t)dz,y=-(int64_t)dx,angle=0;
+    int negative=y<0,back=x<0;
+    if(!x && !y)return 0; /* DJGPP atan2 returns zero for the coincident case. */
+    if(x<0)x=-x;
+    if(y<0)y=-y;
+    uint64_t largest=(uint64_t)(x>y?x:y);
+    unsigned shift=0;
+    while(largest<(UINT64_C(1)<<59)){largest<<=1;shift++;}
+    x<<=shift;y<<=shift;
+    for(unsigned i=0;i<sizeof(steps)/sizeof(steps[0]) && y;i++) {
+        int64_t previous_x=x;
+        if(y>0){x+=y>>i;y-=previous_x>>i;angle+=steps[i];}
+        else {x-=y>>i;y+=previous_x>>i;angle-=steps[i];}
+    }
+    if(back)angle=AB3D_DOS_PI_ANGLE-angle;
+    int raw=(int)(angle>>50);
+    return (int16_t)(((negative?-raw:raw)*2)&ANGLE_MASK);
+#else
+    double angle=atan2(-(double)dx,-(double)dz);
+    int16_t raw=(int16_t)(angle*(4096.0/(2.0*3.14159265)));
+    return (int16_t)((raw*2)&ANGLE_MASK);
+#endif
+}
+
+int32_t math_distance_floor(int32_t dx,int32_t dz)
+{
+#ifdef AB3D_DOS
+    uint64_t value=(uint64_t)((int64_t)dx*dx)+(uint64_t)((int64_t)dz*dz);
+    uint64_t root=0,bit=UINT64_C(1)<<62;
+    while(bit>value)bit>>=2;
+    while(bit) {
+        if(value>=root+bit){value-=root+bit;root=(root>>1)+bit;}
+        else root>>=1;
+        bit>>=2;
+    }
+    return root>INT32_MAX?INT32_MIN:(int32_t)root;
+#else
+    return (int32_t)sqrt((double)dx*dx+(double)dz*dz);
+#endif
+}
+
 void math_tables_init(void)
 {
 #ifndef AB3D_DOS
