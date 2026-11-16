@@ -3873,3 +3873,12 @@ They also compare the actual click's native surface with the queried surface,
 using whole CSS pixels to avoid browser rounding on one-pixel seams. All three
 boundary cases pass in Linux Firefox with the original native pixel, portable
 source and Undo/Redo assertions intact.
+
+Inspector browser checks now address the actual expandable summary rather than
+the same label in the property jump menu. Attachment checks target their own
+summary among the mechanism's three expandable controls. Barrier tests use a
+denser native pick grid so narrow transparent texels remain covered at the new
+viewport size. All six Chromium navigation, wall-connection and water checks
+pass, retaining native rendering, collision, export and history assertions.
+Full CI stops at its first failure to publish actionable evidence promptly;
+successful runs still execute every browser test.

@@ -20,7 +20,7 @@ async function place(page: Page, diagram: Locator, x: number, z: number) {
 async function precisePosition(page: Page, x: number, z: number) {
   // A screen pixel can cover multiple world units. Use the numerical controls
   // for exact placement after verifying the graphical gesture created a point.
-  const panel = page.locator('details').filter({ has: page.getByText('Control points and links', { exact: true }) });
+  const panel = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'Control points and links' }) });
   await panel.getByRole('spinbutton', { name: 'Position X', exact: true }).fill(String(x));
   await panel.getByRole('spinbutton', { name: 'Position Z', exact: true }).fill(String(z));
   const apply = panel.getByRole('button', { name: 'Apply position', exact: true }); if (await apply.isEnabled()) await apply.click();
@@ -32,7 +32,7 @@ test('authors lower/upper controls, graphical moves, assignments and links with 
   await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'controls.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.from.id.replace(/^room-/, '')}`) }).click();
-  await page.getByText('Control points and links', { exact: true }).click();
+  await page.locator('summary').filter({ hasText: 'Control points and links' }).click();
   const diagram = page.getByRole('img', { name: 'Control-point room diagram' }), storey = page.getByRole('combobox', { name: 'Control-point storey' });
   await page.getByRole('button', { name: 'Place control point in room', exact: true }).click(); await diagram.focus(); await page.keyboard.press('Escape');
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
@@ -89,8 +89,8 @@ test('authors lower/upper controls, graphical moves, assignments and links with 
   await preview.getByRole('button', { name: 'Stop', exact: true }).click();
   await page.locator('input[type=file]').setInputFiles(savedPath);
   await page.getByRole('button', { name: new RegExp(`^Room ${fixture.from.id.replace(/^room-/, '')}`) }).click();
-  const details = page.locator('details').filter({ has: page.getByText('Control points and links', { exact: true }) });
-  if (await details.getAttribute('open') === null) await page.getByText('Control points and links', { exact: true }).click();
+  const details = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'Control points and links' }) });
+  if (await details.getAttribute('open') === null) await page.locator('summary').filter({ hasText: 'Control points and links' }).click();
   await expect(page.getByRole('combobox', { name: 'Lower room control point' })).toHaveValue(String(first));
   await expect(page.getByRole('combobox', { name: 'Upper room control point' })).toHaveValue(String(first + 1));
   await page.getByRole('combobox', { name: 'Selected control point' }).selectOption(String(first));

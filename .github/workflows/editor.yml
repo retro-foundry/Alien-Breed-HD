@@ -140,9 +140,9 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
-            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a --server-args="-screen 0 1920x1080x24" npm run test:e2e -- --headed
+            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a --server-args="-screen 0 1920x1080x24" npm run test:e2e -- --headed --max-failures=1
           else
-            npm run test:e2e
+            npm run test:e2e -- --max-failures=1
           fi
       - name: Upload static editor
         uses: actions/upload-artifact@v4

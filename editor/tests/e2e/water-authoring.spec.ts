@@ -18,8 +18,8 @@ async function save(page: Page, info: TestInfo, name: string) {
   return { path, document: decodeProject(new Uint8Array(await readFile(path))) };
 }
 async function openWater(page: Page) {
-  const details = page.locator('details').filter({ has: page.getByText('Water and animation groups', { exact: true }) });
-  if (await details.getAttribute('open') === null) await page.getByText('Water and animation groups', { exact: true }).click();
+  const details = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'Water and animation groups' }) });
+  if (await details.getAttribute('open') === null) await page.locator('summary').filter({ hasText: 'Water and animation groups' }).click();
 }
 async function openGroups(page: Page) {
   const details = page.locator('details').filter({ has: page.getByText('Create or edit water animation group', { exact: true }) }).last();

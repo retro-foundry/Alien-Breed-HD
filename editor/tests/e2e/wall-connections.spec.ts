@@ -14,7 +14,7 @@ test('closes an existing shared wall, blocks native movement, saves and reopens 
   await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'shared-wall.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(owner.originZone).padStart(3, '0')}(?:\\s|$)`) }).click();
-  await page.getByText('Wall connections (solid / dotted)', { exact: true }).click();
+  await page.locator('summary').filter({ hasText: 'Wall connections (solid / dotted)' }).click();
   await page.getByRole('button', { name: `Close edge ${label} to ${name}`, exact: true }).click();
   await page.getByRole('button', { name: 'Cancel wall closure', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
@@ -56,7 +56,7 @@ test('closes an existing shared wall, blocks native movement, saves and reopens 
   // graphics/collision, rather than simply restoring an earlier source state.
   await page.locator('input[type=file]').setInputFiles({ name: 'native-solid-wall.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(built.document)) });
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(owner.originZone).padStart(3, '0')}(?:\\s|$)`) }).click();
-  await page.getByText('Wall connections (solid / dotted)', { exact: true }).click();
+  await page.locator('summary').filter({ hasText: 'Wall connections (solid / dotted)' }).click();
   await expect(preview.getByRole('status')).toContainText('zones loaded');
   const revision = (await preview.getAttribute('data-revision'))!;
   await page.getByRole('button', { name: `Open edge ${label} to ${name}`, exact: true }).click();
@@ -69,6 +69,6 @@ test('closes an existing shared wall, blocks native movement, saves and reopens 
   await expect(page.getByRole('button', { name: `Close edge ${label} to ${name}`, exact: true })).toBeDisabled();
   await page.locator('input[type=file]').setInputFiles({ name: 'reopened-closed.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(saved)) });
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(owner.originZone).padStart(3, '0')}(?:\\s|$)`) }).click();
-  await page.getByText('Wall connections (solid / dotted)', { exact: true }).click();
+  await page.locator('summary').filter({ hasText: 'Wall connections (solid / dotted)' }).click();
   await expect(page.getByRole('button', { name: `Close edge ${label} to ${name}`, exact: true })).toBeDisabled();
 });

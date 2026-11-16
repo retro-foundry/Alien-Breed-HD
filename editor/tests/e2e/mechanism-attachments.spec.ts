@@ -13,7 +13,7 @@ for (const kind of ['door', 'lift'] as const) test(`${kind} attachments show nat
   await expect(page.locator('.project-picker strong')).toHaveText(document.name);
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(dependencies.room).padStart(3, '0')}(?:\\s|$)`) }).click();
   const section = page.locator('.property-section').filter({ has: page.getByRole('heading', { name: `${kind === 'door' ? 'Door' : 'Lift'} ${mechanism.id}`, exact: true }) });
-  await section.locator('summary').click();
+  await section.locator('.mechanism-attachments > summary').click();
   const attachments = section.locator('.mechanism-attachments');
   const table = attachments.getByRole('table', { name: 'Moving wall attachments' });
   await expect(table.getByRole('row')).toHaveCount(dependencies.walls.length + 1);

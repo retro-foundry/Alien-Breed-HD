@@ -14,7 +14,7 @@ test('authors a see-through barrier that reveals and picks the adjoining room wh
   await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'transparent-boundary.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(owner.originZone).padStart(3, '0')}(?:\\s|$)`) }).click();
-  await page.getByText('Wall connections (solid / dotted)', { exact: true }).click();
+  await page.locator('summary').filter({ hasText: 'Wall connections (solid / dotted)' }).click();
   const create = page.getByRole('button', { name: `See-through barrier on edge ${label} to ${name}`, exact: true });
   await create.click(); await page.getByRole('button', { name: 'Cancel barrier', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
@@ -39,7 +39,8 @@ test('authors a see-through barrier that reveals and picks the adjoining room wh
   const angle = fixture.normal.x > 0 ? 2048 : fixture.normal.x < 0 ? 6144 : fixture.normal.z > 0 ? 0 : 4096;
   const camera = { ...fixture.start, zone: own.id, upper: 0, angle };
   await captureEngine(page, camera);
-  const samples = Array.from({ length: 961 }, (_, index) => ({ x: (index % 31 + 1) / 32, y: (Math.floor(index / 31) + 1) / 32 }));
+  // Sample narrow transparent texels as well as the opaque barrier strips.
+  const samples = Array.from({ length: 16129 }, (_, index) => ({ x: (index % 127 + 1) / 128, y: (Math.floor(index / 127) + 1) / 128 }));
   const barrier = await enginePickDetails(page, samples);
   expect(barrier.some(pick => pick.surface?.type === 13)).toBe(true);
   expect(barrier.some(pick => pick.zone === destination.id && pick.surface?.type !== 13)).toBe(true);

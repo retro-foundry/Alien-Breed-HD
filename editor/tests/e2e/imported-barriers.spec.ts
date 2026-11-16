@@ -13,7 +13,7 @@ test('recognises a raw imported barrier, preserves it through a height edit, and
   await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'raw-native-barrier.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
   await page.getByRole('button', { name: new RegExp(`^Zone ${String(own.originZone).padStart(3, '0')}(?:\\s|$)`) }).click();
-  await page.getByText('Wall connections (solid / dotted)', { exact: true }).click();
+  await page.locator('summary').filter({ hasText: 'Wall connections (solid / dotted)' }).click();
   await expect(page.getByRole('button', { name: `See-through barrier on edge ${label} to ${name}`, exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: `Open edge ${label} to ${name}`, exact: true })).toBeEnabled();
   await expect(page.getByRole('note', { name: 'Map line legend' })).toContainText('see-through barrier');
@@ -28,7 +28,8 @@ test('recognises a raw imported barrier, preserves it through a height edit, and
   const preview = page.getByRole('region', { name: '3D game engine preview' }); await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
   const angle = fixture.normal.x > 0 ? 2048 : fixture.normal.x < 0 ? 6144 : fixture.normal.z > 0 ? 0 : 4096;
   await captureEngine(page, { ...fixture.start, zone: ownCell.id, upper: 0, angle });
-  const samples = Array.from({ length: 961 }, (_, index) => ({ x: (index % 31 + 1) / 32, y: (Math.floor(index / 31) + 1) / 32 }));
+  // Sample narrow transparent texels as well as the opaque barrier strips.
+  const samples = Array.from({ length: 16129 }, (_, index) => ({ x: (index % 127 + 1) / 128, y: (Math.floor(index / 127) + 1) / 128 }));
   const picks = await enginePickDetails(page, samples);
   expect(picks.some(pick => pick.surface?.type === 13)).toBe(true);
   expect(picks.some(pick => pick.zone === destination.id && pick.surface?.type !== 13)).toBe(true);

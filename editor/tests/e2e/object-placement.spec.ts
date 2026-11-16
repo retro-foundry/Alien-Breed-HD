@@ -22,7 +22,7 @@ test('named palette searches, repeated clicks ignore existing markers, invalid p
   await clickMap(page, 20128, 20128); // Player marker must not intercept placement.
   await clickMap(page, 20128, 20128); // Existing object must not intercept either.
   await clickMap(page, 19984, 20128);
-  await expect(page.getByRole('alert')).toContainText('Click inside a room');
+  await expect(page.getByRole('alert')).toContainText('Click a floor inside a room');
   await page.getByRole('button', { name: 'Dismiss error' }).click();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await page.getByRole('button', { name: 'Redo', exact: true }).click();
