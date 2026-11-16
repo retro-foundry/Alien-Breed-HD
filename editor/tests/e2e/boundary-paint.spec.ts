@@ -49,7 +49,7 @@ for (const mode of ['authored lower', 'authored upper', 'repaired doorway'] as c
   const point = points[pickedIndex]!;
   const position = await enginePlayerState(page);
   const nativeClick = page.evaluate(() => new Promise(resolve => {
-    const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!;
+    const frame = window.document.querySelector<HTMLIFrameElement>('iframe[title="Alien Breed game engine"]')!;
     const receive = (event: MessageEvent) => { if (event.source === frame.contentWindow && event.origin === location.origin && event.data?.source === 'ab3d-engine' && event.data.type === 'pick') { window.removeEventListener('message', receive); resolve(event.data); } };
     window.addEventListener('message', receive);
   }));
