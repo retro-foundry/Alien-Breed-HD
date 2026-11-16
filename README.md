@@ -93,9 +93,11 @@ Floor column-fast rendering is enabled by default.
 
 ### DOS / 486
 
-The DOS build targets a 486 DX2/DX4, 4 MB RAM, VESA RGB565 video and
-Sound Blaster audio. The default RGB565 build renders at 320x240 and presents
-pixels 1:1 through SDL; the optional indexed build uses 320x200.
+The DOS build requires a 486, 4 MB RAM and VGA, with optional Sound Blaster
+audio. An FPU is optional; a DX2/DX4 is recommended for speed. `ABHD.BAT`
+prefers high-color VESA output (RGB565, RGB555 or RGB444) and automatically
+uses the bundled 320x200 indexed VGA renderer when high color is unavailable.
+The default high-color mode is 320x240 with 1:1 pixels.
 From PowerShell, with CMake, Ninja, Git, Python 3 and ffmpeg installed:
 
 ```powershell
