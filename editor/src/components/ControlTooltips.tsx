@@ -47,11 +47,15 @@ export function ControlTooltips() {
     document.addEventListener('pointerover', over); document.addEventListener('pointerout', leave);
     document.addEventListener('focusin', focus); document.addEventListener('focusout', leave);
     document.addEventListener('keydown', key); document.addEventListener('pointerdown', hide);
+    // Activation can focus another control after pointerdown (or come from
+    // Space/Enter). Dismiss its tip once the action has completed.
+    document.addEventListener('click', hide);
     window.addEventListener('scroll', reposition, true); window.addEventListener('resize', reposition);
     return () => {
       restore(); document.removeEventListener('pointerover', over); document.removeEventListener('pointerout', leave);
       document.removeEventListener('focusin', focus); document.removeEventListener('focusout', leave);
       document.removeEventListener('keydown', key); document.removeEventListener('pointerdown', hide);
+      document.removeEventListener('click', hide);
       window.removeEventListener('scroll', reposition, true); window.removeEventListener('resize', reposition);
     };
   }, [id]);

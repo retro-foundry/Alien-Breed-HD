@@ -3799,3 +3799,13 @@ new action search and direct playtest. The direct playtest queries the native
 engine's room brightness to prove that the last focused edit reached the game,
 and verifies that remounting inspection does not start another playtest.
 The native preview was rebuilt from current source before packaging.
+
+Published package verification for source f474d66 / website 1455ea0: Pages run
+43904071364 succeeded; all 80 public files match their staged/package SHA-256
+hashes. Chromium and Firefox both ran the published Playtest button with a
+fresh brightness edit confirmed in the native engine (19), rendered non-black
+pixels and returned to inspection without restarting or reporting page errors.
+The visual pass also found focused tooltips persisting after activation;
+tooltips now dismiss on click/keyboard activation while preserving hover and
+keyboard-focus descriptions. All 28 tooltip/control/usability browser checks
+pass in both browsers after that change.

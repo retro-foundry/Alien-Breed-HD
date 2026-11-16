@@ -1,5 +1,19 @@
 import { expect, test } from '@playwright/test';
 
+test('activating a control dismisses its tooltip while keyboard focus still explains the next control', async ({ page }) => {
+  await page.goto('/?view=top');
+  const row = page.getByRole('button', { name: /^Zone 003/ });
+  await row.hover();
+  await expect(page.getByRole('tooltip')).toContainText('Select zone 3');
+  await row.click();
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('tooltip')).toContainText('Select zone 4');
+  await page.keyboard.press('Space');
+  await expect(page.locator('.inspector-heading h2')).toHaveText('Zone 4');
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
+});
+
 test('tooltips explain actions on hover and keyboard focus; help works using the keyboard', async ({ page }) => {
   await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
