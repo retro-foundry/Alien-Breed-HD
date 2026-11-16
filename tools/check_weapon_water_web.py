@@ -65,7 +65,6 @@ const server=http.createServer((req,res)=>{
     console.log(result.lines.join('\n'));
     if(result.failure||errors.length)throw Error(JSON.stringify({failure:result.failure,errors}));
     if(!result.lines.some(v=>v.includes('GPU (GL_R16UI + shader)')))throw Error('WebGL unpack was not active');
-    await page.screenshot({path:path.join(folder,'underwater.png')});
   } finally {if(browser)await browser.close();server.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
 ''')

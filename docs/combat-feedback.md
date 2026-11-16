@@ -688,6 +688,13 @@ and OpenGL output, with CPU and GL weapons, and checks that HUD colors survive.
 capture in Chromium WebGL2. These checks and the existing waterline, weapon
 selection and tag regressions pass.
 
+`python tools/check_dos_weapon_water.py --build-dir <DOS build> --dosbox <exe>`
+loads the prepared release assets and samples actual weapon pixels in the
+authored water room. Native RGB565 and indexed VGA each pass 64 cases with
+4 MB RAM, covering both players, all six guns and underwater/surface/dry views.
+The indexed check compares the palette's original red-removal mapping rather
+than assuming every representative palette color has a zero red channel.
+
 The software display check also exposed a column-major upload writing 32-bit
 pixels into a 16-bit texture; it now transposes into 16-bit rows. Environment
 options are consumed before SDL's Windows environment buffer is reused, keeping
