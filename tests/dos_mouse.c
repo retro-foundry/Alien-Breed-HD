@@ -81,7 +81,7 @@ static void check_driver_buttons(SDL_Window *window)
 
 static void push_motion(float dx, float dy)
 {
-    SDL_Event event = {0};
+    Ab3dDosNativeEvent event = {0};
     event.type = SDL_MOUSEMOTION;
     event.motion.windowID = SDL_GetWindowID(SDL_GetKeyboardFocus());
     event.motion.xrel = dx;
@@ -91,7 +91,7 @@ static void push_motion(float dx, float dy)
 
 static void push_button(SDL_EventType type)
 {
-    SDL_Event event = {0};
+    Ab3dDosNativeEvent event = {0};
     event.type = type;
     event.button.windowID = SDL_GetWindowID(SDL_GetKeyboardFocus());
     event.button.button = SDL_BUTTON_LEFT;

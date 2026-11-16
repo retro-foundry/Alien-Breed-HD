@@ -61,6 +61,6 @@ void dos_ui_discard_canvas_readback(DosUiRenderer *r);
 #endif
 bool dos_ui_present(DosUiRenderer *r);
 SDL_Surface *dos_ui_readback(DosUiRenderer *r,const SDL_Rect *rect);
-int dos_ui_geometry(DosUiRenderer *r,DosUiImage *image,const SDL_Vertex *v,int count,const int *indices,int n);
+int dos_ui_solid_quad(DosUiRenderer *r,const int xy[4][2],Uint8 red,Uint8 green,Uint8 blue);
 
 #endif

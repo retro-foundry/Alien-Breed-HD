@@ -46,8 +46,8 @@
 #define LEVEL_TEXT_FADE_FRAME_MS     20
 #define LEVEL_TEXT_MIN_DISMISS_MS    750
 
-static void control_game_over_fade_tick(float progress_0_to_1, void *userdata);
-static void control_level_complete_fade_tick(float progress_0_to_1, void *userdata);
+static void control_game_over_fade_tick(AudioProgress progress_0_to_1, void *userdata);
+static void control_level_complete_fade_tick(AudioProgress progress_0_to_1, void *userdata);
 static bool s_autosave_next_level_start = false;
 static bool s_show_transition_level_text = false;
 static bool s_front_menu_requested = true;
@@ -746,30 +746,24 @@ void play_the_game(GameState *state)
 }
 #endif
 
-static void control_game_over_fade_tick(float progress_0_to_1, void *userdata)
+static void control_game_over_fade_tick(AudioProgress progress_0_to_1, void *userdata)
 {
     (void)userdata;
 
-    if (progress_0_to_1 < 0.0f) progress_0_to_1 = 0.0f;
-    if (progress_0_to_1 > 1.0f) progress_0_to_1 = 1.0f;
-
     /* Fade into a strong red tint while Game Over music plays. */
-    int alpha = (int)(progress_0_to_1 * 220.0f + 0.5f);
+    int alpha = audio_progress_alpha(progress_0_to_1,220);
     if (alpha < 0) alpha = 0;
     if (alpha > 255) alpha = 255;
     display_set_screen_tint(255, 0, 0, alpha);
     display_present_last_frame(NULL);
 }
 
-static void control_level_complete_fade_tick(float progress_0_to_1, void *userdata)
+static void control_level_complete_fade_tick(AudioProgress progress_0_to_1, void *userdata)
 {
     (void)userdata;
 
-    if (progress_0_to_1 < 0.0f) progress_0_to_1 = 0.0f;
-    if (progress_0_to_1 > 1.0f) progress_0_to_1 = 1.0f;
-
     /* Fade into bright white while level-complete music plays. */
-    int alpha = (int)(progress_0_to_1 * 220.0f + 0.5f);
+    int alpha = audio_progress_alpha(progress_0_to_1,220);
     if (alpha < 0) alpha = 0;
     if (alpha > 255) alpha = 255;
     display_set_screen_tint(255, 255, 255, alpha);
@@ -972,7 +966,7 @@ int play_game_outer_emscripten_begin(GameState *state)
             s_em_outer_br = EM_OUTER_BR_GAMEOVER;
             if (!audio_start_one_shot_module("sounds/mt/GameOver.mt"))
                 return 0;
-            control_game_over_fade_tick(0.0f, state);
+            control_game_over_fade_tick(AUDIO_PROGRESS_START, state);
             s_em_fade_t0 = SDL_GetTicks();
             return 1;
         }
@@ -984,7 +978,7 @@ int play_game_outer_emscripten_begin(GameState *state)
         s_em_outer_br = EM_OUTER_BR_ENDGAME;
         if (!audio_start_one_shot_module("sounds/mt/EndGame.mt"))
             return 0;
-        control_level_complete_fade_tick(0.0f, state);
+        control_level_complete_fade_tick(AUDIO_PROGRESS_START, state);
         s_em_fade_t0 = SDL_GetTicks();
         return 1;
     }
@@ -992,7 +986,7 @@ int play_game_outer_emscripten_begin(GameState *state)
     s_em_outer_br = EM_OUTER_BR_WELLDONE;
     if (!audio_start_one_shot_module("sounds/mt/WellDone.mt"))
         return 0;
-    control_level_complete_fade_tick(0.0f, state);
+    control_level_complete_fade_tick(AUDIO_PROGRESS_START, state);
     s_em_fade_t0 = SDL_GetTicks();
     return 1;
 }
@@ -1004,11 +998,11 @@ int play_game_outer_emscripten_fade_frame(GameState *state)
     if (elapsed >= duration_ms) {
         switch (s_em_outer_br) {
         case EM_OUTER_BR_GAMEOVER:
-            control_game_over_fade_tick(1.0f, state);
+            control_game_over_fade_tick(AUDIO_PROGRESS_END, state);
             break;
         case EM_OUTER_BR_ENDGAME:
         case EM_OUTER_BR_WELLDONE:
-            control_level_complete_fade_tick(1.0f, state);
+            control_level_complete_fade_tick(AUDIO_PROGRESS_END, state);
             break;
         default:
             break;
@@ -1017,11 +1011,11 @@ int play_game_outer_emscripten_fade_frame(GameState *state)
         /* Match desktop blocking tail: one more tick(1) after playback ends */
         switch (s_em_outer_br) {
         case EM_OUTER_BR_GAMEOVER:
-            control_game_over_fade_tick(1.0f, state);
+            control_game_over_fade_tick(AUDIO_PROGRESS_END, state);
             break;
         case EM_OUTER_BR_ENDGAME:
         case EM_OUTER_BR_WELLDONE:
-            control_level_complete_fade_tick(1.0f, state);
+            control_level_complete_fade_tick(AUDIO_PROGRESS_END, state);
             break;
         default:
             break;

@@ -50,6 +50,8 @@ void math_tables_init(void);
 int16_t math_angle_to_target(int32_t dx, int32_t dz);
 /* Truncated Euclidean length used by the PC enemy movement path. */
 int32_t math_distance_floor(int32_t dx, int32_t dz);
+/* Rounded panorama columns for the renderer's unchanged horizontal FOV. */
+int math_sky_view_columns(int left,int right,int focal,int pan_width);
 
 /*
  * Lookup sin/cos by 0..8191 angle index.

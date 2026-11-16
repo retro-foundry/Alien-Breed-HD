@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include "ui_dos.h"
 #include "video_dos.h"
+#include "float_dos.h"
 #define SDL_Renderer DosUiRenderer
 #define SDL_Texture DosUiImage
 
@@ -93,6 +94,26 @@ typedef struct {
   bool down;
   bool repeat;
 } Ab3dDosKeyboardEvent;
+typedef SDL_Event Ab3dDosNativeEvent;
+
+/* Keep the SDL2 integer transport expected by input.c. SDL3's float
+ * coordinates are decoded once at this platform boundary. */
+typedef struct {
+  SDL_EventType type;Uint32 reserved;Uint64 timestamp;
+  SDL_WindowID windowID;SDL_MouseID which;SDL_MouseButtonFlags state;
+  int x,y,xrel,yrel;
+} Ab3dDosMotionEvent;
+typedef struct {
+  SDL_EventType type;Uint32 reserved;Uint64 timestamp;
+  SDL_WindowID windowID;SDL_MouseID which;
+  Uint8 button;bool down;Uint8 clicks,padding;int x,y;
+} Ab3dDosButtonEvent;
+typedef struct {
+  SDL_EventType type;Uint32 reserved;Uint64 timestamp;
+  SDL_WindowID windowID;SDL_MouseID which;
+  int x,y;SDL_MouseWheelDirection direction;int mouse_x,mouse_y;
+  Sint32 integer_x,integer_y;
+} Ab3dDosWheelEvent;
 
 typedef union Ab3dDosEvent {
   SDL_EventType type;
@@ -102,9 +123,9 @@ typedef union Ab3dDosEvent {
   Ab3dDosKeyboardEvent key;
   SDL_TextEditingEvent edit;
   SDL_TextInputEvent text;
-  SDL_MouseMotionEvent motion;
-  SDL_MouseButtonEvent button;
-  SDL_MouseWheelEvent wheel;
+  Ab3dDosMotionEvent motion;
+  Ab3dDosButtonEvent button;
+  Ab3dDosWheelEvent wheel;
   SDL_JoyAxisEvent jaxis;
   SDL_JoyBallEvent jball;
   SDL_JoyHatEvent jhat;
@@ -133,6 +154,15 @@ static inline int Ab3dDos_PollEvent(Ab3dDosEvent *event) {
   }
   SDL_memset(event, 0, sizeof(*event));
   SDL_memcpy(event, &raw, sizeof(raw));
+  if(raw.type==SDL_EVENT_MOUSE_MOTION) {
+    event->motion.x=dos_float_to_i32(&raw.motion.x);event->motion.y=dos_float_to_i32(&raw.motion.y);
+    event->motion.xrel=dos_float_to_i32(&raw.motion.xrel);event->motion.yrel=dos_float_to_i32(&raw.motion.yrel);
+  } else if(raw.type==SDL_EVENT_MOUSE_WHEEL) {
+    event->wheel.x=dos_float_to_i32(&raw.wheel.x);event->wheel.y=dos_float_to_i32(&raw.wheel.y);
+    event->wheel.mouse_x=dos_float_to_i32(&raw.wheel.mouse_x);event->wheel.mouse_y=dos_float_to_i32(&raw.wheel.mouse_y);
+  } else if(raw.type==SDL_EVENT_MOUSE_BUTTON_DOWN || raw.type==SDL_EVENT_MOUSE_BUTTON_UP) {
+    event->button.x=dos_float_to_i32(&raw.button.x);event->button.y=dos_float_to_i32(&raw.button.y);
+  }
   if (raw.type == SDL_EVENT_KEY_DOWN || raw.type == SDL_EVENT_KEY_UP) {
     event->key.keysym.sym = raw.key.key;
     event->key.keysym.scancode = raw.key.scancode;
@@ -250,8 +280,8 @@ static inline int Ab3dDos_SetRenderDrawBlendMode(SDL_Renderer *r,SDL_BlendMode m
 }
 /* All surface drawing completes immediately; there is no queued work to flush. */
 static inline bool Ab3dDos_FlushRenderer(SDL_Renderer *r) { return r && r->surface; }
-static inline int Ab3dDos_RenderPoint(SDL_Renderer *r,float x,float y) {
-  SDL_Rect point={(int)x,(int)y,1,1};return dos_ui_fill(r,&point);
+static inline int Ab3dDos_RenderPoint(SDL_Renderer *r,int x,int y) {
+  SDL_Rect point={x,y,1,1};return dos_ui_fill(r,&point);
 }
 static inline bool Ab3dDos_GetRenderClipRect(SDL_Renderer *r,SDL_Rect *rect) {
   if(!r || !rect)return false;*rect=r->clipped?r->clip:(SDL_Rect){0,0,0,0};return true;
@@ -307,8 +337,8 @@ static inline Uint32 Ab3dDos_GetMouseState(int *x, int *y) {
   float fx = 0.0f;
   float fy = 0.0f;
   Uint32 buttons = SDL_GetMouseState(&fx, &fy);
-  if (x != NULL) *x = (int)fx;
-  if (y != NULL) *y = (int)fy;
+  if (x != NULL) *x = dos_float_to_i32(&fx);
+  if (y != NULL) *y = dos_float_to_i32(&fy);
   return buttons;
 }
 
@@ -468,7 +498,6 @@ static inline SDL_Texture *Ab3dDos_CreateTexture(SDL_Renderer *r,SDL_PixelFormat
 #define SDL_FlushRenderer Ab3dDos_FlushRenderer
 #define SDL_RenderPoint Ab3dDos_RenderPoint
 #define SDL_RenderReadPixels dos_ui_readback
-#define SDL_RenderGeometry dos_ui_geometry
 #define SDL_SetRenderClipRect dos_ui_clip
 #define SDL_GetRenderClipRect Ab3dDos_GetRenderClipRect
 #define SDL_RenderClipEnabled Ab3dDos_RenderClipEnabled

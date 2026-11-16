@@ -291,13 +291,13 @@ SDL_Surface *dos_ui_readback(DosUiRenderer *r,const SDL_Rect *rect)
     if(copy && !SDL_BlitSurface(r->surface,&a,copy,NULL)){SDL_DestroySurface(copy);return NULL;}return copy;
 }
 static int edge(int ax,int ay,int bx,int by,int x,int y){return (bx-ax)*(y-ay)-(by-ay)*(x-ax);}
-int dos_ui_geometry(DosUiRenderer *r,DosUiImage *image,const SDL_Vertex *v,int count,const int *indices,int n)
+int dos_ui_solid_quad(DosUiRenderer *r,const int xy[4][2],Uint8 red,Uint8 green,Uint8 blue)
 {
-    if(image || !indices || n%3){SDL_SetError("DOS map uses solid indexed triangles");return -1;}
+    const int indices[6]={0,1,2,0,2,3},n=6;
+    if(dos_ui_color(r,red,green,blue,255)<0)return -1;
     for(int i=0;i<n;i+=3){int ids[3]={indices[i],indices[i+1],indices[i+2]},x[3],y[3];
-        for(int j=0;j<3;j++){if(ids[j]<0 || ids[j]>=count)return -1;x[j]=(int)v[ids[j]].position.x*2;y[j]=(int)v[ids[j]].position.y*2;}
+        for(int j=0;j<3;j++){x[j]=xy[ids[j]][0]*2;y[j]=xy[ids[j]][1]*2;}
         if(edge(x[0],y[0],x[1],y[1],x[2],y[2])<0){int t=x[1];x[1]=x[2];x[2]=t;t=y[1];y[1]=y[2];y[2]=t;}
-        SDL_FColor c=v[ids[0]].color;if(dos_ui_color(r,c.r*255,c.g*255,c.b*255,255)<0)return -1;
         int minx=SDL_max(0,SDL_min(x[0],SDL_min(x[1],x[2]))/2),maxx=SDL_min(r->viewport.w-1,SDL_max(x[0],SDL_max(x[1],x[2]))/2);
         int miny=SDL_max(0,SDL_min(y[0],SDL_min(y[1],y[2]))/2),maxy=SDL_min(r->viewport.h-1,SDL_max(y[0],SDL_max(y[1],y[2]))/2);
         for(int py=miny;py<=maxy;py++)for(int px=minx;px<=maxx;px++){bool inside=true;

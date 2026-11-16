@@ -5701,14 +5701,7 @@ static void renderer_draw_sky_pass_rows(int16_t angpos, int16_t row_start, int16
         center_x != s_cached_sky_view_cols_center_x) {
         int left_px = center_x;
         int right_px = (w - 1) - center_x;
-        const double focal_px = (double)(64 * renderer_proj_x_scale_px());
-        const double hfov =
-            atan((double)left_px / focal_px) +
-            atan((double)right_px / focal_px);
-        double sky_cols_f = ((double)SKY_PAN_WIDTH * hfov) / (2.0 * 3.14159265358979323846);
-        sky_view_cols = (int)(sky_cols_f + 0.5);
-        if (sky_view_cols < 1) sky_view_cols = 1;
-        if (sky_view_cols > SKY_PAN_WIDTH) sky_view_cols = SKY_PAN_WIDTH;
+        sky_view_cols=math_sky_view_columns(left_px,right_px,64*renderer_proj_x_scale_px(),SKY_PAN_WIDTH);
         s_cached_sky_view_cols = sky_view_cols;
         s_cached_sky_view_cols_w = w;
         s_cached_sky_view_cols_h = h;
@@ -7951,14 +7944,7 @@ static void renderer_draw_sky_ceiling_span_ctx(RenderSliceContext *ctx,
             center_x != s_cached_sky_view_cols_center_x) {
             int left_px = center_x;
             int right_px = (w - 1) - center_x;
-            const double focal_px = (double)(64 * renderer_proj_x_scale_px());
-            const double hfov =
-                atan((double)left_px / focal_px) +
-                atan((double)right_px / focal_px);
-            double sky_cols_f = ((double)SKY_PAN_WIDTH * hfov) / (2.0 * 3.14159265358979323846);
-            sky_view_cols = (int)(sky_cols_f + 0.5);
-            if (sky_view_cols < 1) sky_view_cols = 1;
-            if (sky_view_cols > SKY_PAN_WIDTH) sky_view_cols = SKY_PAN_WIDTH;
+            sky_view_cols=math_sky_view_columns(left_px,right_px,64*renderer_proj_x_scale_px(),SKY_PAN_WIDTH);
             s_cached_sky_view_cols = sky_view_cols;
             s_cached_sky_view_cols_w = w;
             s_cached_sky_view_cols_h = h;

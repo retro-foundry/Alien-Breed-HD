@@ -3965,15 +3965,9 @@ static void display_automap_player_arrow_fill(int axb, int ayb, int axl, int ayl
                                               int axr, int ayr)
 {
 #ifdef AB3D_DOS
-    SDL_Vertex verts[4]={0};
     int dos_xy[4][2]={{axb,ayb},{axl,ayl},{axt,ayt},{axr,ayr}};
-    const int indices[6]={0,1,2,0,2,3};
-    for(int i=0;i<4;i++) {
-        verts[i].position=(SDL_FPoint){(float)dos_xy[i][0],(float)dos_xy[i][1]};
-        verts[i].color=(SDL_FColor){18/255.0f,60/255.0f,82/255.0f,1.0f};
-    }
     SDL_SetRenderDrawBlendMode(g_sdl_ren,SDL_BLENDMODE_NONE);
-    SDL_RenderGeometry(g_sdl_ren,NULL,verts,4,indices,6);
+    dos_ui_solid_quad(g_sdl_ren,dos_xy,18,60,82);
     return;
 #endif
     float xy[12] = {

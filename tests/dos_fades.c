@@ -41,16 +41,17 @@ int main(int argc,char **argv)
        fwrite(dos_index_to_c12,1,sizeof(dos_index_to_c12),palette)!=sizeof(dos_index_to_c12))return 4;
     if(fclose(palette))return 5;
 #endif
-    const float progress[]={0.0f,0.25f,0.5f,1.0f,0.5f};
+    const AudioProgress progress[]={AUDIO_PROGRESS_START,audio_progress_ratio(1,4),
+        audio_progress_ratio(1,2),AUDIO_PROGRESS_END,audio_progress_ratio(1,2)};
     const char *names[]={"WHITE0.BMP","WHITE1.BMP","WHITE2.BMP","WHITE3.BMP","WHITEREP.BMP"};
     for(unsigned i=0;i<sizeof(progress)/sizeof(progress[0]);i++) {
         control_level_complete_fade_tick(progress[i],&g_state);
         dos_capture_frame(names[i]);
         if(world_hash()!=hash)return 6;
     }
-    control_game_over_fade_tick(0.5f,&g_state);dos_capture_frame("REDMID.BMP");
-    control_game_over_fade_tick(1.0f,&g_state);dos_capture_frame("REDEND.BMP");
-    control_level_complete_fade_tick(1.0f,&g_state);dos_capture_frame("WHITEEND.BMP");
+    control_game_over_fade_tick(audio_progress_ratio(1,2),&g_state);dos_capture_frame("REDMID.BMP");
+    control_game_over_fade_tick(AUDIO_PROGRESS_END,&g_state);dos_capture_frame("REDEND.BMP");
+    control_level_complete_fade_tick(AUDIO_PROGRESS_END,&g_state);dos_capture_frame("WHITEEND.BMP");
     display_clear_screen_tint();
     display_present_last_frame(NULL);dos_capture_frame("WHITECLR.BMP");
     if(world_hash()!=hash)return 7;

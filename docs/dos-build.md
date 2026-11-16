@@ -106,7 +106,7 @@ Previous artifacts and detailed hashes are under
 
 ### Optional hardware FPU
 
-The next integer-math pass replaces the remaining PC enemy `atan2` and
+The further integer-math pass replaces the remaining PC enemy `atan2` and
 Euclidean-distance calculations in DOS. `math_angle_to_target` retains the
 existing even-angle truncation and the original port's `3.14159265` scale;
 integer vector rotation uses generated constants rather than substituting
@@ -121,10 +121,23 @@ all three valid passes already return through `ObjectMove.s`'s integer
 Removing that branch changes no collision rule. The frozen movement oracle
 passes 8,384 complete scans and sixteen scan-boundary cases byte for byte.
 
+Sky field-of-view setup, music-fade progress and the DOS automap arrow now
+also use integers. Fade phases retain DJGPP's existing binary32 rounding:
+107,714 music positions produce identical phases and tint strengths. The
+sky oracle checks 8,720 projection/centering cases. SDL3 mouse coordinates
+are decoded from binary32 at the DOS transport boundary without x87
+conversions; 100,000 bit-pattern cases and the actual mouse/INI checks pass.
+
+This removes floating-point computation from the normal game-owned paths;
+it does not make SDL3 or the DJGPP C runtime integer-only. SDL still exposes
+floating-point window/mouse interfaces, and optional detailed renderer reports
+retain floating-point formatting. Both DOS executables keep `libemu` for
+those library/diagnostic calls. Hardware with no FPU remains supported.
+
 The DOS executable includes DJGPP `libemu`, activated automatically when no
-coprocessor is detected. A 486SX needs no separate emulator file. Shared
-collision/AI and library floating-point operations retain their existing
-formulae and execute in software. Desktop arithmetic is unchanged.
+coprocessor is detected. A 486SX needs no separate emulator file. Remaining
+library and diagnostic floating-point operations execute in software.
+Desktop arithmetic is unchanged.
 
 The frequent DOS rendering paths use integers: interpolation, sprite-zone
 clipping and vector-object triangle sampling. Sine tables and audio filter

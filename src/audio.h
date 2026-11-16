@@ -7,6 +7,7 @@
 
 #ifndef AUDIO_H
 #define AUDIO_H
+#include "audio_progress.h"
 
 /* Lifecycle */
 void audio_init(void);
@@ -17,7 +18,7 @@ void audio_set_master_volume(int volume_0_to_100);
 void audio_set_underwater(int underwater);
 
 /* Music (tracker module rendered to WAV) */
-typedef void (*audio_blocking_tick_fn)(float progress_0_to_1, void *userdata);
+typedef void (*audio_blocking_tick_fn)(AudioProgress progress_0_to_1, void *userdata);
 
 void audio_init_player(void);
 void audio_stop_player(void);

@@ -3,6 +3,7 @@
 #include "math_tables_dos.h"
 #include "audio.h"
 #include "renderer_fixed.h"
+#include "platform/dos/float_dos.h"
 #include <assert.h>
 #include <limits.h>
 #include <math.h>
@@ -19,6 +20,19 @@
 
 static unsigned checked, exact_boundary_differences;
 static unsigned angle_cases,distance_cases;
+static unsigned progress_cases,float_cases;
+static unsigned sky_cases;
+
+static void check_progress(uint32_t position,uint32_t length)
+{
+    volatile float phase=length?(float)position/(float)length:1.0f;
+    if(phase>1.0f)phase=1.0f;
+    AudioProgress actual=audio_progress_ratio(position,length);
+    uint32_t expected=phase>=1.0f?UINT32_MAX:(uint32_t)((double)phase*4294967296.0);
+    if(actual!=expected)printf("progress %lu/%lu expected=%lu actual=%lu\n",(unsigned long)position,(unsigned long)length,(unsigned long)expected,(unsigned long)actual);
+    assert(actual==expected);
+    assert(audio_progress_alpha(actual,220)==(int)(phase*220.0f+0.5f));progress_cases++;
+}
 
 static void check_direction(int32_t dx,int32_t dz)
 {
@@ -60,6 +74,23 @@ static void check_volume(int volume, int dx, int dz)
 int main(void)
 {
     math_tables_init();
+    for(int width=96;width<=640;width++)for(int scale=1;scale<=8;scale++)
+        for(int centered=0;centered<2;centered++) {
+            int left=centered?width/2:width*47/96,right=width-1-left;
+            double fov=atan((double)left/(64*scale))+atan((double)right/(64*scale));
+            int expected=(int)(432.0*fov/(2.0*3.14159265358979323846)+0.5);
+            if(expected<1)expected=1;
+            assert(math_sky_view_columns(left,right,64*scale,432)==expected);sky_cases++;
+        }
+    const uint32_t lengths[]={0,1,20,44100,1000000,16777217,UINT32_MAX};
+    for(unsigned l=0;l<sizeof(lengths)/sizeof(*lengths);l++) {
+        uint32_t length=lengths[l];
+        for(unsigned alpha=0;alpha<220;alpha++) {
+            uint32_t middle=(uint32_t)((uint64_t)length*(alpha*2+1)/440);
+            for(int delta=-2;delta<=2;delta++)check_progress(middle+delta,length);
+        }
+        check_progress(0,length);check_progress(length,length);
+    }
     for(unsigned ms=0;ms<20;ms++) {
         volatile float alpha=(float)ms/20.0f; /* GameState stores binary32. */
         assert(interpolation_phase[ms]==(uint32_t)((double)alpha*4294967296.0));
@@ -103,6 +134,10 @@ int main(void)
         seed=seed*1664525u+1013904223u;int32_t x=(int)(seed%131071)-65535;
         seed=seed*1664525u+1013904223u;int32_t z=(int)(seed%131071)-65535;
         check_direction(x,z);
+        check_progress(seed,seed^UINT32_C(0x9e3781a2));
+        uint32_t bits=seed;volatile float input;memcpy((void *)&input,&bits,sizeof(bits));
+        int32_t expected=(int32_t)input;
+        assert(dos_float_to_i32((const float *)&input)==expected);float_cases++;
     }
     /* Challenge each truncation threshold from both sides at real word
      * coordinate scales, rather than comparing only arbitrary angles. */
@@ -114,6 +149,8 @@ int main(void)
         for(int delta=-1;delta<=1;delta++){check_direction(x+delta,z);check_direction(x,z+delta);}
     }
     printf("DOS integer directions: %u angle and %u distance cases passed\n",angle_cases,distance_cases);
+    printf("DOS integer transport: %u fade phases and %u binary32 input cases passed\n",progress_cases,float_cases);
+    printf("DOS integer sky: %u projection/FOV cases passed\n",sky_cases);
     printf("DOS maths: 4096 sine values, 8192 lookups, filter coefficients, %u distance gains passed (%u exact integer boundaries)\n",
            checked,exact_boundary_differences);
     return 0;

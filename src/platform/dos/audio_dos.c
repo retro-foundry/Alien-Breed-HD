@@ -263,10 +263,10 @@ void audio_play_module_blocking_once_with_tick(const char *file,audio_blocking_t
     audio_init_module();music_loop=0;music_playing=1;
     while(music_playing) {
         audio_dos_pump();
-        if(tick)tick(music_length?(float)music_pos/music_length:1.0f,arg);
+        if(tick)tick(audio_progress_ratio(music_pos,music_length),arg);
         SDL_PumpEvents();SDL_Delay(10);
     }
-    if(tick)tick(1.0f,arg);
+    if(tick)tick(AUDIO_PROGRESS_END,arg);
 }
 void audio_play_module_blocking_once(const char *f) { audio_play_module_blocking_once_with_tick(f,NULL,NULL); }
 void audio_mt_init(void) { audio_unload_module(); }
