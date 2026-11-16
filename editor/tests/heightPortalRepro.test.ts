@@ -29,14 +29,12 @@ it('the reported -40 ceiling / 240 floor compiles, saves and undoes without repa
  expect(saved.roomAppearances).toBeUndefined();for(const key of ['data','graphics','clips'] as const)expect(createHash('sha256').update(history.document.files[key]).digest('hex')).toBe(createHash('sha256').update(document.files[key]).digest('hex'));
  history=undo(history);expect(history.document.roomSource).toBe(document.roomSource);history=redo(history);expect(texturedEditorScene(history.document).faces.length).toBeGreaterThan(0);
 });
-it('an imported portal room in every original level can change ceiling without losing its material mesh',()=>{
- for(let level=1;level<=16;level++){
+for(let level=1;level<=16;level++) it(`an imported portal room in original level ${level} can change ceiling without losing its material mesh`,()=>{
   const document=openLevel(`L${level}`,originalFiles(level));
   const room=document.roomSource.rooms.find(r=>{const s=roomSettings(document,r);return s.floor-s.ceiling>8 && s.lower.some(g=>g.wall) && !mechanismsForRoom(document,r.recordZone).length && s.boundaryIds.some(id=>document.lines[id]!.connect>=0);})!;
   expect(room).toBeDefined();const settings=roomSettings(document,room);
   const changed=applyCommand(document,spatialEdit(document,{kind:'height',room:room.id,field:'ceiling',value:settings.ceiling+4}));
   try{expect(texturedEditorScene(changed).faces.length,`level ${level}`).toBeGreaterThan(0);}catch(error){throw new Error(`Level ${level}: ${String(error)}`);}
- }
 });
 
 it('height-generated bands expose their real material to the picker without a repair appearance',()=>{
