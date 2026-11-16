@@ -31,6 +31,7 @@ import { MechanismRulesInspector } from './MechanismRulesInspector';
 import { CopiedMechanismInspector } from './CopiedMechanismInspector';
 import { CopyMechanismSettings } from './MechanismTransfers';
 import { SwitchesInspector } from './SwitchesInspector';
+import type { RoomSetupKind, RoomSetupRequest } from './RoomSetupRequest';
 import { mechanismsForRoom } from '../model/mechanismDependencies';
 import { ObjectTypeInspector } from './ObjectTypeInspector';
 import { objectTemplates } from '../model/objectAuthoring';
@@ -54,7 +55,8 @@ function SourceStartForm({ document, player, edit }: { document: LevelDocument; 
     onApply={(room, x, z) => edit(() => setSourceStart(document, player, room, x, z))} />;
 }
 
-export function Inspector({ document, selection, edit, sourceRoom, onObjectDuplicate, onRoomCorner, onRoomCornerInsert, onRoomCornerRemove, onRoomRedraw, onRoomDelete, onShowDestination, onInspectRoom, onViewRoomSide, onPaintRoomTextures, onFindRoom, onHelp }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
+export function Inspector({ document, selection, edit, sourceRoom, setupRequest, onSetup, onObjectDuplicate, onRoomCorner, onRoomCornerInsert, onRoomCornerRemove, onRoomRedraw, onRoomDelete, onShowDestination, onInspectRoom, onViewRoomSide, onPaintRoomTextures, onFindRoom, onHelp }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
+  setupRequest?: RoomSetupRequest; onSetup: (kind: RoomSetupKind) => void;
   onFindRoom: () => void; onHelp: () => void;
   onObjectDuplicate: () => void; onViewRoomSide: () => void; onPaintRoomTextures: () => void;
   sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomCornerInsert: (index: number) => void; onRoomCornerRemove: (index: number) => void; onRoomRedraw: () => void; onRoomDelete: () => void; onShowDestination: (room: string) => void; onInspectRoom: (room: string) => void }) {
@@ -81,7 +83,12 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
   return <aside className="inspector">
     <div className="panel-title">INSPECTOR <span className="eyebrow">{selection?.kind.toUpperCase() ?? 'ROOM'}</span></div>
     <div className="inspector-heading"><span className="selection-symbol"><Icon name={zone || sourceRoom ? 'layers' : start ? 'pin' : 'object'} size={24} /></span><div><h2>{title}</h2><span className="muted">{zone ? `${zone.boundaryIds.length} edges · ${dimensions!.upper.length > 0 && dimensions!.upperFloor > dimensions!.upperCeiling ? 'two storeys' : 'one storey'}` : object ? `Object ${object.id} · ${object.room === null ? 'Deleted' : object.room ? `Room ${object.room.replace(/^room-/, '')}` : `Zone ${object.zone}`}` : sourceRoom ? 'Editable room outline' : 'Level spawn point'}</span></div></div>
-    <InspectorSections key={sourceRoom?.id ?? `${selection?.kind}:${selection?.id}`}>
+    {sourceRoom && <div className="room-setup-tools" role="group" aria-label="Create in this room"><span>Create in this room</span><div>
+      <button type="button" aria-label="Set up door" onClick={() => onSetup('door')}>Door</button>
+      <button type="button" aria-label="Set up lift" onClick={() => onSetup('lift')}>Lift</button>
+      <button type="button" aria-label="Set up switch" onClick={() => onSetup('switch')}>Switch</button>
+    </div></div>}
+    <InspectorSections key={sourceRoom?.id ?? `${selection?.kind}:${selection?.id}`} revealRequest={setupRequest?.sequence}>
       {(zone || sourceRoom) && <p className="field-note">A zone is a map area with its own heights and settings. It can be a whole room, a corridor, or part of a larger room, such as a step. One visible room can contain several zones.</p>}
       {sourceRoom && <RoomSurfaceInspector key={`surfaces:${sourceRoom.id}`} document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onInsertCorner={onRoomCornerInsert} onRemoveCorner={onRoomCornerRemove} onRedraw={onRoomRedraw} onDelete={onRoomDelete} />}
@@ -91,9 +98,9 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
       {sourceRoom && <RoomAppearanceInspector document={document} room={sourceRoom} edit={edit} onPaintTextures={onPaintRoomTextures} />}
       {sourceRoom && <RoomHeightInspector document={document} room={sourceRoom} edit={edit} onViewSide={onViewRoomSide} />}
       {sourceRoom && <WaterInspector key={`water:${sourceRoom.id}`} document={document} room={sourceRoom} edit={edit} onInspect={onInspectRoom} />}
-      {sourceRoom && <AuthoredMechanismInspector document={document} room={sourceRoom} edit={edit} onShowRoom={onInspectRoom} />}
+      {sourceRoom && <AuthoredMechanismInspector document={document} room={sourceRoom} edit={edit} onShowRoom={onInspectRoom} request={setupRequest} onStart={onSetup} />}
       {sourceRoom && <CopiedMechanismInspector document={document} room={sourceRoom} edit={edit} onShowRoom={onInspectRoom} />}
-      <SwitchesInspector document={document} room={sourceRoom} zone={zone?.id} edit={edit} frameRoom={onShowDestination} />
+      <SwitchesInspector document={document} room={sourceRoom} zone={zone?.id} edit={edit} frameRoom={onShowDestination} request={setupRequest} />
       {sourceRoom && (!zone || sourceRoom.properties) && <RoomPropertiesInspector document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && (!zone || !sourceMatchesLevel(document)) && <TeleportInspector document={document} room={sourceRoom} edit={edit} onShowDestination={onShowDestination} />}
       {zone && <>

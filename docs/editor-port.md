@@ -3927,3 +3927,18 @@ bounds, Ctrl/Command action search and playtest, restored canvas focus, native
 brightness 19 after a focused edit and 2,066,084 rendered pixels, without page
 errors. Older versioned assets and all five pre-existing untracked website
 files remain in place. The complete AMOS port requirements above stay open.
+
+### Door, lift and switch setup usability
+
+Single-room selection now exposes Door, Lift and Switch setup at the top of
+the inspector, with equivalent searchable actions. A setup request clears an
+inspector filter, reveals its form and focuses the first relevant field.
+Mechanism forms explain movement, activation and appearance in numbered steps;
+lift landing choices use actual neighbouring floor heights rather than invented
+travel distances. Door starting poses and native rules remain unchanged. Wall
+switch setup chooses an unused native number and focuses wall selection.
+
+The first batch passes 38 Chromium/Firefox checks, including original and new
+door/lift creation, native movement and wall synchronization, switch activation,
+Undo, cancellation, project reopening, filtered inspector navigation and the
+general usability flows. No native game or file-format changes are involved.

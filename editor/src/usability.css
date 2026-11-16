@@ -1,3 +1,10 @@
+.room-setup-tools { flex-shrink: 0; padding: 8px 16px; border-bottom: 1px solid #343c46; }
+.room-setup-tools > span { display: block; font-size: 10px; color: #9dadb8; margin-bottom: 5px; }
+.room-setup-tools > div { display: flex; gap: 6px; }
+.room-setup-tools button { flex: 1; font-size: 11px; padding: 6px; border-color: #465244; color: #c8e1aa; background: #b2de7a0a; }
+.setup-step { margin: 18px 0 8px; font-size: 12px; color: #c8e1aa; }
+.setup-summary { margin: 10px 0; padding: 8px; border-left: 2px solid #8ba56b; color: #bbcdad; background: #b2de7a0a; font-size: 11px; line-height: 1.6; }
+.landing-choices select { max-width: 155px; }
 /* Editing actions wrap into view instead of disappearing off the toolbar. */
 .map-toolbar {
   height: auto;

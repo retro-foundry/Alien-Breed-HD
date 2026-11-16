@@ -17,6 +17,7 @@ import { SpatialViewport } from './components/SpatialViewport';
 import { editingViews, type EditingView } from './model/editorCamera';
 import { MapCanvas, type Selection } from './components/MapCanvas';
 import { Inspector } from './components/Inspector';
+import type { RoomSetupKind, RoomSetupRequest } from './components/RoomSetupRequest';
 import { ObjectGroupInspector } from './components/ObjectGroupInspector';
 import { RoomGroupInspector } from './components/RoomGroupInspector';
 import { StairBuilder } from './components/StairBuilder';
@@ -104,6 +105,8 @@ export function App() {
   const [editingView, setEditingView] = useState<EditingView>(() => { const requested = new URLSearchParams(location.search).get('view'); return editingViews.find(view => view.id === requested)?.id ?? 'perspective'; });
   const [view, setView] = useState<'map' | 'split' | 'engine'>('map');
   const [actionSearchOpen, setActionSearchOpen] = useState(false);
+  const [setupRequest, setSetupRequest] = useState<RoomSetupRequest>();
+  const setupSequence = useRef(0);
   const [playRequest, setPlayRequest] = useState<{ workspace: string; sequence: number }>();
   const playSequence = useRef(0);
   useEffect(() => { if (view === 'map') setPlayRequest(undefined); }, [view]);
@@ -117,6 +120,7 @@ export function App() {
   const unbuiltRooms = useMemo(() => document ? !sourceMatchesLevel(document) : false, [document]);
   const selectedRooms = useMemo(() => selectedRoomId ? document?.roomSource.rooms.filter(room => roomIds.includes(room.id)) ?? [] : [], [document?.roomSource, roomIds, selectedRoomId]);
   const selectedRoom = selectedRooms.length > 1 ? undefined : document?.roomSource.rooms.find(room => selectedRoomId ? room.id === selectedRoomId : selection?.kind === 'zone' && room.originZone === selection.id);
+  useEffect(() => { setSetupRequest(undefined); }, [selectedRoom?.id]);
   const template = selectedRoom?.recordZone ?? (document?.zones.some(zone => zone.id === roomTemplate) ? roomTemplate : document?.zones[0]?.id);
   useEffect(() => { if (selectedRoom) setRoomTemplate(selectedRoom.recordZone); }, [selectedRoom?.recordZone]);
   const select = useCallback((value: Selection) => { setObjectIds([]); setRoomIds([]); setSelection(value); setSelectedRoomId(null); }, []);
@@ -555,7 +559,15 @@ export function App() {
     setStatus('Click a wall, floor or ceiling in the textured 3D editor, then choose Paint this wall or Paint this surface.');
   };
   const unavailable = !document || !!busy;
+  const openRoomSetup = (kind: RoomSetupKind) => {
+    if (!selectedRoom || unavailable || selectedRooms.length > 1) return;
+    setTool('select'); setRoomDraft(null);
+    setSetupRequest({ room: selectedRoom.id, kind, sequence: ++setupSequence.current });
+  };
   const actions: EditorAction[] = [
+    ...(['door', 'lift', 'switch'] as const).map(kind => ({ id: `create-${kind}`, label: `Create ${kind === 'switch' ? 'wall switch' : kind}`,
+      description: selectedRoom ? `Set up ${kind === 'switch' ? 'a wall switch' : `a ${kind}`} in the selected room.` : 'Select one room first, then open its setup.',
+      keywords: 'make add movement mechanism trigger button panel', disabled: unavailable || !selectedRoom || selectedRooms.length > 1, run: () => openRoomSetup(kind) })),
     { id: 'draw', label: 'Draw room', description: 'Draw an outline in Top view; Enter finishes, Escape cancels.', keywords: 'create add polygon geometry', disabled: unavailable || template === undefined, run: beginRoom },
     { id: 'object', label: 'Add object', description: 'Choose an enemy, pickup or scenery, then click a floor to place it.', keywords: 'create monster health gun key', disabled: unavailable, run: addObject },
     { id: 'stairs', label: 'Build stairs', description: 'Create a flight of steps from endpoints and heights.', keywords: 'create staircase', disabled: unavailable || template === undefined, run: buildStairs },
@@ -660,7 +672,7 @@ export function App() {
             setRoomIds(proposal.ids); setSelectedRoomId(proposal.ids.at(-1)!); setFrameSelection(value => value + 1); }} />}
         {objectOpen && document && <ObjectPalette onCancel={() => setObjectOpen(false)} onChoose={choice => { setObjectPlacement(choice); setObjectOpen(false); setTool('object'); setShowObjects(true); setView(current => current === 'engine' ? 'map' : current); }} />}
       </main>
-      {document && (selectedRooms.length > 1 ? <RoomGroupInspector rooms={selectedRooms} frame={frameCurrent} clear={() => select(null)} remove={deleteRoomGroup} move={(x, z) => { if (x !== 0 || z !== 0) edit(() => moveRoomGroup(document, selectedRooms.map(room => room.id), x, z)); }} /> : groupIds.length > 1 ? <ObjectGroupInspector document={document} ids={groupIds} edit={edit} frame={frameCurrent} duplicate={duplicateGroup} clear={() => select(null)} /> : <Inspector onFindRoom={findRooms} onHelp={() => setHelp(true)} document={document} selection={selection} edit={edit} sourceRoom={selectedRoom} onPaintRoomTextures={paintRoomTextures} onViewRoomSide={() => { if (!selectedRoom) return; setEditingView('front'); setView('map'); setFocusRoom(current => ({ id: selectedRoom.id, request: (current?.request ?? 0) + 1, frame: true })); }} onObjectDuplicate={duplicateObject} onRoomCorner={editRoomCorner} onRoomCornerInsert={insertRoomCorner} onRoomCornerRemove={removeRoomCorner} onRoomRedraw={redrawRoom} onRoomDelete={deleteRoom} onInspectRoom={id => { const target = document.roomSource.rooms.find(room => room.id === id); if (!target) return; if (target.originZone !== null) select({ kind: 'zone', id: target.originZone }); else selectRoom(id); setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1, frame: true })); setView('map'); }} onShowDestination={id => { setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1, frame: true })); setView('map'); }} />)}
+      {document && (selectedRooms.length > 1 ? <RoomGroupInspector rooms={selectedRooms} frame={frameCurrent} clear={() => select(null)} remove={deleteRoomGroup} move={(x, z) => { if (x !== 0 || z !== 0) edit(() => moveRoomGroup(document, selectedRooms.map(room => room.id), x, z)); }} /> : groupIds.length > 1 ? <ObjectGroupInspector document={document} ids={groupIds} edit={edit} frame={frameCurrent} duplicate={duplicateGroup} clear={() => select(null)} /> : <Inspector setupRequest={setupRequest?.room === selectedRoom?.id ? setupRequest : undefined} onSetup={openRoomSetup} onFindRoom={findRooms} onHelp={() => setHelp(true)} document={document} selection={selection} edit={edit} sourceRoom={selectedRoom} onPaintRoomTextures={paintRoomTextures} onViewRoomSide={() => { if (!selectedRoom) return; setEditingView('front'); setView('map'); setFocusRoom(current => ({ id: selectedRoom.id, request: (current?.request ?? 0) + 1, frame: true })); }} onObjectDuplicate={duplicateObject} onRoomCorner={editRoomCorner} onRoomCornerInsert={insertRoomCorner} onRoomCornerRemove={removeRoomCorner} onRoomRedraw={redrawRoom} onRoomDelete={deleteRoom} onInspectRoom={id => { const target = document.roomSource.rooms.find(room => room.id === id); if (!target) return; if (target.originZone !== null) select({ kind: 'zone', id: target.originZone }); else selectRoom(id); setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1, frame: true })); setView('map'); }} onShowDestination={id => { setFocusRoom(current => ({ id, request: (current?.request ?? 0) + 1, frame: true })); setView('map'); }} />)}
     </div>
     <footer className="statusbar"><span className="status-dot" /><span>{autosave}</span><span className="status-message" aria-live="polite">{status || 'Choose a zone to start editing'}</span><span>X <strong>{Math.round(cursor.x)}</strong></span><span>Z <strong>{Math.round(cursor.z)}</strong></span><span className="status-size">{document?.points.length ?? 0} points · {document?.zones.length ?? 0} zones</span></footer>
     {actionSearchOpen && <ActionSearch actions={actions} onClose={() => setActionSearchOpen(false)} onChoose={action => { flushSync(() => setActionSearchOpen(false)); action.run(); }} />}

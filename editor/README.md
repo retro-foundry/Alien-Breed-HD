@@ -78,6 +78,15 @@ returns to inspection. Returning to Engine view later does not restart play.
 While drawing, **Undo corner** removes the last draft point without changing
 the level history. Enter finishes the room; Escape or changing tools cancels.
 
+To make a door, lift or switch, select one room and use **Create in this room**
+at the top of the inspector. **Find action** also offers Create door, Create
+lift and Create wall switch. Setup clears an inspector filter and reveals the
+right form. Doors and lifts explain movement, activation and appearance in
+three steps. A lift can use a neighbouring room's floor for either stop;
+smaller height values are higher. Switch setup selects an unused number and
+focuses the wall choice. Setup is a draft until Apply/Add; Cancel and Escape
+keep the saved room unchanged.
+
 ## Editing views
 
 **Editor view** opens in editable **3D perspective**. Perspective and 3D

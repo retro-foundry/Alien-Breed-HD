@@ -9,12 +9,13 @@ function propertyText(element: Element) {
 }
 
 /** Keep property forms mounted while finding and revealing their settings. */
-export function InspectorSections({ children }: { children: ReactNode }) {
+export function InspectorSections({ children, revealRequest }: { children: ReactNode; revealRequest?: number }) {
   const content = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const [sections, setSections] = useState<Section[]>([]);
   const needle = query.trim().toLocaleLowerCase();
+  useLayoutEffect(() => { if (revealRequest !== undefined) setQuery(''); }, [revealRequest]);
   useLayoutEffect(() => {
     const root = content.current!;
     const collect = () => {

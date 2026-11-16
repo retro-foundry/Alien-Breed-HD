@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { RoomSetupRequest } from './RoomSetupRequest';
 import type { LevelDocument } from '../model/level';
 import type { SourceRoom } from '../model/roomSource';
 import type { EditCommand } from '../model/commands';
@@ -47,9 +48,22 @@ function SwitchPlacement({ document, slot, room, kind, edit }: {
   </>;
 }
 
-function AuthorSwitches({ document, room, edit }: { document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void }) {
-  const [slot, setSlot] = useState(''), [edge, setEdge] = useState(''), [error, setError] = useState('');
+function AuthorSwitches({ document, room, edit, request }: { document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void; request?: RoomSetupRequest }) {
   const free = availableSwitchSlots(document);
+  const [slot, setSlot] = useState(() => String(free[0] ?? '')), [edge, setEdge] = useState(''), [error, setError] = useState('');
+  const details = useRef<HTMLDetailsElement>(null);
+  useEffect(() => { if (slot === '' || !free.includes(Number(slot))) setSlot(String(free[0] ?? '')); }, [free.join(',')]);
+  useEffect(() => {
+    if (request?.room !== room.id || request.kind !== 'switch' || !details.current) return;
+    // Reveal after the inspector has cleared its filter and restored sections.
+    const frame = window.requestAnimationFrame(() => {
+      if (!details.current) return;
+      details.current.open = true;
+      details.current.scrollIntoView({ block: 'start' });
+      details.current.querySelector<HTMLSelectElement>('[aria-label="New switch wall"]')?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [request?.sequence]);
   const change = (number: number, value: { edge: number; automatic: boolean } | null) => {
     try {
       const command = editRoomSource(setSourceSwitch(document, room.id, number, value));
@@ -68,7 +82,7 @@ function AuthorSwitches({ document, room, edit }: { document: LevelDocument; roo
   const left = Math.min(...room.vertices.map(point => point.x)), top = Math.min(...room.vertices.map(point => point.z));
   const scale = 160 / Math.max(1, Math.max(...room.vertices.map(point => point.x)) - left, Math.max(...room.vertices.map(point => point.z)) - top);
   const diagram = room.vertices.map(point => ({ x: 30 + (point.x - left) * scale, y: 30 + (point.z - top) * scale }));
-  return <section className="property-section" aria-label="Wall switches"><details><summary>Wall switches</summary>
+  return <section className="property-section" aria-label="Wall switches"><details ref={details}><summary>Wall switches</summary>
     <p className="field-note">Add a switch to a solid lower-storey wall. Its panel appears at the wall centre, 32 to 64 units above the floor. Stand nearby and press Space in Build &amp; play.</p>
     <p className="field-note">To make it open a door or operate a lift, select the same switch number under that mechanism’s Requires all selected. The level has eight switch numbers.</p>
     <svg viewBox="0 0 220 220" width="100%" style={{ maxHeight: 220 }} aria-label="Numbered switch wall edges">
@@ -120,12 +134,13 @@ function ResetControl({ enabled, prefix, change }: { enabled: boolean; prefix: s
   </label>;
 }
 
-export function SwitchesInspector({ document, room, zone, edit, frameRoom }: {
+export function SwitchesInspector({ document, room, zone, edit, frameRoom, request }: {
   document: LevelDocument; room?: SourceRoom; zone?: number;
+  request?: RoomSetupRequest;
   edit: (command: EditCommand | (() => EditCommand)) => void; frameRoom: (room: string) => void;
 }) {
   return <>
-    {room && <AuthorSwitches key={room.id} document={document} room={room} edit={edit} />}
+    {room && <AuthorSwitches key={room.id} document={document} room={room} edit={edit} request={request} />}
     {activeNativeSwitches(document).filter(item => item.zone === zone).map(item => <section className="property-section" key={`original-${item.id}`} aria-label={`Switch ${item.id + 1}`}>
       <h3>Switch {item.id + 1}</h3>
       <ResetControl enabled={item.type !== 0} prefix={`switch ${item.id + 1}`} change={enabled => edit(() => setSwitchAutomaticReset(document, item.id, enabled))} />
