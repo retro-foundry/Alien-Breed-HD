@@ -31,6 +31,12 @@ if ($ProfileGuided) {
   python (Join-Path $repo 'tools/profile_dos.py') --build-dir $build --dosbox $DosBox
   Check 'DOS compiler feedback and validation'
 }
+if (!$Indexed) {
+  # A separate executable keeps the indexed renderer out of the native image's
+  # 4 MB runtime budget. Only fourteen wall cache files differ between them.
+  & $PSCommandPath -BuildDir "$BuildDir/indexed" -Indexed
+  $assetArgs += @('--vga-build-dir', "$build/indexed")
+}
 python (Join-Path $repo 'tools/package_dos.py') @assetArgs --archive
 Check 'DOS distribution archive'
 Write-Output "Built $build/game/ABHD.EXE"

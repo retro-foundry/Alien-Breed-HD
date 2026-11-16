@@ -1,7 +1,7 @@
 # DOS / 486 build
 
-Target: 486 (DX2/DX4 recommended), optional x87 FPU, 4 MB RAM, DOS 5+, VESA RGB565 video and
-Sound Blaster audio. A VBE 2 BIOS or UNIVBE is recommended. The build was
+Target: 486 (DX2/DX4 recommended), optional x87 FPU, 4 MB RAM, DOS 5+, VGA and
+Sound Blaster audio. High-color VESA is preferred when available. The build was
 validated in DOSBox Staging 0.82.2 with `core=normal`, `cputype=486_slow`,
 `machine=svga_s3`, 4 MB RAM and fixed CPU cycles. Real hardware remains untested.
 
@@ -34,10 +34,75 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_dos.ps1
 
 The cache is cloned without hard links; the reference project is not modified.
 The build command stages assets, regenerates the desktop sprite palette header
-and a private native RGB565 version for DOS, compiles `ABHD.EXE`, sets a 128 KB stack, and creates
+and a private native RGB565 version for DOS, compiles the high-color and VGA
+executables, sets 128 KB stacks, and creates
 `build/dos/ABHD-DOS.zip`. The archive includes CWSDPMI, its redistribution notice,
 SDL's license, game data, music, `AB3D.INI`, `README.TXT` and `ABHD.BAT`.
 Only the distribution manifest is archived, excluding local saves, logs and tests.
+
+### Automatic video compatibility
+
+Use `ABHD.BAT` to select the supported video path. The high-color executable
+prefers RGB565, then RGB555, then RGB444 when the BIOS explicitly reports that
+layout. Each retains the original 4096 source colors. Basic VGA does not
+guarantee high-color modes: its standard mode 13h is 320x200 with 256 colors
+([IBM VGA reference](https://ardent-tool.com/video/IBM_VGA_XGA_Technical_Reference_Manual_May92.pdf)).
+
+When no suitable high-color mode exists, `ABHD.EXE` returns the reserved status
+86 after shutting down SDL. The launcher then runs `ABVGA.EXE --dos-vga`, using
+the existing indexed renderer and palette derived per level from the original
+assets. It forces standard 320x200 even if an existing INI requests 240 lines.
+Other startup/game errors do not trigger another renderer. Run `ABHD.BAT`
+explicitly: DOS resolves the same-named EXE before the BAT when given `ABHD`.
+
+The renderer and cached artwork retain RGB565 internally in the high-color
+build. RGB555/RGB444 displays use integer row conversion at presentation;
+RGB565 keeps its existing direct-copy/canvas path. UI colors and damage/end
+fades use the selected hardware masks. Conversion needs no extra framebuffer
+and no floating point. Original gameplay, palettes and lighting calculations
+are unchanged. The separate VGA executable keeps its renderer out of the
+high-color program's 4 MB memory budget.
+
+Both executables share their source assets, settings and saves. Fourteen wall
+caches use a separate `Vxxxxxx.BIN` alias because indexed and native cache
+layouts differ. Packaging verifies every shared asset before producing the
+combined archive. `tools/build_dos.ps1` builds the indexed executable under
+`<build-dir>/indexed`; `-Indexed` still makes a standalone indexed package.
+Direct calls to `package_dos.py --archive` for the native build must supply
+`--vga-build-dir <indexed-build-dir>`.
+
+```powershell
+python tools/check_dos_video.py --dosbox <dosbox-staging.exe>
+python tools/check_dos.py --build-dir build/dos --dosbox <dosbox-x.exe> `
+  --video rgb555 --no-fpu --height 200 --memory 4 --cycles 40000 --frames 32 --level 4 --sound on --mouse --exercise
+python tools/check_dos.py --build-dir build/dos --dosbox <dosbox-x.exe> `
+  --video vga --launcher --no-fpu --height 240 --memory 4 --cycles 40000 --frames 32 --level 4 --sound on --mouse --exercise
+```
+
+The primitive oracle checks every RGB565 input, odd/unaligned rows and guards,
+all 4096 source colors in each layout and 3,538,944 clipped tint pixels. The
+VGA-only integration check uses the real batch handoff and verifies clean
+shutdown as well as gameplay. The tracked SDL desktop patch chooses an actual
+320x200 descriptor when 640x480 is absent, fixing a null desktop-mode access
+on exit from VGA-only hardware. Test-only handoff markers and DOSBox-X CPU-trap
+setup stay inside isolated check directories.
+
+The verified combined release is staged in `build/dos/game` and
+`build/dos/ABHD-DOS.zip`; build/test evidence is under `build/dos-video`.
+The optimized build passes 31 feedback scenarios, all 22 4 MB capture checks
+and the real-time 4 MB RGB565 SB16/mouse/UI exercise. All 22 RGB565 images
+also match the preceding FPU-removal release exactly, with and without x87.
+RGB555 and VGA-only paths pass the 4 MB no-FPU UI/save/load/briefing checks;
+the VGA check starts with a 240-line INI and verifies actual 320x200 output.
+The launcher contract preserves statuses 0, 1, 85, 87 and 255, and switches
+only for 86 while forwarding all nine parameters. Desktop Release builds.
+
+The combined ZIP contains 253 files (4,176,560 bytes), sharing all but fourteen
+wall caches between the two executables. SHA-256:
+`f02ca9b2d77e706c17849cbfa9293d6b20adc2b80a9dedad6163a07c0cec4a6f`.
+Staging preserves 239 other installed files, including settings and saves.
+Previous artifacts and detailed hashes are under
+`build/dos-video/previous-installed` and `build/dos-video/staging.json`.
 
 ### Optional hardware FPU
 
@@ -99,8 +164,8 @@ The emulator overhead relative to the updated hardware-FPU build is about
 The optimized text/data/BSS total is 1,487,896 bytes. Both outcome fades and
 all sixteen text briefings retain their exact tested pixels.
 
-The verified executable and ZIP are staged in `build/dos`, with the runnable
-directory at `build/dos/game`. Updating the executable/README preserved all
+The FPU-removal executable and ZIP were staged in `build/dos`, with the runnable
+directory at `build/dos/game`. That update preserved all
 240 other installed files, including settings and saves. Previous artifacts
 are backed up under `build/dos-no-fpu/previous-installed`; hashes and staging
 checks are recorded in `build/dos-no-fpu/staging.json`. The 3,424,991-byte ZIP
@@ -128,7 +193,8 @@ uninstrumented image must reproduce all 22 ordinary-build captures exactly at 4 
 and pass the real-time 4 MB level-4 SB16/mouse exercise. Host audio is muted.
 Training takes several minutes and stays under the selected build directory.
 No compiler counters or additional texture/shade banks enter the package.
-The option currently targets native RGB565; the indexed build is unchanged.
+Compiler feedback targets the high-color executable; the bundled indexed
+executable uses the ordinary build.
 An ordinary build command clears the CMake feedback option and recompiles
 the ordinary executable. Missing or mismatched feedback fails compilation.
 

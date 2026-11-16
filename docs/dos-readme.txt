@@ -1,13 +1,20 @@
 ALIEN BREED HD - DOS / 486 BUILD
 
-Requires a 486, 4 MB RAM, DOS 5+ and VESA RGB565
-video (a mode of at least 320x200). A VBE 2 BIOS or UNIVBE is recommended.
-The smallest available RGB565 mode is selected; many cards use 320x240.
+Requires a 486, 4 MB RAM, DOS 5+ and VGA.
+Run ABHD.BAT for automatic video selection: RGB565, then RGB555/RGB444
+high-color VESA modes, then standard 320x200 256-color VGA. High-color modes
+retain all 4096 source colors. Basic VGA uses the existing palette per level;
+some colors/shades are merged. A VBE 2 BIOS or UNIVBE helps high-color support
+but is not required for the VGA fallback.
 An FPU is optional. A DX2/DX4 is recommended for speed; 486SX systems use
 the included software coprocessor emulator automatically. No extra file is needed.
 
+ABHD.EXE runs the high-color version directly; ABVGA.EXE --dos-vga forces VGA.
+Only one executable runs at a time. The launcher switches only when no usable
+high-color mode exists; other errors are left visible in ab3d.log.
+
 Unzip the entire package into a writable directory, then run ABHD.BAT.
-When updating, keep ABHD.EXE and DATA from the same package.
+When updating, keep the program files and DATA from the same package.
 CWSDPMI.EXE is included; the launcher disables disk swapping. Use a lean DOS
 boot with XMS enabled and EMS disabled, aiming for about 600 KB free conventional
 RAM at the DOS prompt for texture/sample banks, the runtime and audio driver. Extra TSRs
@@ -15,7 +22,7 @@ and larger video modes can require more RAM. Set BLASTER to your card's resource
 if unset, the launcher uses A220 I7 D1 H5 T6. Sound Blaster 16 and compatible
 cards are supported by the SDL DOS backend. To run without sound:
   SET AB3D_DOS_SOUND=0
-  ABHD
+  ABHD.BAT
 
 Keyboard: arrows move/turn; A/D strafe; Ctrl fire; Space use; 1-6 weapons;
 Esc menu; Enter selects; Tab map; F5/F9 save/load. See the in-game options.
@@ -54,7 +61,8 @@ view red while keeping the scene visible and the HUD readable.
 HUD keys are prefiltered to 16x16 before loading, then drawn without scaling.
 Menus and text stay inside the visible screen.
 Key underlines and bars leave room for the complete HUD in 200-line output.
-Output retains all 4096 Amiga colors. The DOS build uses the same game logic
+High-color output retains all 4096 Amiga colors; VGA uses 256 colors per level.
+The DOS build uses the same game logic
 and source assets as the desktop port. Original samples mix at 8007 Hz;
 music is rendered offline and streamed. Levels are unpacked offline into
 identical raw data to reduce loading memory and CPU work. Save payloads are validated and then

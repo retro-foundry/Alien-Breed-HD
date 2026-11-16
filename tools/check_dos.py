@@ -28,6 +28,8 @@ def main():
     parser.add_argument('--level', type=int, default=1)
     parser.add_argument('--sound', choices=['on', 'off'], default='on')
     parser.add_argument('--no-fpu', action='store_true', help='Block x87 in CR0 and verify the software emulator before/after the game')
+    parser.add_argument('--video', choices=['auto','rgb555','vga'], default='auto', help='Restrict emulated video capabilities (RGB555 requires DOSBox-X)')
+    parser.add_argument('--launcher', action='store_true', help='Exercise the packaged ABHD.BAT and its automatic VGA fallback')
     parser.add_argument('--frontend', action='store_true', help='Enter the map through the real title keyboard path')
     parser.add_argument('--exercise', action='store_true', help='Check title keyboard/music, then mix shotgun/flame samples')
     parser.add_argument('--sb', choices=['sb16', 'sbpro2'], default='sb16')
@@ -42,6 +44,8 @@ def main():
         parser.error('--min-fps requires a positive target and real-time ticks')
     build = args.build_dir.resolve()
     dosbox_x = 'dosbox-x' in args.dosbox.name.lower()
+    if args.video=='rgb555' and not dosbox_x:
+        parser.error('--video rgb555 requires DOSBox-X')
     if args.height is None:
         packaged_ini = (build / 'generated/default.ini').read_text()
         args.height = int(re.search(r'^render_height=(\d+)$', packaged_ini, re.MULTILINE)[1])
@@ -66,6 +70,8 @@ def main():
         case += '-views'
     if args.no_fpu:
         case += '-no-fpu'
+    if args.video!='auto':case+='-'+args.video
+    if args.launcher:case+='-launcher'
     run = build / 'checks' / case
     run.mkdir(parents=True, exist_ok=True)
     mapping = json.loads((build / 'generated/assets.json').read_text())
@@ -73,6 +79,15 @@ def main():
         dest = run / name
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(build / 'game' / name, dest)
+    if args.launcher:
+        vga_mapping=json.loads((build/'generated/vga-assets.json').read_text())
+        for name in ['ABHD.BAT','ABVGA.EXE',*vga_mapping.values()]:
+            dest=run/name;dest.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copy2(build/'game'/name,dest)
+        # Trace the real handoff after the batch's error-level guards. Child
+        # freopen redirects make shell ECHO output unreliable in DOSBox.
+        bat=run/'ABHD.BAT'
+        bat.write_text(bat.read_text().replace('\nABVGA.EXE','\nECHO SWITCH>VGA.OK\nABVGA.EXE'),encoding='ascii')
     ini = (build / 'generated/default.ini').read_text()
     for key, value in {'render_width': args.width, 'render_height': args.height,
                        'start_level': args.level}.items():
@@ -87,7 +102,7 @@ def main():
                  'HUD200.BMP', 'HUD240.BMP', 'BAR200.BMP', 'BAR240.BMP',
                  'AUTOS.BMP', 'LOAD.BMP', 'NEWGAME.BMP', 'PAUSE.BMP', 'BOOT.LOG',
                  'AUTOSAVE.BIN', 'AUTO1.BIN', 'AUTO2.BIN', 'AUTO3.BIN', 'AUTO4.BIN',
-                 'FPU0.LOG', 'FPU1.LOG', 'FPUHW.LOG', 'FPUTRAP.OK']:
+                 'FPU0.LOG', 'FPU1.LOG', 'FPUHW.LOG', 'FPUTRAP.OK', 'VGA.OK']:
         (run / name).unlink(missing_ok=True)
     for capture in run.glob('BLURB??.BIN'):
         capture.unlink()
@@ -113,6 +128,10 @@ def main():
         (run/'FORCEEMU.COM').write_bytes(bytes.fromhex('0f01e083c8040f01f0b8004ccd21'))
         before_game='set 387=N\nFORCEEMU.COM\nCWSDPMI.EXE -s-\nFPUHW.EXE >FPUHW.LOG\nif not errorlevel 1 goto failed\necho TRAP>FPUTRAP.OK\nFORCEEMU.COM\nCWSDPMI.EXE -s-\nFPUCHK.EXE >FPU0.LOG\nif errorlevel 1 goto failed\nFORCEEMU.COM\n'
         after_game='FORCEEMU.COM\nCWSDPMI.EXE -s-\nFPUCHK.EXE >FPU1.LOG\nif errorlevel 1 goto failed\n'
+        if args.launcher:
+            # Test-only CPU setup between DPMI clients; DOSBox-X omits TS.
+            bat=run/'ABHD.BAT'
+            bat.write_text(bat.read_text().replace('CWSDPMI.EXE -s-','FORCEEMU.COM\nCWSDPMI.EXE -s-'),encoding='ascii')
     config = run / 'profile.conf'
     config.write_text(f'''[sdl]
 fullscreen=false
@@ -125,7 +144,7 @@ mouse_capture={'onclick' if args.visible else 'nomouse'}
 [mixer]
 nosound=true
 [dosbox]
-machine=svga_s3
+machine={'vgaonly' if args.video=='vga' else 'svga_s3'}
 memsize={args.memory}
 [cpu]
 core=normal
@@ -142,6 +161,7 @@ xms=true
 ems=false
 umb={'true' if dosbox_x else 'false'}
 {('kernel allocation in umb=true' + chr(10) + 'private area in umb=true') if dosbox_x else ''}
+{('[video]' + chr(10) + 'allow 16bpp vesa modes=false' + chr(10) + 'allow 24bpp vesa modes=false' + chr(10) + 'allow 32bpp vesa modes=false') if args.video=='rgb555' else ''}
 [autoexec]
 mount c "{run}"
 c:
@@ -151,8 +171,8 @@ set AB3D_DOS_MOUSE={1 if args.mouse else 0}
 set AB3D_DOS_BENCH_TURN={1 if args.turn else 0}
 set AB3D_PROFILE_RENDER={1 if args.render_profile else 0}
 set AB3D_PROFILE_RENDER_EVERY_MS=1000
-{before_game}CWSDPMI.EXE -s-
-ABHD.EXE --dos-bench {args.frames} {'--dos-check' if args.exercise else '--dos-check-frontend' if args.frontend else ''} {'--dos-fixed-ticks' if args.fixed_ticks else ''} {'--dos-check-screen-sizes' if args.screen_sizes else ''} >BOOT.LOG
+{before_game}{('CWSDPMI.EXE -s-' + chr(10)) if not args.launcher else ''}
+{'CALL ABHD.BAT' if args.launcher else 'ABHD.EXE'} --dos-bench {args.frames} {'--dos-check' if args.exercise else '--dos-check-frontend' if args.frontend else ''} {'--dos-fixed-ticks' if args.fixed_ticks else ''} {'--dos-check-screen-sizes' if args.screen_sizes else ''} >BOOT.LOG
 if errorlevel 1 goto failed
 {after_game}echo PASS>PASS.TXT
 :failed
@@ -211,6 +231,16 @@ exit
             raise SystemExit(f'Emulator did not trap x87 without libemu; use DOSBox-X with fpu=false; see {run}')
         raise SystemExit(f'DOS failed before creating its log; see {run}/BOOT.LOG')
     log = (run / 'ab3d.log').read_text()
+    if '=== Exit (code 0) ===' not in log:
+        raise SystemExit(f'DOS game failed: {log[-1000:].strip()}; see {run}')
+    if args.video=='rgb555' and '[DOS VIDEO] hardware SDL_PIXELFORMAT_XRGB1555' not in log:
+        raise SystemExit(f'RGB555 was not selected; see {run}')
+    if args.video=='vga' and '[DOS VIDEO] hardware SDL_PIXELFORMAT_INDEX8 320x200' not in log:
+        raise SystemExit(f'Standard VGA mode was not selected; see {run}')
+    if args.launcher and args.video=='vga' and not (run/'VGA.OK').exists():
+        raise SystemExit(f'Automatic VGA fallback did not run; see {run}')
+    if args.launcher and args.video!='vga' and (run/'VGA.OK').exists():
+        raise SystemExit(f'VGA fallback replaced a usable high-color mode; see {run}')
     if args.no_fpu:
         if not (run/'FPUTRAP.OK').exists():
             raise SystemExit(f'Emulator failed the no-libemu negative control; see {run}')
@@ -232,7 +262,7 @@ exit
     actual_w, actual_h = (int(v) for v in native.groups()) if native else (args.width, args.height)
     view_w,view_h=actual_w*args.screen_size//100,actual_h*args.screen_size//100
     expected_rect=f'present rect {view_w}x{view_h} at ({(actual_w-view_w)//2},{(actual_h-view_h)//2})'
-    if actual_w < args.width or actual_h < args.height or expected_rect not in log:
+    if ((actual_w < args.width or actual_h < args.height) and args.video!='vga') or expected_rect not in log:
         raise SystemExit(f'DOS did not present its native resolution at 1:1; see {run}')
     if args.screen_sizes and '32 allocation-free framebuffer switches passed' not in log:
         raise SystemExit(f'DOS screen-size checks did not complete; see {run}')
