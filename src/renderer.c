@@ -22,8 +22,8 @@
  *         - Walls  -> column-by-column textured drawing
  *         - Floors -> span-based textured drawing
  *         - Objects -> scaled sprite drawing
- *   7. Resolve underwater tint post-pass
- *   8. Draw gun overlay
+ *   7. Draw gun overlay
+ *   8. Resolve underwater tint over the completed view
  *   9. Swap buffers
  */
 
@@ -2585,7 +2585,7 @@ static int renderer_thread_worker_main(void *userdata)
                                           frame_idx, trace_clip,
                                           worker->index,
                                           &fill_screen_water, &world_stats);
-                if (state->cfg_weapon_draw)
+                if (state->cfg_weapon_draw && !s_weapon_post_gl_active)
                     renderer_draw_gun_columns(state, col_start, col_end);
             } else if (job_type == RENDERER_THREAD_JOB_WATER_TINT) {
                 renderer_apply_underwater_tint_slice(tint_fill_screen_water,
@@ -17432,8 +17432,8 @@ static void renderer_draw_display_impl(GameState *state)
     uint64_t t0 = 0;
     uint64_t t_after_setup = 0;
     uint64_t t_after_world = 0;
-    uint64_t t_after_tint = 0;
     uint64_t t_after_gun = 0;
+    uint64_t t_after_tint = 0;
     uint64_t t_after_swap = 0;
     int world_workers = 0;
     int tint_workers = 0;
@@ -17694,7 +17694,18 @@ static void renderer_draw_display_impl(GameState *state)
      * both consume it; visual tint enablement is handled by each draw path. */
     g_renderer.last_fill_screen_water = fill_screen_water;
 
-    /* 6. Underwater fillscrnwater post-pass — skipped when GL multiply handles it (or weapon GL). */
+    if (g_debug_spill_visualize) {
+        renderer_apply_spill_visualize_debug_overlay(&world_zone_prepass, frame_idx);
+    }
+
+    /* AB3DI.s DrawDisplay: DrawInGun precedes fillscrnwater's AND #$00FF.
+     * Workers already drew their gun columns; GL owns its deferred weapon. */
+    if (!used_threaded_world && state->cfg_weapon_draw && !s_weapon_post_gl_active) {
+        renderer_draw_gun(state);
+    }
+    if (prof_on) t_after_gun = SDL_GetPerformanceCounter();
+
+    /* Tint the completed world and weapon, or let GL apply the same mask. */
     int used_threaded_tint = 0;
     if (!s_weapon_post_gl_active && !s_gl_water_tint_post_active) {
 #ifndef AB3D_NO_THREADS
@@ -17712,17 +17723,6 @@ static void renderer_draw_display_impl(GameState *state)
         }
     }
     if (prof_on) t_after_tint = SDL_GetPerformanceCounter();
-
-    if (g_debug_spill_visualize) {
-        renderer_apply_spill_visualize_debug_overlay(&world_zone_prepass, frame_idx);
-    }
-
-    /* 7. Draw gun overlay — skipped when the GL path will handle it.
-     * In threaded-world mode the gun is already drawn per worker column strip. */
-    if (!used_threaded_world && state->cfg_weapon_draw && !s_weapon_post_gl_active) {
-        renderer_draw_gun(state);
-    }
-    if (prof_on) t_after_gun = SDL_GetPerformanceCounter();
 
     /* 8. Swap buffers (the just-drawn buffer becomes the display buffer) */
     /* Flush non-temporal store write-combine buffers before the display path reads cw_buffer. */
@@ -17778,9 +17778,9 @@ static void renderer_draw_display_impl(GameState *state)
         ps->ticks_total += (t_after_swap - t0);
         ps->ticks_setup_prepass += (t_after_setup - t0);
         ps->ticks_world += (t_after_world - t_after_setup);
-        ps->ticks_tint += (t_after_tint - t_after_world);
-        ps->ticks_gun += (t_after_gun - t_after_tint);
-        ps->ticks_swap += (t_after_swap - t_after_gun);
+        ps->ticks_gun += (t_after_gun - t_after_world);
+        ps->ticks_tint += (t_after_tint - t_after_gun);
+        ps->ticks_swap += (t_after_swap - t_after_tint);
         ps->prepass_zone_total += (uint64_t)prepass_total_zones;
         ps->prepass_zone_valid_total += (uint64_t)prepass_valid_zones;
         ps->prepass_clip_pixels_total += (uint64_t)prepass_clip_pixels;
@@ -17799,9 +17799,9 @@ static void renderer_draw_display_impl(GameState *state)
                 ps->worst_frame_idx = frame_idx;
                 ps->worst_setup_ms = ((double)(t_after_setup - t0) * 1000.0) / (double)ps->perf_freq;
                 ps->worst_world_ms = ((double)(t_after_world - t_after_setup) * 1000.0) / (double)ps->perf_freq;
-                ps->worst_tint_ms = ((double)(t_after_tint - t_after_world) * 1000.0) / (double)ps->perf_freq;
-                ps->worst_gun_ms = ((double)(t_after_gun - t_after_tint) * 1000.0) / (double)ps->perf_freq;
-                ps->worst_swap_ms = ((double)(t_after_swap - t_after_gun) * 1000.0) / (double)ps->perf_freq;
+                ps->worst_gun_ms = ((double)(t_after_gun - t_after_world) * 1000.0) / (double)ps->perf_freq;
+                ps->worst_tint_ms = ((double)(t_after_tint - t_after_gun) * 1000.0) / (double)ps->perf_freq;
+                ps->worst_swap_ms = ((double)(t_after_swap - t_after_tint) * 1000.0) / (double)ps->perf_freq;
                 ps->worst_prepass_total = prepass_total_zones;
                 ps->worst_prepass_valid = prepass_valid_zones;
                 ps->worst_prepass_clip_pixels = prepass_clip_pixels;

@@ -670,6 +670,29 @@ exercise. This ordinary build does not replace the installed profile-optimized
 4 MB DOS package; a new optimized release still requires fresh compiler training
 and the complete 4 MB validation.
 
+### Underwater weapons in every compositor
+
+`AB3DI.s` draws `DrawInGun` before `fillscrnwater` removes red with
+`AND #$00FF`. The serial renderer and deferred GL weapon previously drew the
+gun after that mask. Both now composite the weapon before tinting the view,
+with the HUD drawn afterward. Thread workers also respect GL weapon ownership
+so they do not draw a second CPU weapon under the deferred quad. Above water
+and at the exact surface, weapon colors are unchanged.
+
+`feedback_weapon_water` uses the original level-1 water polygon and gun assets
+for both players, all six drawable guns and their animation frames. Native
+CPU checks cover serial/threaded rendering and ARGB/color-word output.
+`python tools/check_weapon_water.py` additionally captures real SDL software
+and OpenGL output, with CPU and GL weapons, and checks that HUD colors survive.
+`python tools/check_weapon_water_web.py --emcc <emcc.py>` runs the same display
+capture in Chromium WebGL2. These checks and the existing waterline, weapon
+selection and tag regressions pass.
+
+The software display check also exposed a column-major upload writing 32-bit
+pixels into a 16-bit texture; it now transposes into 16-bit rows. Environment
+options are consumed before SDL's Windows environment buffer is reused, keeping
+the requested software/GL driver and tint path available for these checks.
+
 ### DOS mouse sensitivity and mouselook defaults
 
 DOS SDL supplies raw INT 33h/0Bh relative counts. Treating them as desktop

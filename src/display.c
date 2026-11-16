@@ -2929,6 +2929,17 @@ static void display_cpu_unpack_cw_to_texture(const uint16_t *src, int w, int h)
     void *pixels;
     int pitch;
     if (SDL_LockTexture(g_texture, NULL, &pixels, &pitch) < 0) return;
+    if (g_texture_is_4444_direct) {
+        /* A column-major CW image still needs transposing, but the target
+         * remains 16-bit. Writing ARGB8888 here overruns the texture rows. */
+        for (int y = 0; y < h; y++) {
+            uint16_t *dst_row = (uint16_t*)((uint8_t*)pixels + (size_t)y * (size_t)pitch);
+            for (int x = 0; x < w; x++)
+                dst_row[x] = src[display_cw_index_xy(x, y, w, h)] & 0x0FFFu;
+        }
+        SDL_UnlockTexture(g_texture);
+        return;
+    }
     for (int y = 0; y < h; y++) {
         uint32_t *dst_row = (uint32_t*)((uint8_t*)pixels + (size_t)y * (size_t)pitch);
         for (int x = 0; x < w; x++) {
@@ -3436,20 +3447,24 @@ void display_init(GameState *state)
     renderer_init(rw, rh);
 #endif
 
-    const char *driver_override = SDL_getenv("AB3D_RENDER_DRIVER");
+    /* SDL_getenv may reuse one buffer on Windows. Keep the driver name
+     * across the other environment reads and SDL window creation. */
+    char driver_override[64];
+    const char *driver_env = SDL_getenv("AB3D_RENDER_DRIVER");
+    SDL_strlcpy(driver_override, driver_env ? driver_env : "", sizeof(driver_override));
     /* Set AB3D_DISABLE_GL_UNPACK=1 to force D3D + SDL texture (CPU blit path). Otherwise prefer GL_R16UI. */
     const char *disable_gl_unpack = SDL_getenv("AB3D_DISABLE_GL_UNPACK");
-    const char *debug_window_title = SDL_getenv("AB3D_DEBUG_WINDOW_TITLE");
-    const char *framebuffer_mipmap = SDL_getenv("AB3D_FRAMEBUFFER_MIPMAPS");
     int prefer_gpu_unpack = 1;
     if (disable_gl_unpack && disable_gl_unpack[0] != '\0') {
         if (disable_gl_unpack[0] == '1' || disable_gl_unpack[0] == 'y' || disable_gl_unpack[0] == 'Y')
             prefer_gpu_unpack = 0;
     }
+    const char *debug_window_title = SDL_getenv("AB3D_DEBUG_WINDOW_TITLE");
     g_debug_window_title = (debug_window_title &&
                             (debug_window_title[0] == '1' ||
                              debug_window_title[0] == 'y' ||
                              debug_window_title[0] == 'Y')) ? 1 : 0;
+    const char *framebuffer_mipmap = SDL_getenv("AB3D_FRAMEBUFFER_MIPMAPS");
     g_framebuffer_mipmap_enabled = (framebuffer_mipmap &&
                                     (framebuffer_mipmap[0] == '1' ||
                                      framebuffer_mipmap[0] == 'y' ||
@@ -5288,9 +5303,6 @@ static void display_present_cw_frame(GameState *state)
         display_gl_present_cw(src, w, h);
         if (g_gl_hud_ok) {
             display_gl_overlay_begin();
-            /* Underwater multiply: cheap GL quad; avoid per-pixel CPU copy of whole buffer. */
-            if (use_gl_water_tint)
-                display_gl_multiply_tint_rect(renderer_get_last_fill_screen_water());
             if (use_gl_weapon) {
                 if (state->cfg_weapon_draw) {
                     int frame_slot, ix, iy, iw, ih;
@@ -5316,6 +5328,10 @@ static void display_present_cw_frame(GameState *state)
                     }
                 }
             }
+            /* Match AB3DI.s DrawInGun before fillscrnwater: include the GL
+             * weapon in the same underwater mask, before drawing the HUD. */
+            if (use_gl_water_tint)
+                display_gl_multiply_tint_rect(renderer_get_last_fill_screen_water());
         } else
             display_sdl_resync_after_raw_gl();
     } else {
