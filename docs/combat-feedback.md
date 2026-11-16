@@ -695,6 +695,13 @@ authored water room. Native RGB565 and indexed VGA each pass 64 cases with
 The indexed check compares the palette's original red-removal mapping rather
 than assuming every representative palette color has a zero red channel.
 
+Windows Release and the single-threaded web release are rebuilt. Fresh native
+DOS compiler training completes 31 scenarios, all 22 optimized capture
+comparisons and the real-time 4 MB sound/mouse/menu/save exercise. The final
+RGB555 build and automatic indexed VGA launcher also pass with x87 blocked
+and software emulation active. The installed DOS binaries and ZIP are updated;
+all 255 other local files, including settings and saves, are preserved.
+
 The software display check also exposed a column-major upload writing 32-bit
 pixels into a 16-bit texture; it now transposes into 16-bit rows. Environment
 options are consumed before SDL's Windows environment buffer is reused, keeping
