@@ -15,6 +15,8 @@ for(const view of ['top','orthographic','perspective'])test(`${view}: left gestu
  await from.click();await to.click({modifiers:['Shift']});if(view!=='top')await page.getByRole('combobox',{name:'Editing view',exact:true}).selectOption(view);
  await page.getByRole('button',{name:'Frame selected rooms',exact:true}).click();await page.getByRole('button',{name:'Clear room selection',exact:true}).click();
  const canvas=page.locator(view==='top'?'canvas[aria-label="Level map"]':'canvas[aria-label="Editing viewport"]');
+ // Keep the room centres and selection rectangle clear of the floating guide.
+ if(view==='top'){const r=(await canvas.boundingBox())!;await page.mouse.move(r.x+r.width/2,r.y+r.height/2);await page.mouse.down({button:'middle'});await page.mouse.move(r.x+r.width/2,r.y+r.height/2+60,{steps:4});await page.mouse.up({button:'middle'});}
  const state=async()=>view==='top'?JSON.stringify(await canvas.evaluate(node=>['data-world-x','data-world-z','data-world-scale'].map(key=>node.getAttribute(key)))):(await canvas.getAttribute('data-camera'))!;
  const before=await state(),bounds=(await canvas.boundingBox())!;
  const point=async(x:number,z:number,y=0)=>{
@@ -31,6 +33,8 @@ for(const view of ['top','orthographic','perspective'])test(`${view}: left gestu
  const marker=await point(20192,20160,-8);await page.mouse.move(marker.x,marker.y);await page.mouse.down();await page.mouse.move(marker.x+25,marker.y+15,{steps:5});await page.mouse.up();expect(await state()).toBe(before);await expect(page.getByRole('button',{name:'Undo',exact:true})).toBeDisabled();
  const download=page.waitForEvent('download');await page.getByRole('button',{name:'Save project',exact:true}).click();const path=info.outputPath('selection-only.ab3d');await(await download).saveAs(path);
  const saved=decodeProject(new Uint8Array(await readFile(path)));expect(saved.roomSource).toEqual(document.roomSource);expect(saved.sourceObjects).toEqual(document.sourceObjects);expect(saved.sourceStarts).toEqual(document.sourceStarts);
+ // Clear the room's height controls before picking the marker beneath them.
+ await page.keyboard.press('Escape');
  await page.mouse.click(marker.x,marker.y);const handle=page.getByRole('button',{name:view==='top'?'Move selection':'Move object X',exact:true});await expect(handle).toBeVisible();const h=(await handle.boundingBox())!;
  if(view==='top'){await page.mouse.move(h.x+h.width/2,h.y+h.height/2);await page.mouse.down();await page.mouse.move(h.x+h.width/2+25,h.y+h.height/2,{steps:5});await page.mouse.up();}else{await handle.focus();await handle.press('ArrowRight');}await expect(page.getByRole('button',{name:'Undo',exact:true})).toBeEnabled();await page.getByRole('button',{name:'Undo',exact:true}).click();expect(await state()).toBe(before);
  await page.mouse.move(bounds.x+40,bounds.y+40);await page.mouse.down({button:'middle'});await page.mouse.move(bounds.x+70,bounds.y+60,{steps:3});await page.mouse.up({button:'middle'});expect(await state()).not.toBe(before);await expect(page.getByRole('button',{name:'Undo',exact:true})).toBeDisabled();

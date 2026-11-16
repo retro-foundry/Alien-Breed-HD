@@ -782,6 +782,8 @@ broader resource authoring and export profiles remain in progress.
 | Action | Shortcut |
 | --- | --- |
 | Open files | Ctrl/Cmd+O |
+| Find an editor action | Ctrl/Cmd+K |
+| Build and play | Ctrl/Cmd+Enter |
 | Download project copy | Ctrl/Cmd+S |
 | Undo / redo | Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z |
 | Select / pan | V / H |

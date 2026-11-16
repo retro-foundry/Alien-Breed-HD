@@ -165,10 +165,16 @@ export function SpatialViewport(props: Props) {
     const settings = roomSettings(preview.document, heightRoom), floor = settings[layer === 'upper' ? 'upperFloor' : 'floor'];
     const centre = { x: heightRoom.vertices.reduce((sum, p) => sum + p.x, 0) / heightRoom.vertices.length, z: heightRoom.vertices.reduce((sum, p) => sum + p.z, 0) / heightRoom.vertices.length };
     const storeys = orbit && settings.upper.length && settings.upperFloor > settings.upperCeiling ? [false, true] : [layer === 'upper'];
-    for (const upper of storeys.filter(upper => !upper || heightRooms.every(room => { const s = roomSettings(preview.document, room); return s.upper.length > 0 && s.upperFloor > s.upperCeiling; }))) for (const field of ['floor', 'ceiling'] as const) {
+    const editableStoreys = storeys.filter(upper => !upper || heightRooms.every(room => { const s = roomSettings(preview.document, room); return s.upper.length > 0 && s.upperFloor > s.upperCeiling; }));
+    for (const [storeyIndex, upper] of editableStoreys.entries()) for (const field of ['floor', 'ceiling'] as const) {
       const setting = upper ? field === 'floor' ? 'upperFloor' : 'upperCeiling' : field;
-      const separation = orbit && storeys.length === 2 ? (upper ? 1 : -1) * Math.min(camera.distance / 20, 32) : 0;
-      const position = add({ ...centre, y: settings[setting] }, mul(cameraBasis(camera).right, separation));
+      // Keep all plane controls reachable even when framing distant rooms or
+      // thin storeys. Convert screen spacing to a world-space drag anchor.
+      const anchor = { ...centre, y: settings[setting] }, right = cameraBasis(camera).right;
+      const pixelsPerUnit = project(add(anchor, right)).x - project(anchor).x;
+      const slot = storeyIndex * 2 + (field === 'floor' ? 0 : 1);
+      const offset = (slot - (editableStoreys.length * 2 - 1) / 2) * 32;
+      const position = Math.abs(pixelsPerUnit) > 1e-7 ? add(anchor, mul(right, offset / pixelsPerUnit)) : anchor;
       handles.push({ id: orbit ? `${upper ? 'upper' : 'lower'}-${field}` : field,
         label: orbit ? `Drag ${upper ? 'upper' : 'lower'} ${field} height` : `Drag room ${field} height`, position, axis: vertical,
         change: { kind: 'height', room: heightRoom.id, rooms: heightRooms.map(room => room.id), field: setting, value: position.y }, colour: field === 'floor' ? '#b2de7a' : '#e6bd81' });

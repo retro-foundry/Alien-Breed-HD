@@ -19,6 +19,10 @@ for(const view of ['perspective','orthographic'])test(`${view}: selected zones s
  for(const field of roomHeightFields){
   const upper=field.startsWith('upper'),plane=field.toLowerCase().endsWith('floor')?'floor':'ceiling',handle=page.getByRole('button',{name:`Drag ${upper?'upper':'lower'} ${plane} height`,exact:true});
   await expect(handle).toBeVisible();await expect(handle).toHaveAttribute('title',/all 2 selected zones/);
+  expect(await handle.evaluate(element => {
+   const bounds = element.getBoundingClientRect();
+   return window.document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)?.closest('button')?.getAttribute('aria-label');
+  })).toBe(await handle.getAttribute('aria-label'));
   const r=(await handle.boundingBox())!,drag=async()=>{await page.mouse.move(r.x+r.width/2,r.y+r.height/2);await page.mouse.down();await page.mouse.move(r.x+r.width/2,r.y+r.height/2+(plane==='floor'?-4:4),{steps:4});};
   await drag();await page.keyboard.press('Escape');await page.mouse.up();await expect(page.getByRole('button',{name:'Undo',exact:true})).toBeDisabled();
   await drag();await page.mouse.up();await expect(page.getByRole('alert')).toHaveCount(0);await expect(page.getByRole('heading',{name:'2 selected rooms',exact:true})).toBeVisible();

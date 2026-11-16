@@ -3882,3 +3882,27 @@ viewport size. All six Chromium navigation, wall-connection and water checks
 pass, retaining native rendering, collision, export and history assertions.
 Full CI stops at its first failure to publish actionable evidence promptly;
 successful runs still execute every browser test.
+
+### Reachable graphical height controls
+
+The shorter editing viewport exposed overlapping 3D height controls: clicking
+the lower-floor control's centre hit the lower-ceiling control. Plane controls
+now occupy separate screen columns, converted to world-space drag anchors so
+the existing drag and height-validation commands remain authoritative. Group
+tests verify the actual hit target at each control's centre before exercising
+all four planes, cancellation, saved values and one-step Undo. Both Windows
+browsers and Linux Chromium pass those group-height checks.
+
+Inspector diagram tests scroll the actual grip into view and drag through the
+actual upper-floor position in a window showing both endpoints. This replaces
+a fixed distance that could leave the Firefox window before crossing the
+plane. Both Firefox diagram checks pass with their original validation,
+native rendering and source-history assertions.
+
+A separate checkout of the pre-usability release ccbdca7 reproduces three
+existing source-compiler rendering failures: Level 2 room 67 at angle 6144,
+Level 13 room 31 at angle 1024, and the Level 2 marine decomposition check.
+The respective before/after native hashes are 354907538/2002506307,
+2384666308/2915394930 and 354907538/2002506307, identical to this branch.
+These remain port parity issues; no native renderer/gameplay code changed in
+the usability work. The complete browser run retains all of these assertions.

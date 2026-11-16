@@ -56,6 +56,8 @@ test('graphical height gestures cancel cleanly, save committed source only, undo
 });
 
 test('upper and lower handles support repeated keyboard edits, invalid relationships and Escape without losing selection', async ({ page }) => {
+  // Show both ends of the invalid drag rather than moving outside the window.
+  await page.setViewportSize({ width: 1280, height: 950 });
   const fixture = roomHeightFixture(twoStoreyHeightTemplate()), template = fixture.original.zones[fixture.from.recordZone]!;
   await page.goto('/?view=top'); await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
   await page.locator('input[type=file]').setInputFiles({ name: 'upper-handles.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
@@ -69,9 +71,12 @@ test('upper and lower handles support repeated keyboard edits, invalid relations
   await expect(page.getByRole('slider', { name: 'Lower floor handle', exact: true })).toHaveAttribute('aria-valuenow', String(template.floor));
   await upper.press('Escape'); await expect(upper).toBeFocused();
   // A large drag through its own floor is an invalid provisional air band.
-  await upper.scrollIntoViewIfNeeded(); const knob = (await upper.locator('circle').boundingBox())!;
+  await upper.locator('circle').scrollIntoViewIfNeeded();
+  await expect(upper.locator('circle')).toBeInViewport();
+  const knob = (await upper.locator('circle').boundingBox())!;
+  const floorKnob = (await page.getByRole('slider', { name: 'Upper floor handle', exact: true }).locator('circle').boundingBox())!;
   await page.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2); await page.mouse.down();
-  await page.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2 + 140, { steps: 8 });
+  await page.mouse.move(knob.x + knob.width / 2, floorKnob.y + floorKnob.height / 2 + 20, { steps: 8 });
   await expect(page.locator('.room-height-section [role=status]')).toContainText('upper ceiling must be above');
   await page.mouse.up();
   await expect(upper).toHaveAttribute('aria-valuenow', String(template.upperCeiling + 3.5));
