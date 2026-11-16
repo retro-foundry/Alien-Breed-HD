@@ -12,6 +12,7 @@ import { WallStyleBrowser } from './WallStyleBrowser';
 import { CopyMechanismSettings, MoveAuthoredMechanism } from './MechanismTransfers';
 import { buildRoomEdges } from '../model/geometry';
 import type { RoomSetupKind, RoomSetupRequest } from './RoomSetupRequest';
+import { RoomSetupDialog } from './RoomSetupDialog';
 
 export function AuthoredMechanismInspector({ document, room, edit, onShowRoom, request, onStart }: { document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void; onShowRoom: (id: string) => void; request?: RoomSetupRequest; onStart: (kind: RoomSetupKind) => void }) {
   const section = useRef<HTMLElement>(null);
@@ -24,6 +25,8 @@ export function AuthoredMechanismInspector({ document, room, edit, onShowRoom, r
       conditions: saved?.conditions ?? 0, openRule: saved?.openRule ?? 0, closeRule: saved?.closeRule ?? 0 };
   };
   const [active, setActive] = useState<'door' | 'lift' | undefined>(existing?.kind), [draft, setDraft] = useState(initial), [error, setError] = useState('');
+  const [dialogOpen, setDialogOpen] = useState(false);
+  useEffect(() => { setDialogOpen(false); }, [room.id]);
   useEffect(() => { setActive(existing?.kind); setDraft(initial()); setError(''); }, [document, room.id]);
   const conflict = movingRoomOwnership(document, room);
   const neighbours = useMemo(() => {
@@ -32,17 +35,22 @@ export function AuthoredMechanismInspector({ document, room, edit, onShowRoom, r
     return document.roomSource.rooms.filter(item => item.id === room.id || ids.has(item.id)).map(item => ({ id: item.id, floor: roomSettings(document, item).floor }));
   }, [document.roomSource, room.id]);
   useEffect(() => {
-    if (request?.room !== room.id || request.kind === 'switch' || conflict && !room.moving) return;
-    setDraft(initial(request.kind)); setActive(request.kind); setError('');
+    if (request?.room !== room.id || request.kind === 'switch') return;
+    setDialogOpen(true);
+    if (!conflict || room.moving) { setDraft(initial(request.kind)); setActive(request.kind); setError(''); }
   }, [request?.sequence]);
   useEffect(() => {
-    if (request?.room !== room.id || request.kind === 'switch' || !conflict && active !== request.kind) return;
+    if (!dialogOpen || request?.room !== room.id || request.kind === 'switch' || !conflict && active !== request.kind) return;
     section.current?.scrollIntoView({ block: 'start' });
     const target = section.current?.querySelector<HTMLElement>('input[type=number]') ?? section.current?.querySelector<HTMLElement>('h3');
     if (target) { if (target.tagName === 'H3') target.tabIndex = -1; target.focus({ preventScroll: true }); }
-  }, [request?.sequence, active]);
-  if (conflict && !room.moving) return <section ref={section} className="property-section"><h3>Door or lift</h3><p className="field-note">{conflict.reason}</p>{conflict.room && conflict.room !== room.id && <button type="button" title="Select and frame the room with the existing mechanism." onClick={() => onShowRoom(conflict.room!)}>Go to existing {conflict.kind}</button>}</section>;
+  }, [request?.sequence, active, dialogOpen]);
+  if (conflict && !room.moving) {
+    const message = <section ref={section} className="property-section"><h3>Door or lift</h3><p className="field-note">{conflict.reason}</p>{conflict.room && conflict.room !== room.id && <button type="button" title="Select and frame the room with the existing mechanism." onClick={() => { setDialogOpen(false); onShowRoom(conflict.room!); }}>Go to existing {conflict.kind}</button>}</section>;
+    return dialogOpen ? <RoomSetupDialog title={`Door or lift · Room ${room.id.replace(/^room-/, '')}`} onClose={() => setDialogOpen(false)}>{message}</RoomSetupDialog> : message;
+  }
   const reset = () => { setDraft(initial()); setActive(existing?.kind); setError(''); };
+  const close = () => { reset(); setDialogOpen(false); };
   const begin = (kind: 'door' | 'lift') => { setDraft(initial(kind)); setActive(kind); setError(''); };
   const apply = () => {
     try {
@@ -53,16 +61,17 @@ export function AuthoredMechanismInspector({ document, room, edit, onShowRoom, r
         current: draft.start === 'top' ? top : draft.start === 'bottom' ? bottom : existing!.current });
       const change = setSourceMovingRoom(document, room.id, value);
       buildPlayableLevel({ ...document, roomSource: change.after }, -1);
-      edit(editRoomSource(change)); setError('');
+      edit(editRoomSource(change)); setError(''); setDialogOpen(false);
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
   };
-  return <section ref={section} className="property-section mechanism-setup" aria-label="Create door or lift"><h3>{existing ? `Authored ${existing.kind}` : 'Door or lift'}</h3>
+  const content = <section ref={section} className="property-section mechanism-setup" aria-label="Create door or lift"><h3>{existing ? `Authored ${existing.kind}` : 'Door or lift'}</h3>
     <p className="field-note">Use a connected room with no inward corners. Doors move its ceiling; lifts move its floor. The editor builds their wall and collision links automatically.</p>
     {!active ? <><button type="button" onClick={() => onStart('door')} title="Configure an independent door in this room. Starts closed by default; nothing changes until Apply mechanism.">Make door</button>
       <button type="button" onClick={() => onStart('lift')} title="Configure an independent lift. Choose its two destinations, then Apply mechanism.">Make lift</button></> :
-      <form aria-label="Authored mechanism settings" onSubmit={event => { event.preventDefault(); apply(); }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); reset(); } }}>
+      <form aria-label="Authored mechanism settings" onSubmit={event => { event.preventDefault(); apply(); }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); } }}>
         <label className="select-field"><span>Mechanism</span><select aria-label="New mechanism kind" value={draft.kind} title="Choose which room plane moves. Choose destinations again when changing kind." onChange={event => begin(event.target.value as 'door' | 'lift')}>
           <option value="door">Door</option><option value="lift">Lift</option></select></label>
+        <div className="mechanism-setup-steps"><fieldset>
         <h4 className="setup-step">1. {draft.kind === 'door' ? 'Choose open and closed positions' : 'Choose the two stops'}</h4>
         <p className="field-note">{draft.kind === 'door' ? 'The ceiling rises to open the doorway and lowers to the floor to close it.' : 'The floor moves between two heights. Match a stop to a neighbouring floor to make a landing.'}</p>
         {(['top', 'bottom'] as const).map(field => <label className="number-field" key={field}><span>{field === 'top' ? draft.kind === 'door' ? 'Open height' : 'Upper destination' : draft.kind === 'door' ? 'Closed height' : 'Lower destination'}</span>
@@ -77,17 +86,20 @@ export function AuthoredMechanismInspector({ document, room, edit, onShowRoom, r
           : draft.kind === 'lift' ? 'Choose two different stops: the upper height must be smaller than the lower height.' : 'The open height must be smaller than the closed height.'}</p>
         <label className="select-field"><span>Starts</span><select aria-label="New mechanism initial position" value={draft.start} title="Choose its initial endpoint without changing the editable room's open clearance." onChange={event => setDraft({ ...draft, start: event.target.value })}>
           <option value="top">{draft.kind === 'door' ? 'Open' : 'At upper destination'}</option><option value="bottom">{draft.kind === 'door' ? 'Closed' : 'At lower destination'}</option>{existing?.kind === draft.kind && <option value="saved">Keep saved height ({existing.current})</option>}</select></label>
-        <h4 className="setup-step">2. Choose how it operates</h4>
+        </fieldset><fieldset><h4 className="setup-step">2. Choose how it operates</h4>
         <MechanismRulesInspector mechanism={draft} prefix="New mechanism" change={(conditions, openRule, closeRule) => setDraft({ ...draft, conditions, openRule, closeRule })} />
         <p className="field-note">Requirements unlock the chosen trigger. A switch requirement alone does not change the opening rule.</p>
-        <h4 className="setup-step">3. Choose the moving wall appearance</h4>
+        </fieldset><fieldset><h4 className="setup-step">3. Choose the moving wall appearance</h4>
         <WallStyleBrowser records={movingWallChoices(document, room)} value={draft.wall} onChange={wall => setDraft({ ...draft, wall })} label="moving wall" overrides={document.wallOverrides} />
         <p className="field-note">Destinations use world units; smaller numbers are higher. Space uses doors and lifts in Build &amp; play. Choose trigger rules above. Apply is one Undo; Escape or Cancel discards the draft.</p>
+        </fieldset></div><div className="setup-footer">
         {error && <p role="alert">{error}</p>}
-        <button type="button" onClick={reset} title="Discard uncommitted settings. Escape also cancels.">Cancel mechanism draft</button>
+        <button type="button" onClick={close} title="Discard uncommitted settings. Escape also cancels.">Cancel mechanism draft</button>
         <button type="submit" className="small-button" title="Validate geometry, create movement links and commit all settings as one undoable edit.">Apply mechanism</button>
+        </div>
       </form>}
     {existing && <button type="button" className="danger-button" title="Return this room to a static volume with its editable floor/ceiling heights. Undo restores the controller." onClick={() => edit(() => editRoomSource(setSourceMovingRoom(document, room.id, null)))}>Remove mechanism</button>}
     {existing && <><CopyMechanismSettings document={document} owner={{ type: 'authored', kind: existing.kind, room: room.id }} edit={edit} /><MoveAuthoredMechanism document={document} room={room} edit={edit} onShowRoom={onShowRoom} /></>}
   </section>;
+  return dialogOpen ? <RoomSetupDialog title={`Set up ${draft.kind} · Room ${room.id.replace(/^room-/, '')}`} onClose={close}>{content}</RoomSetupDialog> : content;
 }

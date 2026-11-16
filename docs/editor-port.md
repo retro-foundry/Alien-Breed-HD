@@ -3960,3 +3960,18 @@ New tests create and connect each mechanism, undo/redo the combined edit, save
 and reopen its source, press Space at the panel in the real game and verify
 the native condition bit, moving plane and synchronized walls. The broader
 port parity requirements and previously documented baseline failures stay open.
+
+The guided forms now open in a dedicated, responsive setup dialog using the
+same components and edit commands as the inspector. Movement, activation and
+appearance sit in three columns; wall-switch placement and its connection sit
+side by side. Apply stays reachable when scrolling. Native dialog focus trapping
+isolates editor shortcuts, and Escape/Close discard only unapplied settings and
+restore the initiating control. Successful Apply/Add returns to the saved
+inspector state. Existing inline inspection/editing remains available.
+
+The final dialog package passes 68 related Windows Chromium/Firefox checks
+and 20 Linux Chromium/Firefox checks, including 760px/480px layouts, reachable
+actions, focus restoration, actual native doors/lifts, original/copied switch
+workflows and atomic placement/connection history. All 1,258 model tests passed
+for the unchanged underlying editing commands. No source-game behavior or
+project format was changed.

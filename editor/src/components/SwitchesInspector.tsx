@@ -11,6 +11,7 @@ import { buildPlayableLevel } from '../model/playableBuild';
 import { createLinkedSwitch } from '../model/switchMechanismLinks';
 import { mechanismOwnerKey } from '../model/mechanismSettingsTransfer';
 import { SwitchMechanismConnections, SwitchTargetFields, switchTargets, type SwitchTargetDraft } from './SwitchMechanismConnections';
+import { RoomSetupDialog } from './RoomSetupDialog';
 
 function SwitchPlacement({ document, slot, room, kind, edit }: {
   document: LevelDocument; slot: number; room?: SourceRoom; kind: 'native' | 'copy' | 'authored';
@@ -52,7 +53,7 @@ function SwitchPlacement({ document, slot, room, kind, edit }: {
   </>;
 }
 
-function AuthorSwitches({ document, room, edit, request }: { document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void; request?: RoomSetupRequest }) {
+function AuthorSwitches({ document, room, edit, request, expanded, onFinish, onCancel }: { document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void; request?: RoomSetupRequest; expanded: boolean; onFinish: () => void; onCancel: () => void }) {
   const free = availableSwitchSlots(document);
   const [slot, setSlot] = useState(() => String(free[0] ?? '')), [edge, setEdge] = useState(''), [error, setError] = useState('');
   const [connection, setConnection] = useState<SwitchTargetDraft>({ target: '', mode: 'activate' });
@@ -83,7 +84,7 @@ function AuthorSwitches({ document, room, edit, request }: { document: LevelDocu
       if (connection.target && !target) throw new Error('The selected door or lift no longer exists. Choose its connection again.');
       const command = createLinkedSwitch(document, room.id, Number(slot), Number(edge), target, connection.mode);
       buildPlayableLevel(applyCommand(document, command), -1);
-      edit(command); setError(''); setEdge(''); setConnection({ target: '', mode: 'activate' });
+      edit(command); setError(''); setEdge(''); setConnection({ target: '', mode: 'activate' }); onFinish();
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
   let roomIssue = '';
@@ -99,11 +100,11 @@ function AuthorSwitches({ document, room, edit, request }: { document: LevelDocu
   const left = Math.min(...room.vertices.map(point => point.x)), top = Math.min(...room.vertices.map(point => point.z));
   const scale = 160 / Math.max(1, Math.max(...room.vertices.map(point => point.x)) - left, Math.max(...room.vertices.map(point => point.z)) - top);
   const diagram = room.vertices.map(point => ({ x: 30 + (point.x - left) * scale, y: 30 + (point.z - top) * scale }));
-  return <section className="property-section" aria-label="Wall switches"><details ref={details}><summary>Wall switches</summary>
+  return <section className="property-section" aria-label="Wall switches"><details ref={details} open={expanded || undefined}><summary>Wall switches</summary>
     <p className="field-note">Use a solid lower-storey wall at least 64 units long, with 64 units of headroom. An open doorway cannot hold a panel. The panel sits at the wall centre, 32 to 64 units above the floor. Stand nearby and press Space in Playtest.</p>
     <p className="field-note">Choose the door or lift below to connect it directly. The level has eight switch numbers; the next unused number is selected for you.</p>
     {roomIssue && <p className="setup-summary" role="note">{roomIssue} Put the switch in a neighbouring static room, then connect it to the moving room.</p>}
-    <h4 className="setup-step">1. Choose a wall</h4>
+    <div className="switch-placement-layout"><div className="switch-wall-diagram"><h4 className="setup-step">1. Choose a wall</h4>
     <svg viewBox="0 0 220 220" width="100%" style={{ maxHeight: 220 }} aria-label="Numbered switch wall edges">
       <polygon points={diagram.map(point => `${point.x},${point.y}`).join(' ')} fill="var(--panel-bg, #202830)" stroke="currentColor" />
       {diagram.map((a, index) => {
@@ -120,6 +121,7 @@ function AuthorSwitches({ document, room, edit, request }: { document: LevelDocu
       })}
     </svg>
     <p className="field-note">The diagram shows this room from above. Click a numbered edge to choose the new switch wall; S marks an existing switch.</p>
+    </div><div className="switch-placement-settings">
     {!free.length ? <p className="field-note">All eight switch numbers are used. Select an existing switch below to connect, move or remove it.</p> : <fieldset className="new-switch-setup" aria-label="Add a wall switch">
       <label className="select-field"><span>Switch number</span><select aria-label="New switch number" value={slot} onChange={event => setSlot(event.target.value)}><option value="">Choose an unused number</option>{free.map(number => <option key={number} value={number}>Switch {number + 1}{switchRequirements(document, number) ? ' (already required by a mechanism)' : ''}</option>)}</select></label>
       <label className="select-field"><span>Wall</span><select aria-label="New switch wall" value={edge} onChange={event => setEdge(event.target.value)}><option value="">Choose a solid wall edge</option>{walls}</select></label>
@@ -129,9 +131,11 @@ function AuthorSwitches({ document, room, edit, request }: { document: LevelDocu
       <div className="setup-buttons"><button type="button" className="small-button" onClick={() => {
         setEdge(''); setSlot(String(free[0] ?? '')); setConnection({ target: '', mode: 'activate' }); setError('');
         if (details.current) { details.current.open = false; details.current.querySelector('summary')?.focus(); }
+        onCancel();
       }}>Cancel switch setup</button>
       <button type="button" className="small-button" disabled={slot === '' || edge === '' || !!roomIssue} onClick={add}>Add wall switch</button></div>
     </fieldset>}
+    </div></div>
     {error && <p className="field-note" role="alert">{error}</p>}
     {room.switches?.map(item => {
       const edges = room.boundaryMaterials?.edges.map((boundary, index) => boundary === item.boundary ? index : -1).filter(index => index >= 0) ?? [];
@@ -166,8 +170,14 @@ export function SwitchesInspector({ document, room, zone, edit, frameRoom, reque
   request?: RoomSetupRequest;
   edit: (command: EditCommand | (() => EditCommand)) => void; frameRoom: (room: string) => void;
 }) {
-  return <>
-    {room && <AuthorSwitches key={room.id} document={document} room={room} edit={edit} request={request} />}
+  const [dialogOpen, setDialogOpen] = useState(false), [expanded, setExpanded] = useState(false);
+  useEffect(() => { setDialogOpen(false); setExpanded(false); }, [room?.id]);
+  useEffect(() => { if (request?.room === room?.id && request?.kind === 'switch') setDialogOpen(true); }, [request?.sequence]);
+  const close = () => { setDialogOpen(false); setExpanded(false); };
+  const showRoom = (id: string) => { setDialogOpen(false); setExpanded(true); frameRoom(id); };
+  const content = <>
+    {room && <AuthorSwitches key={room.id} document={document} room={room} edit={edit} request={dialogOpen ? request : undefined} expanded={dialogOpen || expanded}
+      onFinish={() => { setDialogOpen(false); setExpanded(true); }} onCancel={close} />}
     {activeNativeSwitches(document).filter(item => item.zone === zone).map(item => <section className="property-section" key={`original-${item.id}`} aria-label={`Switch ${item.id + 1}`}>
       <h3>Switch {item.id + 1}</h3>
       <ResetControl enabled={item.type !== 0} prefix={`switch ${item.id + 1}`} change={enabled => edit(() => setSwitchAutomaticReset(document, item.id, enabled))} />
@@ -184,9 +194,10 @@ export function SwitchesInspector({ document, room, zone, edit, frameRoom, reque
         <div className="info-row"><span>Copied from</span><span>Switch {item.id + 1}</span></div>
         <div className="info-row"><span>Activation room</span><span>Room {item.room.replace(/^room-/, '')}</span></div>
         <button className="small-button" disabled={!graphics} title="Frame the room containing this switch's wall graphics while keeping the switch selected."
-          onClick={() => { if (graphics) frameRoom(graphics.id); }}>Show switch graphics room</button>
+          onClick={() => { if (graphics) showRoom(graphics.id); }}>Show switch graphics room</button>
         <p className="field-note">This copy has independent reset settings. Changing the reset mode keeps its native timer state and attachments. Undo restores each edit.</p>
       </section>;
     })}
   </>;
+  return dialogOpen && room ? <RoomSetupDialog title={`Set up wall switches · Room ${room.id.replace(/^room-/, '')}`} onClose={close}>{content}</RoomSetupDialog> : content;
 }

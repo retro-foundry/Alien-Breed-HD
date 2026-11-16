@@ -81,8 +81,10 @@ the level history. Enter finishes the room; Escape or changing tools cancels.
 To make a door, lift or switch, select one room and use **Create in this room**
 at the top of the inspector. **Find action** also offers Create door, Create
 lift and Create wall switch. Setup clears an inspector filter and reveals the
-right form. Doors and lifts explain movement, activation and appearance in
-three steps. A lift can use a neighbouring room's floor for either stop;
+right form in a wider setup window. Doors and lifts explain movement,
+activation and appearance in three columns; switch placement shows its wall
+diagram beside connection choices. The window adapts to smaller screens,
+keeps Apply reachable, and returns keyboard focus when closed. A lift can use a neighbouring room's floor for either stop;
 smaller height values are higher. Switch setup selects an unused number and
 focuses the wall choice. Setup is a draft until Apply/Add; Cancel and Escape
 keep the saved room unchanged.

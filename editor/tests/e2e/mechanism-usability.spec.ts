@@ -21,12 +21,15 @@ test('room setup reveals filtered door and lift forms, focuses heights and offer
   const search = page.getByRole('textbox', { name: 'Find a setting', exact: true });
   await search.fill('water');
   await page.getByRole('button', { name: 'Set up door', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: /^Set up door/ })).toBeVisible();
   const form = page.getByRole('form', { name: 'Authored mechanism settings' });
   await expect(search).toHaveValue('');
   await expect(form.getByRole('spinbutton', { name: 'New mechanism top', exact: true })).toBeFocused();
   await expect(form.getByRole('combobox', { name: 'New mechanism initial position' })).toHaveValue('bottom');
   await expect(form).toContainText('The ceiling rises');
   await form.getByRole('button', { name: 'Cancel mechanism draft', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: /^Set up door/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Set up door', exact: true })).toBeFocused();
   await page.getByRole('button', { name: 'Find action', exact: true }).click();
   const actions = page.getByRole('dialog', { name: 'Find an editor action' });
   await actions.getByRole('textbox').fill('create lift');
@@ -39,6 +42,7 @@ test('room setup reveals filtered door and lift forms, focuses heights and offer
   await expect(form).toContainText('Lowers when');
   await page.screenshot({ path: info.outputPath('lift-setup.png') });
   await form.getByRole('button', { name: 'Cancel mechanism draft', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Find action', exact: true })).toBeFocused();
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
 });
 
@@ -55,7 +59,32 @@ test('switch setup opens from room actions with an unused number selected and wa
   await expect(section.getByRole('combobox', { name: 'New switch number', exact: true })).toHaveValue(String(fixture.slot));
   await section.getByRole('button', { name: 'Choose edge 1 for new switch', exact: true }).click();
   await section.getByRole('button', { name: 'Cancel switch setup', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: /^Set up wall switches/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Set up switch', exact: true })).toBeFocused();
   await expect(section.locator('details').first()).not.toHaveAttribute('open');
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+});
+
+for (const width of [760, 480]) test(`setup window keeps controls reachable at ${width}px and Escape cancels without editing`, async ({ page }, info) => {
+  const fixture = authoredMovingFixture('lift');
+  await page.setViewportSize({ width, height: 900 });
+  await page.goto('/?view=top');
+  await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.locator('input[type=file]').setInputFiles({ name: 'responsive-setup.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(fixture.document)) });
+  if (!await page.getByRole('button', { name: new RegExp(`^Room ${fixture.room.id.replace('room-', '')}(?:\\s|$)`) }).isVisible())
+    await page.getByRole('button', { name: 'Toggle project navigator', exact: true }).click();
+  await page.getByRole('button', { name: new RegExp(`^Room ${fixture.room.id.replace('room-', '')}(?:\\s|$)`) }).click();
+  const trigger = page.getByRole('button', { name: 'Set up lift', exact: true });
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: /^Set up lift/ });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await expect(dialog.getByRole('button', { name: 'Close setup' })).toBeInViewport();
+  await expect(dialog.getByRole('button', { name: 'Apply mechanism', exact: true })).toBeInViewport();
+  await page.screenshot({ path: info.outputPath(`setup-${width}.png`) });
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
 });
 
