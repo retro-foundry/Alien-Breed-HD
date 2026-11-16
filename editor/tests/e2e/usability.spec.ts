@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { engineRoomProperties } from '../engineCapture';
 
 test('getting started leads to a searchable room, with clear selection actions', async ({ page }) => {
   await page.goto('/?view=top');
@@ -33,6 +34,10 @@ test('find settings reveals expandable fields, retains invalid drafts, and reset
   await search.fill('brightness');
   await expect(page.getByRole('spinbutton', { name: 'Brightness', exact: true })).toBeVisible();
   await expect(corner).toBeHidden();
+  await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  await expect(search).toHaveValue('');
+  await expect(corner).toBeVisible();
+  await expect(corner).toBeFocused();
   await search.fill('Corner 1 X');
   await expect(corner).toHaveValue('100000');
   await corner.press('Escape');
@@ -109,6 +114,9 @@ test('main tools fit smaller windows and player starts can be searched', async (
     }
     expect(await page.locator('.map-toolbar').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await page.locator('.editing-options').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    for (const name of ['Find action', 'Build and play level', 'Save project', 'Export level', 'Help and shortcuts']) {
+      await expect(page.getByRole('button', { name, exact: true })).toBeInViewport();
+    }
   }
 });
 
@@ -118,9 +126,56 @@ test('drawing has visible progress and changing tools cancels the unfinished roo
   await expect(page.locator('.selection-description')).toContainText('Drawing room');
   const canvas = page.locator('canvas[aria-label="Level map"]');
   await canvas.click({ position: { x: 240, y: 180 } });
-  await expect(page.locator('.selection-description')).toContainText('1 corners');
+  await expect(page.locator('.selection-description')).toContainText('1 corner');
   await expect(page.getByRole('button', { name: 'Finish room', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Undo corner', exact: true }).click();
+  await expect(page.locator('.selection-description')).toContainText('0 corners');
   await page.getByRole('button', { name: 'Pan tool', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Finish room', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+});
+
+test('action search finds creation tools with keyboard navigation and preserves focus on cancel', async ({ page }) => {
+  await page.goto('/?view=top');
+  await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  const trigger = page.getByRole('button', { name: 'Find action', exact: true });
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: 'Find an editor action' });
+  const search = dialog.getByRole('textbox', { name: 'Search editor actions' });
+  await expect(search).toBeFocused();
+  await search.fill('scenery');
+  await search.press('ArrowDown');
+  await expect(dialog.getByRole('button', { name: /^Add object/ })).toBeFocused();
+  await page.keyboard.press('Enter');
+  const palette = page.getByRole('dialog', { name: 'Choose object to place' });
+  await expect(palette).toBeVisible();
+  await page.keyboard.press('Escape');
+  await trigger.focus();
+  await page.keyboard.press('Control+k');
+  await expect(search).toBeFocused();
+  await search.fill('no-such-action');
+  await expect(dialog.getByRole('status')).toContainText('No actions match');
+  await search.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+});
+
+test('one-click play builds current edits and does not restart when returning to inspection', async ({ page }) => {
+  await page.goto('/?view=top');
+  await page.getByRole('button', { name: /^Zone 003/ }).click();
+  const brightness = page.getByRole('spinbutton', { name: 'Brightness', exact: true });
+  await brightness.fill('12');
+  await brightness.press('Control+Enter');
+  const preview = page.getByRole('region', { name: '3D game engine preview' });
+  await expect(preview.getByRole('status')).toHaveText('Playtest running', { timeout: 60000 });
+  await expect(brightness).toHaveValue('12');
+  await expect(preview).toHaveAttribute('data-rendered-pixels', /[1-9]/);
+  expect((await engineRoomProperties(page, 3)).brightness).toBe(12);
+  await preview.getByRole('button', { name: 'Stop', exact: true }).click();
+  await page.getByRole('button', { name: 'Editor view', exact: true }).click();
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
+  await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
+  await expect(preview.getByRole('button', { name: 'Build & play', exact: true })).toBeEnabled();
+  await expect(preview.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
 });

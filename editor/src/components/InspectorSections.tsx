@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import { Icon } from './Icon';
 
 interface Section { element: HTMLElement; title: string; text: string }
@@ -67,6 +68,16 @@ export function InspectorSections({ children }: { children: ReactNode }) {
       }}><option value="">Jump to properties…</option>{matches.map(section => <option key={sections.indexOf(section)} value={sections.indexOf(section)}>{section.title}</option>)}</select>
       {needle && <span className="setting-results" role="status">{matches.length ? `${matches.length} matching ${matches.length === 1 ? 'section' : 'sections'}` : 'No settings match. Try heights, textures or lighting.'}</span>}
     </div>
-    <div className="inspector-scroll" ref={content}>{children}</div>
+    <div className="inspector-scroll" ref={content} onInvalidCapture={event => {
+      flushSync(() => setQuery(''));
+      if (event.target instanceof HTMLInputElement) {
+        let parent = event.target.parentElement;
+        while (parent && parent !== content.current) {
+          if (parent instanceof HTMLDetailsElement) parent.open = true;
+          parent = parent.parentElement;
+        }
+        event.target.focus();
+      }
+    }}>{children}</div>
   </>;
 }

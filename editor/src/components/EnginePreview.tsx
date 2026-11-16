@@ -18,9 +18,9 @@ import { PolygonPaintDialog } from './PolygonPaintDialog';
 import { polygonMaterialTarget, type PolygonMaterialTarget } from '../model/polygonMaterials';
 
 interface EngineMessage { source: 'ab3d-engine'; type: string; revision?: number; zone?: number; zones?: number; message?: string; nonblack?: number; slot?: number; exitZone?: number; surface?: NativeSurfacePick | null; object?: NativeObjectPick | null; shortcut?: unknown }
-interface Props { document: LevelDocument; selection: Selection; sourceRoomId?: string; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSelectRoom: (room: string) => void; onSelectObject: (id: number) => void; onShortcut: (shortcut: InspectionShortcut) => void; onEdit: (command: EditCommand) => void; onSlotChange: (slot: number) => void }
+interface Props { document: LevelDocument; selection: Selection; sourceRoomId?: string; layer: 'lower' | 'upper'; onSelectZone: (zone: number) => void; onSelectRoom: (room: string) => void; onSelectObject: (id: number) => void; onShortcut: (shortcut: InspectionShortcut) => void; onEdit: (command: EditCommand) => void; onSlotChange: (slot: number) => void; playRequest?: number; onPlayRequestHandled?: () => void }
 
-export function EnginePreview({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onShortcut, onEdit, onSlotChange }: Props) {
+export function EnginePreview({ document, selection, sourceRoomId, layer, onSelectZone, onSelectRoom, onSelectObject, onShortcut, onEdit, onSlotChange, playRequest, onPlayRequestHandled }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false), [loaded, setLoaded] = useState(false);
   const [playing, setPlaying] = useState(false), [starting, setStarting] = useState(false);
@@ -35,6 +35,7 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
   const [actualExit, setActualExit] = useState<number>();
   const [spawnZone, setSpawnZone] = useState<number>();
   const revisionRef = useRef(0), pendingPlay = useRef(false);
+  const handledPlayRequest = useRef<number | undefined>(undefined);
   const hasLoadedFrame = useRef(false);
   const loadedNotice = useRef(''), inspectionUnavailable = useRef(false);
   const pickedViewTarget = useRef<{ source: LevelDocument; zone?: number; room?: string; object?: number; layer: Props['layer'] } | undefined>(undefined);
@@ -213,6 +214,13 @@ export function EnginePreview({ document, selection, sourceRoomId, layer, onSele
     send('play', { playing: false }); setPlaying(false); setStarting(false); setLoaded(false);
     setActualSlot(-1); setActualExit(undefined); setSpawnZone(undefined); setNonblack(0);
   }, [document]);
+
+  useEffect(() => {
+    if (!ready || playRequest === undefined || handledPlayRequest.current === playRequest) return;
+    handledPlayRequest.current = playRequest;
+    onPlayRequestHandled?.();
+    void load(true);
+  }, [ready, playRequest]);
 
   useEffect(() => {
     const picked = pickedViewTarget.current; pickedViewTarget.current = undefined;

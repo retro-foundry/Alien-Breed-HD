@@ -66,6 +66,18 @@ to a section. Selecting another item starts with an unfiltered inspector.
 **Help and shortcuts** includes a task search covering the guide and keyboard
 control tables. Escape clears a help query before closing the guide.
 
+**Find action** (`Ctrl/Command+K`) searches creation, navigation, texturing,
+playtest, file and recovery actions. Type a task, then press Enter to choose
+the first available match, or use Up/Down to browse. Escape closes the menu
+and returns focus. Actions use the same validated commands as the toolbar.
+
+**Playtest** in the header (`Ctrl/Command+Enter`) builds the latest edits and
+starts the actual game directly from the editing view. A valid focused number
+is committed first; an invalid number is revealed for correction. **Stop**
+returns to inspection. Returning to Engine view later does not restart play.
+While drawing, **Undo corner** removes the last draft point without changing
+the level history. Enter finishes the room; Escape or changing tools cancels.
+
 ## Editing views
 
 **Editor view** opens in editable **3D perspective**. Perspective and 3D

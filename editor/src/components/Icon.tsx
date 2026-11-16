@@ -1,4 +1,4 @@
-type IconName = 'open' | 'save' | 'export' | 'undo' | 'redo' | 'select' | 'hand' | 'fit' | 'layers' | 'search' | 'help' | 'close' | 'chevron' | 'grid' | 'eye' | 'object' | 'pin' | 'alert';
+type IconName = 'open' | 'save' | 'export' | 'undo' | 'redo' | 'select' | 'hand' | 'fit' | 'layers' | 'search' | 'help' | 'close' | 'chevron' | 'grid' | 'eye' | 'object' | 'pin' | 'alert' | 'play';
 const paths: Record<IconName, string> = {
   open: 'M3 7h6l2 2h10l-3 11H3V7zm0 0V4h7l2 3h6v2',
   save: 'M4 3h13l4 4v14H3V3h1zm3 0v7h10V3M7 21v-7h10v7',
@@ -17,6 +17,7 @@ const paths: Record<IconName, string> = {
   object: 'm12 3 9 5v9l-9 5-9-5V8l9-5zm-9 5 9 5 9-5m-9 5v9',
   pin: 'M12 22s7-8 7-13a7 7 0 0 0-14 0c0 5 7 13 7 13zm0-16a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
   alert: 'm12 3 10 18H2L12 3zm0 6v5m0 3h.01',
+  play: 'm8 4 13 8-13 8V4z',
 };
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]} /></svg>;

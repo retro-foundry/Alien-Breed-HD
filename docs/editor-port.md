@@ -3758,3 +3758,44 @@ unrelated website archives and local unused build assets remain untouched.
 This is an incremental authoring delivery, not closure of R0-R12. Synchronized
 controller groups, the strict original-engine profile and the other open items
 in the requirements/parity audit remain active.
+
+
+## Usability pass (2026-11-16)
+
+The current request is to make the editor easier to understand and faster to
+work with across the whole existing editing workflow. The tools now wrap into
+labelled navigation, creation and history groups. Templates, storeys and grid
+settings have their own row; relevant copy/paste actions follow the selection.
+Frame selection and Clear selection are explicit actions. Room drafts show
+corner progress, Finish/Cancel and Undo corner without altering level history.
+
+The empty inspector explains selecting, editing, playtesting and keeping work.
+Contents search accepts displayed zone names/numbers and player starts, with
+clear controls. Inspector search discovers fields inside expandable sections,
+keeps numeric drafts mounted, resets for another selection and offers direct
+section navigation. Invalid fields hidden by search are revealed for correction
+when saving or starting a playtest. Help can be searched by task or shortcut.
+
+Find action (Ctrl/Command+K) searches existing creation, navigation, materials,
+playtest, file and recovery commands with keyboard navigation and modal focus.
+Header Playtest (Ctrl/Command+Enter) commits a valid focused numeric property,
+builds the current source and starts the actual engine. Play requests are
+consumed once and scoped to their workspace; returning to inspection does not
+restart gameplay. Original editing commands, formats and engine rules remain
+the authority. These interface changes do not close the unrelated remaining
+AMOS parity and R0-R12 authoring requirements above.
+
+The native wall oracle was regenerated from current io.c using the native C
+dumper and SB decompressor: all 14 unpacked hashes and complete RGBA sheets are
+unchanged. Mechanism transfer validation retains every original/copy/authored
+source-target combination in individual tests, avoiding a single nine-build
+5-second test. All 103 unit files / 1,235 tests pass with two workers.
+
+Packaged-browser validation: 56 checks pass in Chromium and Firefox across
+usability, all sixteen original imports, editing/Undo/saving/recovery, room
+drawing/corners, object and room clipboards, and failed-renderer recovery.
+An additional 30 checks pass for the control guide, modal shortcut ownership,
+new action search and direct playtest. The direct playtest queries the native
+engine's room brightness to prove that the last focused edit reached the game,
+and verifies that remounting inspection does not start another playtest.
+The native preview was rebuilt from current source before packaging.
