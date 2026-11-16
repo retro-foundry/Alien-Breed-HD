@@ -334,8 +334,8 @@ static inline int Ab3dDos_ShowCursor(int toggle) {
 }
 
 static inline Uint32 Ab3dDos_GetMouseState(int *x, int *y) {
-  float fx = 0.0f;
-  float fy = 0.0f;
+  /* SDL writes both outputs; zero initialization otherwise emits x87 stores. */
+  float fx,fy;
   Uint32 buttons = SDL_GetMouseState(&fx, &fy);
   if (x != NULL) *x = dos_float_to_i32(&fx);
   if (y != NULL) *y = dos_float_to_i32(&fy);

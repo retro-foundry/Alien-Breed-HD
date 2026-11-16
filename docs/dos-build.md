@@ -127,6 +127,9 @@ also use integers. Fade phases retain DJGPP's existing binary32 rounding:
 sky oracle checks 8,720 projection/centering cases. SDL3 mouse coordinates
 are decoded from binary32 at the DOS transport boundary without x87
 conversions; 100,000 bit-pattern cases and the actual mouse/INI checks pass.
+`python tools/check_dos_integer.py --build-dir <DOS build>` compiles ten
+gameplay/input/audio/UI/raster units to assembly and rejects x87 instructions
+and floating-point math calls, including otherwise hidden compiler conversions.
 
 This removes floating-point computation from the normal game-owned paths;
 it does not make SDL3 or the DJGPP C runtime integer-only. SDL still exposes
