@@ -19,7 +19,8 @@ test('tooltips explain actions on hover and keyboard focus; help works using the
   await expect(dialog.getByText('Use doors and switches', { exact: true })).toBeVisible();
   const close = dialog.getByRole('button', { name: 'Close dialog' });
   await expect(close).toBeFocused();
-  await close.press('Tab'); await expect(close).toBeFocused();
+  await close.press('Tab'); await expect(dialog.getByRole('textbox', { name: 'Search editor help' })).toBeFocused();
+  await page.keyboard.press('Shift+Tab'); await expect(close).toBeFocused();
   await close.press('Space');
   await expect(dialog).toHaveCount(0);
   await expect(help).toBeFocused();

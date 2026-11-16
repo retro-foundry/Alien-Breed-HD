@@ -18,6 +18,7 @@ import { TeleportInspector } from './TeleportInspector';
 import { RoomAppearanceInspector } from './RoomAppearanceInspector';
 import type { Selection } from './MapCanvas';
 import { Icon } from './Icon';
+import { InspectorSections } from './InspectorSections';
 import type { SourceRoom } from '../model/roomSource';
 import { RoomInspector } from './RoomInspector';
 import { RoomHeightInspector } from './RoomHeightInspector';
@@ -53,10 +54,16 @@ function SourceStartForm({ document, player, edit }: { document: LevelDocument; 
     onApply={(room, x, z) => edit(() => setSourceStart(document, player, room, x, z))} />;
 }
 
-export function Inspector({ document, selection, edit, sourceRoom, onObjectDuplicate, onRoomCorner, onRoomCornerInsert, onRoomCornerRemove, onRoomRedraw, onRoomDelete, onShowDestination, onInspectRoom, onViewRoomSide, onPaintRoomTextures }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
+export function Inspector({ document, selection, edit, sourceRoom, onObjectDuplicate, onRoomCorner, onRoomCornerInsert, onRoomCornerRemove, onRoomRedraw, onRoomDelete, onShowDestination, onInspectRoom, onViewRoomSide, onPaintRoomTextures, onFindRoom, onHelp }: { document: LevelDocument; selection: Selection; edit: (command: EditCommand | (() => EditCommand)) => void;
+  onFindRoom: () => void; onHelp: () => void;
   onObjectDuplicate: () => void; onViewRoomSide: () => void; onPaintRoomTextures: () => void;
   sourceRoom?: SourceRoom; onRoomCorner: (index: number, axis: 'x' | 'z', value: number) => void; onRoomCornerInsert: (index: number) => void; onRoomCornerRemove: (index: number) => void; onRoomRedraw: () => void; onRoomDelete: () => void; onShowDestination: (room: string) => void; onInspectRoom: (room: string) => void }) {
-  if (!selection && !sourceRoom) return <aside className="inspector"><div className="panel-title">INSPECTOR</div><div className="empty-inspector"><Icon name="select" size={32} /><h2>Select something</h2><p>Click a zone, object or player start to inspect it.</p><p className="muted">Drag objects and starts to reposition them. Hold Alt to ignore the grid.</p></div></aside>;
+  if (!selection && !sourceRoom) return <aside className="inspector"><div className="panel-title">GETTING STARTED</div><div className="empty-inspector">
+    <Icon name="select" size={30} /><h2>Make this level your own</h2><p>Choose a room, object or player start in the view or the project list.</p>
+    <ol className="quick-start"><li><strong>Select and frame</strong><span>Click to select. Shift-click adds to a group. Frame selection brings it closer.</span></li><li><strong>Edit in the inspector</strong><span>Find heights, textures and gameplay settings here. Enter applies numbers; Escape cancels a field.</span></li><li><strong>Try it, then keep it</strong><span>Use Engine view to build and play. Save project downloads an editable backup; Export level creates game files.</span></li></ol>
+    <button className="small-button" onClick={onFindRoom}><Icon name="search" size={15} />Find a room</button><button className="small-button" onClick={onHelp}><Icon name="help" size={15} />Read the editor guide</button>
+    <p className="navigation-tip">3D: right-drag to orbit, middle-drag to pan, wheel to zoom. <kbd>F</kbd> fits the level.</p>
+  </div></aside>;
   const zone = selection?.kind === 'zone' ? document.zones.find(zone => zone.id === selection.id) : undefined;
   const dimensions = sourceRoom ? roomSettings(document, sourceRoom) : zone;
   let waterHeight: number | string | undefined = zone?.water;
@@ -74,7 +81,7 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
   return <aside className="inspector">
     <div className="panel-title">INSPECTOR <span className="eyebrow">{selection?.kind.toUpperCase() ?? 'ROOM'}</span></div>
     <div className="inspector-heading"><span className="selection-symbol"><Icon name={zone || sourceRoom ? 'layers' : start ? 'pin' : 'object'} size={24} /></span><div><h2>{title}</h2><span className="muted">{zone ? `${zone.boundaryIds.length} edges · ${dimensions!.upper.length > 0 && dimensions!.upperFloor > dimensions!.upperCeiling ? 'two storeys' : 'one storey'}` : object ? `Object ${object.id} · ${object.room === null ? 'Deleted' : object.room ? `Room ${object.room.replace(/^room-/, '')}` : `Zone ${object.zone}`}` : sourceRoom ? 'Editable room outline' : 'Level spawn point'}</span></div></div>
-    <div className="inspector-scroll">
+    <InspectorSections key={sourceRoom?.id ?? `${selection?.kind}:${selection?.id}`}>
       {(zone || sourceRoom) && <p className="field-note">A zone is a map area with its own heights and settings. It can be a whole room, a corridor, or part of a larger room, such as a step. One visible room can contain several zones.</p>}
       {sourceRoom && <RoomSurfaceInspector key={`surfaces:${sourceRoom.id}`} document={document} room={sourceRoom} edit={edit} />}
       {sourceRoom && <RoomInspector room={sourceRoom} onCorner={onRoomCorner} onInsertCorner={onRoomCornerInsert} onRemoveCorner={onRoomCornerRemove} onRedraw={onRoomRedraw} onDelete={onRoomDelete} />}
@@ -154,6 +161,6 @@ export function Inspector({ document, selection, edit, sourceRoom, onObjectDupli
         ? <SourceStartForm document={document} player={start.player} edit={edit} />
         : <PositionForm x={start.x} z={start.z} zone={start.zone} onApply={(x, z, zone) => edit(() => setStart(document, start.player, x, z, zone))} />}<p className="field-note">Select the triangle, then drag its movement handle to place this start. The point must stay inside its room.</p></section>}
       {point && <section className="property-section"><h3>Coordinates</h3><InfoRow label="X" value={point.x} /><InfoRow label="Z" value={point.z} /></section>}
-    </div>
+    </InspectorSections>
   </aside>;
 }

@@ -1,0 +1,101 @@
+/* Editing actions wrap into view instead of disappearing off the toolbar. */
+.map-toolbar {
+  height: auto;
+  min-height: 48px;
+  padding: 7px 10px;
+  gap: 7px 12px;
+  flex-wrap: wrap;
+  overflow: visible;
+}
+.map-toolbar .tool-group { display: flex; flex-wrap: wrap; gap: 4px; }
+.map-toolbar .tool-group + .tool-group { border-left: 1px solid #3b444e; padding-left: 10px; }
+.map-toolbar button { font-size: 11px; min-height: 32px; padding: 6px 9px; }
+.map-toolbar button.active { background: #b2de7a1a; color: #c6ec99; border-color: #738d57; }
+.map-toolbar .history-tools { margin-left: auto; }
+.editing-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 10px;
+  padding: 7px 10px;
+  background: #1b222a;
+  border-bottom: 1px solid #343c46;
+  flex-shrink: 0;
+}
+.editing-options .grid-select { display: flex; align-items: center; gap: 6px; font-size: 10px; color: #a4b1bd; }
+.editing-options .grid-select select { max-width: 155px; font-size: 11px; padding: 5px 6px; }
+.editing-options .layer-toggle { display: flex; flex-shrink: 0; }
+.editing-options .layer-toggle button { font-size: 10px; padding: 6px 8px; }
+.editing-options .icon-button { width: 30px; height: 30px; }
+.selection-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  gap: 4px 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #343c46;
+  background: #222c32;
+}
+.selection-description { font-size: 11px; color: #b5c5ce; margin-right: auto; line-height: 1.6; }
+.selection-toolbar .small-button { min-height: 28px; font-size: 11px; padding: 4px 7px; }
+.selection-toolbar.drawing { background: #2b3527; border-color: #6f8953; }
+.selection-toolbar.drawing .selection-description { color: #d2eab7; }
+.search-box button { padding: 2px; flex-shrink: 0; }
+.search-box input { width: 100%; min-width: 0; }
+.search-box:focus-within { border-color: #9cbd70; }
+
+/* Search leaves the forms mounted, including their unapplied number drafts. */
+.inspector-tools { padding: 10px 12px; border-bottom: 1px solid #3a444e; background: #202930; flex-shrink: 0; }
+.inspector-tools .search-box { margin: 0 0 7px; }
+.inspector-tools > select { width: 100%; font-size: 11px; }
+.setting-results { display: block; color: #bccbd3; font-size: 11px; line-height: 1.5; margin-top: 7px; }
+.inspector-scroll > [hidden] { display: none !important; }
+.property-section h3:focus { outline: 1px solid #b2de7a; outline-offset: 5px; }
+.empty-inspector { text-align: left; padding: 24px 18px; overflow: auto; }
+.empty-inspector > svg { color: #b2de7a; margin-bottom: 16px; }
+.empty-inspector h2 { font-size: 17px; color: #d9e5e9; line-height: 1.4; }
+.empty-inspector p { color: #9dadb8; line-height: 1.7; }
+.quick-start { list-style: none; padding: 0; margin: 22px 0; counter-reset: steps; }
+.quick-start li { position: relative; padding-left: 30px; margin-bottom: 18px; counter-increment: steps; }
+.quick-start li::before { content: counter(steps); position: absolute; left: 0; top: 0; width: 21px; height: 21px; display: grid; place-items: center; border: 1px solid #53634b; border-radius: 50%; color: #b2de7a; font-size: 10px; }
+.quick-start strong { display: block; font-size: 12px; color: #d1dce1; margin-bottom: 5px; }
+.quick-start span { display: block; font-size: 11px; line-height: 1.7; color: #9dadb8; }
+.empty-inspector .small-button { width: 100%; justify-content: flex-start; margin: 4px 0; font-size: 12px; color: #d1dde2; }
+.empty-inspector .navigation-tip { margin-top: 20px; font-size: 11px; }
+.help-search { margin: 20px 0 8px; }
+.help-search .search-box { margin: 0 0 7px; background: #171f26; }
+.help-search > span { font-size: 11px; color: #aabac4; }
+.help-no-results { padding: 22px 0; }
+.modal:has(.help-topics) { width: 650px; }
+.help-topic { border-bottom: 1px solid #3b4650; padding-bottom: 14px; }
+.help-topic:last-child { border-bottom: 0; }
+
+@media (min-width: 1101px) {
+  .workspace { grid-template-columns: 224px minmax(0, 1fr) 310px; }
+}
+@media (max-width: 850px) {
+  .map-toolbar { gap: 6px; padding: 6px; }
+  .map-toolbar button { padding: 5px 7px; }
+  .map-toolbar .tool-group + .tool-group { padding-left: 5px; }
+  .editing-options { gap: 5px; padding: 6px; }
+  .editing-options .grid-select > span { display: none; }
+  .editing-options .grid-select select { max-width: 115px; }
+  .selection-toolbar { padding: 5px 8px; }
+  .view-tabs { flex-wrap: wrap; }
+}
+@media (max-width: 620px) {
+  .inspector { max-height: 40dvh; }
+  .inspector-scroll { display: block; }
+  .inspector-scroll .property-section { min-width: 0; border-right: 0; border-bottom: 1px solid #343c46; }
+  .inspector-tools { padding: 7px 10px; }
+  .inspector-tools > select { padding: 4px 6px; }
+  .inspector-heading { flex-shrink: 0; }
+  .empty-inspector { padding: 14px; }
+  .empty-inspector > svg, .quick-start, .empty-inspector .navigation-tip { display: none; }
+  .empty-inspector p { margin: 5px 0; }
+  .empty-inspector .small-button { width: auto; margin: 4px 8px 0 0; font-size: 11px; }
+  .map-main { min-height: 260px; }
+  .editing-options .grid-select select { max-width: 100px; }
+  .selection-description { flex-basis: 100%; }
+}

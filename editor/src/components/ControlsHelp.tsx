@@ -3,13 +3,14 @@ export const previewKeys = [['W / A / S / D', 'Move the editing camera'], ['Righ
 export const playKeys = [['W / S', 'Move forward / backward'], ['A / D', 'Strafe left / right'], ['Mouse', 'Aim after clicking the game view'], ['Left click / Ctrl', 'Fire'], ['Space / right click', 'Use doors and switches'], ['C', 'Crouch'], ['Shift', 'Change run / walk speed'], ['1–6 / mouse wheel', 'Choose an available weapon'], ['Esc', 'Release the mouse / open the game menu'], ['Stop button', 'Return to editing']] as const;
 
 import { zoneGraphicsRecordLimit } from '../model/renderLimits';
+import { HelpTopics } from './HelpTopics';
 
 function Keys({ rows }: { rows: readonly (readonly [string, string])[] }) {
   return <div className="shortcut-list">{rows.map(([key, action]) => <div key={key}><span>{action}</span><kbd>{key}</kbd></div>)}</div>;
 }
 
 export function ControlsHelp() {
-  return <><span className="eyebrow">CONTROLS & SHORTCUTS</span><h2>Find your way around</h2>
+  return <HelpTopics><span className="eyebrow">CONTROLS & SHORTCUTS</span><h2>Find your way around</h2>
     <p>Open an original level or your project. Click a zone, object or player start to inspect it. Left click selects; left drag draws a zone selection box. Hold Shift to add zones. Use explicit movement handles to move objects and starts; positions must stay inside their zone. Hover over a control or focus it with Tab for a tooltip.</p>
     <h3>Dotted lines and connections</h3><p>Dotted lines are shared zone connections (portals), not a different room type. In Top view, Draw room beside another room with an edge exactly matching all or part of its edge. Grid snapping or matching corner coordinates helps. Press Enter; starter wall, floor and ceiling textures are assigned automatically. The editor marks the shared edge dotted automatically, even while selected. A corner contact gives no passage, and overlapping outlines are rejected. Match floor heights and leave enough headroom to walk through; doors can close connections. Automatic rules preserve solid boundaries between imported zones. To change one, select the room and expand Wall connections (solid / dotted). Open edge changes both sides. Close edge asks for both wall styles and lighting; Apply wall closure commits collision and graphics as one Undo. Cancel leaves the original passage intact, and Use automatic edge restores the imported/drawing rule. Controlled walls use their mechanism controls. The map legend has a diagram and step-by-step instructions.</p>
     <h3>Rooms and zones</h3><p>A zone is a map area with its own heights and settings. It can be a room, corridor or part of a larger room, such as a step. Several zones can form one visible room.</p>
@@ -57,5 +58,5 @@ export function ControlsHelp() {
     <h3>Playtesting</h3><p>Choose the target game slot and Level exit in Project. Original slot exit retains the game's built-in completion zone; choose an existing zone or a newly drawn Room for an authored exit, or No exit to test freely. Every section of a concave room counts as the same exit. Choose another exit before deleting that room or dividing it into a ceiling opening. Save project keeps its room identity; Export level writes the matching game setup. Choose Build & play, then click the game view to capture the mouse. The first click captures it; subsequent clicks fire. Use Stop to return to editing.</p><Keys rows={playKeys} />
     <h3>Keeping your work</h3><p>Workspace changes are saved in this browser. Save project downloads a portable .ab3d backup, including the target game slot. Choose that slot in Project or the 3D toolbar; it is independent of the project name. Export level puts the game files in the matching levels/level_… directory with installation instructions. Keep project copies to transfer your work or recover it if browser storage is cleared.</p>
     <h3>Engine capacity</h3><p>The current game supports {zoneGraphicsRecordLimit} graphics commands per room and floor. Walls, surfaces and draw controls share this budget. Preview and game export stop with a room-specific error if a stream exceeds it; Save project still preserves your work. This is the current port's limit, not an original Amiga compatibility profile.</p>
-  </>;
+  </HelpTopics>;
 }

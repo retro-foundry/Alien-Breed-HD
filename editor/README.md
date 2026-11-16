@@ -45,6 +45,27 @@ the GitHub Pages run, public `build-info.json` and asset hashes, then open the
 public editor and native engine. Deployment does not close the remaining
 authoring requirements recorded in the port notes.
 
+## Finding your way around
+
+The editing toolbar groups selection/navigation, creation and Undo/Redo. It
+wraps to fit your window. Room templates, active storey, grid and display
+options sit on their own row. The selection bar names your selection and
+offers **Frame selection**, **Clear selection** and relevant copy/duplicate
+actions. Paste actions appear after copying. Drawing shows the corner count
+and keeps **Finish room** and **Cancel room** in view.
+
+With nothing selected, the inspector explains the select → edit → play/save
+workflow. **Find a room** opens and focuses the project search. Contents search
+accepts zone numbers/names, objects and player starts; its clear button or
+Escape restores the list without clearing the selection.
+
+For a selected room or object, **Find a setting** filters the inspector and
+reveals matching expandable fields. Clearing it restores the full inspector;
+unapplied numeric drafts remain mounted. **Jump to properties** moves straight
+to a section. Selecting another item starts with an unfiltered inspector.
+**Help and shortcuts** includes a task search covering the guide and keyboard
+control tables. Escape clears a help query before closing the guide.
+
 ## Editing views
 
 **Editor view** opens in editable **3D perspective**. Perspective and 3D
