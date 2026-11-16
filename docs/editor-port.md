@@ -3809,3 +3809,18 @@ The visual pass also found focused tooltips persisting after activation;
 tooltips now dismiss on click/keyboard activation while preserving hover and
 keyboard-focus descriptions. All 28 tooltip/control/usability browser checks
 pass in both browsers after that change.
+
+Final usability package: source UI 26320b1 / website 5838884. Pages run
+43905476479 succeeded and all 80 public package files match the exact tested
+bytes. Both public browsers confirmed tooltip dismissal, searchable actions,
+actual native brightness 19 after the header Playtest action and non-black
+rendering, with no page errors. The 24 editable-3D/spatial/framing/stairs checks
+also pass across both browsers, including actual native stair walking.
+
+CI exposed two pre-existing multi-case timing failures under the unchanged
+five-second test deadline: the sixteen-map height check and combined barrier
+open/close test. Each map and each barrier state is now an independent test,
+retaining all assertions. Vitest caps compiler workers at two to avoid CPU-count
+oversubscription. The default npm test command passes all 103 files / 1,251
+cases in 132.43 seconds locally. Test deadlines and renderer/game rules are
+unchanged; the matching source CI is rerun after these test-only fixes.

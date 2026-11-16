@@ -37,21 +37,19 @@ it('recognises a raw exported barrier without inventing source overrides and pre
   expect(result.map(face => face.wall)).toEqual(original.map(face => face.wall));
 });
 
-it('explicitly opens or closes an imported barrier with saved provenance and Undo', () => {
+for (const open of [true, false]) it(`explicitly ${open ? 'opens' : 'closes'} an imported barrier with saved provenance and Undo`, () => {
   const { document, own, other } = importedBarrierFixture(), target = roomPortalTargets(document, own.id).find(target => target.neighbour === other.id)!;
-  for (const open of [true, false]) {
-    const appearances = open ? [] : [own, other].map(room => {
-      const choices = roomAppearanceChoices(document, room);
-      return { room: room.id, lowerWall: choices.lower[0]!.offset, upperWall: choices.upper[0]?.offset ?? null, lightingPoint: choices.points[0]! };
-    });
-    const command = setRoomPortal(document, own.id, target.edges[0]!, other.id, open, appearances);
-    const history = execute({ document, past: [], future: [] }, command), built = buildPlayableLevel(history.document, -1);
-    const cell = built.topology!.cells.find(cell => cell.sourceId === own.id)!, destination = built.topology!.cells.find(cell => cell.sourceId === other.id)!;
-    expect(cell.neighbours.includes(destination.id)).toBe(open);
-    expect(built.document.zones[cell.id]!.lower.some(face => face.type === 13)).toBe(false);
-    expect(undo(history).document).toEqual(document); expect(redo(undo(history)).document.roomSource).toEqual(history.document.roomSource);
-    expect(buildPlayableLevel(decodeProject(encodeProject(history.document)), -1).document.files).toEqual(built.document.files);
-  }
+  const appearances = open ? [] : [own, other].map(room => {
+    const choices = roomAppearanceChoices(document, room);
+    return { room: room.id, lowerWall: choices.lower[0]!.offset, upperWall: choices.upper[0]?.offset ?? null, lightingPoint: choices.points[0]! };
+  });
+  const command = setRoomPortal(document, own.id, target.edges[0]!, other.id, open, appearances);
+  const history = execute({ document, past: [], future: [] }, command), built = buildPlayableLevel(history.document, -1);
+  const cell = built.topology!.cells.find(cell => cell.sourceId === own.id)!, destination = built.topology!.cells.find(cell => cell.sourceId === other.id)!;
+  expect(cell.neighbours.includes(destination.id)).toBe(open);
+  expect(built.document.zones[cell.id]!.lower.some(face => face.type === 13)).toBe(false);
+  expect(undo(history).document).toEqual(document); expect(redo(undo(history)).document.roomSource).toEqual(history.document.roomSource);
+  expect(buildPlayableLevel(decodeProject(encodeProject(history.document)), -1).document.files).toEqual(built.document.files);
 });
 
 it('retains imported barrier mappings across inserted corners and independent group copies', () => {

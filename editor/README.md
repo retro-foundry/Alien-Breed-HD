@@ -732,6 +732,10 @@ and Firefox, covering all 16 maps in the actual engine and map UI, editing/undo,
 file round trips, focused-field saves, autosave recovery, malformed inputs,
 invalid positions, narrow layouts and asynchronous-load races.
 
+Unit tests compile complete level fixtures with at most two workers, keeping
+their existing deadlines reliable on machines reporting many logical CPUs.
+Original-map and controller combinations run as separately named cases.
+
 Compression fixtures were generated using the independent C decompressor.
 From the repository root, regenerate them only after reviewing source changes:
 
