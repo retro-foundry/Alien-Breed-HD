@@ -88,21 +88,23 @@ on exit from VGA-only hardware. Test-only handoff markers and DOSBox-X CPU-trap
 setup stay inside isolated check directories.
 
 The verified combined release is staged in `build/dos/game` and
-`build/dos/ABHD-DOS.zip`; build/test evidence is under `build/dos-video`.
+`build/dos/ABHD-DOS.zip`; current build/test evidence is under
+`build/dos-integer` and `build/dos-float-audit`.
 The optimized build passes 31 feedback scenarios, all 22 4 MB capture checks
 and the real-time 4 MB RGB565 SB16/mouse/UI exercise. All 22 RGB565 images
-also match the preceding FPU-removal release exactly, with and without x87.
-RGB555 and VGA-only paths pass the 4 MB no-FPU UI/save/load/briefing checks;
+also match the preceding underwater-weapon release exactly, with and without
+x87. RGB555 and the VGA-only launcher pass 32-frame 4 MB no-FPU sound/mouse
+checks. The earlier video-compatibility pass also covers UI/save/load/briefings;
 the VGA check starts with a 240-line INI and verifies actual 320x200 output.
 The launcher contract preserves statuses 0, 1, 85, 87 and 255, and switches
 only for 86 while forwarding all nine parameters. Desktop Release builds.
 
-The combined ZIP contains 253 files (4,176,560 bytes), sharing all but fourteen
+The combined ZIP contains 253 files (4,169,385 bytes), sharing all but fourteen
 wall caches between the two executables. SHA-256:
-`f02ca9b2d77e706c17849cbfa9293d6b20adc2b80a9dedad6163a07c0cec4a6f`.
-Staging preserves 239 other installed files, including settings and saves.
+`bec957d0246a6952fdabe0bbadbc2104d5808848b6cd64fb38bbe647d3ec31a8`.
+Staging preserves 255 other installed files, including settings and saves.
 Previous artifacts and detailed hashes are under
-`build/dos-video/previous-installed` and `build/dos-video/staging.json`.
+`build/dos-integer/previous-installed` and `build/dos-integer/staging.json`.
 
 ### Optional hardware FPU
 
@@ -136,6 +138,27 @@ it does not make SDL3 or the DJGPP C runtime integer-only. SDL still exposes
 floating-point window/mouse interfaces, and optional detailed renderer reports
 retain floating-point formatting. Both DOS executables keep `libemu` for
 those library/diagnostic calls. Hardware with no FPU remains supported.
+
+The release completes fresh compiler training (31 scenarios), all 22 optimized
+4 MB captures and the real-time SB16/mouse/UI/save exercise. With x87 genuinely
+blocked, all 22 starting/turning scenes still match the preceding release's
+FPU-enabled pixels. Five outcome-fade/lifecycle cases, exact audio mixing,
+mouse/INI checks and the shared movement/shooting/audio/water/sky/tag/automap
+regressions pass. Windows Release and the single-threaded web release rebuild.
+
+A fresh DOSBox-X comparison uses `core=normal`, `cputype=486`, 40,000 fixed
+cycles, 4 MB, 320x200, level 4, SB16 and mouse. Three 128-frame real-time runs
+per case give these median FPS values:
+
+| Build | Hardware FPU | Software emulation |
+| --- | ---: | ---: |
+| Previous underwater-weapon release | 50.38 | 44.46 |
+| Integer-math release | 50.33 | 48.07 |
+
+The no-FPU case improves about 8.1%; FPU-enabled performance is effectively
+unchanged. The remaining software/FPU gap is about 4.5% in this profile.
+These are emulator results, not measurements on a physical 486. Full runs,
+executable hashes and settings are in `build/dos-float-audit/benchmark.json`.
 
 The DOS executable includes DJGPP `libemu`, activated automatically when no
 coprocessor is detected. A 486SX needs no separate emulator file. Remaining
@@ -177,7 +200,8 @@ include the emulator. Real hardware remains untested.
 The SDL VGA patch accepts valid VBE BIOS detection on adapters whose DAC mask
 does not support readback, while retaining the existing plain-VGA probe.
 
-The verified candidate is in `build/dos-no-fpu`; its compiler-feedback report
+For the earlier FPU-removal pass, the verified candidate is in
+`build/dos-no-fpu`; its compiler-feedback report
 is `pgo/report.json`. All 22 native 320x240 captures at 4 MB match the unchanged
 source build, as do 128 barrel/debris framebuffers and simulation hashes.
 The DOSBox-X no-FPU matrix (`pgo/no-fpu-check/report.json`) also matches all
@@ -187,8 +211,9 @@ oracles cover 2,679,681 distance gains, 257,252 covered triangle samples and
 126,000 independent clipping intersections. Desktop Release and the movement,
 shooting, audio, teleport, water, sky, tag and automap regressions pass.
 
-At 40,000 fixed cycles in DOSBox-X, 4 MB, 320x200, SB16 and mouse, 128 real-time
-frames measure 24.85 FPS for the unchanged ordinary source build with an FPU,
+That earlier pass used 40,000 fixed cycles in DOSBox-X, 4 MB, 320x200,
+SB16 and mouse. Its 128 real-time frames measured 24.85 FPS for the
+unchanged ordinary source build with an FPU,
 23.66 for the updated feedback build with an FPU and 22.21 without one.
 The emulator overhead relative to the updated hardware-FPU build is about
 6%; these are emulator comparisons, not measured 486 hardware speeds.
