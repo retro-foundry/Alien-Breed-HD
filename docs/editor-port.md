@@ -3942,3 +3942,21 @@ The first batch passes 38 Chromium/Firefox checks, including original and new
 door/lift creation, native movement and wall synchronization, switch activation,
 Undo, cancellation, project reopening, filtered inspector navigation and the
 general usability flows. No native game or file-format changes are involved.
+
+Wall switch authoring now connects directly to named native/copied/authored
+doors and lifts. Placement and linking compose existing edit commands into one
+Undo entry; failed validation exposes no partial panel or condition change.
+Users explicitly choose the existing trigger or the native timer opening rule
+(objects.c door_routine mode 4 / lift_routine mode 2, from Anims.s). Closing
+rules, ranges, starting state and all other requirements stay intact. Existing
+switches show their actual connections and support Connect/Unlink. Wall/headroom
+requirements, lift raise/lower labels and draft cancellation are visible.
+
+All 104 model files / 1,258 tests pass, including seven new cases covering
+all three mechanism ownership types, atomic history, reopen and isolation.
+The final related browser group passes 64 Windows checks across Chromium and
+Firefox; 16 corresponding Linux Chromium/Firefox checks also pass with Mesa.
+New tests create and connect each mechanism, undo/redo the combined edit, save
+and reopen its source, press Space at the panel in the real game and verify
+the native condition bit, moving plane and synchronized walls. The broader
+port parity requirements and previously documented baseline failures stay open.

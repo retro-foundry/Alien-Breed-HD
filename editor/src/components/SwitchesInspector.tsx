@@ -8,6 +8,9 @@ import { availableSwitchSlots, setSourceSwitch, switchRequirements, reassignNati
 import { activeNativeSwitches } from '../model/nativeSwitches';
 import { applyCommand, editRoomSource } from '../model/commands';
 import { buildPlayableLevel } from '../model/playableBuild';
+import { createLinkedSwitch } from '../model/switchMechanismLinks';
+import { mechanismOwnerKey } from '../model/mechanismSettingsTransfer';
+import { SwitchMechanismConnections, SwitchTargetFields, switchTargets, type SwitchTargetDraft } from './SwitchMechanismConnections';
 
 function SwitchPlacement({ document, slot, room, kind, edit }: {
   document: LevelDocument; slot: number; room?: SourceRoom; kind: 'native' | 'copy' | 'authored';
@@ -26,6 +29,7 @@ function SwitchPlacement({ document, slot, room, kind, edit }: {
   };
   const required = switchRequirements(document, slot);
   return <>
+    <SwitchMechanismConnections document={document} slot={slot} edit={edit} />
     <details><summary>Move switch {slot + 1} to another wall or room</summary>
       <p className="field-note">Choose the destination room and its solid lower wall. The switch moves to the wall centre. Its number and door/lift requirements stay the same. Apply is one Undo.</p>
       <label className="select-field"><span>Destination room</span><select aria-label={`Switch ${slot + 1} destination room`} value={destination} onChange={event => { setDestination(event.target.value); setEdge(''); }}>
@@ -51,6 +55,7 @@ function SwitchPlacement({ document, slot, room, kind, edit }: {
 function AuthorSwitches({ document, room, edit, request }: { document: LevelDocument; room: SourceRoom; edit: (command: EditCommand | (() => EditCommand)) => void; request?: RoomSetupRequest }) {
   const free = availableSwitchSlots(document);
   const [slot, setSlot] = useState(() => String(free[0] ?? '')), [edge, setEdge] = useState(''), [error, setError] = useState('');
+  const [connection, setConnection] = useState<SwitchTargetDraft>({ target: '', mode: 'activate' });
   const details = useRef<HTMLDetailsElement>(null);
   useEffect(() => { if (slot === '' || !free.includes(Number(slot))) setSlot(String(free[0] ?? '')); }, [free.join(',')]);
   useEffect(() => {
@@ -72,6 +77,18 @@ function AuthorSwitches({ document, room, edit, request }: { document: LevelDocu
       if (!room.switches?.some(item => item.slot === number)) { setSlot(''); setEdge(''); }
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
+  const add = () => {
+    try {
+      const target = connection.target ? switchTargets(document).find(item => mechanismOwnerKey(item.owner) === connection.target)?.owner : undefined;
+      if (connection.target && !target) throw new Error('The selected door or lift no longer exists. Choose its connection again.');
+      const command = createLinkedSwitch(document, room.id, Number(slot), Number(edge), target, connection.mode);
+      buildPlayableLevel(applyCommand(document, command), -1);
+      edit(command); setError(''); setEdge(''); setConnection({ target: '', mode: 'activate' });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+  };
+  let roomIssue = '';
+  if (free.length) try { setSourceSwitch(document, room.id, free[0]!, { edge: 0, automatic: false }); }
+  catch (reason) { roomIssue = reason instanceof Error ? reason.message : String(reason); }
   const wallEdge = (index: number) => room.boundaryMaterials?.edges.indexOf(room.boundaryMaterials.edges[index]!) ?? index;
   const walls = room.vertices.flatMap((a, index) => {
     if (wallEdge(index) !== index) return [];
@@ -83,8 +100,10 @@ function AuthorSwitches({ document, room, edit, request }: { document: LevelDocu
   const scale = 160 / Math.max(1, Math.max(...room.vertices.map(point => point.x)) - left, Math.max(...room.vertices.map(point => point.z)) - top);
   const diagram = room.vertices.map(point => ({ x: 30 + (point.x - left) * scale, y: 30 + (point.z - top) * scale }));
   return <section className="property-section" aria-label="Wall switches"><details ref={details}><summary>Wall switches</summary>
-    <p className="field-note">Add a switch to a solid lower-storey wall. Its panel appears at the wall centre, 32 to 64 units above the floor. Stand nearby and press Space in Build &amp; play.</p>
-    <p className="field-note">To make it open a door or operate a lift, select the same switch number under that mechanism’s Requires all selected. The level has eight switch numbers.</p>
+    <p className="field-note">Use a solid lower-storey wall at least 64 units long, with 64 units of headroom. An open doorway cannot hold a panel. The panel sits at the wall centre, 32 to 64 units above the floor. Stand nearby and press Space in Playtest.</p>
+    <p className="field-note">Choose the door or lift below to connect it directly. The level has eight switch numbers; the next unused number is selected for you.</p>
+    {roomIssue && <p className="setup-summary" role="note">{roomIssue} Put the switch in a neighbouring static room, then connect it to the moving room.</p>}
+    <h4 className="setup-step">1. Choose a wall</h4>
     <svg viewBox="0 0 220 220" width="100%" style={{ maxHeight: 220 }} aria-label="Numbered switch wall edges">
       <polygon points={diagram.map(point => `${point.x},${point.y}`).join(' ')} fill="var(--panel-bg, #202830)" stroke="currentColor" />
       {diagram.map((a, index) => {
@@ -101,6 +120,18 @@ function AuthorSwitches({ document, room, edit, request }: { document: LevelDocu
       })}
     </svg>
     <p className="field-note">The diagram shows this room from above. Click a numbered edge to choose the new switch wall; S marks an existing switch.</p>
+    {!free.length ? <p className="field-note">All eight switch numbers are used. Select an existing switch below to connect, move or remove it.</p> : <fieldset className="new-switch-setup" aria-label="Add a wall switch">
+      <label className="select-field"><span>Switch number</span><select aria-label="New switch number" value={slot} onChange={event => setSlot(event.target.value)}><option value="">Choose an unused number</option>{free.map(number => <option key={number} value={number}>Switch {number + 1}{switchRequirements(document, number) ? ' (already required by a mechanism)' : ''}</option>)}</select></label>
+      <label className="select-field"><span>Wall</span><select aria-label="New switch wall" value={edge} onChange={event => setEdge(event.target.value)}><option value="">Choose a solid wall edge</option>{walls}</select></label>
+      <h4 className="setup-step">2. Connect a door or lift (optional)</h4>
+      <SwitchTargetFields document={document} prefix="New switch" value={connection} change={setConnection} />
+      <p className="field-note">Add places the panel{connection.target ? ' and connects its mechanism' : ''} as one edit. Undo restores both. Stand nearby and press Space in Playtest.</p>
+      <div className="setup-buttons"><button type="button" className="small-button" onClick={() => {
+        setEdge(''); setSlot(String(free[0] ?? '')); setConnection({ target: '', mode: 'activate' }); setError('');
+        if (details.current) { details.current.open = false; details.current.querySelector('summary')?.focus(); }
+      }}>Cancel switch setup</button>
+      <button type="button" className="small-button" disabled={slot === '' || edge === '' || !!roomIssue} onClick={add}>Add wall switch</button></div>
+    </fieldset>}
     {error && <p className="field-note" role="alert">{error}</p>}
     {room.switches?.map(item => {
       const edges = room.boundaryMaterials?.edges.map((boundary, index) => boundary === item.boundary ? index : -1).filter(index => index >= 0) ?? [];
@@ -116,11 +147,7 @@ function AuthorSwitches({ document, room, edit, request }: { document: LevelDocu
         {used && <p className="field-note">A door or lift requires this switch. Clear that requirement before removing it.</p>}
       </div>;
     })}
-    {!free.length ? <p className="field-note">All eight switch numbers are used.</p> : <>
-      <label className="select-field"><span>Switch number</span><select aria-label="New switch number" value={slot} onChange={event => setSlot(event.target.value)}><option value="">Choose an unused number</option>{free.map(number => <option key={number} value={number}>Switch {number + 1}{switchRequirements(document, number) ? ' (already required by a mechanism)' : ''}</option>)}</select></label>
-      <label className="select-field"><span>Wall</span><select aria-label="New switch wall" value={edge} onChange={event => setEdge(event.target.value)}><option value="">Choose a solid wall edge</option>{walls}</select></label>
-      <button type="button" className="small-button" disabled={slot === '' || edge === ''} onClick={() => change(Number(slot), { edge: Number(edge), automatic: false })}>Add wall switch</button>
-    </>}
+
   </details></section>;
 }
 

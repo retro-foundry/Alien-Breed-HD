@@ -87,6 +87,14 @@ smaller height values are higher. Switch setup selects an unused number and
 focuses the wall choice. Setup is a draft until Apply/Add; Cancel and Escape
 keep the saved room unchanged.
 
+Wall switches can connect directly to a named original, copied or new door/lift.
+**Start opening / raising when on** uses its native timer trigger;
+**Unlock the existing trigger** keeps its opening rule. Other keys/switches,
+closing rules, travel ranges and starting positions are preserved. Adding a
+panel and its connection is one Undo. Existing switches list their connected
+mechanisms and offer Connect/Unlink. Unlink removes the requirement while
+keeping the trigger rules. **Cancel switch setup** discards the placement draft.
+
 ## Editing views
 
 **Editor view** opens in editable **3D perspective**. Perspective and 3D

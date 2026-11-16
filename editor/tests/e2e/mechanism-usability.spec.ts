@@ -2,8 +2,17 @@ import { expect, test } from '@playwright/test';
 import { authoredMovingFixture } from '../authoredMovingFixture';
 import { switchRoomFixture } from '../sourceSwitchFixture';
 import { encodeProject } from '../../src/model/project';
+import { applyCommand, editRoomSource, setSourceStart } from '../../src/model/commands';
+import { availableSwitchSlots } from '../../src/model/sourceSwitches';
+import { movingRoomFromDraft, setSourceMovingRoom } from '../../src/model/sourceMovingRoom';
+import { roomAppearanceChoices } from '../../src/model/roomAppearance';
+import { captureMechanismSettings, mechanismOwnerKey } from '../../src/model/mechanismSettingsTransfer';
+import { buildPlayableLevel } from '../../src/model/playableBuild';
+import { decodeProject } from '../../src/model/project';
+import { readFile } from 'node:fs/promises';
+import { engineMechanismState, engineMechanismTrace, enginePlayerInventory } from '../engineCapture';
 
-test('room setup reveals filtered door and lift forms, focuses heights and offers actual landing floors', async ({ page }) => {
+test('room setup reveals filtered door and lift forms, focuses heights and offers actual landing floors', async ({ page }, info) => {
   const fixture = authoredMovingFixture('lift');
   await page.goto('/?view=top');
   await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
@@ -26,6 +35,9 @@ test('room setup reveals filtered door and lift forms, focuses heights and offer
   await form.getByRole('combobox', { name: 'Choose upper landing' }).selectOption('0');
   await expect(form.getByRole('spinbutton', { name: 'New mechanism top', exact: true })).toHaveValue('0');
   await expect(form.getByRole('status')).toContainText('Travel: 32 units');
+  await expect(form).toContainText('Raises when');
+  await expect(form).toContainText('Lowers when');
+  await page.screenshot({ path: info.outputPath('lift-setup.png') });
   await form.getByRole('button', { name: 'Cancel mechanism draft', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
 });
@@ -41,5 +53,58 @@ test('switch setup opens from room actions with an unused number selected and wa
   const section = page.getByRole('region', { name: 'Wall switches', exact: true });
   await expect(section.getByRole('combobox', { name: 'New switch wall', exact: true })).toBeFocused();
   await expect(section.getByRole('combobox', { name: 'New switch number', exact: true })).toHaveValue(String(fixture.slot));
+  await section.getByRole('button', { name: 'Choose edge 1 for new switch', exact: true }).click();
+  await section.getByRole('button', { name: 'Cancel switch setup', exact: true }).click();
+  await expect(section.locator('details').first()).not.toHaveAttribute('open');
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+});
+
+for (const kind of ['door', 'lift'] as const) test(`create and connect a switch to a ${kind} in one undoable step and operate it in the native game`, async ({ page }, info) => {
+  test.setTimeout(90000);
+  const fixture = authoredMovingFixture(kind), owner = { type: 'authored' as const, kind, room: fixture.room.id };
+  const mechanism = fixture.mechanism;
+  let document = applyCommand(fixture.document, editRoomSource(setSourceMovingRoom(fixture.document, fixture.room.id,
+    movingRoomFromDraft({ kind, top: mechanism.top, bottom: mechanism.bottom, current: mechanism.bottom, conditions: 0,
+      openRule: 0, closeRule: kind === 'door' ? 1 : 2, wall: roomAppearanceChoices(fixture.document, fixture.room).lower[0]!.offset }))));
+  document = applyCommand(document, setSourceStart(document, 1, fixture.neighbour.id, 20480, 20128));
+  const slot = availableSwitchSlots(document)[0]!;
+  await page.goto('/?view=top');
+  await expect(page.locator('.project-picker strong')).toHaveText('Level 1');
+  await page.locator('input[type=file]').setInputFiles({ name: 'connected-switch.ab3d', mimeType: 'application/zip', buffer: Buffer.from(encodeProject(document)) });
+  await page.getByRole('button', { name: new RegExp(`^Room ${fixture.neighbour.id.replace('room-', '')}(?:\\s|$)`) }).click();
+  await page.getByRole('button', { name: 'Set up switch', exact: true }).click();
+  const section = page.getByRole('region', { name: 'Wall switches', exact: true });
+  await section.getByRole('button', { name: 'Choose edge 3 for new switch', exact: true }).click();
+  await section.getByRole('combobox', { name: 'New switch controls', exact: true }).selectOption(mechanismOwnerKey(owner));
+  await expect(section.getByRole('combobox', { name: 'New switch connection mode' })).toHaveValue('activate');
+  await page.screenshot({ path: info.outputPath(`${kind}-switch-setup.png`) });
+  await section.getByRole('button', { name: 'Add wall switch', exact: true }).click();
+  const connected = section.getByRole('group', { name: `Switch ${slot + 1} connections`, exact: true });
+  await expect(connected).toContainText(`Authored ${kind}`);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(connected).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  const file = info.outputPath('connected-switch.ab3d'); await (await download).saveAs(file);
+  const saved = decodeProject(new Uint8Array(await readFile(file))), built = buildPlayableLevel(saved, -1);
+  expect(captureMechanismSettings(saved, owner)).toEqual({ ...captureMechanismSettings(document, owner), conditions: 1 << (slot + 4), openRule: kind === 'door' ? 4 : 2 });
+  const id = built.document.mechanisms.filter(item => item.kind === kind).at(-1)!.id;
+  await page.getByRole('button', { name: 'Engine view', exact: true }).click();
+  const preview = page.getByRole('region', { name: '3D game engine preview' });
+  await expect(preview.getByRole('status')).toContainText('zones loaded', { timeout: 60000 });
+  await preview.getByRole('button', { name: 'Build & play', exact: true }).click();
+  await expect(preview.getByRole('status')).toHaveText('Playtest running');
+  expect((await enginePlayerInventory(page)).conditions).toBe(0);
+  expect((await engineMechanismState(page, kind, id)).current).toBe(mechanism.bottom);
+  await page.frameLocator('iframe[title="Alien Breed game engine"]').locator('canvas').press('Space', { delay: 80 });
+  await expect.poll(async () => (await enginePlayerInventory(page)).conditions).toBe(1 << (slot + 4));
+  const trace = await engineMechanismTrace(page, kind, id, false);
+  expect(trace.some(state => state.current < mechanism.bottom)).toBe(true);
+  for (const state of trace) expect(state).toMatchObject({ plane: state.current, unsynchronizedWalls: 0 });
+  await preview.getByRole('button', { name: 'Stop', exact: true }).click();
+  await connected.getByRole('button', { name: /^Unlink switch/ }).click();
+  await expect(connected).toContainText('No door or lift requires');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(connected).toContainText(`Authored ${kind}`);
 });
