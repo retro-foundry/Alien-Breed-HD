@@ -24,6 +24,12 @@ The project keeps Amiga data formats and game behavior where possible, while run
 
 No Amiga binary is executed by this port.
 
+Desktop and web menus use the supplied widescreen artwork in
+`amiga/data/gfx/TitleScreen.png` at its full resolution. DOS continues to use
+the original `amiga/data/includes/titlescrnraw` and
+`amiga/data/pal/TitleScrnPal`; both original assets remain preserved. The
+desktop-only PNG is excluded from DOS packages.
+
 See [billboard spill notes](docs/billboard-spill.md) for cross-zone sprite
 visibility fixes and regression coverage.
 

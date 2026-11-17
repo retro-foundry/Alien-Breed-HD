@@ -388,10 +388,11 @@ static void         display_ascii_font_upload_array_texture(void);
 static void         display_text_screen_draw(Uint8 alpha);
 static void         display_text_screen_draw_in_rect(Uint8 alpha, SDL_Rect r);
 
-/* Amiga ControlLoop.s LoadTitleScrn loads disk/includes/titlescrnraw into
- * seven 10240-byte bitplanes, and TitleCop.s supplies TITLEPAL. */
+/* DOS retains ControlLoop.s LoadTitleScrn's seven original bitplanes and
+ * TitleCop.s palette. Desktop/web use the supplied PNG at its own aspect. */
 #define DISPLAY_TITLE_RAW_PATH      "data/includes/titlescrnraw"
 #define DISPLAY_TITLE_PAL_PATH      "data/pal/TitleScrnPal"
+#define DISPLAY_TITLE_PNG_PATH      "data/gfx/TitleScreen.png"
 #define DISPLAY_TITLE_W             320
 #define DISPLAY_TITLE_H             256
 #define DISPLAY_TITLE_PLANES        7
@@ -405,6 +406,13 @@ static void         display_text_screen_draw_in_rect(Uint8 alpha, SDL_Rect r);
 static SDL_Texture *g_title_screen_tex;
 static GLuint       g_title_screen_gl_tex;
 static int          g_title_screen_load_attempted;
+#ifdef AB3D_DOS
+static const int    g_title_screen_width = DISPLAY_TITLE_W;
+static const int    g_title_screen_height = DISPLAY_TITLE_H;
+#else
+static int          g_title_screen_width = DISPLAY_TITLE_W;
+static int          g_title_screen_height = DISPLAY_TITLE_H;
+#endif
 static void         display_title_screen_free(void);
 
 #ifdef AB3D_DOS
@@ -1988,8 +1996,13 @@ static void display_title_screen_free(void)
         g_title_screen_tex = NULL;
     }
     g_title_screen_load_attempted = 0;
+#ifndef AB3D_DOS
+    g_title_screen_width = DISPLAY_TITLE_W;
+    g_title_screen_height = DISPLAY_TITLE_H;
+#endif
 }
 
+#ifdef AB3D_DOS
 static uint8_t display_title_palette_component_to_rgb(int component)
 {
     if (component < 0) component = 0;
@@ -2003,25 +2016,13 @@ static uint8_t display_title_palette_component_to_rgb(int component)
     if (component > 255) component = 255;
     return (uint8_t)component;
 }
-
-static void display_title_screen_upload_gl_texture(const uint32_t *argb)
+#else
+static void display_title_screen_upload_gl_texture(const unsigned char *rgba)
 {
-    if (!argb || !g_gl_unpack_ok) return;
+    if (!rgba || !g_gl_unpack_ok) return;
     if (!g_gl_gen_textures || !g_gl_bind_texture || !g_gl_tex_image_2d ||
         !g_gl_tex_parameteri2 || !g_gl_delete_textures) {
         return;
-    }
-
-    size_t pixels = (size_t)DISPLAY_TITLE_W * (size_t)DISPLAY_TITLE_H;
-    uint8_t *rgba = (uint8_t *)malloc(pixels * 4u);
-    if (!rgba) return;
-
-    for (size_t i = 0; i < pixels; i++) {
-        uint32_t c = argb[i];
-        rgba[i * 4u + 0u] = (uint8_t)((c >> 16) & 255u);
-        rgba[i * 4u + 1u] = (uint8_t)((c >> 8) & 255u);
-        rgba[i * 4u + 2u] = (uint8_t)(c & 255u);
-        rgba[i * 4u + 3u] = (uint8_t)((c >> 24) & 255u);
     }
 
     if (g_title_screen_gl_tex)
@@ -2037,13 +2038,13 @@ static void display_title_screen_upload_gl_texture(const uint32_t *argb)
     if (g_title_screen_gl_tex) {
         g_gl_active_texture(GL_TEXTURE0);
         g_gl_bind_texture(DGL_TEXTURE_2D, g_title_screen_gl_tex);
-        g_gl_tex_parameteri2(DGL_TEXTURE_2D, DGL_TEXTURE_MAG_FILTER, (GLint)GL_NEAREST);
-        g_gl_tex_parameteri2(DGL_TEXTURE_2D, DGL_TEXTURE_MIN_FILTER, (GLint)GL_NEAREST);
+        g_gl_tex_parameteri2(DGL_TEXTURE_2D, DGL_TEXTURE_MAG_FILTER, (GLint)GL_LINEAR);
+        g_gl_tex_parameteri2(DGL_TEXTURE_2D, DGL_TEXTURE_MIN_FILTER, (GLint)GL_LINEAR);
         g_gl_tex_parameteri2(DGL_TEXTURE_2D, DGL_TEXTURE_WRAP_S, (GLint)DGL_CLAMP_TO_EDGE);
         g_gl_tex_parameteri2(DGL_TEXTURE_2D, DGL_TEXTURE_WRAP_T, (GLint)DGL_CLAMP_TO_EDGE);
         display_gl_reset_rgba_texture_unpack(1);
         g_gl_tex_image_2d(DGL_TEXTURE_2D, 0, (GLint)GL_RGBA8,
-                          DISPLAY_TITLE_W, DISPLAY_TITLE_H, 0,
+                          g_title_screen_width, g_title_screen_height, 0,
                           GL_RGBA, GL_UNSIGNED_BYTE, rgba);
         display_gl_reset_rgba_texture_unpack(4);
         g_gl_bind_texture(DGL_TEXTURE_2D, 0);
@@ -2055,8 +2056,8 @@ static void display_title_screen_upload_gl_texture(const uint32_t *argb)
         printf("[DISPLAY] title screen: GL texture upload failed\n");
     }
 
-    free(rgba);
 }
+#endif
 
 #ifdef AB3D_DOS
 static void display_title_screen_ensure_loaded(void)
@@ -2099,83 +2100,52 @@ static void display_title_screen_ensure_loaded(void)
 #else
 static void display_title_screen_ensure_loaded(void)
 {
-    uint8_t *raw;
-    uint8_t *pal;
+    unsigned char *rgba;
     uint32_t *argb;
 
     if (g_title_screen_load_attempted || !g_sdl_ren) return;
     g_title_screen_load_attempted = 1;
 
-    raw = display_load_asset_exact(DISPLAY_TITLE_RAW_PATH,
-                                   DISPLAY_TITLE_RAW_BYTES,
-                                   "title screen raw");
-    pal = display_load_asset_exact(DISPLAY_TITLE_PAL_PATH,
-                                   DISPLAY_TITLE_PAL_BYTES,
-                                   "title screen palette");
-    if (!raw || !pal) {
-        free(raw);
-        free(pal);
-        return;
-    }
+    rgba = display_load_png_rgba_asset(DISPLAY_TITLE_PNG_PATH,
+                                      &g_title_screen_width, &g_title_screen_height,
+                                      "title artwork");
+    if (!rgba) return;
 
-    argb = (uint32_t *)malloc((size_t)DISPLAY_TITLE_W *
-                              (size_t)DISPLAY_TITLE_H *
-                              sizeof(uint32_t));
+    size_t pixels = (size_t)g_title_screen_width * (size_t)g_title_screen_height;
+    argb = (uint32_t *)malloc(pixels * sizeof(uint32_t));
     if (!argb) {
-        free(raw);
-        free(pal);
+        stbi_image_free(rgba);
         return;
     }
 
-    for (int y = 0; y < DISPLAY_TITLE_H; y++) {
-        for (int x = 0; x < DISPLAY_TITLE_W; x++) {
-            int byte_off = y * DISPLAY_TITLE_ROW_BYTES + (x >> 3);
-            int bit = 7 - (x & 7);
-            int index = 0;
-
-            for (int plane = 0; plane < DISPLAY_TITLE_PLANES; plane++) {
-                const uint8_t *plane_base =
-                    raw + (size_t)plane * DISPLAY_TITLE_PLANE_BYTES;
-                index |= ((plane_base[byte_off] >> bit) & 1) << plane;
-            }
-
-            {
-                size_t pal_off = (size_t)index * DISPLAY_TITLE_PAL_ENTRY_BYTES;
-                uint32_t r = display_title_palette_component_to_rgb(
-                    ((int)pal[pal_off] << 8) | (int)pal[pal_off + 1]);
-                uint32_t g = display_title_palette_component_to_rgb(
-                    (int)pal[pal_off + 2]);
-                uint32_t b = display_title_palette_component_to_rgb(
-                    (int)pal[pal_off + 3]);
-                argb[(size_t)y * DISPLAY_TITLE_W + (size_t)x] =
-                    0xFF000000u | (r << 16) | (g << 8) | b;
-            }
-        }
+    for (size_t i = 0; i < pixels; i++) {
+        const unsigned char *p = rgba + i * 4;
+        argb[i] = ((uint32_t)p[3] << 24) | ((uint32_t)p[0] << 16) |
+                  ((uint32_t)p[1] << 8) | p[2];
     }
 
-    display_title_screen_upload_gl_texture(argb);
+    display_title_screen_upload_gl_texture(rgba);
+    stbi_image_free(rgba);
 
     g_title_screen_tex = SDL_CreateTexture(g_sdl_ren, SDL_PIXELFORMAT_ARGB8888,
                                            SDL_TEXTUREACCESS_STATIC,
-                                           DISPLAY_TITLE_W, DISPLAY_TITLE_H);
+                                           g_title_screen_width, g_title_screen_height);
     if (!g_title_screen_tex ||
         SDL_UpdateTexture(g_title_screen_tex, NULL, argb,
-                          DISPLAY_TITLE_W * (int)sizeof(uint32_t)) != 0) {
+                          g_title_screen_width * (int)sizeof(uint32_t)) != 0) {
         if (g_title_screen_tex) SDL_DestroyTexture(g_title_screen_tex);
         g_title_screen_tex = NULL;
         printf("[DISPLAY] title screen: SDL texture upload failed\n");
     } else {
         SDL_SetTextureBlendMode(g_title_screen_tex, SDL_BLENDMODE_BLEND);
 #if SDL_VERSION_ATLEAST(2, 0, 12)
-        SDL_SetTextureScaleMode(g_title_screen_tex, SDL_ScaleModeNearest);
+        SDL_SetTextureScaleMode(g_title_screen_tex, SDL_ScaleModeLinear);
 #endif
-        printf("[DISPLAY] Title screen loaded from %s / %s\n",
-               DISPLAY_TITLE_RAW_PATH, DISPLAY_TITLE_PAL_PATH);
+        printf("[DISPLAY] Title artwork loaded from %s (%dx%d)\n",
+               DISPLAY_TITLE_PNG_PATH, g_title_screen_width, g_title_screen_height);
     }
 
     free(argb);
-    free(raw);
-    free(pal);
 }
 #endif
 
@@ -3158,14 +3128,14 @@ int display_text_line_at_point(int window_x, int window_y, int title_screen,
         return 0;
 
     if (title_screen) {
-        r = display_fit_rect(out_w, out_h, DISPLAY_TITLE_W, DISPLAY_TITLE_H);
+        r = display_fit_rect(out_w, out_h, g_title_screen_width, g_title_screen_height);
         if (g_gl_unpack_ok && g_gl_hud_ok) {
             display_gl_output_size(&out_w, &out_h);
             if (out_w < 1) out_w = g_present_width;
             if (out_h < 1) out_h = g_present_height;
             display_window_point_to_size(window_x, window_y, out_w, out_h,
                                          &px, &py);
-            r = display_fit_rect(out_w, out_h, DISPLAY_TITLE_W, DISPLAY_TITLE_H);
+            r = display_fit_rect(out_w, out_h, g_title_screen_width, g_title_screen_height);
         }
     } else {
 #ifdef AB3D_DOS
@@ -5579,8 +5549,8 @@ void display_present_title_screen_alpha(int text_alpha, int dim_alpha)
     }
 
     SDL_Rect title_dst = display_fit_rect(out_w, out_h,
-                                          DISPLAY_TITLE_W,
-                                          DISPLAY_TITLE_H);
+                                          g_title_screen_width,
+                                          g_title_screen_height);
 
     if (g_gl_unpack_ok && g_gl_hud_ok) {
         display_gl_output_size(&g_gl_overlay_win_w, &g_gl_overlay_win_h);
@@ -5588,7 +5558,7 @@ void display_present_title_screen_alpha(int text_alpha, int dim_alpha)
         g_gl_clear_color(0.0f, 0.0f, 0.0f, 1.0f);
         g_gl_clear(GL_COLOR_BUFFER_BIT);
         title_dst = display_fit_rect(g_gl_overlay_win_w, g_gl_overlay_win_h,
-                                     DISPLAY_TITLE_W, DISPLAY_TITLE_H);
+                                     g_title_screen_width, g_title_screen_height);
         display_gl_overlay_begin();
         display_gl_texture_id_blit(g_title_screen_gl_tex, &title_dst, 255);
         if (dim_alpha > 0)

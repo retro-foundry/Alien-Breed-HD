@@ -58,6 +58,10 @@ def main():
             # Match the native staging tree rather than classifying by suffix.
             if file.is_file():
                 key = (logical + '/' + file.relative_to(folder).as_posix()).lower()
+                # Desktop/web use the supplied high-resolution replacement.
+                # DOS retains titlescrnraw + TitleScrnPal and its existing map.
+                if key == 'data/gfx/titlescreen.png':
+                    continue
                 sources[key] = file
     for file in (root / 'amiga/sounds').iterdir():
         if file.is_file():

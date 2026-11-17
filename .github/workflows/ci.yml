@@ -157,9 +157,9 @@ jobs:
           $renderTestSdl = (Resolve-Path build/_deps/sdl2-src).Path
           cmake -S tests/render -B build/render-checks -A x64 "-DAB3D_TEST_DATA=$renderTestData" "-DFETCHCONTENT_SOURCE_DIR_SDL2=$renderTestSdl"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build build/render-checks --config Release --target renderer_tags weapon_water_cpu weapon_water_display --parallel
+          cmake --build build/render-checks --config Release --target renderer_tags weapon_water_cpu weapon_water_display title_screen_display --parallel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          foreach ($renderTest in @("renderer_tags", "weapon_water_cpu", "weapon_water_display")) {
+          foreach ($renderTest in @("renderer_tags", "weapon_water_cpu", "weapon_water_display", "title_screen_display")) {
             & "build/render-checks/Release/$renderTest.exe"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
