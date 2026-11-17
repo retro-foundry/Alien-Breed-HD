@@ -36,9 +36,10 @@ bottleneck; they do not establish that every source of FPS variation is fixed.
 
 Validation also compared 1,040 lower-room views across levels 10-12 at 960x540,
 12 workers and four headings: their color-word buffers matched the prior
-renderer. The native checks passed 576 CPU weapon/water cases and 576 actual
-SDL composition cases, covering threaded/synchronous rendering, ARGB/CW, both
-players and HUD preservation. The WebAssembly checks passed 288 weapon/water
+renderer. The native checks passed 576 CPU weapon/water cases, 576 SDL software
+composition cases and 576 OpenGL composition cases, covering
+threaded/synchronous rendering, ARGB/CW, both players and HUD preservation.
+The WebAssembly checks passed 288 weapon/water
 cases and the color/diagnostic tests. `feedback_tags.c` additionally checks
 partial-column ownership, untouched history sources, clamped/empty ranges,
 ARGB ownership and the full-image synchronous copy.
