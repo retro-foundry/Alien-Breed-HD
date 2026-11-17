@@ -4,11 +4,48 @@
 #include "sb_decompress.h"
 #include <assert.h>
 
+#ifndef AB3D_TAGS_EXTERNAL_STATE
 GameState g_state;
+#endif
 enum { W = 192, H = 160 };
 static RendererPixel expected_cw[W * H];
 static uint32_t expected_rgb[W * H];
 static uint8_t expected_tags[W * H];
+
+static void check_history_columns(void)
+{
+    const int bounds[][2] = {{W-7,W+5},{-3,13},{13,W-7},{17,17}};
+    for (int expand = 0; expand <= 1; expand++) {
+        uint8_t copied[W] = {0};
+        renderer_set_rgb_raster_expand(expand);
+        memset(g_renderer.buffer, 0xa5, W * H);
+        memset(g_renderer.back_buffer, 0xa5, W * H);
+        for (int i = 0; i < W * H; i++) {
+            g_renderer.cw_buffer[i] = 0xa55a;
+            g_renderer.cw_back_buffer[i] = (RendererPixel)(i & 4095);
+            g_renderer.rgb_buffer[i] = 0x12345678;
+            g_renderer.rgb_back_buffer[i] = 0xff000000u | (unsigned)i;
+        }
+        for (unsigned b = 0; b < sizeof(bounds)/sizeof(bounds[0]); b++) {
+            renderer_prefill_color_columns(bounds[b][0], bounds[b][1]);
+            for (int x = 0; x < W; x++)
+                if (x >= bounds[b][0] && x < bounds[b][1]) copied[x] = 1;
+            for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) {
+                size_t cw = renderer_cw_index_xy(x, y, W, H);
+                size_t rgb = (size_t)y * W + x;
+                assert(g_renderer.cw_buffer[cw] == (copied[x] ? (cw & 4095) : 0xa55a));
+                assert(g_renderer.cw_back_buffer[cw] == (cw & 4095));
+                assert(g_renderer.rgb_buffer[rgb] == (copied[x] && expand ? (0xff000000u | (unsigned)rgb) : 0x12345678));
+                assert(g_renderer.rgb_back_buffer[rgb] == (0xff000000u | (unsigned)rgb));
+                assert(g_renderer.buffer[rgb] == 0xa5 && g_renderer.back_buffer[rgb] == 0xa5);
+            }
+        }
+        /* The synchronous path still copies the whole image. */
+        renderer_prefill_color_columns(0, W);
+        assert(!memcmp(g_renderer.cw_buffer, g_renderer.cw_back_buffer, W * H * sizeof(RendererPixel)));
+        if (expand) assert(!memcmp(g_renderer.rgb_buffer, g_renderer.rgb_back_buffer, W * H * sizeof(uint32_t)));
+    }
+}
 
 static void draw_frame(int capture)
 {
@@ -38,6 +75,7 @@ int main(void)
     level->object_data = NULL;
     math_tables_init();
     renderer_init(W, H);
+    check_history_columns();
     renderer_set_rgb_raster_expand(1);
     uint8_t *backfile;
     assert(!sb_load_file("amiga/data/gfx/BackFile", &backfile, &bytes));

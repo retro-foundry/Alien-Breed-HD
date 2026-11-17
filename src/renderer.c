@@ -674,6 +674,7 @@ static void renderer_draw_world_slice(GameState *state,
                                       int automap_stage_slot,
                                       int8_t *out_fill_screen_water,
                                       RendererWorkloadStats *out_workload_stats);
+static void renderer_prefill_color_columns(int col_start, int col_end);
 static void renderer_build_zone_section_clips(GameState *state, int16_t zone_id,
                                               RendererZoneSectionClip *out_lower,
                                               RendererZoneSectionClip *out_upper,
@@ -2561,6 +2562,10 @@ static int renderer_thread_worker_main(void *userdata)
         renderer_workload_stats_reset(&world_stats);
         if (active && col_start < col_end) {
             if (job_type == RENDERER_THREAD_JOB_WORLD && state) {
+                /* Preserve frame history in this worker's disjoint columns.
+                 * Copying the entire image on the main thread first adds a
+                 * serial memory pass and transfers its cache ownership. */
+                renderer_prefill_color_columns(col_start, col_end);
                 /* Pre-size thread-local scratch once at the start of this worker
                  * job so we avoid first-use reallocs inside hot zone loops. */
                 {
@@ -5399,28 +5404,52 @@ void renderer_clear(uint8_t color)
 #endif
 }
 
-static void renderer_prefill_current_color_from_previous_frame(void)
+static void renderer_prefill_color_columns(int col_start, int col_end)
 {
 #if !RENDER_CLEAR && !defined(AB3D_DOS)
     int w = g_renderer.width;
     int h = g_renderer.height;
     if (w <= 0 || h <= 0) return;
 
-    size_t pixel_count = (size_t)w * (size_t)h;
+    if (col_start < 0) col_start = 0;
+    if (col_end > w) col_end = w;
+    if (col_start >= col_end) return;
     if (g_renderer.cw_buffer && g_renderer.cw_back_buffer) {
-        memcpy(g_renderer.cw_buffer,
-               g_renderer.cw_back_buffer,
-               pixel_count * sizeof(RendererPixel));
+#if AB3D_CW_COL_MAJOR
+        size_t first = (size_t)col_start * (size_t)h;
+        size_t count = (size_t)(col_end - col_start) * (size_t)h;
+        memcpy(g_renderer.cw_buffer + first, g_renderer.cw_back_buffer + first,
+               count * sizeof(RendererPixel));
+#else
+        if (col_start == 0 && col_end == w) {
+            memcpy(g_renderer.cw_buffer, g_renderer.cw_back_buffer,
+                   (size_t)w * (size_t)h * sizeof(RendererPixel));
+        } else {
+            for (int y = 0; y < h; y++) {
+                size_t first = (size_t)y * (size_t)w + (size_t)col_start;
+                memcpy(g_renderer.cw_buffer + first, g_renderer.cw_back_buffer + first,
+                       (size_t)(col_end - col_start) * sizeof(RendererPixel));
+            }
+        }
+#endif
     }
-#ifndef AB3D_DOS
     /* GPU unpack presents cw_buffer directly. Its unused ARGB history is
      * 33 MB at 4K and must not evict the actual raster/texture working set. */
     if (g_renderer_rgb_raster_expand && g_renderer.rgb_buffer && g_renderer.rgb_back_buffer) {
-        memcpy(g_renderer.rgb_buffer,
-               g_renderer.rgb_back_buffer,
-               pixel_count * sizeof(uint32_t));
+        if (col_start == 0 && col_end == w) {
+            memcpy(g_renderer.rgb_buffer, g_renderer.rgb_back_buffer,
+                   (size_t)w * (size_t)h * sizeof(uint32_t));
+        } else {
+            for (int y = 0; y < h; y++) {
+                size_t first = (size_t)y * (size_t)w + (size_t)col_start;
+                memcpy(g_renderer.rgb_buffer + first, g_renderer.rgb_back_buffer + first,
+                       (size_t)(col_end - col_start) * sizeof(uint32_t));
+            }
+        }
     }
-#endif
+#else
+    (void)col_start;
+    (void)col_end;
 #endif
 }
 
@@ -17629,7 +17658,6 @@ static void renderer_draw_display_impl(GameState *state)
     if (prof_on) t_after_setup = SDL_GetPerformanceCounter();
 
     automap_stage_reset_frame();
-    renderer_prefill_current_color_from_previous_frame();
 
     int8_t fill_screen_water = 0;
     int used_threaded_world = 0;
@@ -17655,6 +17683,7 @@ static void renderer_draw_display_impl(GameState *state)
 #endif
     }
     if (!used_threaded_world) {
+        renderer_prefill_color_columns(0, g_renderer.width);
         renderer_clear(0);
         renderer_draw_world_slice(state, &world_zone_prepass,
                                   0, (int16_t)g_renderer.width,
