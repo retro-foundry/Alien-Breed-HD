@@ -591,7 +591,7 @@ static bool enemy_try_zone_teleport(GameObject *obj, GameState *state, MoveConte
     if (zone_for_teleport < 0) return false;
 
     /* Players already run teleports in player_control; enemies need this explicit pass. */
-    return check_teleport(ctx, &state->level, (int16_t)zone_for_teleport, 0x7FFFFu);
+    return check_teleport(ctx, &state->level, (int16_t)zone_for_teleport, TELEPORT_ENEMY);
 }
 
 /* -----------------------------------------------------------------------

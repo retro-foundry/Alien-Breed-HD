@@ -1522,61 +1522,43 @@ void head_towards_angle(MoveContext* ctx, int16_t* facing,
  * check_teleport - Zone teleporter check
  * ----------------------------------------------------------------------- */
 bool check_teleport(MoveContext* ctx, LevelState* level, int16_t zone_id,
-                    uint32_t destination_collision_flags)
+                    TeleportMover mover)
 {
-    if (!level->data || !level->zone_adds) return false;
-    int zone_slots = level_zone_slot_count(level);
-    if (zone_id < 0 || zone_id >= zone_slots) return false;
+    const uint8_t* source = level_get_zone_data_ptr(level, zone_id);
+    if (!source) return false;
 
-    {
-        int32_t zone_off = read_be32(level->zone_adds + zone_id * 4);
-        const uint8_t* zone_data = level->data + zone_off;
+    uint8_t* destination = level_get_zone_data_ptr(level, read_be16(source + ZONE_OFF_TEL_ZONE));
+    if (!destination) return false;
 
-        int16_t tel_zone = read_be16(zone_data + 38);
-        if (tel_zone < 0) return false;
-        if (tel_zone >= zone_slots) return false;
+    int32_t walk_x = ctx->newx;
+    int32_t walk_z = ctx->newz;
+    int32_t walk_y = ctx->newy;
+    uint32_t walk_flags = ctx->collide_flags;
+    int32_t landing_y = walk_y + (read_be32(destination + ZONE_OFF_FLOOR) -
+                                  read_be32(source + ZONE_OFF_FLOOR));
 
-        {
-            int16_t tel_x = read_be16(zone_data + 40);
-            int16_t tel_z = read_be16(zone_data + 42);
+    ctx->newx = read_be16(source + ZONE_OFF_TEL_X);
+    ctx->newz = read_be16(source + ZONE_OFF_TEL_Z);
 
-            int32_t src_floor = read_be32(zone_data + ZONE_FLOOR_HEIGHT);
+    /* AB3DI.s PLR1/2_Control probes before applying the floor delta.
+     * ObjectMove.s CheckTeleport applies the delta before Collision. */
+    if (mover == TELEPORT_ENEMY) ctx->newy = landing_y;
+    ctx->collide_flags = mover == TELEPORT_PLAYER ? 0x3FFFFu : 0x7FFFFu;
+    collision_check(ctx, level);
+    ctx->collide_flags = walk_flags;
 
-            int32_t dest_zone_off = read_be32(level->zone_adds + tel_zone * 4);
-            const uint8_t* dest_zone = level->data + dest_zone_off;
-            int32_t dest_floor = read_be32(dest_zone + ZONE_FLOOR_HEIGHT);
-
-            int32_t floor_diff = dest_floor - src_floor;
-            int32_t walk_x = ctx->newx;
-            int32_t walk_z = ctx->newz;
-
-            ctx->newx = tel_x;
-            ctx->newz = tel_z;
-            ctx->newy += floor_diff;
-
-            {
-                uint32_t old_flags = ctx->collide_flags;
-                ctx->collide_flags = destination_collision_flags;
-                collision_check(ctx, level);
-                ctx->collide_flags = old_flags;
-            }
-
-            if (ctx->hitwall) {
-                /* AB3DI.s PLR1/2_Control restore the walking coordinates
-                 * when an exit is occupied. Leaving the destination here
-                 * makes the subsequent walking collision test hit it again,
-                 * preventing the player from stepping off the pad. */
-                ctx->newx = walk_x;
-                ctx->newz = walk_z;
-                ctx->newy -= floor_diff;
-                ctx->hitwall = 0;
-                return false;
-            }
-
-            ctx->objroom = (uint8_t*)(level->data + dest_zone_off);
-            return true;
-        }
+    if (ctx->hitwall) {
+        /* Restore the walking target so an occupied exit cannot trap the mover. */
+        ctx->newx = walk_x;
+        ctx->newz = walk_z;
+        ctx->newy = walk_y;
+        ctx->hitwall = 0;
+        return false;
     }
+
+    ctx->newy = landing_y;
+    ctx->objroom = destination;
+    return true;
 }
 
 /* -----------------------------------------------------------------------

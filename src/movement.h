@@ -105,20 +105,25 @@ void head_towards_angle(MoveContext *ctx, int16_t *facing,
                         int32_t target_x, int32_t target_z,
                         int16_t speed, int16_t turn_speed);
 
+typedef enum {
+    TELEPORT_PLAYER,
+    TELEPORT_ENEMY,
+} TeleportMover;
+
 /*
  * CheckTeleport - Check if current zone has a teleport destination.
  *
  * Shared by ObjectMove.s CheckTeleport and AB3DI.s PLR1/2_Control.
  * If the zone's ToTelZone field is >= 0, teleports the object to the
  * destination coordinates and adjusts Y for floor height difference.
- * destination_collision_flags selects the original caller's arrival test:
- * players use 0x3FFFF (18 bits), enemies use 0x7FFFF (19 bits).
+ * Players probe at their source Y with an 18-bit mask. Enemies probe at
+ * their floor-adjusted Y with a 19-bit mask.
  *
  * Returns: true if teleported, false otherwise. A blocked destination
  * preserves the attempted walking coordinates so movement can continue.
  */
 bool check_teleport(MoveContext *ctx, LevelState *level, int16_t zone_id,
-                    uint32_t destination_collision_flags);
+                    TeleportMover mover);
 
 /*
  * FindCloseRoom - Find the room closest to the player from an object.

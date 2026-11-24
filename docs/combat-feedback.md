@@ -472,6 +472,32 @@ marine's object/point records and the source/destination room pointers.
 Compare this with the native fixture before and after that enemy uses
 the source pad.
 
+### Player teleport collision height
+
+`AB3DI.s` `PLR1_Control` and `PLR2_Control` probe the landing X/Z at the
+player's current Y, apply the floor-height difference on success, and jump
+to `.cantmove`. `ObjectMove.s` `CheckTeleport` applies the floor difference
+before its enemy collision probe. The PC port used the enemy ordering for
+players, which could incorrectly reject a pad if a living alien overlapped
+the adjusted landing height. The corrected player path commits the landing
+room and coordinates directly, including the original fractional X/Z words.
+
+The regression reproduces the refusal on level 9 pad 42 -> 85, covers the
+opposite floor change on 134 -> 82, and checks that an alien overlapping the
+source-height probe still blocks the player. The 504 level 9 and 15 cases
+pass, along with 624 clear-landing checks across all 52 shipped pads. A
+68020 instruction-level check of both original player routines and `Collision`
+confirmed the block/arrival result, position and room pointer in 16 cases
+using the two level 9 pad records.
+
+Level 3 reproduces the same failure on both pads (67 -> 69 and 159 -> 127).
+The walk-on test uses the authored marine and flying alien already in the
+landing rooms. The previous build passed all 240 approaches with the enemies
+at their authored positions and refused all 240 when the matching enemy was
+placed at the landing point. The corrected build passes all 480 approaches
+through the four entrances, across both players, both stances, and updates
+of one to fifteen VBlanks.
+
 ## Silent corpse gibbing from explosions
 
 By request, every retained enemy corpse can now be destroyed by an explosion

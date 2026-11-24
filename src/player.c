@@ -1679,29 +1679,19 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
         ctx.objroom = state->level.data + plr->roompt;
     }
 
-    /* AB3DI.s PLR1/2_Control uses an 18-bit arrival mask. The generic
-     * ObjectMove.s CheckTeleport mask has 19 bits and additionally treats
-     * tough marines (type 18) as blockers. Keep these caller rules separate. */
-    if (plr->zone >= 0) {
-        if (check_teleport(&ctx, &state->level, plr->zone, 0x3FFFFu)) {
-            /* Teleport destination is in integer coords; sync to 16.16. */
-            plr->xoff = (int32_t)ctx.newx << 16;
-            plr->zoff = (int32_t)ctx.newz << 16;
-            /* Keep old/new in sync so MoveObject does not sweep between
-             * pre-teleport and post-teleport positions this frame. */
-            plr->oldxoff = plr->xoff;
-            plr->oldzoff = plr->zoff;
-            plr->s_xoff = plr->xoff;
-            plr->s_zoff = plr->zoff;
-            /* check_teleport adjusts ctx.newy by source/destination floor
-             * delta; carry that back into sim Y (without bob offset). */
-            plr->s_yoff = ctx.newy - bob_val;
-            plr->yoff = ctx.newy;
-            plr->oldyoff = plr->yoff;
-            plr->oldangpos = plr->angpos;
-            plr->oldlook_y = plr->look_y;
-            audio_play_sample(26, 64);
-        }
+    const int16_t prev_zone = plr->zone;
+    const bool teleported = check_teleport(&ctx, &state->level, prev_zone, TELEPORT_PLAYER);
+    if (teleported) {
+        /* AB3DI.s PLR1/2_Control goes straight to .cantmove on success. */
+        plr->s_yoff = ctx.newy - bob_val;
+        plr->yoff = ctx.newy;
+        plr->oldyoff = plr->yoff;
+        plr->oldangpos = plr->angpos;
+        plr->oldlook_y = plr->look_y;
+        ctx.stood_in_top = plr->stood_in_top;
+        plr->no_transition_back_roompt = -1;
+        audio_play_sample(26, 64);
+        goto commit_room;
     }
 
     /* 5. Object collision check.
@@ -1859,10 +1849,8 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
         ctx.hitwall = any_hit;
     }
 
+commit_room:
     plr->stood_in_top = ctx.stood_in_top;
-
-    /* Remember zone before we apply move_object result (detect zone transition) */
-    int16_t prev_zone = plr->zone;
 
     /* Update roompt and zone from move_object result.
      * ctx.objroom may have changed if the player crossed into a new zone.
@@ -1908,10 +1896,14 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
      *
      * This preserves the fractional part from the simulation while
      * updating only the integer part from MoveObject's wall-slid result. */
-    plr->xoff = ((int32_t)ctx.newx << 16) | (plr->xoff & 0x0000FFFF);
-    plr->zoff = ((int32_t)ctx.newz << 16) | (plr->zoff & 0x0000FFFF);
+    plr->xoff = (ctx.newx * 65536) | (plr->xoff & 0xFFFF);
+    plr->zoff = (ctx.newz * 65536) | (plr->zoff & 0xFFFF);
     plr->s_xoff = plr->xoff;
     plr->s_zoff = plr->zoff;
+    if (teleported) {
+        plr->oldxoff = plr->xoff;
+        plr->oldzoff = plr->zoff;
+    }
 
     /* 7. Update target Y from room floor height
      * AND set up PointsToRotatePtr / ListOfGraphRooms for this zone.
@@ -1944,7 +1936,7 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
 
         /* When we just transitioned zones (e.g. stepped onto stairs), snap Y to new floor
          * immediately so we stand on the step instead of smoothing through it. */
-        if (plr->zone != prev_zone && plr->s_tyoff < plr->s_yoff) {
+        if (!teleported && plr->zone != prev_zone && plr->s_tyoff < plr->s_yoff) {
             plr->s_yoff = plr->s_tyoff;
             plr->s_yvel = 0;
             /* Keep shoot/collision-facing PLR_yoff in sync with the snapped sim Y
@@ -1962,7 +1954,7 @@ static void player_full_control(PlayerState *plr, GameState *state, int plr_num)
     }
 
     if (plr->zone != prev_zone) {
-        player_log_zone_enter(state, plr, plr_num, prev_zone, "move");
+        player_log_zone_enter(state, plr, plr_num, prev_zone, teleported ? "teleport" : "move");
     }
 }
 
